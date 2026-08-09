@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+  <!-- PWA / iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EDGE">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#080c10">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon.svg">
+
+  <title>EDGE Trade Signals</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Barlow+Condensed:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="app-header">
+      <div class="header-brand">
+        <span class="header-logo">EDGE</span>
+        <span class="header-tagline">Trade Signals</span>
+      </div>
+      <div class="header-actions">
+        <button id="refresh-btn" class="btn-refresh" onclick="handleRefresh()" title="Refresh">↻</button>
+      </div>
+    </header>
+
+    <!-- Market Status Banner -->
+    <div id="market-banner" class="market-banner"></div>
+
+    <!-- Budget Bar (signals/portfolio/watchlist only) -->
+    <div id="budget-bar" class="budget-bar hidden"></div>
+
+    <!-- Main Tab Content -->
+    <main id="tab-content" class="tab-content"></main>
+
+    <!-- Bottom Navigation -->
+    <nav id="bottom-nav">
+      <button class="nav-btn active" data-tab="signals" onclick="switchTab('signals')">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Signals</span>
+      </button>
+      <button class="nav-btn" data-tab="portfolio" onclick="switchTab('portfolio')">
+        <span class="nav-icon">💼</span>
+        <span class="nav-label">Portfolio</span>
+        <span id="badge-portfolio" class="nav-badge hidden">0</span>
+      </button>
+      <button class="nav-btn" data-tab="sold" onclick="switchTab('sold')">
+        <span class="nav-icon">✅</span>
+        <span class="nav-label">Sold</span>
+      </button>
+      <button class="nav-btn" data-tab="settings" onclick="switchTab('settings')">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Modal Overlay -->
+  <div id="modal-overlay" class="modal-overlay hidden" onclick="handleOverlayClick(event)">
+    <div id="modal-container" class="modal-container" onclick="event.stopPropagation()">
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Confirmation Dialog -->
+  <div id="confirm-overlay" class="modal-overlay hidden" onclick="closeConfirm()">
+    <div class="confirm-box" onclick="event.stopPropagation()">
+      <p id="confirm-msg"></p>
+      <div class="confirm-btns">
+        <button class="btn-danger" onclick="confirmAction()">Confirm</button>
+        <button class="btn-ghost" onclick="closeConfirm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bump ?v= to match VERSION in app.js on every release — app.js is served with
+       a 10-minute browser cache (GitHub Pages default), and mobile browsers/PWAs
+       can hold onto it well past that without a cache-busting query change. -->
+  <script src="app.js?v=20260806201853"></script>
+</body>
+</html>
