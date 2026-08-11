@@ -1,13 +1,192 @@
 'use strict';
 // ================================================================
-// EDGE Trade Signals — app.js  v1.16.1
+// EDGE Trade Signals — app.js  v2.0.0
 // ================================================================
+
+// ── 0. PIN GATE ──────────────────────────────────────────────────
+// Runs before anything else. Default PIN hash is SHA-256("0684");
+// default security-answer hash is SHA-256("Rainbow6") — the plain
+// values are never stored, only these hashes. A user-set PIN
+// (edge2_pin_hash in localStorage) always takes priority over the
+// hardcoded default.
+
+const DEFAULT_PIN_HASH = 'bfdb0f9421ac027731316cf04945379416a33b2180aa6b9bdfef63e967d68d01';
+const SECURITY_ANSWER_HASH = 'd7d602a4b095428e7432015e114bb5a3045291484f0f98cd9a6d3395c4f1a202';
+
+async function sha256Hex(str) {
+  const enc = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getPinHash() {
+  return localStorage.getItem('edge2_pin_hash') || DEFAULT_PIN_HASH;
+}
+
+function isPinVerified() {
+  return sessionStorage.getItem('edge2_pin_verified') === 'true';
+}
+
+function lockApp() {
+  sessionStorage.removeItem('edge2_pin_verified');
+  location.reload();
+}
+
+let _pinBuf = '';
+let _newPin1 = '';
+let _newPin2 = '';
+let _newPinStage = 1;
+
+function pinDotsHtml(buf) {
+  let html = '';
+  for (let i = 0; i < 4; i++) {
+    html += `<div class="pin-box">${i < buf.length ? '<span class="pin-dot"></span>' : ''}</div>`;
+  }
+  return html;
+}
+
+function pinNumpadHtml(pressFn, backFn) {
+  let html = '<div class="pin-numpad">';
+  for (let n = 1; n <= 9; n++) {
+    html += `<button class="pin-key" onclick="${pressFn}('${n}')">${n}</button>`;
+  }
+  html += `<button class="pin-key pin-key-ghost" disabled></button>`;
+  html += `<button class="pin-key" onclick="${pressFn}('0')">0</button>`;
+  html += `<button class="pin-key pin-key-back" onclick="${backFn}()">⌫</button>`;
+  html += '</div>';
+  return html;
+}
+
+function renderPinScreen(opts = {}) {
+  document.body.innerHTML = `
+    <div class="pin-screen">
+      <div class="pin-title">EDGE2</div>
+      <div class="pin-subtitle">Enter PIN</div>
+      <div class="pin-boxes${opts.shake ? ' shake' : ''}" id="pin-boxes">${pinDotsHtml(_pinBuf)}</div>
+      <div class="pin-error">${opts.error || ''}</div>
+      ${pinNumpadHtml('pinPress', 'pinBackspace')}
+      <button class="pin-submit" onclick="pinSubmit()">Submit</button>
+      <a class="pin-forgot" onclick="showForgotPinScreen()">Forgot PIN?</a>
+    </div>`;
+}
+
+function pinPress(d) {
+  if (_pinBuf.length >= 4) return;
+  _pinBuf += d;
+  if (_pinBuf.length === 4) { pinSubmit(); return; }
+  renderPinScreen();
+}
+
+function pinBackspace() {
+  _pinBuf = _pinBuf.slice(0, -1);
+  renderPinScreen();
+}
+
+async function pinSubmit() {
+  if (_pinBuf.length !== 4) return;
+  const entered = _pinBuf;
+  const hash = await sha256Hex(entered);
+  if (hash === getPinHash()) {
+    sessionStorage.setItem('edge2_pin_verified', 'true');
+    _pinBuf = '';
+    location.reload();
+  } else {
+    _pinBuf = '';
+    renderPinScreen({ error: 'Incorrect PIN', shake: true });
+  }
+}
+
+function showForgotPinScreen(opts = {}) {
+  document.body.innerHTML = `
+    <div class="pin-screen">
+      <div class="pin-title">EDGE2</div>
+      <div class="pin-subtitle">Security Question</div>
+      <div class="pin-question">What is your favorite game?</div>
+      <input id="security-answer" class="pin-text-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Answer">
+      <div class="pin-error">${opts.error || ''}</div>
+      <button class="pin-submit" onclick="checkSecurityAnswer()">Submit</button>
+      <a class="pin-forgot" onclick="_pinBuf='';renderPinScreen()">‹ Back to PIN</a>
+    </div>`;
+  document.getElementById('security-answer')?.focus();
+}
+
+async function checkSecurityAnswer() {
+  const val = document.getElementById('security-answer')?.value || '';
+  const hash = await sha256Hex(val.trim());
+  if (hash === SECURITY_ANSWER_HASH) {
+    _newPin1 = ''; _newPin2 = ''; _newPinStage = 1;
+    showSetNewPinScreen();
+  } else {
+    showForgotPinScreen({ error: 'Incorrect answer' });
+  }
+}
+
+function showSetNewPinScreen(opts = {}) {
+  const stage = _newPinStage;
+  const buf = stage === 1 ? _newPin1 : _newPin2;
+  document.body.innerHTML = `
+    <div class="pin-screen">
+      <div class="pin-title">EDGE2</div>
+      <div class="pin-subtitle">${stage === 1 ? 'Set New PIN' : 'Confirm New PIN'}</div>
+      <div class="pin-boxes${opts.shake ? ' shake' : ''}" id="pin-boxes">${pinDotsHtml(buf)}</div>
+      <div class="pin-error">${opts.error || ''}</div>
+      ${pinNumpadHtml('newPinPress', 'newPinBackspace')}
+      <button class="pin-submit" onclick="newPinSubmit()">${stage === 1 ? 'Next' : 'Save'}</button>
+    </div>`;
+}
+
+function newPinPress(d) {
+  if (_newPinStage === 1) {
+    if (_newPin1.length >= 4) return;
+    _newPin1 += d;
+  } else {
+    if (_newPin2.length >= 4) return;
+    _newPin2 += d;
+  }
+  showSetNewPinScreen();
+}
+
+function newPinBackspace() {
+  if (_newPinStage === 1) _newPin1 = _newPin1.slice(0, -1);
+  else _newPin2 = _newPin2.slice(0, -1);
+  showSetNewPinScreen();
+}
+
+async function newPinSubmit() {
+  if (_newPinStage === 1) {
+    if (_newPin1.length !== 4) return;
+    _newPinStage = 2;
+    showSetNewPinScreen();
+    return;
+  }
+  if (_newPin2.length !== 4) return;
+  if (_newPin2 !== _newPin1) {
+    _newPin2 = '';
+    showSetNewPinScreen({ error: 'PINs do not match', shake: true });
+    return;
+  }
+  const hash = await sha256Hex(_newPin1);
+  localStorage.setItem('edge2_pin_hash', hash);
+  sessionStorage.setItem('edge2_pin_verified', 'true');
+  _newPin1 = ''; _newPin2 = ''; _newPinStage = 1;
+  location.reload();
+}
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v1.16.1';
+const VERSION = 'v2.0.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
+
+// ── Supabase ─────────────────────────────────────────────────────
+// Client is named supabaseClient (not `supabase`) — the CDN bundle's UMD
+// wrapper puts the library itself on window.supabase, and declaring a
+// top-level `const supabase` in a classic (non-module) script collides
+// with that global and throws "Identifier 'supabase' has already been
+// declared" in some load orders.
+const SUPABASE_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Sum of every signal's max POSITIVE points in scoreStock() — Scoring Formula v2
 // (Change 8/9): Volume spike 20 (was 30) + Price momentum 20 + RSI position 20 +
 // Above 20-day MA 10 + Volume build 15 + Mean reversion 20 + Consecutive up days 15 +
@@ -1539,6 +1718,13 @@ async function testGroqConnection() {
   } catch(e) { return false; }
 }
 
+async function testSupabaseConnection() {
+  try {
+    const { error } = await supabaseClient.from('db_meta').select('key').limit(1);
+    return !error;
+  } catch(e) { return false; }
+}
+
 // ── 8. TECHNICAL INDICATORS ───────────────────────────────────────
 
 function calcRSI(closes) {
@@ -1973,6 +2159,34 @@ async function runScreener() {
   setRefreshSpinning(false);
   renderSignalsTab();
   updateNavBadges();
+  writeRatingSnapshots(state.signals);
+}
+
+// Best-effort mirror of this run's qualifying signals into Supabase, plus a
+// purge of anything older than 90 days. Never blocks or interrupts the
+// screener — any failure (write or purge) is caught and logged, not thrown.
+async function writeRatingSnapshots(signals) {
+  const toWrite = (signals || []).filter(s => s.score >= 60);
+  if (!toWrite.length) return;
+  try {
+    const capturedAt = new Date().toISOString();
+    const rows = toWrite.map(s => ({
+      ticker: s.ticker,
+      captured_at: capturedAt,
+      score: s.score,
+      label: s.signal,
+      rsi: s.rsi,
+      volume_ratio: s.volRatio,
+      price: s.price,
+      macro_condition: s.macroCondition || null,
+    }));
+    const { error } = await supabaseClient.from('rating_snapshots').insert(rows);
+    if (error) { console.error('Supabase snapshot write failed:', error.message); return; }
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    await supabaseClient.from('rating_snapshots').delete().lt('captured_at', cutoff);
+  } catch(e) {
+    console.error('Supabase snapshot write failed:', e.message);
+  }
 }
 
 async function computePreMarketMovers(snapshots, candidates, allBars, newsMap) {
@@ -3234,8 +3448,10 @@ function handleOverlayClick(e) {
   if (e.target === document.getElementById('modal-overlay')) closeModal();
 }
 
-function showConfirm(msg, cb) {
+function showConfirm(msg, cb, confirmLabel) {
   document.getElementById('confirm-msg').textContent = msg;
+  const btn = document.getElementById('confirm-btn');
+  if (btn) btn.textContent = confirmLabel || 'Confirm';
   state._confirmCb = cb;
   document.getElementById('confirm-overlay').classList.remove('hidden');
 }
@@ -3806,6 +4022,48 @@ function selectDecision(dec) {
   document.getElementById('dec-own').classList.toggle('selected', dec === 'own');
 }
 
+// Best-effort mirror of the sold trade into Supabase. Never blocks or
+// throws into the caller — localStorage (state.sold) remains the source
+// of truth; this is purely additive persistence for later analysis/export.
+async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
+  try {
+    const signalLabel = pos.scoreAtBuy >= 80 ? 'STRONG BUY' : pos.scoreAtBuy >= 50 ? 'SOFT BUY' : 'WATCH';
+    const { error } = await supabaseClient.from('trades').insert([{
+      ticker: pos.ticker,
+      company: pos.company,
+      buy_date: pos.buyDate,
+      buy_time: pos.buyTime || null,
+      buy_day_of_week: pos.buyDayOfWeek || null,
+      buy_session: pos.buySession || null,
+      sell_date: saleDate,
+      sell_time: record.sellTime,
+      sell_day_of_week: record.sellDayOfWeek,
+      shares: pos.shares,
+      buy_price: pos.buyPrice,
+      sell_price: salePrice,
+      pnl_dollars: pnlDollar,
+      pnl_pct: pnlPct,
+      signal_score: pos.scoreAtBuy,
+      signal_label: signalLabel,
+      rsi_at_buy: pos.rsiAtBuy,
+      volume_ratio_at_buy: pos.volRatioAtBuy,
+      risk_score: pos.riskAtBuy,
+      duration_classification: pos.duration,
+      price_tier: record.priceRange,
+      macro_condition: pos.macroConditionAtBuy,
+      catalyst_setup: !!pos.catalystSetup,
+      sub10_adjustment: pos.subTenEntryAdjustment ?? 0,
+      groq_at_purchase: pos.groqProbabilityAtBuy || null,
+      distance_from_target: record.distanceFromTargetAtSale,
+      momentum_protection: !!pos.momentumProtectionActivated,
+      source: record.source,
+    }]);
+    if (error) console.error('Supabase trade write failed:', error.message);
+  } catch(e) {
+    console.error('Supabase trade write failed:', e.message);
+  }
+}
+
 function confirmMarkSold(posId) {
   const salePrice = parseFloat(document.getElementById('sold-price').value);
   const saleDate  = document.getElementById('sold-date').value;
@@ -3873,6 +4131,7 @@ function confirmMarkSold(posId) {
   state.portfolio = state.portfolio.filter(p => p.id !== posId);
   persist('sold');
   persist('portfolio');
+  writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct);
   closeModal();
   updateNavBadges();
   renderPortfolioTab();
@@ -4655,6 +4914,15 @@ function renderSettingsTab() {
     </div>
 
     <div class="settings-section mt12">
+      <div class="settings-section-title">Database</div>
+      <div id="db-usage"><div class="test-result"><span class="spinner"></span> Loading…</div></div>
+      <div class="settings-row" style="flex-direction:column;align-items:stretch;">
+        <button class="btn btn-ghost btn-sm mt8" onclick="exportAndArchiveDatabase()">📦 Export &amp; Archive Database</button>
+        <div class="settings-hint mt4">Downloads all Supabase trade data as a report, then offers to purge rating snapshots older than 90 days</div>
+      </div>
+    </div>
+
+    <div class="settings-section mt12">
       <div class="settings-section-title">App Info</div>
       <div class="settings-row">
         <span class="settings-label">Version</span>
@@ -4672,6 +4940,10 @@ function renderSettingsTab() {
         <button class="btn btn-ghost btn-sm" onclick="confirmForceUpdate()">🔄 Force Update App</button>
         <div class="settings-hint mt4">Use if app feels outdated after an update</div>
       </div>
+      <div class="settings-row" style="flex-direction:column;align-items:stretch;">
+        <button class="btn btn-ghost btn-sm" onclick="lockApp()">🔒 Lock App</button>
+        <div class="settings-hint mt4">Require PIN entry again immediately</div>
+      </div>
     </div>
 
     <div class="app-version">EDGE Trade Signals ${VERSION}<br>
@@ -4679,6 +4951,395 @@ function renderSettingsTab() {
       <a href="https://console.groq.com/keys" target="_blank">Get Groq Key</a>
     </div>
   `;
+  loadDatabaseUsage();
+}
+
+const DB_ROW_LIMIT = 50000;
+
+async function loadDatabaseUsage() {
+  const el = document.getElementById('db-usage');
+  if (!el) return;
+  try {
+    const [snapRes, tradeRes] = await Promise.all([
+      supabaseClient.from('rating_snapshots').select('*', { count: 'exact', head: true }),
+      supabaseClient.from('trades').select('*', { count: 'exact', head: true }),
+    ]);
+    if (snapRes.error) throw snapRes.error;
+    if (tradeRes.error) throw tradeRes.error;
+
+    const snapN = snapRes.count || 0;
+    const tradeN = tradeRes.count || 0;
+    const total = snapN + tradeN;
+    const pct = Math.min(100, (total / DB_ROW_LIMIT) * 100);
+    const barClass = pct > 80 ? 'db-bar-red' : pct >= 60 ? 'db-bar-yellow' : 'db-bar-green';
+    const warning = pct > 80
+      ? `<div class="db-usage-warn">⚠ Consider archiving soon</div>`
+      : '';
+
+    el.innerHTML = `
+      <div class="settings-row">
+        <span class="settings-label">Rating snapshots</span>
+        <span class="mono">${snapN.toLocaleString()} rows</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Trade records</span>
+        <span class="mono">${tradeN.toLocaleString()} rows</span>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Total</span>
+        <span class="mono">${total.toLocaleString()} / ${DB_ROW_LIMIT.toLocaleString()} rows (free tier limit)</span>
+      </div>
+      <div class="db-usage-bar-track">
+        <div class="db-usage-bar-fill ${barClass}" style="width:${pct.toFixed(1)}%"></div>
+      </div>
+      ${warning}
+    `;
+  } catch(e) {
+    el.innerHTML = `<div class="settings-hint" style="color:var(--red)">Could not load database usage.</div>`;
+  }
+}
+
+// Builds a Claude-analysis-style report from Supabase data (trades + a rating
+// snapshot summary), mirroring generateClaudeReport()'s structure but limited
+// to the columns actually persisted in the trades/rating_snapshots tables —
+// per-sale diagnostics that only ever lived in localStorage (near-miss data,
+// sell-warning-at-sale, target drift/capping, ATR trimming, signals-fired list)
+// aren't in the Supabase schema and are intentionally omitted rather than faked.
+function buildSupabaseArchiveReport(trades, snapshotRows) {
+  const now = new Date();
+  const dateStr = now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+
+  const wins   = trades.filter(t => t.pnl_pct > 0);
+  const losses = trades.filter(t => t.pnl_pct <= 0);
+  const apps   = trades.filter(t => t.source === 'App Signal');
+  const owns   = trades.filter(t => t.source === 'Own Decision');
+  const appWins = apps.filter(t => t.pnl_pct > 0);
+  const ownWins = owns.filter(t => t.pnl_pct > 0);
+
+  const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : 0;
+  const avgWinPnL  = avg(wins, t => t.pnl_dollars).toFixed(2);
+  const avgLossPnL = avg(losses, t => t.pnl_dollars).toFixed(2);
+  const best  = trades.reduce((a,b) => b.pnl_pct > a.pnl_pct ? b : a, trades[0]);
+  const worst = trades.reduce((a,b) => b.pnl_pct < a.pnl_pct ? b : a, trades[0]);
+
+  const tierStats = (min, max, label) => {
+    const t = trades.filter(x => x.sell_price >= min && x.sell_price <= max);
+    const tw = t.filter(x => x.pnl_pct > 0);
+    return `${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+  const durStats = (dur, label) => {
+    const t = trades.filter(x => x.duration_classification === dur);
+    const tw = t.filter(x => x.pnl_pct > 0);
+    return `${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+  const scoreStats = (lo, hi) => {
+    const t = trades.filter(x => (x.signal_score??0) >= lo && (x.signal_score??0) <= hi);
+    const tw = t.filter(x => x.pnl_pct > 0);
+    return `Score ${lo}–${hi}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate`;
+  };
+  const rsiBucket = (lo, hi, label) => {
+    const t = trades.filter(x => (x.rsi_at_buy||0) >= lo && (x.rsi_at_buy||0) < hi);
+    const tw = t.filter(x => x.pnl_pct > 0);
+    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+  const volBucket = (lo, hi, label) => {
+    const t = trades.filter(x => (x.volume_ratio_at_buy||0) >= lo && (x.volume_ratio_at_buy||0) < hi);
+    const tw = t.filter(x => x.pnl_pct > 0);
+    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+  const macroCondStats = (condition, label) => {
+    const t = trades.filter(x => x.macro_condition === condition);
+    const tw = t.filter(x => x.pnl_pct > 0);
+    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+  const macroSectorWeaknessStats = (label) => {
+    const t = trades.filter(x => (x.macro_condition||'').startsWith('SECTOR_WEAKNESS'));
+    const tw = t.filter(x => x.pnl_pct > 0);
+    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+  const sessionStats = (session, label) => {
+    const t = trades.filter(x => x.buy_session === session);
+    const tw = t.filter(x => x.pnl_pct > 0);
+    return `  ${(label+':').padEnd(25)}${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+  const dayOfWeekStats = (day) => {
+    const t = trades.filter(x => x.buy_day_of_week === day);
+    const tw = t.filter(x => x.pnl_pct > 0);
+    return `  ${(day+':').padEnd(11)}${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+
+  const withSubTen    = trades.filter(x => x.sub10_adjustment != null);
+  const subTenBonus   = withSubTen.filter(x => x.sub10_adjustment > 0);
+  const subTenPenalty = withSubTen.filter(x => x.sub10_adjustment < 0);
+  const subTenNone    = withSubTen.filter(x => x.sub10_adjustment === 0);
+  const subTenBucketStats = (arr) => {
+    const w = arr.filter(x => x.pnl_pct > 0);
+    return `  Total: ${arr.length} | win rate ${arr.length?((w.length/arr.length*100).toFixed(0)):'—'}% | avg outcome ${arr.length?avg(arr,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+
+  const parseGroqAtBuy = (x) => {
+    const m = (x.groq_at_purchase || '').match(/^(.+?):\s*(\d+)%\s*likely/i);
+    return m ? { label: m[1].trim().toUpperCase(), pct: parseInt(m[2], 10) } : null;
+  };
+  const groqRunTrades    = trades.filter(x => x.groq_at_purchase);
+  const groqNotRunTrades = trades.filter(x => !x.groq_at_purchase);
+  const groqBucketStats = (arr) => {
+    const w = arr.filter(x => x.pnl_pct > 0);
+    return `Win rate: ${arr.length?((w.length/arr.length*100).toFixed(0)):'—'}% | avg outcome ${arr.length?avg(arr,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+  let groqSection;
+  if (groqRunTrades.length < 5) {
+    groqSection = 'Insufficient data — run Groq analysis before buying to build this dataset';
+  } else {
+    const parsed = trades.map(x => ({ x, p: parseGroqAtBuy(x) })).filter(o => o.p);
+    const reachHigh = parsed.filter(o => o.p.label.includes('REACH TARGET') && o.p.pct > 50).map(o => o.x);
+    const dropHigh  = parsed.filter(o => o.p.label.includes('DROP FROM HERE') && o.p.pct > 50).map(o => o.x);
+    groqSection = `Trades where Groq was run before buying:          ${groqRunTrades.length}
+  Groq said REACH TARGET likely (>50%):
+    ${groqBucketStats(reachHigh)}
+  Groq said DROP FROM HERE likely (>50%):
+    ${groqBucketStats(dropHigh)}
+  Trades where Groq was NOT run before buying:    ${groqNotRunTrades.length}
+    ${groqBucketStats(groqNotRunTrades)}`;
+  }
+
+  const distBucket = (predicate, label) => {
+    const t = trades.filter(x => x.distance_from_target != null && predicate(x.distance_from_target));
+    return `  ${label.padEnd(35)}${t.length} trades | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+  };
+  const withDist = trades.filter(x => x.distance_from_target != null);
+  const avgDist  = withDist.length ? avg(withDist, x => x.distance_from_target).toFixed(1) : null;
+
+  const momentumTrades = trades.filter(x => x.momentum_protection);
+
+  // Rating snapshot summary: per-ticker counts + overall date range
+  const snapByTicker = {};
+  let minDate = null, maxDate = null;
+  (snapshotRows || []).forEach(r => {
+    snapByTicker[r.ticker] = (snapByTicker[r.ticker] || 0) + 1;
+    if (!minDate || r.captured_at < minDate) minDate = r.captured_at;
+    if (!maxDate || r.captured_at > maxDate) maxDate = r.captured_at;
+  });
+  const snapTickers = Object.keys(snapByTicker).sort();
+
+  let report = `EDGE2 — SUPABASE DATABASE ARCHIVE
+Generated: ${dateStr}
+App Version: ${VERSION}
+
+=== ARCHIVE SUMMARY ===
+Total trades archived: ${trades.length}
+Rating snapshot tickers tracked: ${snapTickers.length}
+Rating snapshot total rows: ${(snapshotRows||[]).length}
+Rating snapshot date range: ${minDate ? `${minDate.split('T')[0]} to ${maxDate.split('T')[0]}` : 'N/A'}
+
+=== SUMMARY STATISTICS ===
+Total completed trades: ${trades.length}
+  - App signal trades: ${apps.length} (${trades.length?(apps.length/trades.length*100).toFixed(0):0}% of total)
+  - Own decision trades: ${owns.length} (${trades.length?(owns.length/trades.length*100).toFixed(0):0}% of total)
+
+Overall win rate: ${trades.length?((wins.length/trades.length*100).toFixed(0)):0}%
+  - App signal win rate: ${apps.length?((appWins.length/apps.length*100).toFixed(0)):0}%
+  - Own decision win rate: ${owns.length?((ownWins.length/owns.length*100).toFixed(0)):0}%
+
+Average profit on wins: +$${avgWinPnL} (${avg(wins,t=>t.pnl_pct).toFixed(1)}%)
+Average loss on losses: $${avgLossPnL} (${avg(losses,t=>t.pnl_pct).toFixed(1)}%)
+Best trade: ${best ? `${best.ticker} +$${(best.pnl_dollars??0).toFixed(2)} (+${(best.pnl_pct??0).toFixed(1)}%)` : 'N/A'}
+Worst trade: ${worst ? `${worst.ticker} $${(worst.pnl_dollars??0).toFixed(2)} (${(worst.pnl_pct??0).toFixed(1)}%)` : 'N/A'}
+
+Signal data at purchase — wins vs losses:
+  Avg RSI:          wins ${avg(wins,t=>t.rsi_at_buy||0).toFixed(1)}  | losses ${avg(losses,t=>t.rsi_at_buy||0).toFixed(1)}
+  Avg volume ratio: wins ${avg(wins,t=>t.volume_ratio_at_buy||0).toFixed(2)}x | losses ${avg(losses,t=>t.volume_ratio_at_buy||0).toFixed(2)}x
+  Avg risk score:   wins ${avg(wins,t=>t.risk_score||0).toFixed(1)}  | losses ${avg(losses,t=>t.risk_score||0).toFixed(1)}
+  Avg signal score: wins ${avg(wins,t=>t.signal_score||0).toFixed(1)}  | losses ${avg(losses,t=>t.signal_score||0).toFixed(1)}
+
+RSI at purchase — win rate by bucket:
+${rsiBucket(0,45,'<45    ')}
+${rsiBucket(45,55,'45–55  ')}
+${rsiBucket(55,65,'55–65  ')}
+${rsiBucket(65,999,'65+    ')}
+
+Volume ratio at purchase — win rate by bucket:
+${volBucket(0,1.0,'<1.0x  ')}
+${volBucket(1.0,2.0,'1.0–2x ')}
+${volBucket(2.0,3.0,'2–3x   ')}
+${volBucket(3.0,999,'3x+    ')}
+
+Performance by price tier:
+  ${tierStats(1,3,'$1–$3')}
+  ${tierStats(4,9,'$4–$9')}
+  ${tierStats(10,20,'$10–$20')}
+
+Performance by duration classification:
+  ${durStats('DAY','Exit Today')}
+  ${durStats('3-DAY','Est. 2-4 Days')}
+  ${durStats('WEEK','Est. 5-7 Days')}
+
+Performance by signal score at purchase:
+  ${scoreStats(20,49)}
+  ${scoreStats(50,79)}
+  ${scoreStats(80,100)}
+
+=== MACRO CONDITION AT TIME OF PURCHASE ===
+${macroCondStats('RISK_OFF',          'RISK_OFF:            ')}
+${macroCondStats('GEOPOLITICAL',      'GEOPOLITICAL:        ')}
+${macroCondStats('TECH_ROTATION_OUT', 'TECH_ROTATION_OUT:   ')}
+${macroCondStats('BROAD_RALLY',       'BROAD_RALLY:         ')}
+${macroCondStats('MOMENTUM_DAY',      'MOMENTUM_DAY:        ')}
+${macroSectorWeaknessStats(          'SECTOR_WEAKNESS_*:   ')}
+${macroCondStats('CHOPPY',            'CHOPPY:              ')}
+
+=== ENTRY TIMING ANALYSIS ===
+
+Performance by time of day at purchase:
+${sessionStats('PRE_MARKET', 'Pre-market entries')}
+${sessionStats('REGULAR', 'Regular session entries')}
+
+Performance by day of week at purchase:
+${dayOfWeekStats('Monday')}
+${dayOfWeekStats('Tuesday')}
+${dayOfWeekStats('Wednesday')}
+${dayOfWeekStats('Thursday')}
+${dayOfWeekStats('Friday')}
+
+=== SUB-$10 ENTRY ADJUSTMENT ANALYSIS ===
+
+Trades where sub-$10 bonus applied (positive adjustment):
+${subTenBucketStats(subTenBonus)}
+
+Trades where sub-$10 penalty applied (negative adjustment):
+${subTenBucketStats(subTenPenalty)}
+
+Trades where no sub-$10 adjustment ($10+ stocks):
+${subTenBucketStats(subTenNone)}
+
+=== GROQ PRE-BUY ANALYSIS ACCURACY ===
+
+${groqSection}
+
+=== EXIT TIMING ANALYSIS ===
+
+Distance from target at time of sale:
+${distBucket(d => d > 10, 'Sold more than 10% below target:')}
+${distBucket(d => d >= 5 && d <= 10, 'Sold 5-10% below target:')}
+${distBucket(d => d > 0 && d < 5, 'Sold within 5% of target:')}
+${distBucket(d => d <= 0, 'Sold at or above target:')}
+
+Average distance from target at sale across all trades: ${avgDist!=null?`${avgDist}%`:'N/A'}
+
+=== MOMENTUM PROTECTION ===
+
+Trades where Momentum Protection activated: ${momentumTrades.length}
+Avg outcome on those trades: ${momentumTrades.length ? avg(momentumTrades, x=>x.pnl_pct).toFixed(1) : '—'}%
+
+=== CATALYST SETUP ANALYSIS ===
+
+${(() => {
+    const flagged = trades.filter(x => x.catalyst_setup);
+    const nonFlagged = trades.filter(x => !x.catalyst_setup);
+    if (!flagged.length) return `  Total flagged trades: 0\n  No archived trades with the catalyst_setup flag yet.`;
+    const flaggedW = flagged.filter(x => x.pnl_pct > 0);
+    const bestF = flagged.reduce((a,b) => b.pnl_pct > a.pnl_pct ? b : a);
+    const worstF = flagged.reduce((a,b) => b.pnl_pct < a.pnl_pct ? b : a);
+    return `  Total flagged trades: ${flagged.length}
+  Win rate on flagged trades: ${(flaggedW.length/flagged.length*100).toFixed(0)}%
+  Avg outcome on flagged trades: ${avg(flagged,x=>x.pnl_pct).toFixed(1)}%
+  Avg outcome on non-flagged trades: ${nonFlagged.length?avg(nonFlagged,x=>x.pnl_pct).toFixed(1):'—'}%
+  Best flagged trade: ${bestF.ticker} ${bestF.pnl_pct>=0?'+':''}${bestF.pnl_pct.toFixed(1)}%
+  Worst flagged trade: ${worstF.ticker} ${worstF.pnl_pct>=0?'+':''}${worstF.pnl_pct.toFixed(1)}%`;
+  })()}
+
+=== RATING SNAPSHOTS BY TICKER ===
+
+${snapTickers.length ? snapTickers.map(t => `  ${t.padEnd(8)} ${snapByTicker[t]} snapshot${snapByTicker[t]===1?'':'s'}`).join('\n') : '  No rating snapshots recorded yet.'}
+
+=== FULL TRADE HISTORY ===
+
+`;
+
+  trades.forEach((t, i) => {
+    const subTenLine = t.sub10_adjustment == null ? 'N/A' : `${t.sub10_adjustment >= 0 ? '+' : ''}${t.sub10_adjustment} pts`;
+    const distLine = t.distance_from_target == null
+      ? 'N/A'
+      : t.distance_from_target >= 0
+        ? `${t.distance_from_target.toFixed(1)}% below target`
+        : `${Math.abs(t.distance_from_target).toFixed(1)}% above target`;
+    const daysHeld = (t.buy_date && t.sell_date)
+      ? Math.round((new Date(t.sell_date) - new Date(t.buy_date)) / 86400000)
+      : null;
+
+    report += `Trade #${i+1}
+  Ticker: ${t.ticker} — ${t.company || t.ticker}
+  Bought: $${(t.buy_price??0).toFixed(2)} on ${t.buy_date}
+  Sold: $${(t.sell_price??0).toFixed(2)} on ${t.sell_date}
+  Shares: ${t.shares} | Days held: ${daysHeld ?? 'N/A'}
+  Result: ${(t.pnl_dollars??0)>=0?'WIN':'LOSS'} $${(t.pnl_dollars??0).toFixed(2)} (${(t.pnl_pct??0).toFixed(1)}%)
+  Source: ${t.source || 'N/A'}
+  Signal score at purchase: ${t.signal_score ?? 'N/A'}/100 (${t.signal_label || 'N/A'})
+  RSI at purchase: ${t.rsi_at_buy!=null?t.rsi_at_buy.toFixed(1):'N/A'}
+  Volume ratio at purchase: ${t.volume_ratio_at_buy!=null?t.volume_ratio_at_buy.toFixed(2):'N/A'}x
+  Risk score at purchase: ${t.risk_score ?? 'N/A'}/10
+  Duration classification: ${t.duration_classification || 'N/A'}
+  Price tier: ${t.price_tier || 'N/A'}
+  Macro condition at purchase: ${t.macro_condition || 'N/A'}
+  Catalyst setup at purchase: ${t.catalyst_setup ? 'Yes' : 'No'}
+  Buy time: ${t.buy_time ? `${t.buy_time} Pacific (${t.buy_day_of_week}, ${t.buy_session})` : 'N/A'}
+  Sell time: ${t.sell_time ? `${t.sell_time} Pacific (${t.sell_day_of_week})` : 'N/A'}
+  Sub-$10 entry adjustment: ${subTenLine}
+  Groq at purchase: ${t.groq_at_purchase || 'Not run'}
+  Distance from target at sale: ${distLine}
+  Momentum protection activated: ${t.momentum_protection ? 'Yes' : 'No'}
+
+`;
+  });
+
+  return report;
+}
+
+async function exportAndArchiveDatabase() {
+  try {
+    const { data: trades, error: tradesErr } = await supabaseClient
+      .from('trades').select('*').order('buy_date', { ascending: true });
+    if (tradesErr) throw tradesErr;
+    if (!trades || !trades.length) { alert('No trades in Supabase to archive yet.'); return; }
+
+    let snapshotRows = [];
+    try {
+      const { data, error } = await supabaseClient.from('rating_snapshots').select('ticker, captured_at');
+      if (!error && data) snapshotRows = data;
+    } catch(e) {}
+
+    const report = buildSupabaseArchiveReport(trades, snapshotRows);
+    const blob = new Blob([report], { type: 'text/plain' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `edge2-archive-${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    showConfirm(
+      'Archive downloaded. Delete rating snapshots older than 90 days to free up space?',
+      deleteOldRatingSnapshots,
+      'Delete'
+    );
+  } catch(e) {
+    alert('Could not export archive: ' + e.message);
+  }
+}
+
+async function deleteOldRatingSnapshots() {
+  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    const { error, count } = await supabaseClient
+      .from('rating_snapshots')
+      .delete({ count: 'exact' })
+      .lt('captured_at', cutoff);
+    if (error) { alert('Could not delete old snapshots: ' + error.message); return; }
+    alert(`Done. ${count ?? 0} old snapshots removed.`);
+    loadDatabaseUsage();
+  } catch(e) {
+    alert('Could not delete old snapshots: ' + e.message);
+  }
 }
 
 function togglePw(id) {
@@ -4730,10 +5391,11 @@ async function testConnections() {
   state.settings.groqKey      = document.getElementById('set-groq-key')?.value.trim() || state.settings.groqKey;
   persist('settings');
 
-  const [alpOk, groqOk] = await Promise.all([testAlpacaConnection(), testGroqConnection()]);
+  const [alpOk, groqOk, supaOk] = await Promise.all([testAlpacaConnection(), testGroqConnection(), testSupabaseConnection()]);
   el.innerHTML = `<div class="test-result">
     <span class="${alpOk?'test-ok':'test-err'}">${alpOk?'✓':'✗'} Alpaca ${alpOk?'connected':'failed'}</span>
     <span class="${groqOk?'test-ok':'test-err'}">${groqOk?'✓':'✗'} Groq ${groqOk?'connected':'failed'}</span>
+    <span class="${supaOk?'test-ok':'test-err'}">${supaOk?'✓':'✗'} Supabase ${supaOk?'connected':'failed'}</span>
   </div>`;
 }
 
@@ -5033,4 +5695,8 @@ async function init() {
   updateNavBadges();
 }
 
-init();
+if (isPinVerified()) {
+  init();
+} else {
+  renderPinScreen();
+}
