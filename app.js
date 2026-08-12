@@ -1,6 +1,6 @@
 'use strict';
 // ================================================================
-// EDGE Trade Signals — app.js  v2.1.0
+// EDGE Trade Signals — app.js  v2.2.0
 // ================================================================
 
 // ── 0. PIN GATE ──────────────────────────────────────────────────
@@ -174,7 +174,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.1.0';
+const VERSION = 'v2.2.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
@@ -812,7 +812,7 @@ function loadState() {
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
-    forcePreMarketMode: false, useUnifiedRecommendations: false
+    forcePreMarketMode: false
   }, state.settings);
   state.notifications = Object.assign({
     enabled: true, permission: 'default',
@@ -1613,25 +1613,23 @@ within the ${maxDays}-day window}`;
     const momentumActive = !!pos.momentumProtectionActivated;
     const trailingStop = momentumActive ? peakPrice * 0.85 : null;
 
-    // Unified recommendation (beta) — gives Groq the app's own holistic
-    // judgment as context rather than requiring it to re-derive the same
-    // conclusion from the raw signals above. `stock` doubles as the
-    // currentSignal argument here — it's the same live state.signals entry
-    // (or fallback) already used for every other live field in this prompt.
-    let unifiedPromptBlock = '';
-    if (state.settings.useUnifiedRecommendations) {
-      const ur = calcUnifiedRecommendation({ ...pos, currentPrice: livePrice, rsi: liveRsi }, stock, state.macroContext);
-      if (ur.hardFloor) {
-        unifiedPromptBlock = `\nUnified recommendation: ${ur.label}\n`;
-      } else {
-        const topExit = ur.factors.filter(f => f.points < 0).sort((a, b) => a.points - b.points).slice(0, 2);
-        const topHold = ur.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points).slice(0, 2);
-        unifiedPromptBlock = `
+    // Unified recommendation — gives Groq the app's own holistic judgment as
+    // context rather than requiring it to re-derive the same conclusion from
+    // the raw signals above. `stock` doubles as the currentSignal argument
+    // here — it's the same live state.signals entry (or fallback) already
+    // used for every other live field in this prompt.
+    let unifiedPromptBlock;
+    const ur = calcUnifiedRecommendation({ ...pos, currentPrice: livePrice, rsi: liveRsi }, stock, state.macroContext);
+    if (ur.hardFloor) {
+      unifiedPromptBlock = `\nUnified recommendation: ${ur.label}\n`;
+    } else {
+      const topExit = ur.factors.filter(f => f.points < 0).sort((a, b) => a.points - b.points).slice(0, 2);
+      const topHold = ur.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points).slice(0, 2);
+      unifiedPromptBlock = `
 Unified recommendation: ${ur.label} (composite score: ${ur.composite})
 Top exit factors: ${topExit.length ? topExit.map(f => f.name).join('; ') : 'none'}
 Top hold factors: ${topHold.length ? topHold.map(f => f.name).join('; ') : 'none'}
 `;
-      }
     }
 
     if (pnlDollar >= 0) {
@@ -2266,11 +2264,8 @@ function renderSignalsTab() {
       .filter(p => {
         const sig = state.signals.find(s => s.ticker === p.ticker);
         if (!sig) return false;
-        if (state.settings.useUnifiedRecommendations) {
-          const result = calcUnifiedRecommendation({ ...p, currentPrice: sig.price, rsi: sig.rsi }, sig, state.macroContext);
-          return result.hardFloor || result.label === 'SELL NOW';
-        }
-        return calcSellWarning(p, sig.price, sig.rsi, sig.atr) === 'SELL_NOW';
+        const result = calcUnifiedRecommendation({ ...p, currentPrice: sig.price, rsi: sig.rsi }, sig, state.macroContext);
+        return result.hardFloor || result.label === 'SELL NOW';
       })
       .map(p => p.ticker);
     if (exitTickers.length) {
@@ -3178,10 +3173,10 @@ async function openStockModal(ticker) {
       ? `<div class="day-suppressed-overlay" style="margin-bottom:12px">⚠ DAY trade — entry window has closed for today</div>`
       : '';
 
-    // Unified recommendation (beta) — only meaningful for an owned position,
-    // and only when the toggle is on. Uses this modal's own fresh live
-    // price/RSI (not the possibly-stale state.signals snapshot).
-    const unifiedModalBlock = (ownedPos && state.settings.useUnifiedRecommendations)
+    // Unified recommendation — only meaningful for an owned position. Uses
+    // this modal's own fresh live price/RSI (not the possibly-stale
+    // state.signals snapshot).
+    const unifiedModalBlock = ownedPos
       ? buildUnifiedRecommendationModalBlock(calcUnifiedRecommendation(
           { ...ownedPos, currentPrice: _modalStock.livePrice, rsi: _modalStock.liveRsi },
           s || state.ownedScores[ticker] || null,
@@ -3693,14 +3688,9 @@ async function renderPortfolioTab() {
     const days = Math.floor((Date.now() - new Date(p.buyDate).getTime()) / 86400000);
     const durLabel = durHoldLabel(p.duration);
 
-    let portBanner;
-    if (state.settings.useUnifiedRecommendations) {
-      const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
-      const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi }, currentSignal, state.macroContext);
-      portBanner = buildUnifiedPortfolioBanner(unifiedResult);
-    } else {
-      portBanner = buildPortfolioBanner(p, currentPrice, rsi, pnlDollar, pnlPct, days);
-    }
+    const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
+    const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi }, currentSignal, state.macroContext);
+    const portBanner = buildUnifiedPortfolioBanner(unifiedResult);
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
     const priceDiffPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
     const nowCls = Math.abs(priceDiffPct) < 1 ? 'pf-now-flat' : priceDiffPct > 0 ? 'pf-now-up' : 'pf-now-down';
@@ -3712,7 +3702,7 @@ async function renderPortfolioTab() {
     const priceBarTarget = (liveTarget && Math.abs(targetDriftPct) > 5) ? liveTarget : p.target;
 
     // Rule 4: trailing stop recalculated from peakPrice every refresh, same threshold
-    // as the SELL_SOON trailing check in getPortfolioTier/calcSellWarning.
+    // as the trailing-stop-warning factor in calcUnifiedRecommendation.
     const momentumBadge = p.momentumProtectionActivated
       ? `<div class="pf-momentum">🚀 Momentum protection active — trailing stop $${(p.peakPrice * 0.85).toFixed(2)}</div>`
       : '';
@@ -3864,69 +3854,6 @@ async function renderPortfolioTab() {
   if (sumEl)  sumEl.innerHTML  = sumHtml;
 }
 
-function calcSellWarning(position, currentPrice, rsi, atr) {
-  const pnlPct = ((currentPrice - position.buyPrice) / position.buyPrice) * 100;
-  const pt = getPT();
-  const ptMin = pt.getHours() * 60 + pt.getMinutes();
-  const days = Math.floor((Date.now() - new Date(position.buyDate).getTime()) / 86400000);
-  // Momentum Protection (Rule 2): once a position has ever run 20%+ above purchase,
-  // RSI-based warnings are suspended for good — see momentumProtectionActivated in
-  // renderPortfolioTab. Stop-loss, -8% loss, and day-trade cutoff stay active regardless.
-  const inProtection = !!position.momentumProtectionActivated;
-
-  // SELL NOW conditions
-  if (currentPrice <= position.stop) return 'SELL_NOW';
-  if (!inProtection && rsi > 78) return 'SELL_NOW';
-  if (pnlPct <= -8) return 'SELL_NOW';
-  if (position.duration === 'DAY' && ptMin >= 720 && isTradingDay(pt)) return 'SELL_NOW'; // past 12pm
-  // More than 10% past original target — take the profit, regardless of other conditions.
-  // Suspended while protected (Rule 3) — the trailing stop below governs instead.
-  if (!inProtection && currentPrice > position.target * 1.10) return 'SELL_NOW';
-  // Trailing stop (Rule 3): dropped 20%+ from peak while protected
-  if (inProtection && currentPrice <= position.peakPrice * 0.80) return 'SELL_NOW';
-
-  // SELL SOON conditions
-  // More than 5% past original target, regardless of other conditions.
-  // Suspended while protected (Rule 3).
-  if (!inProtection && currentPrice > position.target * 1.05) return 'SELL_SOON';
-
-  // Within 3% of target, approaching from below. Suspended while protected.
-  if (!inProtection && currentPrice >= position.target * 0.97 && currentPrice < position.target) return 'SELL_SOON';
-  if (!inProtection && rsi >= 72) return 'SELL_SOON';
-  if (position.duration === '3-DAY' && days >= 4) return 'SELL_SOON';
-  if (position.duration === 'WEEK' && days >= 7) return 'SELL_SOON';
-
-  // Peak give-back (more than half of peak gain given back). Superseded by the
-  // Rule 3 trailing stop once Momentum Protection is active (per confirmed scope).
-  const peakGain = position.peakPrice - position.buyPrice;
-  if (!inProtection && peakGain > 0) {
-    const currentGain = currentPrice - position.buyPrice;
-    if (currentGain < peakGain * 0.5) return 'SELL_SOON';
-  }
-
-  // Trailing stop (Rule 3): dropped 15%+ from peak while protected
-  if (inProtection && currentPrice <= position.peakPrice * 0.85) return 'SELL_SOON';
-
-  return 'HOLDING';
-}
-
-function getSellNowReason(p, price, rsi) {
-  if (price <= p.stop) return 'Price hit stop-loss';
-  if (rsi > 78) return `RSI ${rsi.toFixed(0)} — extremely overbought`;
-  const pt = getPT();
-  if (p.duration === 'DAY' && pt.getHours() >= 12) return 'Day trade — exit before close';
-  return 'Down 8%+ from purchase';
-}
-
-function getSellSoonReason(p, price, rsi, days) {
-  const toTarget = price >= p.target * 0.97;
-  if (toTarget) return 'Within 3% of target — protect gains';
-  if (rsi >= 72) return `RSI ${rsi.toFixed(0)} approaching overbought`;
-  if (p.duration === '3-DAY' && days >= 4) return '4+ days — est. 2-4 day trade overdue';
-  if (p.duration === 'WEEK' && days >= 7) return '7+ days — est. 5-7 day trade complete';
-  return 'Peak gain giving back';
-}
-
 function buildWeekendBanner() {
   const pt = getPT();
   if (pt.getDay() !== 5 || !isTradingDay(pt)) return '';
@@ -3961,74 +3888,13 @@ function buildFridayFlag(p, currentPrice, pnlPct) {
   return `<div class="friday-flag">📅 Friday — are you comfortable holding this risk over the weekend?</div>`;
 }
 
-// Single source of truth for the Portfolio card's hold/sell tier — also used by
-// the Groq "owned stock" prompt so the two can never disagree with each other.
-function getPortfolioTier(p, currentPrice, rsi, pnlDollar, pnlPct, days) {
-  const pt = getPT();
-  const ptMin = pt.getHours() * 60 + pt.getMinutes();
-  // Momentum Protection (Rule 2): once a position has ever run 20%+ above purchase,
-  // RSI-based warnings are suspended for good — see momentumProtectionActivated in
-  // renderPortfolioTab. Stop-loss, -8% loss, and day-trade cutoff stay active regardless.
-  const inProtection = !!p.momentumProtectionActivated;
-
-  // SELL NOW
-  if (currentPrice <= p.stop) return 'SELL_NOW';
-  if (!inProtection && rsi > 78) return 'SELL_NOW';
-  if (pnlPct <= -8) return 'SELL_NOW';
-  if (p.duration === 'DAY' && ptMin >= 720 && isTradingDay(pt)) return 'SELL_NOW';
-  // More than 10% past original target — take the profit, regardless of other conditions.
-  // Suspended while protected (Rule 3) — the trailing stop below governs instead.
-  if (!inProtection && currentPrice > p.target * 1.10) return 'SELL_NOW';
-  // Trailing stop (Rule 3): dropped 20%+ from peak while protected
-  if (inProtection && currentPrice <= p.peakPrice * 0.80) return 'SELL_NOW';
-
-  // DANGER — within 3% of stop-loss
-  const distToStop = ((currentPrice - p.stop) / currentPrice) * 100;
-  if (distToStop > 0 && distToStop <= 3) return 'DANGER';
-
-  // SELL SOON — more than 5% past original target, regardless of other conditions.
-  // Suspended while protected (Rule 3).
-  if (!inProtection && currentPrice > p.target * 1.05) return 'SELL_SOON';
-
-  // SELL SOON — within 3% of target, approaching from below. Suspended while protected.
-  if (!inProtection && currentPrice >= p.target * 0.97 && currentPrice < p.target) return 'SELL_SOON';
-
-  // Trailing stop (Rule 3): dropped 15%+ from peak while protected
-  if (inProtection && currentPrice <= p.peakPrice * 0.85) return 'SELL_SOON';
-
-  // HOLD ON TRACK (profitable)
-  if (pnlDollar >= 0) return 'HOLD_TRACK';
-
-  // HOLD RECOVERING (negative but not at stop)
-  return 'HOLD_RECOVER';
-}
-
-function buildPortfolioBanner(p, currentPrice, rsi, pnlDollar, pnlPct, days) {
-  const tier = getPortfolioTier(p, currentPrice, rsi, pnlDollar, pnlPct, days);
-
-  const bannerLabel = {
-    SELL_NOW:     'SELL NOW',
-    DANGER:       'DANGER — NEAR STOP-LOSS',
-    SELL_SOON:    'SELL SOON',
-    HOLD_TRACK:   'HOLD — ON TRACK',
-    HOLD_RECOVER: 'HOLD — RECOVERING',
-  }[tier];
-  const bannerCls = {
-    SELL_NOW:     'port-sell-now',
-    DANGER:       'port-danger',
-    SELL_SOON:    'port-sell-soon',
-    HOLD_TRACK:   'port-hold-track',
-    HOLD_RECOVER: 'port-hold-recover',
-  }[tier];
-
-  return `<div class="port-banner ${bannerCls}"><strong>${bannerLabel}</strong></div>`;
-}
-
-// ── 16b. UNIFIED RECOMMENDATION ENGINE (beta) ───────────────────────
-// Per edge2-unified-recommendation-engine.md. Standalone/pure — not yet
-// wired into any UI. NOT a replacement for getPortfolioTier()/
-// calcSellWarning() until the Settings toggle (added in a later step)
-// is ON; both systems intentionally coexist during the beta period.
+// ── 16b. UNIFIED RECOMMENDATION ENGINE ──────────────────────────────
+// Per edge2-unified-recommendation-engine.md. Sole recommendation system
+// driving the Portfolio banner, Signals tab exit alerts, nav badge, owned-
+// stock Groq prompt, and sold trade records — the old getPortfolioTier()/
+// calcSellWarning()/buildPortfolioBanner() system it replaced (SELL NOW/
+// SELL SOON/HOLD trip wires) ran in parallel behind a beta toggle for
+// evaluation and was retired once it was found to be equivalent-or-better.
 
 const MAX_HOLD_DAYS = { DAY: 1, '3-DAY': 4, WEEK: 7 };
 const MACRO_TAILWIND_CONDITIONS = ['BROAD_RALLY', 'MOMENTUM_DAY'];
@@ -4365,22 +4231,10 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
   }
 }
 
-// Unified recommendation (beta) snapshot for a trade record at time of sale.
-// Returns all-null when the toggle is off — same "present but empty" pattern
-// as the record's other optional/legacy fields (e.g. cappedByAtBuy) rather
-// than omitting the keys, so downstream code can check the value directly.
-// Uses pos.rsiAtBuy (not live RSI) to exactly match the rsi input
-// calcSellWarning() already uses for currentWarn just above this call, so
-// the old and new systems are being compared on the same inputs.
+// Unified recommendation snapshot for a trade record at time of sale. Uses
+// pos.rsiAtBuy rather than any live RSI since a sale is a point-in-time
+// event with no "current" bar fetch of its own at this point in the flow.
 function computeUnifiedSaleFields(pos, salePrice) {
-  if (!state.settings.useUnifiedRecommendations) {
-    return {
-      unifiedRecommendationAtSale: null,
-      unifiedCompositeAtSale: null,
-      topExitFactorsAtSale: null,
-      topHoldFactorsAtSale: null,
-    };
-  }
   const currentSignal = state.signals.find(s => s.ticker === pos.ticker) || state.ownedScores[pos.ticker] || null;
   const ur = calcUnifiedRecommendation({ ...pos, currentPrice: salePrice, rsi: pos.rsiAtBuy }, currentSignal, state.macroContext);
   if (ur.hardFloor) {
@@ -4410,7 +4264,6 @@ function confirmMarkSold(posId) {
   const days = Math.floor((new Date(saleDate) - new Date(pos.buyDate)) / 86400000);
   const pnlDollar = (salePrice - pos.buyPrice) * pos.shares;
   const pnlPct    = ((salePrice - pos.buyPrice) / pos.buyPrice) * 100;
-  const currentWarn = calcSellWarning(pos, salePrice, pos.rsiAtBuy, 0);
   const targetDriftPct = (pos.liveTarget != null && pos.target)
     ? ((pos.liveTarget - pos.target) / pos.target) * 100
     : null;
@@ -4446,7 +4299,10 @@ function confirmMarkSold(posId) {
     catalystSetup: pos.catalystSetup || false,
     duration: pos.duration,
     priceRange: salePrice <= 3 ? '$1–$3' : salePrice <= 9 ? '$4–$9' : '$10–$20',
-    sellWarningAtSale: currentWarn,
+    // Retired along with calcSellWarning() — historical trades keep their
+    // old SELL_NOW/SELL_SOON/HOLDING value; new trades use the
+    // unifiedRecommendationAtSale fields below instead.
+    sellWarningAtSale: null,
     targetDriftPct,
     peakPrice: pos.peakPrice,
     peakPriceDate: pos.peakPriceDate || null,
@@ -4980,11 +4836,11 @@ ${(()=>{
 
 === UNIFIED RECOMMENDATION AT TIME OF SALE ===
 ${(()=>{
-  // unifiedRecommendationAtSale is null on any trade sold with the beta
-  // toggle off (or before this feature existed) — those trades simply
-  // don't match any bucket below rather than being force-fit into one.
+  // unifiedRecommendationAtSale is null on trades sold before this feature
+  // existed (or during its beta-toggle period) — those simply don't match
+  // any bucket below rather than being force-fit into one.
   const withUnified = sold.filter(s => s.unifiedRecommendationAtSale);
-  if (!withUnified.length) return '  No completed trades were sold with unified recommendations (beta) enabled yet.';
+  if (!withUnified.length) return '  No completed trades with a unified recommendation on record yet.';
 
   const bucket = (label, predicate) => {
     const t = withUnified.filter(predicate);
@@ -5273,20 +5129,6 @@ function renderSettingsTab() {
         ${body}
       </div>`;
     })()}
-
-    <div class="settings-section mt12">
-      <div class="settings-section-title">Recommendations</div>
-      <div class="settings-row">
-        <div>
-          <div class="settings-label">Use unified recommendations (beta)</div>
-          <div class="settings-hint">Replaces the SELL NOW/SELL SOON/HOLD system with a single weighted judgment across all signals. Off by default — the old system keeps working normally either way.</div>
-        </div>
-        <label class="toggle-wrap">
-          <input type="checkbox" id="set-unified-rec" ${s.useUnifiedRecommendations?'checked':''} onchange="savePref('useUnifiedRecommendations',this.checked)">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-    </div>
 
     <div class="settings-section mt12">
       <div class="settings-section-title">Testing</div>
@@ -6052,14 +5894,9 @@ function updateNavBadges() {
     if (isAfternoonMode()) {
       state.portfolio.forEach(p => {
         const price = state.portfolioPrices[p.ticker] || p.buyPrice;
-        if (state.settings.useUnifiedRecommendations) {
-          const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
-          const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy }, currentSignal, state.macroContext);
-          if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING'].includes(result.label)) warnCount++;
-        } else {
-          const w = calcSellWarning(p, price, p.rsiAtBuy, 0);
-          if (w === 'SELL_NOW' || w === 'SELL_SOON') warnCount++;
-        }
+        const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
+        const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy }, currentSignal, state.macroContext);
+        if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING'].includes(result.label)) warnCount++;
       });
     }
     pfBadge.textContent = warnCount;
