@@ -1,6 +1,6 @@
 'use strict';
 // ================================================================
-// EDGE Trade Signals — app.js  v2.0.0
+// EDGE Trade Signals — app.js  v2.1.0
 // ================================================================
 
 // ── 0. PIN GATE ──────────────────────────────────────────────────
@@ -174,7 +174,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.0.0';
+const VERSION = 'v2.1.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
@@ -812,7 +812,7 @@ function loadState() {
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
-    forcePreMarketMode: false
+    forcePreMarketMode: false, useUnifiedRecommendations: false
   }, state.settings);
   state.notifications = Object.assign({
     enabled: true, permission: 'default',
@@ -1613,6 +1613,27 @@ within the ${maxDays}-day window}`;
     const momentumActive = !!pos.momentumProtectionActivated;
     const trailingStop = momentumActive ? peakPrice * 0.85 : null;
 
+    // Unified recommendation (beta) — gives Groq the app's own holistic
+    // judgment as context rather than requiring it to re-derive the same
+    // conclusion from the raw signals above. `stock` doubles as the
+    // currentSignal argument here — it's the same live state.signals entry
+    // (or fallback) already used for every other live field in this prompt.
+    let unifiedPromptBlock = '';
+    if (state.settings.useUnifiedRecommendations) {
+      const ur = calcUnifiedRecommendation({ ...pos, currentPrice: livePrice, rsi: liveRsi }, stock, state.macroContext);
+      if (ur.hardFloor) {
+        unifiedPromptBlock = `\nUnified recommendation: ${ur.label}\n`;
+      } else {
+        const topExit = ur.factors.filter(f => f.points < 0).sort((a, b) => a.points - b.points).slice(0, 2);
+        const topHold = ur.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points).slice(0, 2);
+        unifiedPromptBlock = `
+Unified recommendation: ${ur.label} (composite score: ${ur.composite})
+Top exit factors: ${topExit.length ? topExit.map(f => f.name).join('; ') : 'none'}
+Top hold factors: ${topHold.length ? topHold.map(f => f.name).join('; ') : 'none'}
+`;
+      }
+    }
+
     if (pnlDollar >= 0) {
       prompt += `
 Purchase price: $${pos.buyPrice.toFixed(2)}
@@ -1620,7 +1641,7 @@ Unrealized P&L: +$${pnlDollar.toFixed(2)} (+${pnlPct.toFixed(1)}%)
 Peak price since purchase: $${peakPrice.toFixed(2)}
 Momentum protection active: ${momentumActive ? 'YES' : 'NO'}
 Trailing stop if active: ${trailingStop != null ? `$${trailingStop.toFixed(2)}` : 'N/A'}
-
+${unifiedPromptBlock}
 You are evaluating this position specifically within its
 remaining time window of ${daysRemaining} trading days.
 Base your probabilities on what is realistic within that
@@ -1645,7 +1666,7 @@ Unrealized P&L: -$${Math.abs(pnlDollar).toFixed(2)} (-${Math.abs(pnlPct).toFixed
 Peak price since purchase: $${peakPrice.toFixed(2)}
 Days held: ${daysHeld} of intended ${maxDays} window
 Stop-loss: $${stop.toFixed(2)} (${distToStopPct.toFixed(1)}% away)
-
+${unifiedPromptBlock}
 You are evaluating this position specifically within its
 remaining time window of ${daysRemaining} trading days.
 A stock that is losing with only 1 day remaining has much
@@ -2245,6 +2266,10 @@ function renderSignalsTab() {
       .filter(p => {
         const sig = state.signals.find(s => s.ticker === p.ticker);
         if (!sig) return false;
+        if (state.settings.useUnifiedRecommendations) {
+          const result = calcUnifiedRecommendation({ ...p, currentPrice: sig.price, rsi: sig.rsi }, sig, state.macroContext);
+          return result.hardFloor || result.label === 'SELL NOW';
+        }
         return calcSellWarning(p, sig.price, sig.rsi, sig.atr) === 'SELL_NOW';
       })
       .map(p => p.ticker);
@@ -3153,6 +3178,17 @@ async function openStockModal(ticker) {
       ? `<div class="day-suppressed-overlay" style="margin-bottom:12px">⚠ DAY trade — entry window has closed for today</div>`
       : '';
 
+    // Unified recommendation (beta) — only meaningful for an owned position,
+    // and only when the toggle is on. Uses this modal's own fresh live
+    // price/RSI (not the possibly-stale state.signals snapshot).
+    const unifiedModalBlock = (ownedPos && state.settings.useUnifiedRecommendations)
+      ? buildUnifiedRecommendationModalBlock(calcUnifiedRecommendation(
+          { ...ownedPos, currentPrice: _modalStock.livePrice, rsi: _modalStock.liveRsi },
+          s || state.ownedScores[ticker] || null,
+          state.macroContext
+        ))
+      : '';
+
     document.getElementById('stock-modal-body').innerHTML = `
       ${daySuppressedBanner}
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
@@ -3209,6 +3245,7 @@ async function openStockModal(ticker) {
       </div>
 
       <div class="section-label">Signal Breakdown</div>
+      ${unifiedModalBlock}
       <div class="signal-row">
         <span class="signal-key">RSI (14-day)</span>
         <span class="signal-val">${stock.rsi.toFixed(1)} — ${rsiLabel}</span>
@@ -3656,7 +3693,14 @@ async function renderPortfolioTab() {
     const days = Math.floor((Date.now() - new Date(p.buyDate).getTime()) / 86400000);
     const durLabel = durHoldLabel(p.duration);
 
-    const portBanner   = buildPortfolioBanner(p, currentPrice, rsi, pnlDollar, pnlPct, days);
+    let portBanner;
+    if (state.settings.useUnifiedRecommendations) {
+      const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
+      const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi }, currentSignal, state.macroContext);
+      portBanner = buildUnifiedPortfolioBanner(unifiedResult);
+    } else {
+      portBanner = buildPortfolioBanner(p, currentPrice, rsi, pnlDollar, pnlPct, days);
+    }
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
     const priceDiffPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
     const nowCls = Math.abs(priceDiffPct) < 1 ? 'pf-now-flat' : priceDiffPct > 0 ? 'pf-now-up' : 'pf-now-down';
@@ -3980,6 +4024,263 @@ function buildPortfolioBanner(p, currentPrice, rsi, pnlDollar, pnlPct, days) {
   return `<div class="port-banner ${bannerCls}"><strong>${bannerLabel}</strong></div>`;
 }
 
+// ── 16b. UNIFIED RECOMMENDATION ENGINE (beta) ───────────────────────
+// Per edge2-unified-recommendation-engine.md. Standalone/pure — not yet
+// wired into any UI. NOT a replacement for getPortfolioTier()/
+// calcSellWarning() until the Settings toggle (added in a later step)
+// is ON; both systems intentionally coexist during the beta period.
+
+const MAX_HOLD_DAYS = { DAY: 1, '3-DAY': 4, WEEK: 7 };
+const MACRO_TAILWIND_CONDITIONS = ['BROAD_RALLY', 'MOMENTUM_DAY'];
+const DURATION_WINDOW_LABEL = { DAY: 'exit-today', '3-DAY': '2-4 day', WEEK: '5-7 day' };
+
+// position: a portfolio position object AUGMENTED by the caller with live
+//   `currentPrice` and `rsi` fields (the position itself only persists
+//   buy-time snapshots — renderPortfolioTab already computes fresh
+//   currentPrice/rsi every render and must attach them before calling,
+//   e.g. calcUnifiedRecommendation({...p, currentPrice, rsi}, sig, ctx)).
+// currentSignal: the live state.signals entry for this ticker if still in
+//   the last scan (full fields: score/signal/rsi/volRatio/macroCondition/
+//   category/catalystSetup/maPct), or the reduced state.ownedScores entry
+//   (score/label only) if it dropped out, or null/undefined if untracked.
+//   Any factor needing a field currentSignal doesn't have is skipped
+//   gracefully rather than throwing — see individual checks below.
+// macroContext: state.macroContext ({condition, changes, ...}) or null.
+//
+// Returns { label, composite, factors, topFactors, hardFloor, mixed }.
+// factors/topFactors entries are { name, points } — points sign implies
+// direction (negative = exit pressure/down-arrow, positive = hold
+// pressure/up-arrow). composite is null when hardFloor is true, since the
+// hard floor bypasses composite scoring entirely per spec.
+function calcUnifiedRecommendation(position, currentSignal, macroContext) {
+  const price = position.currentPrice;
+  const rsi = position.rsi;
+
+  // ── HARD FLOOR — must be the very first thing evaluated, before any
+  // factor scoring, and bypasses the composite entirely.
+  if (price <= position.stop) {
+    const factor = { name: 'Stop-loss breach', points: null };
+    return {
+      label: 'SELL NOW — Stop-loss hit',
+      composite: null,
+      factors: [factor],
+      topFactors: [factor],
+      hardFloor: true,
+      mixed: false,
+    };
+  }
+
+  const factors = [];
+  const add = (name, points) => factors.push({ name, points });
+
+  const pnlPct = ((price - position.buyPrice) / position.buyPrice) * 100;
+  const days = Math.floor((Date.now() - new Date(position.buyDate).getTime()) / 86400000);
+  const maxHold = MAX_HOLD_DAYS[position.duration];
+  const inProtection = !!position.momentumProtectionActivated;
+
+  // ── Loss % vs trailing-stop — mutually exclusive per spec note: trailing
+  // stop factors replace the standard loss % factors while protection is
+  // active, never both.
+  if (inProtection) {
+    const pullbackPct = ((position.peakPrice - price) / position.peakPrice) * 100;
+    if (pullbackPct >= 20) {
+      add(`Pulled back ${pullbackPct.toFixed(0)}% from peak (trailing stop)`, -50);
+    } else if (pullbackPct >= 15) {
+      add(`Pulled back ${pullbackPct.toFixed(0)}% from peak (trailing stop)`, -25);
+    } else {
+      add('Momentum protection active — above trailing stop', 30);
+    }
+  } else {
+    if (pnlPct <= -20) {
+      add(`Down ${Math.abs(pnlPct).toFixed(0)}% from purchase`, -60);
+    } else if (pnlPct <= -8) {
+      add(`Down ${Math.abs(pnlPct).toFixed(0)}% from purchase`, -30);
+    }
+  }
+
+  // ── Duration
+  if (maxHold != null) {
+    const overdueDays = days - maxHold;
+    if (overdueDays >= 3) {
+      add('Severely past intended hold window', -50);
+    } else if (overdueDays >= 1) {
+      add('Past intended hold window', -25);
+    } else {
+      add(`Within intended ${DURATION_WINDOW_LABEL[position.duration]} window`, 20);
+      if (days < maxHold / 2) add('Early in hold window', 10);
+    }
+  }
+
+  // ── RSI (current)
+  if (rsi != null) {
+    if (rsi > 75) add(`RSI overbought at ${rsi.toFixed(0)}`, -25);
+    else if (rsi >= 65) add(`RSI elevated at ${rsi.toFixed(0)}`, -10);
+    else if (rsi >= 55) add(`RSI in sweet spot at ${rsi.toFixed(0)}`, 20);
+    else if (rsi >= 35) add(`RSI neutral-bullish at ${rsi.toFixed(0)}`, 15);
+  }
+
+  // ── Current signal score (tier + drift vs score at buy)
+  const nowScore = currentSignal?.score;
+  if (nowScore != null) {
+    if (nowScore > 80) add(`Current score ${nowScore} — support signal`, 50);
+    else if (nowScore >= 65) add(`Current score ${nowScore} — support signal`, 30);
+    else if (nowScore >= 50) add(`Current score ${nowScore} — support signal`, 15);
+    else if (nowScore >= 30) add(`Current score ${nowScore} — weak signal`, -10);
+    else add(`Current score ${nowScore} — weak signal`, -25);
+
+    if (position.scoreAtBuy != null) {
+      if (nowScore > position.scoreAtBuy) {
+        add(`Score improved from ${position.scoreAtBuy} → ${nowScore}`, 20);
+      } else if (position.scoreAtBuy - nowScore > 20) {
+        add(`Score dropped from ${position.scoreAtBuy} → ${nowScore}`, -15);
+      }
+    }
+  }
+
+  // ── Macro condition
+  const condition = macroContext?.condition;
+  if (condition) {
+    if (BROAD_ELEVATED_CONDITIONS.includes(condition)) {
+      add(`Macro: ${condition}`, -20);
+    } else if (MACRO_TAILWIND_CONDITIONS.includes(condition)) {
+      add(`Macro: ${condition}`, 20);
+    } else if (currentSignal?.category) {
+      const affected = SECTOR_WEAKNESS_THRESHOLD_CATEGORIES[condition];
+      if (affected && affected.includes(currentSignal.category)) {
+        add(`Macro: ${condition} (sector)`, -15);
+      }
+    }
+  }
+
+  // ── Volume ratio (current)
+  const volRatio = currentSignal?.volRatio;
+  if (volRatio != null) {
+    if (volRatio < 0.5) add(`Volume fading at ${volRatio.toFixed(1)}x`, -10);
+    else if (volRatio < 1.0) add(`Quiet accumulation at ${volRatio.toFixed(1)}x`, 10);
+    else if (volRatio <= 2.0) add(`Healthy volume ${volRatio.toFixed(1)}x`, 15);
+  }
+
+  // ── 20-day MA position (current)
+  const maPct = currentSignal?.maPct;
+  if (maPct != null) {
+    if (maPct < 0) add('Below 20-day MA', -10);
+    else if (maPct > 0) add('Above 20-day MA', 15);
+  }
+
+  // ── Catalyst setup (current scan flag, not buy-time)
+  if (currentSignal?.catalystSetup) add('Catalyst setup active', 20);
+
+  // ── Near target (profitable + within 10% of target either side)
+  if (position.target && pnlPct > 0) {
+    const distFromTargetPct = Math.abs((price - position.target) / position.target) * 100;
+    if (distFromTargetPct <= 10) {
+      add(`Near target — ${distFromTargetPct.toFixed(0)}% away`, 15);
+    }
+  }
+
+  // ── Price tier (current price)
+  if (price >= 10 && price <= 20) add('Price tier $10–$20 (best win rate)', 10);
+
+  const composite = factors.reduce((sum, f) => sum + f.points, 0);
+
+  let label;
+  if (composite < -60) label = 'SELL NOW';
+  else if (composite < -30) label = 'SELL SOON';
+  else if (composite < -10) label = 'CONSIDER SELLING';
+  else if (composite <= 10) label = 'HOLD — Mixed signals';
+  else if (composite <= 30) label = 'HOLD';
+  else if (composite <= 60) label = 'HOLD STRONG';
+  else label = 'HIGH CONVICTION HOLD';
+
+  const topFactors = [...factors]
+    .sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
+    .slice(0, 3);
+
+  return {
+    label,
+    composite,
+    factors,
+    topFactors,
+    hardFloor: false,
+    mixed: Math.abs(composite) <= 10,
+  };
+}
+
+// label -> CSS class per the Step 3 color mapping. Hard-floor label is
+// 'SELL NOW — Stop-loss hit', hence the startsWith check.
+function getUnifiedBannerClass(label) {
+  if (label.startsWith('SELL NOW')) return 'ur-sell-now';
+  return {
+    'SELL SOON':            'ur-sell-soon',
+    'CONSIDER SELLING':     'ur-consider-selling',
+    'HOLD — Mixed signals': 'ur-hold-mixed',
+    'HOLD':                 'ur-hold',
+    'HOLD STRONG':          'ur-hold-strong',
+    'HIGH CONVICTION HOLD': 'ur-high-conviction',
+  }[label] || 'ur-hold-mixed';
+}
+
+// Plain single-line banner (label only) for the unified engine — the Step 4
+// wiring point. The full two-line display (top factors, arrows, "conflicted"
+// note) from the requirements doc's Step 4 spec is added in the next pass;
+// this keeps the toggle usable end-to-end in the meantime.
+function unifiedFactorLine(f, cssClass) {
+  const arrow = f.points >= 0 ? '↑' : '↓';
+  const sign = f.points >= 0 ? '+' : '';
+  return `<div class="${cssClass} ${f.points >= 0 ? 'ur-factor-up' : 'ur-factor-down'}">
+    <span>${arrow} ${f.name}</span><span class="ur-pts">(${sign}${f.points})</span>
+  </div>`;
+}
+
+// Line 1: recommendation label. Line 2: top 2-3 factors with arrows + points,
+// net composite, and — if the composite is within ±10 — a "conflicted" note.
+// Hard floor renders as a plain single-line banner (no factors/net; composite
+// is null and there's nothing to break down beyond the stop-loss hit itself).
+function buildUnifiedPortfolioBanner(result) {
+  const cls = getUnifiedBannerClass(result.label);
+  if (result.hardFloor) {
+    return `<div class="port-banner ur-banner ${cls}"><strong>${result.label}</strong></div>`;
+  }
+  const netSign = result.composite >= 0 ? '+' : '';
+  const conflictedNote = result.mixed
+    ? `<div class="ur-conflicted">Signals are conflicted — Groq analysis recommended</div>`
+    : '';
+  return `<div class="port-banner ur-banner ${cls}">
+    <div class="ur-label"><strong>${result.label}</strong></div>
+    <div class="ur-factors">
+      ${result.topFactors.map(f => unifiedFactorLine(f, 'ur-factor')).join('')}
+      <div class="ur-net">Net: ${netSign}${result.composite}</div>
+    </div>
+    ${conflictedNote}
+  </div>`;
+}
+
+// Modal RECOMMENDATION block — shows ALL factors (not just top 2-3), split
+// into hold vs sell groups, each sorted by descending magnitude.
+function buildUnifiedRecommendationModalBlock(result) {
+  const cls = getUnifiedBannerClass(result.label);
+  if (result.hardFloor) {
+    return `<div class="ur-modal-block">
+      <div class="ur-modal-title">UNIFIED RECOMMENDATION</div>
+      <div class="ur-modal-headline ${cls}">${result.label}</div>
+    </div>`;
+  }
+  const holdFactors = result.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points);
+  const sellFactors = result.factors.filter(f => f.points < 0).sort((a, b) => a.points - b.points);
+  return `<div class="ur-modal-block">
+    <div class="ur-modal-title">UNIFIED RECOMMENDATION</div>
+    <div class="ur-modal-headline ${cls}">${result.label} (${result.composite >= 0 ? '+' : ''}${result.composite} composite)</div>
+    ${holdFactors.length ? `
+      <div class="ur-modal-group-label">Factors for holding:</div>
+      ${holdFactors.map(f => unifiedFactorLine(f, 'ur-modal-factor')).join('')}
+    ` : ''}
+    ${sellFactors.length ? `
+      <div class="ur-modal-group-label">Factors for selling:</div>
+      ${sellFactors.map(f => unifiedFactorLine(f, 'ur-modal-factor')).join('')}
+    ` : ''}
+  </div>`;
+}
+
 // ── 17. MARK AS SOLD ──────────────────────────────────────────────
 
 function openMarkSoldModal(posId, currentPrice) {
@@ -4064,6 +4365,40 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
   }
 }
 
+// Unified recommendation (beta) snapshot for a trade record at time of sale.
+// Returns all-null when the toggle is off — same "present but empty" pattern
+// as the record's other optional/legacy fields (e.g. cappedByAtBuy) rather
+// than omitting the keys, so downstream code can check the value directly.
+// Uses pos.rsiAtBuy (not live RSI) to exactly match the rsi input
+// calcSellWarning() already uses for currentWarn just above this call, so
+// the old and new systems are being compared on the same inputs.
+function computeUnifiedSaleFields(pos, salePrice) {
+  if (!state.settings.useUnifiedRecommendations) {
+    return {
+      unifiedRecommendationAtSale: null,
+      unifiedCompositeAtSale: null,
+      topExitFactorsAtSale: null,
+      topHoldFactorsAtSale: null,
+    };
+  }
+  const currentSignal = state.signals.find(s => s.ticker === pos.ticker) || state.ownedScores[pos.ticker] || null;
+  const ur = calcUnifiedRecommendation({ ...pos, currentPrice: salePrice, rsi: pos.rsiAtBuy }, currentSignal, state.macroContext);
+  if (ur.hardFloor) {
+    return {
+      unifiedRecommendationAtSale: ur.label,
+      unifiedCompositeAtSale: null,
+      topExitFactorsAtSale: ['Stop-loss breach'],
+      topHoldFactorsAtSale: [],
+    };
+  }
+  return {
+    unifiedRecommendationAtSale: ur.label,
+    unifiedCompositeAtSale: ur.composite,
+    topExitFactorsAtSale: ur.factors.filter(f => f.points < 0).sort((a, b) => a.points - b.points).slice(0, 2).map(f => f.name),
+    topHoldFactorsAtSale: ur.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points).slice(0, 2).map(f => f.name),
+  };
+}
+
 function confirmMarkSold(posId) {
   const salePrice = parseFloat(document.getElementById('sold-price').value);
   const saleDate  = document.getElementById('sold-date').value;
@@ -4081,6 +4416,7 @@ function confirmMarkSold(posId) {
     : null;
   // Rule 5: did the position actually exit via the trailing stop threshold?
   const trailingStopTriggered = !!pos.momentumProtectionActivated && salePrice <= pos.peakPrice * 0.85;
+  const unifiedSaleFields = computeUnifiedSaleFields(pos, salePrice);
 
   const record = {
     id: Date.now().toString(),
@@ -4125,6 +4461,7 @@ function confirmMarkSold(posId) {
     distanceFromTargetAtSale: pos.target
       ? Math.round(((pos.target - salePrice) / pos.target) * 1000) / 10
       : null,
+    ...unifiedSaleFields,
   };
 
   state.sold.unshift(record);
@@ -4641,6 +4978,44 @@ ${(()=>{
   Worst flagged trade: ${worst.ticker} ${worst.pnlPct >= 0 ? '+' : ''}${worst.pnlPct.toFixed(1)}%`;
 })()}
 
+=== UNIFIED RECOMMENDATION AT TIME OF SALE ===
+${(()=>{
+  // unifiedRecommendationAtSale is null on any trade sold with the beta
+  // toggle off (or before this feature existed) — those trades simply
+  // don't match any bucket below rather than being force-fit into one.
+  const withUnified = sold.filter(s => s.unifiedRecommendationAtSale);
+  if (!withUnified.length) return '  No completed trades were sold with unified recommendations (beta) enabled yet.';
+
+  const bucket = (label, predicate) => {
+    const t = withUnified.filter(predicate);
+    return `  ${label.padEnd(20)}${t.length} trades | avg outcome ${t.length ? avg(t, s=>s.pnlPct).toFixed(1) : '—'}%`;
+  };
+  const distribution = `Distribution of recommendations at time of sale:
+${bucket('SELL NOW:', s => s.unifiedRecommendationAtSale.startsWith('SELL NOW'))}
+${bucket('SELL SOON:', s => s.unifiedRecommendationAtSale === 'SELL SOON')}
+${bucket('CONSIDER SELLING:', s => s.unifiedRecommendationAtSale === 'CONSIDER SELLING')}
+${bucket('HOLD:', s => s.unifiedRecommendationAtSale === 'HOLD' || s.unifiedRecommendationAtSale === 'HOLD — Mixed signals')}
+${bucket('HOLD STRONG:', s => s.unifiedRecommendationAtSale === 'HOLD STRONG')}
+${bucket('HIGH CONVICTION:', s => s.unifiedRecommendationAtSale === 'HIGH CONVICTION HOLD')}`;
+
+  const topFactorsFor = (predicate, field, caseSuffix) => {
+    const counts = {};
+    withUnified.filter(predicate).forEach(s => (s[field] || []).forEach(name => { counts[name] = (counts[name] || 0) + 1; }));
+    const ranked = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 3);
+    return ranked.length
+      ? ranked.map(([name, n], i) => `  ${i+1}. ${name}: appeared in ${n} ${caseSuffix}${n===1?'':'s'}`).join('\n')
+      : '  Not enough trades in this category yet.';
+  };
+
+  return `${distribution}
+
+Top factors that appeared most in SELL NOW recommendations:
+${topFactorsFor(s => s.unifiedRecommendationAtSale.startsWith('SELL NOW'), 'topExitFactorsAtSale', 'SELL NOW case')}
+
+Top factors that appeared most in HIGH CONVICTION HOLD:
+${topFactorsFor(s => s.unifiedRecommendationAtSale === 'HIGH CONVICTION HOLD', 'topHoldFactorsAtSale', 'case')}`;
+})()}
+
 === FULL TRADE HISTORY ===
 
 `;
@@ -4898,6 +5273,20 @@ function renderSettingsTab() {
         ${body}
       </div>`;
     })()}
+
+    <div class="settings-section mt12">
+      <div class="settings-section-title">Recommendations</div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Use unified recommendations (beta)</div>
+          <div class="settings-hint">Replaces the SELL NOW/SELL SOON/HOLD system with a single weighted judgment across all signals. Off by default — the old system keeps working normally either way.</div>
+        </div>
+        <label class="toggle-wrap">
+          <input type="checkbox" id="set-unified-rec" ${s.useUnifiedRecommendations?'checked':''} onchange="savePref('useUnifiedRecommendations',this.checked)">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
 
     <div class="settings-section mt12">
       <div class="settings-section-title">Testing</div>
@@ -5663,8 +6052,14 @@ function updateNavBadges() {
     if (isAfternoonMode()) {
       state.portfolio.forEach(p => {
         const price = state.portfolioPrices[p.ticker] || p.buyPrice;
-        const w = calcSellWarning(p, price, p.rsiAtBuy, 0);
-        if (w === 'SELL_NOW' || w === 'SELL_SOON') warnCount++;
+        if (state.settings.useUnifiedRecommendations) {
+          const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
+          const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy }, currentSignal, state.macroContext);
+          if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING'].includes(result.label)) warnCount++;
+        } else {
+          const w = calcSellWarning(p, price, p.rsiAtBuy, 0);
+          if (w === 'SELL_NOW' || w === 'SELL_SOON') warnCount++;
+        }
       });
     }
     pfBadge.textContent = warnCount;

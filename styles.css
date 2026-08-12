@@ -791,6 +791,105 @@ a { color: var(--blue); }
   50%       { opacity: 0.55; }
 }
 
+/* ── Unified Recommendation Banner (beta) — 7-tier color mapping per
+   edge2-unified-recommendation-engine.md Step 3 ── */
+.ur-sell-now {
+  font-size: 16px; padding: 14px 12px;
+  background: rgba(255,77,109,0.18); border-color: var(--red); color: var(--red);
+}
+.ur-sell-soon {
+  background: rgba(255,159,67,0.16); border-color: var(--orange); color: var(--orange);
+}
+.ur-consider-selling {
+  background: rgba(255,209,102,0.14); border-color: var(--yellow); color: var(--yellow);
+}
+.ur-hold-mixed {
+  background: var(--badge-neutral-bg); border-color: var(--border); color: var(--text-dim);
+}
+.ur-hold {
+  background: rgba(0,255,136,0.08); border-color: rgba(0,255,136,0.3); color: var(--text-dim);
+}
+.ur-hold-strong {
+  background: rgba(0,255,136,0.14); border-color: var(--green); color: var(--green);
+}
+.ur-high-conviction {
+  background: rgba(0,255,136,0.22); border-color: var(--green); color: var(--green);
+  font-size: 15px;
+}
+
+/* Portfolio banner — Line 1 label + Line 2 top factors, per Step 4 spec */
+.ur-banner { text-align: left; }
+.ur-banner .ur-label { text-align: center; margin-bottom: 8px; }
+.ur-factors {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ur-factor { display: flex; justify-content: space-between; gap: 8px; }
+.ur-factor-up   { color: var(--green); }
+.ur-factor-down { color: var(--red); }
+.ur-pts { opacity: 0.85; white-space: nowrap; }
+.ur-net {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid currentColor;
+  opacity: 0.6;
+  font-weight: 700;
+}
+.ur-conflicted {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: normal;
+  color: var(--yellow);
+  text-align: center;
+}
+
+/* Stock Detail Modal — RECOMMENDATION block, shows ALL factors */
+.ur-modal-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-bottom: 14px;
+  background: var(--card);
+}
+.ur-modal-title {
+  font-family: var(--cond);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+.ur-modal-headline {
+  font-family: var(--cond);
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.ur-modal-group-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 8px 0 4px;
+}
+.ur-modal-factor {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 2px 0 2px 8px;
+}
+
 /* ── Portfolio Card ── */
 .portfolio-card {
   background: var(--card);
