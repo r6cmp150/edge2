@@ -1,6 +1,6 @@
 'use strict';
 // ================================================================
-// EDGE Trade Signals — app.js  v2.3.0
+// EDGE Trade Signals — app.js  v2.3.1
 // ================================================================
 
 // ── 0. PIN GATE ──────────────────────────────────────────────────
@@ -174,7 +174,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.3.0';
+const VERSION = 'v2.3.1';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
@@ -2993,7 +2993,13 @@ function sbContribClass(key, pts) {
 }
 
 function buildScoreBreakdown(s) {
-  const { rows, total } = computeScoreBreakdown(s);
+  // Always called with a real state.signals entry (Signals tab cards never
+  // render from a fallback object) — s.score is authoritative and immune to
+  // any later modal-open recomputation, so use it directly rather than
+  // computeScoreBreakdown()'s own total (see buildModalScoreBreakdown for
+  // why that distinction matters).
+  const { rows } = computeScoreBreakdown(s);
+  const total = s.score;
   const id   = `sb-${s.ticker}`;
 
   // Compact contributions line: every row that actually moved the score
@@ -3028,13 +3034,27 @@ function buildScoreBreakdown(s) {
   </div>`;
 }
 
-function buildModalScoreBreakdown(s) {
-  const { rows, total } = computeScoreBreakdown(s);
-  // Derived from `total`, not s.signal — same reasoning as TOTAL using
-  // `total` instead of s.score: s.signal can be a stale/hardcoded
-  // placeholder ('WATCH') on the openStockModal fallback stock object.
-  // Thresholds mirror scoreStock()'s own signal assignment exactly.
-  const signal = total >= 80 ? 'STRONG BUY' : total >= 50 ? 'SOFT BUY' : 'WATCH';
+// isFallback: true only when openStockModal built `s` from live bars because
+// no state.signals entry existed for this ticker (score/signal on that
+// object are placeholders and were never real). In that case only,
+// TOTAL/SIGNAL come from computeScoreBreakdown()'s fresh computation.
+//
+// For a REAL signal, TOTAL/SIGNAL must come from s.score/s.signal directly
+// — NOT computeScoreBreakdown()'s total. openStockModal recomputes
+// consUpDays/consUpPts/rsVsSPY/relStrengthPts from its own independent bars
+// fetch and overwrites them on this same object (for the Groq prompt's
+// benefit) before this function ever runs, so by the time
+// computeScoreBreakdown() reads them here they can differ from what
+// scoreStock() actually used — a single new day's bar is enough to flip a
+// "2 consecutive up days" into "4", a real 5-to-15-point swing. s.score
+// itself is a plain number set once by scoreStock() and is never touched by
+// that mutation, so it stays trustworthy regardless.
+function buildModalScoreBreakdown(s, isFallback) {
+  const { rows, total: freshTotal } = computeScoreBreakdown(s);
+  const total = isFallback ? freshTotal : s.score;
+  const signal = isFallback
+    ? (total >= 80 ? 'STRONG BUY' : total >= 50 ? 'SOFT BUY' : 'WATCH')
+    : s.signal;
   const sigCls = signal === 'STRONG BUY' ? 'msb-strong'
                : signal === 'SOFT BUY' ? 'msb-soft' : 'msb-watch';
 
@@ -3187,13 +3207,20 @@ async function openStockModal(ticker) {
     stock.rsVsSPY        = modalRsVsSPY;
     stock.relStrengthPts = modalRelStrPts;
 
-    // Same fresh-computation fix as the Score Breakdown's TOTAL/SIGNAL rows
-    // below: stock.score/stock.signal can be the fallback stock object's
-    // hardcoded placeholders (0/'WATCH') for a ticker no longer in the
-    // current scan. Compute the real total once here so this header badge
-    // always agrees with the Score Breakdown section further down.
-    const { total: modalScoreTotal } = computeScoreBreakdown(stock);
-    const modalScoreSignal = modalScoreTotal >= 80 ? 'STRONG BUY' : modalScoreTotal >= 50 ? 'SOFT BUY' : 'WATCH';
+    // isFallback: no state.signals entry existed for this ticker, so
+    // stock.score/stock.signal are the fallback object's hardcoded
+    // placeholders (0/'WATCH') rather than a real scoreStock() result — use
+    // computeScoreBreakdown()'s fresh total only in that case. Otherwise
+    // stock.score/stock.signal are authoritative and must be used as-is:
+    // the consUpDays/relStrengthPts recompute a few lines above mutates
+    // this same object for the Groq prompt's benefit and can disagree with
+    // what scoreStock() actually used, but never touches .score/.signal
+    // themselves. See buildModalScoreBreakdown for the full explanation.
+    const isFallbackStock = !s;
+    const modalScoreTotal = isFallbackStock ? computeScoreBreakdown(stock).total : stock.score;
+    const modalScoreSignal = isFallbackStock
+      ? (modalScoreTotal >= 80 ? 'STRONG BUY' : modalScoreTotal >= 50 ? 'SOFT BUY' : 'WATCH')
+      : stock.signal;
 
     const chgCls  = stock.todayChange >= 0 ? 'change-pos' : 'change-neg';
     const chgSign = stock.todayChange >= 0 ? '▲' : '▼';
@@ -3354,7 +3381,7 @@ async function openStockModal(ticker) {
         <span class="signal-val">${stock.priceRange}</span>
       </div>
 
-      ${buildModalScoreBreakdown(stock)}
+      ${buildModalScoreBreakdown(stock, isFallbackStock)}
 
       <div class="modal-news-section">${buildModalNewsSection(ticker)}</div>
 
