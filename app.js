@@ -1,6 +1,6 @@
 'use strict';
 // ================================================================
-// EDGE Trade Signals — app.js  v2.2.0
+// EDGE Trade Signals — app.js  v2.3.0
 // ================================================================
 
 // ── 0. PIN GATE ──────────────────────────────────────────────────
@@ -174,7 +174,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.2.0';
+const VERSION = 'v2.3.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
@@ -4224,6 +4224,10 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       distance_from_target: record.distanceFromTargetAtSale,
       momentum_protection: !!pos.momentumProtectionActivated,
       source: record.source,
+      unified_recommendation_at_sale: record.unifiedRecommendationAtSale,
+      unified_composite_at_sale: record.unifiedCompositeAtSale,
+      top_exit_factors_at_sale: record.topExitFactorsAtSale,
+      top_hold_factors_at_sale: record.topHoldFactorsAtSale,
     }]);
     if (error) console.error('Supabase trade write failed:', error.message);
   } catch(e) {
@@ -4349,7 +4353,7 @@ async function renderSoldTab() {
   const totalPnL = state.sold.reduce((sum, s) => sum + s.pnlDollar, 0);
 
   container.innerHTML = `
-    <button class="report-btn" onclick="generateClaudeReport()">📋 Generate Claude Report</button>
+    <button id="report-btn" class="report-btn" onclick="generateClaudeReport()">📋 Generate Claude Report</button>
 
     <div class="sold-summary">
       <div class="section-label" style="padding:0 0 8px 0">Trade Summary</div>
@@ -4428,12 +4432,217 @@ async function renderSoldTab() {
   if (listEl) listEl.innerHTML = html;
 }
 
-function generateClaudeReport() {
+// Rating snapshots have no localStorage equivalent at all — genuinely
+// Supabase-only, unlike the trade fields above. Failure or an empty table
+// both fall through to the same "no snapshot history" message; there's
+// nothing to fall back to.
+async function buildRatingSnapshotHistorySection(sold) {
+  const noDataMsg = `=== RATING SNAPSHOT HISTORY ===
+
+No snapshot history yet — snapshots are recorded after each screener run for stocks scoring 60+`;
+
+  let data;
+  try {
+    const res = await withTimeout(
+      supabaseClient.from('rating_snapshots').select('ticker, captured_at, score').order('captured_at', { ascending: true }),
+      10000,
+      'Supabase rating_snapshots query timed out after 10s'
+    );
+    if (res.error) throw res.error;
+    data = res.data;
+  } catch(e) {
+    console.error('Rating snapshot history fetch failed:', e.message);
+    return noDataMsg;
+  }
+  if (!data || !data.length) return noDataMsg;
+
+  const total = data.length;
+  const earliest = data[0].captured_at.split('T')[0];
+  const latest = data[data.length - 1].captured_at.split('T')[0];
+
+  const byTicker = {};
+  data.forEach(row => {
+    (byTicker[row.ticker] ??= []).push(row);
+  });
+
+  const topTickers = Object.entries(byTicker)
+    .map(([ticker, rows]) => {
+      const scores = rows.map(r => r.score).filter(s => s != null);
+      const avgScore = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+      return {
+        ticker, count: rows.length, avgScore,
+        minScore: scores.length ? Math.min(...scores) : 0,
+        maxScore: scores.length ? Math.max(...scores) : 0,
+      };
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+  const topTickersText = topTickers
+    .map(t => `  ${t.ticker}: ${t.count} snapshots | avg score ${t.avgScore.toFixed(1)} | score range ${t.minScore}–${t.maxScore}`)
+    .join('\n');
+
+  // Cross-reference: tickers that show up in both snapshot history and this
+  // report's trades. For a ticker traded more than once, each purchase gets
+  // its own 7-day-before/7-day-after window, and those per-purchase averages
+  // are themselves averaged into one before/after figure for the ticker.
+  const tradeTickers = [...new Set(sold.map(s => s.ticker))];
+  const overlapTickers = tradeTickers.filter(t => byTicker[t]);
+
+  let correlationText;
+  if (!overlapTickers.length) {
+    correlationText = '  No tickers currently overlap between snapshot history and trade history.';
+  } else {
+    const lines = overlapTickers.map(ticker => {
+      const trades = sold.filter(s => s.ticker === ticker && s.buyDate);
+      const beforeAvgs = [], afterAvgs = [];
+      trades.forEach(trade => {
+        const buyDate = new Date(trade.buyDate);
+        const windowStart = new Date(buyDate.getTime() - 7 * 86400000);
+        const windowEnd = new Date(buyDate.getTime() + 7 * 86400000);
+        const before = byTicker[ticker].filter(r => { const d = new Date(r.captured_at); return d >= windowStart && d < buyDate; }).map(r => r.score).filter(s => s != null);
+        const after = byTicker[ticker].filter(r => { const d = new Date(r.captured_at); return d > buyDate && d <= windowEnd; }).map(r => r.score).filter(s => s != null);
+        if (before.length) beforeAvgs.push(before.reduce((a, b) => a + b, 0) / before.length);
+        if (after.length) afterAvgs.push(after.reduce((a, b) => a + b, 0) / after.length);
+      });
+      if (!beforeAvgs.length && !afterAvgs.length) return null;
+      const avgBefore = beforeAvgs.length ? beforeAvgs.reduce((a, b) => a + b, 0) / beforeAvgs.length : null;
+      const avgAfter = afterAvgs.length ? afterAvgs.reduce((a, b) => a + b, 0) / afterAvgs.length : null;
+      const trend = (avgBefore == null || avgAfter == null) ? 'insufficient data'
+        : avgAfter > avgBefore ? 'improving'
+        : avgAfter < avgBefore ? 'declining'
+        : 'stable';
+      return `  ${ticker}:
+    Avg score in 7 days before purchase: ${avgBefore != null ? avgBefore.toFixed(1) : 'N/A'}
+    Avg score in 7 days after purchase:  ${avgAfter != null ? avgAfter.toFixed(1) : 'N/A'}
+    Score trend: ${trend}`;
+    }).filter(Boolean);
+    correlationText = lines.length ? lines.join('\n\n') : '  No snapshots fall within a 7-day window around any purchase.';
+  }
+
+  return `=== RATING SNAPSHOT HISTORY ===
+
+Total snapshots recorded: ${total}
+Date range: ${earliest} to ${latest}
+Most frequently appearing tickers (top 10):
+${topTickersText}
+
+Tickers appearing in both snapshots and trades:
+${correlationText}`;
+}
+
+// Normalizes a Supabase trades row (snake_case, ~30 columns) into the same
+// shape as a state.sold record (camelCase, ~40 fields) so the rest of
+// generateClaudeReport() below can run unmodified against either source.
+// Fields with no Supabase column (near-miss data, ATR, peak price, trailing
+// stop, RSI-suspended gain, news, signals-fired list, the retired sell-
+// warning enum) come back null/[] — every section already treats those as
+// "no data for this trade" rather than crashing, the same way it already
+// handles pre-update localStorage trades that predate a given field.
+function mapSupabaseTradeToSoldShape(row) {
+  const daysHeld = (row.buy_date && row.sell_date)
+    ? Math.floor((new Date(row.sell_date) - new Date(row.buy_date)) / 86400000)
+    : null;
+  return {
+    id: String(row.id),
+    ticker: row.ticker,
+    company: row.company || row.ticker,
+    shares: row.shares,
+    buyPrice: row.buy_price,
+    sellPrice: row.sell_price,
+    buyDate: row.buy_date,
+    sellDate: row.sell_date,
+    daysHeld,
+    pnlDollar: row.pnl_dollars,
+    pnlPct: row.pnl_pct,
+    source: row.source,
+    scoreAtBuy: row.signal_score,
+    rsiAtBuy: row.rsi_at_buy,
+    volRatioAtBuy: row.volume_ratio_at_buy,
+    riskAtBuy: row.risk_score,
+    newsAtBuy: null,
+    signalsFiredAtBuy: [],
+    volBuildNearMiss: null,
+    meanReversionNearMiss: null,
+    cappedByAtBuy: null,
+    rawAtrAtBuy: null,
+    trimmedAtrAtBuy: null,
+    macroConditionAtBuy: row.macro_condition,
+    thresholdAtBuy: null,
+    catalystSetup: !!row.catalyst_setup,
+    duration: row.duration_classification,
+    priceRange: row.price_tier,
+    sellWarningAtSale: null,
+    targetDriftPct: null,
+    peakPrice: null,
+    peakPriceDate: null,
+    momentumProtectionActivated: !!row.momentum_protection,
+    trailingStopTriggered: false,
+    rsiSuspendedAtGainPct: null,
+    sellTime: row.sell_time,
+    sellDayOfWeek: row.sell_day_of_week,
+    distanceFromTargetAtSale: row.distance_from_target,
+    unifiedRecommendationAtSale: row.unified_recommendation_at_sale,
+    unifiedCompositeAtSale: row.unified_composite_at_sale,
+    topExitFactorsAtSale: row.top_exit_factors_at_sale || [],
+    topHoldFactorsAtSale: row.top_hold_factors_at_sale || [],
+    buyTime: row.buy_time,
+    buyDayOfWeek: row.buy_day_of_week,
+    buySession: row.buy_session,
+    subTenEntryAdjustment: row.sub10_adjustment,
+    groqProbabilityAtBuy: row.groq_at_purchase,
+  };
+}
+
+// Races a promise against a timeout so a hung Supabase query can never hang
+// report generation — used for both the trades query and the rating
+// snapshot query below, each independently.
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+}
+
+async function generateClaudeReport() {
+  const btn = document.getElementById('report-btn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Fetching data…'; }
+
+  let sold, dataSourceNote;
+  try {
+    const { data, error } = await withTimeout(
+      supabaseClient.from('trades').select('*').order('buy_date', { ascending: true }),
+      10000,
+      'Supabase trades query timed out after 10s'
+    );
+    if (error) throw error;
+    if (data && data.length) {
+      sold = data.map(mapSupabaseTradeToSoldShape);
+      dataSourceNote = `Data source: Supabase database (${sold.length} trades)\nNote: near-miss, ATR-trim, and some momentum-protection detail aren't tracked in Supabase — those sections will show limited data for this run.`;
+    } else {
+      sold = state.sold;
+      dataSourceNote = `Data source: localStorage fallback (${sold.length} trades)`;
+    }
+  } catch(e) {
+    console.error('Supabase trade fetch failed, falling back to localStorage:', e.message);
+    const isTimeout = /timed out/i.test(e.message);
+    if (btn && isTimeout) {
+      btn.innerHTML = '<span class="spinner"></span> Supabase timed out — using local data…';
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    sold = state.sold;
+    dataSourceNote = `Data source: localStorage fallback (${sold.length} trades)`;
+  }
+
+  if (!sold.length) {
+    if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
+    alert('No completed trades to report yet.');
+    return;
+  }
+
+  const ratingSnapshotSection = await buildRatingSnapshotHistorySection(sold);
+
   const now = new Date();
   const dateStr = now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
-  const sold = state.sold;
-
-  if (!sold.length) { alert('No completed trades to report yet.'); return; }
 
   const wins   = sold.filter(s => s.pnlPct > 0);
   const losses = sold.filter(s => s.pnlPct <= 0);
@@ -4511,6 +4720,7 @@ function generateClaudeReport() {
   let report = `EDGE TRADE SIGNALS — CLAUDE ANALYSIS REPORT
 Generated: ${dateStr}
 App Version: ${VERSION}
+${dataSourceNote}
 
 === INSTRUCTIONS FOR CLAUDE ===
 I use a mobile trading signals app called EDGE Trade Signals. Below is my complete
@@ -4872,6 +5082,8 @@ Top factors that appeared most in HIGH CONVICTION HOLD:
 ${topFactorsFor(s => s.unifiedRecommendationAtSale === 'HIGH CONVICTION HOLD', 'topHoldFactorsAtSale', 'case')}`;
 })()}
 
+${ratingSnapshotSection}
+
 === FULL TRADE HISTORY ===
 
 `;
@@ -4954,6 +5166,7 @@ Trade Duration:
   a.download = `edge-report-${new Date().toISOString().split('T')[0]}.txt`;
   a.click();
   URL.revokeObjectURL(url);
+  if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
 }
 
 // ── 19. SETTINGS TAB ──────────────────────────────────────────────
