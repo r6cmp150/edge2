@@ -733,6 +733,17 @@ const STOCK_UNIVERSES = {
 const MASTER_TICKERS = STOCK_UNIVERSES.OTHER;
 let TICKERS = MASTER_TICKERS;
 
+// Reverse lookup: which STOCK_UNIVERSES category a ticker belongs to,
+// regardless of the currently selected universe. Used when scoring an owned
+// position outside the active scan's ticker list, so its macro adjustment
+// isn't computed against the wrong sector.
+function findTickerCategory(ticker) {
+  for (const [cat, list] of Object.entries(STOCK_UNIVERSES)) {
+    if (list.includes(ticker)) return cat;
+  }
+  return null;
+}
+
 const COMPANY_NAMES = {
   'SNDL':'SNDL Inc.','CLOV':'Clover Health','MVIS':'MicroVision','WKHS':'Workhorse Group',
   'GOEV':'Canoo Inc.','SPWR':'SunPower','PLUG':'Plug Power','FCEL':'FuelCell Energy',
@@ -2135,6 +2146,7 @@ async function runScreener() {
     const category = state.selectedUniverse || 'OTHER';
     const macroCondition = state.macroContext?.condition || null;
     const displayThreshold = getDisplayThreshold(macroCondition, category);
+    const updatedOwnedTickers = new Set();
     const scored = candidates.map(([ticker, snap]) => {
       const bars = allBars[ticker] || [];
       const s = scoreStock(ticker, snap, bars, newsMap[ticker] || null, spyChangePct, category);
@@ -2145,6 +2157,7 @@ async function runScreener() {
       // Portfolio tab's Score Now always reflects the most recent scan.
       if (s && getOwnedPosition(ticker)) {
         state.ownedScores[ticker] = { score: s.score, label: s.signal };
+        updatedOwnedTickers.add(ticker);
       }
       return s;
     }).filter(s => s && s.score >= displayThreshold);
@@ -2157,6 +2170,35 @@ async function runScreener() {
 
     state.signals.sort((a,b) => b.score - a.score);
     state.lastScanTime = Date.now();
+
+    // 7b. Owned tickers the main scan never reached at all — failed the
+    // Stage 1 price/volume filter, or aren't in the currently selected
+    // universe (TICKERS) in the first place — still need a fresh score, or
+    // state.ownedScores silently keeps whatever it last held for them.
+    // scoreStock() has no side effects (pure/sync), so it's safe to call
+    // here; this is a small supplementary fetch since neither their
+    // snapshot nor bars are guaranteed to already exist above.
+    const ownedTickers = [...new Set(state.portfolio.map(p => p.ticker))];
+    const missingOwnedTickers = ownedTickers.filter(t => !updatedOwnedTickers.has(t));
+    if (missingOwnedTickers.length) {
+      try {
+        const [extraSnaps, extraBars] = await Promise.all([
+          fetchSnapshots(missingOwnedTickers),
+          fetchMultiBars(missingOwnedTickers, 100),
+        ]);
+        missingOwnedTickers.forEach(ticker => {
+          const snap = extraSnaps[ticker];
+          if (!snap) return;
+          const bars = extraBars[ticker] || [];
+          const tickerCategory = findTickerCategory(ticker) || category;
+          const s = scoreStock(ticker, snap, bars, newsMap[ticker] || null, spyChangePct, tickerCategory);
+          if (s) state.ownedScores[ticker] = { score: s.score, label: s.signal };
+        });
+      } catch(e) {
+        console.warn('Owned-ticker score refresh failed:', e.message);
+      }
+    }
+
     persist('signals'); persist('lastScanTime'); persist('ownedScores');
     state.news = newsItems;
     persist('news');
