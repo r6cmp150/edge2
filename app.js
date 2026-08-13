@@ -2905,8 +2905,8 @@ function computeScoreBreakdown(s) {
   // Macro Market Overlay (Step 4) — only shown once macroContext has actually
   // loaded (s.macroCondition truthy); omitted entirely otherwise rather than
   // faking a CHOPPY/0pt row for data that was never fetched.
+  const macroPts = s.macroCondition ? (s.macroAdjustment || 0) : 0;
   if (s.macroCondition) {
-    const macroPts = s.macroAdjustment || 0;
     rows.push({
       key: 'macro', short: 'macro',
       label: `Market condition: ${s.macroCondition} (${formatMacroConditionDetail(s.macroCondition, s.macroChanges)})`,
@@ -2916,7 +2916,14 @@ function computeScoreBreakdown(s) {
     });
   }
 
-  return rows;
+  // The real final score: normalized + macro adjustment, clamped 0-100
+  // exactly like scoreStock() does. Callers should display this, not s.score
+  // — s.score can be stale or a hardcoded placeholder (see openStockModal's
+  // fallback stock object for tickers no longer in the current scan), while
+  // this is always freshly derived from the rows just computed above.
+  const total = Math.max(0, Math.min(100, normalizedScore + macroPts));
+
+  return { rows, total };
 }
 
 // Every row here fires at pts>=0 (never negative) except the Step 4 macro
@@ -2944,7 +2951,7 @@ function sbContribClass(key, pts) {
 }
 
 function buildScoreBreakdown(s) {
-  const rows = computeScoreBreakdown(s);
+  const { rows, total } = computeScoreBreakdown(s);
   const id   = `sb-${s.ticker}`;
 
   // Compact contributions line: every row that actually moved the score
@@ -2969,7 +2976,7 @@ function buildScoreBreakdown(s) {
   return `<div class="sc-score">
     <div class="sc-score-header">
       <span class="sc-score-title">Score breakdown</span>
-      <span class="sc-score-total">${s.score} pts</span>
+      <span class="sc-score-total">${total} pts</span>
     </div>
     <div class="sc-score-contribs">${contribsHtml}</div>
     <button class="sc-score-toggle" onclick="event.stopPropagation();toggleBreakdown('${id}')">
@@ -2980,9 +2987,14 @@ function buildScoreBreakdown(s) {
 }
 
 function buildModalScoreBreakdown(s) {
-  const rows   = computeScoreBreakdown(s);
-  const sigCls = s.signal === 'STRONG BUY' || s.signal === 'BUY' ? 'msb-strong'
-               : s.signal === 'SOFT BUY' ? 'msb-soft' : 'msb-watch';
+  const { rows, total } = computeScoreBreakdown(s);
+  // Derived from `total`, not s.signal — same reasoning as TOTAL using
+  // `total` instead of s.score: s.signal can be a stale/hardcoded
+  // placeholder ('WATCH') on the openStockModal fallback stock object.
+  // Thresholds mirror scoreStock()'s own signal assignment exactly.
+  const signal = total >= 80 ? 'STRONG BUY' : total >= 50 ? 'SOFT BUY' : 'WATCH';
+  const sigCls = signal === 'STRONG BUY' ? 'msb-strong'
+               : signal === 'SOFT BUY' ? 'msb-soft' : 'msb-watch';
 
   const rowsHtml = rows.map(r => {
     const ptsCls = r.pts > 0 ? 'sb-pos' : r.pts < 0 ? 'sb-neg' : 'sb-zero';
@@ -3003,12 +3015,12 @@ function buildModalScoreBreakdown(s) {
       <div class="sb-row msb-row msb-total-row">
         <span class="sb-check" style="opacity:0">✓</span>
         <span class="sb-label msb-label msb-total-label">TOTAL</span>
-        <span class="sb-pts sb-pos msb-total-pts">${s.score} pts</span>
+        <span class="sb-pts sb-pos msb-total-pts">${total} pts</span>
       </div>
       <div class="sb-row msb-row">
         <span class="sb-check" style="opacity:0">✓</span>
         <span class="sb-label msb-label msb-total-label">SIGNAL</span>
-        <span class="sb-pts ${sigCls} msb-total-pts">${s.signal}</span>
+        <span class="sb-pts ${sigCls} msb-total-pts">${signal}</span>
       </div>
     </div>`;
 }
@@ -3133,9 +3145,17 @@ async function openStockModal(ticker) {
     stock.rsVsSPY        = modalRsVsSPY;
     stock.relStrengthPts = modalRelStrPts;
 
+    // Same fresh-computation fix as the Score Breakdown's TOTAL/SIGNAL rows
+    // below: stock.score/stock.signal can be the fallback stock object's
+    // hardcoded placeholders (0/'WATCH') for a ticker no longer in the
+    // current scan. Compute the real total once here so this header badge
+    // always agrees with the Score Breakdown section further down.
+    const { total: modalScoreTotal } = computeScoreBreakdown(stock);
+    const modalScoreSignal = modalScoreTotal >= 80 ? 'STRONG BUY' : modalScoreTotal >= 50 ? 'SOFT BUY' : 'WATCH';
+
     const chgCls  = stock.todayChange >= 0 ? 'change-pos' : 'change-neg';
     const chgSign = stock.todayChange >= 0 ? '▲' : '▼';
-    const sigBadge = sigBadgeClass(stock.signal);
+    const sigBadge = sigBadgeClass(modalScoreSignal);
     const riskCls  = stock.risk <= 3 ? 'risk-low' : stock.risk <= 6 ? 'risk-mid' : 'risk-hi';
 
     const rsiLabel = stock.rsi > 75 ? 'Overbought — caution'
@@ -3189,7 +3209,7 @@ async function openStockModal(ticker) {
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
         <span class="price-mono" style="font-size:20px">$${price.toFixed(2)}</span>
         <span class="${chgCls}">${chgSign}${Math.abs(stock.todayChange).toFixed(1)}%</span>
-        <span class="badge ${sigBadge}">${stock.signal} ${stock.score}</span>
+        <span class="badge ${sigBadge}">${modalScoreSignal} ${modalScoreTotal}</span>
         <span class="badge ${durBadge}">${durBadgeText(displayDuration)}</span>
         ${stock.catalystSetup ? `<span class="badge badge-catalyst">🔍 CATALYST</span>` : ''}
         <span class="risk-pill ${riskCls}">Risk ${stock.risk}/10</span>
@@ -3744,13 +3764,20 @@ async function renderPortfolioTab() {
     // display threshold and so don't appear in state.signals. Fall back to
     // state.signals for the rare case ownedScores hasn't been populated yet
     // (e.g. a position added before this cache existed), else show a placeholder.
+    //
+    // Known limitation: this can disagree with the Stock Detail Modal, which
+    // recomputes a fresh score from live bars when opened (see openStockModal)
+    // rather than reading this same cache. Making this card do a live fetch
+    // per position on every render would be a much larger change, so instead
+    // the "(last scan)" label makes the cache explicit rather than silently
+    // showing a number that might not match what the modal shows right now.
     const ownedScore = state.ownedScores[p.ticker];
     const liveSignal = state.signals.find(s => s.ticker === p.ticker);
     const nowScore = ownedScore
       ? ownedScore
       : liveSignal ? { score: liveSignal.score, label: liveSignal.signal } : null;
     const scoreNowDisplay = nowScore
-      ? `${nowScore.score} <span class="pf-score-label ${nowScore.score >= 80 ? 'pf-score-green' : 'pf-score-yellow'}">${nowScore.label}</span>`
+      ? `${nowScore.score} <span class="pf-score-label ${nowScore.score >= 80 ? 'pf-score-green' : 'pf-score-yellow'}">${nowScore.label}</span>${ownedScore ? ' <span class="pf-score-stale">(last scan)</span>' : ''}`
       : `<span class="pf-score-na">—</span>`;
 
     // Duration urgency — same maxHoldDays map used for the card sort order above.

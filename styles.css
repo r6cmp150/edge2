@@ -943,6 +943,7 @@ a { color: var(--blue); }
 .pf-score-green { color: var(--green); }
 .pf-score-yellow { color: var(--yellow); }
 .pf-score-na { color: var(--muted); }
+.pf-score-stale { font-size: 10px; font-weight: 400; color: var(--muted); }
 
 .pf-quick-read {
   font-size: 11px;
