@@ -1,6 +1,6 @@
 'use strict';
 // ================================================================
-// EDGE Trade Signals — app.js  v2.3.2
+// EDGE Trade Signals — app.js  v2.4.0
 // ================================================================
 
 // ── 0. PIN GATE ──────────────────────────────────────────────────
@@ -174,7 +174,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.3.2';
+const VERSION = 'v2.4.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
@@ -812,11 +812,13 @@ let state = {
   selectedUniverse: 'OTHER',
   notifications: {},     // push notification state — persisted
   ownedScores: {},        // ticker → {score, label} snapshotted at each screener run, for owned positions that no longer clear the display threshold — persisted
+  ownedPrevRSI: {},       // ticker → RSI from the previous portfolio render, for detecting "declining from peak" in calcPeakRiskScore — persisted
+  ownedPeakRSI: {},       // ticker → highest RSI seen across the current hold, for peakRsiDuringHold on the sold record — persisted
   preMarketGroqCache: {}, // ticker → {pairs}|{raw} Groq pre-market read — session only, tap-triggered
 };
 
 function loadState() {
-  ['settings','portfolio','sold','signals','lastScanTime','news','signalToggles','lastPassedCount','selectedUniverse','notifications','ownedScores'].forEach(k => {
+  ['settings','portfolio','sold','signals','lastScanTime','news','signalToggles','lastPassedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -1141,6 +1143,23 @@ async function fetchSingleBars(ticker, limit = 300) {
     });
     return data.bars || [];
   } catch(e) { return []; }
+}
+
+// Next trading day's close after a given sell date — feeds the "what-if held
+// 1 more day" metric in the Winner Exit Timing Analysis report section
+// (URE v2, Change 5). limit:3 gives slack for the day after a Friday/holiday
+// sale to land on the next actual trading session.
+async function fetchNextDayClose(ticker, sellDateStr) {
+  try {
+    const d = new Date(sellDateStr);
+    d.setDate(d.getDate() + 1);
+    const start = d.toISOString().split('T')[0];
+    const data = await alpacaGet(`/stocks/${ticker}/bars`, {
+      timeframe: '1Day', start, limit: 3, sort: 'asc', feed: 'iex'
+    });
+    const bars = data.bars || [];
+    return bars.length ? bars[0].c : null;
+  } catch(e) { return null; }
 }
 
 // 1-minute bars for the "1 Day" chart range — closer in resolution to
@@ -1633,6 +1652,19 @@ within the ${maxDays}-day window}`;
     const ur = calcUnifiedRecommendation({ ...pos, currentPrice: livePrice, rsi: liveRsi }, stock, state.macroContext);
     if (ur.hardFloor) {
       unifiedPromptBlock = `\nUnified recommendation: ${ur.label}\n`;
+    } else if (ur.label === 'LOCK IN PROFITS') {
+      const topPeakRisk = ur.peakRisk.topFactors;
+      const topHold = ur.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points).slice(0, 2);
+      unifiedPromptBlock = `
+Unified recommendation: LOCK IN PROFITS (composite +${ur.composite})
+Peak risk score: ${ur.peakRisk.score} (threshold: −40)
+Top peak risk factors: ${topPeakRisk.length ? topPeakRisk.map(f => f.name).join('; ') : 'none'}
+Main composite factors for holding: ${topHold.length ? topHold.map(f => f.name).join('; ') : 'none'}
+
+Note: The position is strongly positive on the main composite
+but peak risk indicators suggest the upward momentum is
+exhausting. Groq should weight the exit timing heavily.
+`;
     } else {
       const topExit = ur.factors.filter(f => f.points < 0).sort((a, b) => a.points - b.points).slice(0, 2);
       const topHold = ur.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points).slice(0, 2);
@@ -3757,6 +3789,21 @@ async function renderPortfolioTab() {
     const rsi = closes.length >= 15 ? calcRSI(closes) : p.rsiAtBuy;
     const trimmedAtr = bars.length >= 15 ? calcTrimmedATR(bars) : 0;
 
+    // Snapshot the prior render's RSI before overwriting — calcPeakRiskScore
+    // needs this to detect "declining from peak" (RSI was >70, now lower).
+    // No stored value yet (first render / never-before-seen ticker) → null,
+    // so that factor is skipped rather than assumed.
+    const prevRSI = state.ownedPrevRSI[p.ticker] ?? null;
+    p.prevRSI = prevRSI;
+    if (rsi != null) {
+      state.ownedPrevRSI[p.ticker] = rsi;
+      persist('ownedPrevRSI');
+      // Running max across the hold — feeds peakRsiDuringHold on the sold
+      // record at confirmMarkSold() time (Change 5).
+      state.ownedPeakRSI[p.ticker] = Math.max(state.ownedPeakRSI[p.ticker] ?? -Infinity, rsi);
+      persist('ownedPeakRSI');
+    }
+
     // Live recalculated target (display-only — sell warnings keep using p.target)
     const liveTarget = trimmedAtr > 0 ? calcEntryTargetStop(currentPrice, trimmedAtr, p.duration).target : null;
     p.liveTarget = liveTarget;
@@ -3796,7 +3843,7 @@ async function renderPortfolioTab() {
     const durLabel = durHoldLabel(p.duration);
 
     const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
-    const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi }, currentSignal, state.macroContext);
+    const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi }, currentSignal, state.macroContext, snap);
     const portBanner = buildUnifiedPortfolioBanner(unifiedResult);
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
     const priceDiffPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
@@ -4032,7 +4079,7 @@ const DURATION_WINDOW_LABEL = { DAY: 'exit-today', '3-DAY': '2-4 day', WEEK: '5-
 // direction (negative = exit pressure/down-arrow, positive = hold
 // pressure/up-arrow). composite is null when hardFloor is true, since the
 // hard floor bypasses composite scoring entirely per spec.
-function calcUnifiedRecommendation(position, currentSignal, macroContext) {
+function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) {
   const price = position.currentPrice;
   const rsi = position.rsi;
 
@@ -4046,7 +4093,6 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext) {
       factors: [factor],
       topFactors: [factor],
       hardFloor: true,
-      mixed: false,
     };
   }
 
@@ -4163,14 +4209,20 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext) {
 
   const composite = factors.reduce((sum, f) => sum + f.points, 0);
 
-  let label;
+  let label, peakRisk = null;
   if (composite < -60) label = 'SELL NOW';
   else if (composite < -30) label = 'SELL SOON';
-  else if (composite < -10) label = 'CONSIDER SELLING';
-  else if (composite <= 10) label = 'HOLD — Mixed signals';
-  else if (composite <= 30) label = 'HOLD';
-  else if (composite <= 60) label = 'HOLD STRONG';
-  else label = 'HIGH CONVICTION HOLD';
+  else if (composite < 10) label = 'CONSIDER SELLING';
+  else if (composite < 30) label = 'HOLD';
+  else {
+    // Composite is genuinely strong (+30 or above) — check peak risk before
+    // committing to HOLD STRONG. peakRiskScore is evaluated independently
+    // (never added into composite) and only ever computed in this branch.
+    // LOCK IN PROFITS never fires on a losing position even if composite is
+    // positive here, per spec.
+    peakRisk = calcPeakRiskScore(position, currentSignal, snap);
+    label = (pnlPct > 0 && peakRisk.score <= -40) ? 'LOCK IN PROFITS' : 'HOLD STRONG';
+  }
 
   const topFactors = [...factors]
     .sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
@@ -4182,8 +4234,108 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext) {
     factors,
     topFactors,
     hardFloor: false,
-    mixed: Math.abs(composite) <= 10,
+    peakRisk,
+    pnlPct,
   };
+}
+
+// Peak Risk Detection (URE v2, Change 2) — a separate factor sum from the
+// main composite above, evaluated independently and NOT added into it.
+// position: expects currentPrice, buyPrice, target, duration, buyDate, rsi,
+//   and prevRSI (set by renderPortfolioTab from state.ownedPrevRSI — see
+//   Step 2; null/undefined means no prior reading, so that factor is skipped
+//   rather than assumed).
+// currentSignal: expects maPct, volRatio, consUpDays, bars (same shape as a
+//   state.signals entry — the sparse state.ownedScores fallback lacks these,
+//   so those factors just don't fire, same defensive pattern already used
+//   in calcUnifiedRecommendation above).
+// snap: the raw Alpaca snapshot for the ticker (dailyBar.h/.c, prevDailyBar.c)
+//   — used directly for the intraday-giveup and today's-direction factors so
+//   they don't depend on currentSignal's completeness.
+function calcPeakRiskScore(position, currentSignal, snap) {
+  const factors = [];
+  const add = (name, points) => factors.push({ name, points });
+
+  const price = position.currentPrice;
+  const rsi = position.rsi;
+  const prevRSI = position.prevRSI;
+
+  // ── RSI turning from high
+  if (prevRSI != null && prevRSI > 70 && rsi != null && rsi < prevRSI) {
+    add(`RSI declining from peak (${prevRSI.toFixed(0)} → ${rsi.toFixed(0)})`, -30);
+  }
+
+  // ── RSI elevated and high
+  if (rsi != null && rsi > 75) {
+    add(`RSI overbought extreme at ${rsi.toFixed(0)}`, -25);
+  }
+
+  // ── Overextension vs 20-day MA (mutually exclusive: severe beats moderate)
+  const maPct = currentSignal?.maPct;
+  if (maPct != null) {
+    if (maPct > 20) add(`${maPct.toFixed(0)}% above 20-day MA — severe overextension`, -25);
+    else if (maPct >= 10) add(`${maPct.toFixed(0)}% above 20-day MA — moderate overextension`, -15);
+  }
+
+  // ── Hard resistance ceiling — price within 3% below the 52-week high or
+  // the recent 10-day swing high. Same window/approximation calcEntryTargetStop
+  // uses for target capping (bars: sorted is whatever ~100-125 trading days
+  // the screener fetched, not a true 252-day window).
+  const bars = currentSignal?.bars;
+  if (bars && bars.length && price != null) {
+    const high52 = Math.max(...bars.map(b => b.h));
+    const last10ExclToday = bars.slice(-11, -1);
+    const swingHigh10 = last10ExclToday.length ? Math.max(...last10ExclToday.map(b => b.h)) : null;
+    const near = (ceiling) => ceiling != null && price <= ceiling && price >= ceiling * 0.97;
+    if (near(high52)) add(`Within 3% of 52-week high ($${high52.toFixed(2)})`, -20);
+    else if (near(swingHigh10)) add(`Within 3% of 10-day swing high ($${swingHigh10.toFixed(2)})`, -20);
+  }
+
+  // ── Consecutive up days exhaustion
+  if ((currentSignal?.consUpDays ?? 0) >= 4) {
+    add(`${currentSignal.consUpDays} consecutive up days — exhaustion risk`, -20);
+  }
+
+  // ── Intraday gain giveup — today's high more than 3% above current price
+  const todayHigh = snap?.dailyBar?.h;
+  if (todayHigh != null && price != null && price > 0) {
+    const giveupPct = ((todayHigh - price) / price) * 100;
+    if (giveupPct > 3) add(`Gave back ${giveupPct.toFixed(0)}% off today's high`, -25);
+  }
+
+  // ── Volume declining on an up day
+  const prevClose = snap?.prevDailyBar?.c;
+  const todayUp = prevClose != null && price != null && price > prevClose;
+  if (todayUp && currentSignal?.volRatio != null && currentSignal.volRatio < 0.7) {
+    add(`Up today on thin volume (${currentSignal.volRatio.toFixed(1)}x) — distribution signal`, -15);
+  }
+
+  // ── Profit exceeds 2x target
+  if (position.target != null && position.buyPrice) {
+    const targetPct = ((position.target - position.buyPrice) / position.buyPrice) * 100;
+    const pnlPct = price != null ? ((price - position.buyPrice) / position.buyPrice) * 100 : null;
+    if (targetPct > 0 && pnlPct != null && pnlPct > targetPct * 2) {
+      add(`Profit ${pnlPct.toFixed(0)}% exceeds 2× target (${targetPct.toFixed(0)}%)`, -15);
+    }
+  }
+
+  // ── Well past duration window while still winning
+  const maxHold = MAX_HOLD_DAYS[position.duration];
+  if (maxHold != null && position.buyDate) {
+    const days = Math.floor((Date.now() - new Date(position.buyDate).getTime()) / 86400000);
+    const overdueDays = days - maxHold;
+    const pnlPct = price != null ? ((price - position.buyPrice) / position.buyPrice) * 100 : null;
+    if (overdueDays > 3 && pnlPct != null && pnlPct > 0) {
+      add(`${overdueDays} days past intended hold window, still winning`, -20);
+    }
+  }
+
+  const score = factors.reduce((sum, f) => sum + f.points, 0);
+  const topFactors = [...factors]
+    .sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
+    .slice(0, 3);
+
+  return { score, factors, topFactors };
 }
 
 // label -> CSS class per the Step 3 color mapping. Hard-floor label is
@@ -4191,12 +4343,14 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext) {
 function getUnifiedBannerClass(label) {
   if (label.startsWith('SELL NOW')) return 'ur-sell-now';
   return {
-    'SELL SOON':            'ur-sell-soon',
-    'CONSIDER SELLING':     'ur-consider-selling',
-    'HOLD — Mixed signals': 'ur-hold-mixed',
-    'HOLD':                 'ur-hold',
-    'HOLD STRONG':          'ur-hold-strong',
-    'HIGH CONVICTION HOLD': 'ur-high-conviction',
+    'SELL SOON':        'ur-sell-soon',
+    'CONSIDER SELLING': 'ur-consider-selling',
+    'HOLD':              'ur-hold',
+    // HOLD STRONG now spans what used to be HOLD STRONG + HIGH CONVICTION
+    // HOLD (Change 1 consolidation) — reuses the more prominent
+    // ur-high-conviction treatment rather than the plainer ur-hold-strong.
+    'HOLD STRONG':       'ur-high-conviction',
+    'LOCK IN PROFITS':   'ur-lock-profits',
   }[label] || 'ur-hold-mixed';
 }
 
@@ -4221,17 +4375,26 @@ function buildUnifiedPortfolioBanner(result) {
   if (result.hardFloor) {
     return `<div class="port-banner ur-banner ${cls}"><strong>${result.label}</strong></div>`;
   }
+  if (result.label === 'LOCK IN PROFITS') {
+    // Peak-risk factors only — the main composite factors that got the
+    // position to +30 are deliberately not shown here (Change 2 spec).
+    const pnlSign = result.pnlPct >= 0 ? '+' : '';
+    return `<div class="port-banner ur-banner ${cls}">
+      <div class="ur-label"><strong>${result.label}</strong></div>
+      <div class="ur-factors">
+        <div class="ur-factor ur-factor-up"><span>↑ Up ${pnlSign}${result.pnlPct.toFixed(0)}% — strong position</span></div>
+        ${result.peakRisk.topFactors.map(f => unifiedFactorLine(f, 'ur-factor')).join('')}
+      </div>
+      <div class="ur-exit-window">This is the exit window — consider selling now</div>
+    </div>`;
+  }
   const netSign = result.composite >= 0 ? '+' : '';
-  const conflictedNote = result.mixed
-    ? `<div class="ur-conflicted">Signals are conflicted — Groq analysis recommended</div>`
-    : '';
   return `<div class="port-banner ur-banner ${cls}">
     <div class="ur-label"><strong>${result.label}</strong></div>
     <div class="ur-factors">
       ${result.topFactors.map(f => unifiedFactorLine(f, 'ur-factor')).join('')}
       <div class="ur-net">Net: ${netSign}${result.composite}</div>
     </div>
-    ${conflictedNote}
   </div>`;
 }
 
@@ -4246,6 +4409,26 @@ function buildUnifiedRecommendationModalBlock(result) {
     </div>`;
   }
   const holdFactors = result.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points);
+  if (result.label === 'LOCK IN PROFITS') {
+    // Peak risk factors replace the normal sell-factor list here — the
+    // position isn't showing composite-level sell factors (composite is
+    // +30 or above), it's showing reversal risk instead (Change 2 spec).
+    const peakFactors = [...result.peakRisk.factors].sort((a, b) => a.points - b.points);
+    const compositeSign = result.composite >= 0 ? '+' : '';
+    return `<div class="ur-modal-block">
+      <div class="ur-modal-title">UNIFIED RECOMMENDATION</div>
+      <div class="ur-modal-headline ${cls}">${result.label} (composite ${compositeSign}${result.composite}, peak risk ${result.peakRisk.score})</div>
+      ${holdFactors.length ? `
+        <div class="ur-modal-group-label">Why the stock is still strong:</div>
+        ${holdFactors.map(f => unifiedFactorLine(f, 'ur-modal-factor')).join('')}
+      ` : ''}
+      ${peakFactors.length ? `
+        <div class="ur-modal-group-label">Why the exit window is closing:</div>
+        ${peakFactors.map(f => unifiedFactorLine(f, 'ur-modal-factor')).join('')}
+      ` : ''}
+      <div class="ur-modal-recommendation">Recommendation: The position is strong but reversal signals are building. This is the optimal exit zone — selling now preserves gains before momentum fades.</div>
+    </div>`;
+  }
   const sellFactors = result.factors.filter(f => f.points < 0).sort((a, b) => a.points - b.points);
   return `<div class="ur-modal-block">
     <div class="ur-modal-title">UNIFIED RECOMMENDATION</div>
@@ -4342,6 +4525,10 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       unified_composite_at_sale: record.unifiedCompositeAtSale,
       top_exit_factors_at_sale: record.topExitFactorsAtSale,
       top_hold_factors_at_sale: record.topHoldFactorsAtSale,
+      lock_in_profits_fired: record.lockInProfitsFired,
+      peak_risk_score_at_sale: record.peakRiskScoreAtSale,
+      peak_rsi_during_hold: record.peakRsiDuringHold,
+      top_peak_risk_factors_at_sale: record.topPeakRiskFactorsAtSale,
     }]);
     if (error) console.error('Supabase trade write failed:', error.message);
   } catch(e) {
@@ -4355,12 +4542,20 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
 function computeUnifiedSaleFields(pos, salePrice) {
   const currentSignal = state.signals.find(s => s.ticker === pos.ticker) || state.ownedScores[pos.ticker] || null;
   const ur = calcUnifiedRecommendation({ ...pos, currentPrice: salePrice, rsi: pos.rsiAtBuy }, currentSignal, state.macroContext);
+  // Independent of composite/hardFloor — tracked across the whole hold by
+  // renderPortfolioTab (Change 2), falls back to rsiAtBuy if this ticker was
+  // sold without ever being rendered in the Portfolio tab.
+  const peakRsiDuringHold = state.ownedPeakRSI[pos.ticker] ?? pos.rsiAtBuy ?? null;
   if (ur.hardFloor) {
     return {
       unifiedRecommendationAtSale: ur.label,
       unifiedCompositeAtSale: null,
       topExitFactorsAtSale: ['Stop-loss breach'],
       topHoldFactorsAtSale: [],
+      lockInProfitsFired: false,
+      peakRiskScoreAtSale: null,
+      topPeakRiskFactorsAtSale: [],
+      peakRsiDuringHold,
     };
   }
   return {
@@ -4368,6 +4563,10 @@ function computeUnifiedSaleFields(pos, salePrice) {
     unifiedCompositeAtSale: ur.composite,
     topExitFactorsAtSale: ur.factors.filter(f => f.points < 0).sort((a, b) => a.points - b.points).slice(0, 2).map(f => f.name),
     topHoldFactorsAtSale: ur.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points).slice(0, 2).map(f => f.name),
+    lockInProfitsFired: ur.label === 'LOCK IN PROFITS',
+    peakRiskScoreAtSale: ur.peakRisk ? ur.peakRisk.score : null,
+    topPeakRiskFactorsAtSale: ur.peakRisk ? ur.peakRisk.topFactors.map(f => f.name) : [],
+    peakRsiDuringHold,
   };
 }
 
@@ -4442,6 +4641,16 @@ function confirmMarkSold(posId) {
   state.portfolio = state.portfolio.filter(p => p.id !== posId);
   persist('sold');
   persist('portfolio');
+  // Clear this ticker's RSI-hold tracking now that it's sold, so a future
+  // re-buy of the same ticker starts a fresh hold rather than inheriting
+  // stale prev/peak RSI from this position — unless another open position
+  // on the same ticker still exists.
+  if (!state.portfolio.some(p => p.ticker === pos.ticker)) {
+    delete state.ownedPrevRSI[pos.ticker];
+    delete state.ownedPeakRSI[pos.ticker];
+    persist('ownedPrevRSI');
+    persist('ownedPeakRSI');
+  }
   writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct);
   closeModal();
   updateNavBadges();
@@ -4704,6 +4913,10 @@ function mapSupabaseTradeToSoldShape(row) {
     buySession: row.buy_session,
     subTenEntryAdjustment: row.sub10_adjustment,
     groqProbabilityAtBuy: row.groq_at_purchase,
+    lockInProfitsFired: !!row.lock_in_profits_fired,
+    peakRiskScoreAtSale: row.peak_risk_score_at_sale,
+    peakRsiDuringHold: row.peak_rsi_during_hold,
+    topPeakRiskFactorsAtSale: row.top_peak_risk_factors_at_sale || [],
   };
 }
 
@@ -4715,6 +4928,126 @@ function withTimeout(promise, ms, message) {
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
   ]);
+}
+
+// Winner Exit Timing Analysis (URE v2, Change 5) — evaluates whether LOCK IN
+// PROFITS exits, HOLD STRONG holds, and peak-RSI-during-hold actually lined
+// up with good outcomes. Some metrics need peakPrice, which
+// mapSupabaseTradeToSoldShape() leaves null (not tracked in Supabase) — those
+// specific lines degrade to a labeled '—' rather than showing wrong numbers
+// when the report is Supabase-sourced (the default path).
+async function buildWinnerExitTimingSection(sold) {
+  const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : 0;
+
+  const lockInTrades = sold.filter(s => s.lockInProfitsFired);
+  const holdStrongTrades = sold.filter(s => s.unifiedRecommendationAtSale === 'HOLD STRONG');
+  const peakPriceUnavailable = sold.some(s => s.peakPrice == null);
+
+  const lockInBlock = (() => {
+    if (!lockInTrades.length) return `Trades where LOCK IN PROFITS was showing at time of sale:
+  No completed trades with LOCK IN PROFITS on record yet.`;
+    const wins = lockInTrades.filter(s => s.pnlPct > 0);
+    const withPeak = lockInTrades.filter(s => s.peakPrice != null && s.buyPrice);
+    const gainPreserved = withPeak.length
+      ? `${avg(withPeak, s => {
+          const peakGainPct = ((s.peakPrice - s.buyPrice) / s.buyPrice) * 100;
+          return peakGainPct > 0 ? (s.pnlPct / peakGainPct) * 100 : 100;
+        }).toFixed(1)}%`
+      : '— (peakPrice not tracked for this data source)';
+    return `Trades where LOCK IN PROFITS was showing at time of sale:
+  Total: ${lockInTrades.length} | win rate ${(wins.length/lockInTrades.length*100).toFixed(0)}% | avg outcome ${avg(lockInTrades, s=>s.pnlPct).toFixed(1)}%
+  Avg gain preserved at exit: ${gainPreserved}`;
+  })();
+
+  const holdStrongBlock = await (async () => {
+    if (!holdStrongTrades.length) return `Trades where HOLD STRONG was showing at time of sale:
+  No completed trades with HOLD STRONG on record yet.`;
+    const wins = holdStrongTrades.filter(s => s.pnlPct > 0);
+    // Capped at the 25 most recent trades — this metric needs a live
+    // next-day bar fetch per trade (no stored field for it), so the cap
+    // bounds report-generation time/API calls regardless of history size.
+    const sample = [...holdStrongTrades]
+      .filter(s => s.sellDate)
+      .sort((a, b) => new Date(b.sellDate) - new Date(a.sellDate))
+      .slice(0, 25);
+    const whatIfResults = await Promise.all(sample.map(async s => {
+      const nextClose = await fetchNextDayClose(s.ticker, s.sellDate);
+      return nextClose != null ? ((nextClose - s.sellPrice) / s.sellPrice) * 100 : null;
+    }));
+    const validWhatIf = whatIfResults.filter(v => v != null);
+    const whatIfLine = validWhatIf.length
+      ? `${(validWhatIf.reduce((a,b)=>a+b,0)/validWhatIf.length).toFixed(1)}% (${validWhatIf.length} of ${sample.length} most recent trades)`
+      : 'not available (no next-day bar data for the sampled trades)';
+    return `Trades where HOLD STRONG was showing at time of sale:
+  Total: ${holdStrongTrades.length} | win rate ${(wins.length/holdStrongTrades.length*100).toFixed(0)}% | avg outcome ${avg(holdStrongTrades, s=>s.pnlPct).toFixed(1)}%
+  What-if: avg outcome if held 1 more day: ${whatIfLine}
+  (based on next day's close vs sale price)`;
+  })();
+
+  const heldPastBlock = (() => {
+    const withPeak = sold.filter(s => s.peakPrice != null && s.buyPrice && (s.peakRsiDuringHold ?? 0) > 70);
+    if (!withPeak.length) {
+      return `Trades where you held PAST a LOCK IN PROFITS signal:
+  (approximated: trades where peak RSI during hold exceeded 70
+   but final outcome was lower than peak unrealized gain)
+  No qualifying trades on record yet${peakPriceUnavailable ? " (peakPrice isn't tracked for Supabase-sourced trades)" : ''}.`;
+    }
+    const heldPast = withPeak.filter(s => {
+      const peakGainPct = ((s.peakPrice - s.buyPrice) / s.buyPrice) * 100;
+      return s.pnlPct < peakGainPct;
+    });
+    const avgGiven = heldPast.length
+      ? avg(heldPast, s => (((s.peakPrice - s.buyPrice) / s.buyPrice) * 100) - s.pnlPct).toFixed(1)
+      : '0.0';
+    return `Trades where you held PAST a LOCK IN PROFITS signal:
+  (approximated: trades where peak RSI during hold exceeded 70
+   but final outcome was lower than peak unrealized gain)
+  Total: ${heldPast.length} | avg gain given back: ${avgGiven}%`;
+  })();
+
+  const rsiBucketBlock = (() => {
+    const withRsi = sold.filter(s => s.peakRsiDuringHold != null);
+    if (!withRsi.length) {
+      return `Peak RSI reached during hold vs final outcome:
+  No completed trades with peak RSI tracking on record yet.`;
+    }
+    const bucket = (label, predicate) => {
+      const t = withRsi.filter(predicate);
+      return `  ${label.padEnd(28)}${t.length} trades | avg outcome ${t.length ? avg(t, s=>s.pnlPct).toFixed(1) : '—'}%`;
+    };
+    return `Peak RSI reached during hold vs final outcome:
+${bucket('Peak RSI <65 during hold:', s => s.peakRsiDuringHold < 65)}
+${bucket('Peak RSI 65-75 during hold:', s => s.peakRsiDuringHold >= 65 && s.peakRsiDuringHold <= 75)}
+${bucket('Peak RSI 75+ during hold:', s => s.peakRsiDuringHold > 75)}`;
+  })();
+
+  const peakFactorsBlock = (() => {
+    if (!lockInTrades.length) {
+      return `Most common peak risk factors at time of LOCK IN PROFITS exits:
+  No LOCK IN PROFITS exits on record yet.`;
+    }
+    const counts = {};
+    lockInTrades.forEach(s => (s.topPeakRiskFactorsAtSale || []).forEach(name => { counts[name] = (counts[name] || 0) + 1; }));
+    const ranked = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 3);
+    if (!ranked.length) {
+      return `Most common peak risk factors at time of LOCK IN PROFITS exits:
+  No peak risk factor data on record for these exits yet.`;
+    }
+    return `Most common peak risk factors at time of LOCK IN PROFITS exits:
+${ranked.map(([name, n], i) => `  ${i+1}. ${name}: fired in ${n} of ${lockInTrades.length} LOCK IN PROFITS exits`).join('\n')}`;
+  })();
+
+  return `=== WINNER EXIT TIMING ANALYSIS ===
+
+${lockInBlock}
+
+${holdStrongBlock}
+
+${heldPastBlock}
+
+${rsiBucketBlock}
+
+${peakFactorsBlock}`;
 }
 
 async function generateClaudeReport() {
@@ -4731,7 +5064,7 @@ async function generateClaudeReport() {
     if (error) throw error;
     if (data && data.length) {
       sold = data.map(mapSupabaseTradeToSoldShape);
-      dataSourceNote = `Data source: Supabase database (${sold.length} trades)\nNote: near-miss, ATR-trim, and some momentum-protection detail aren't tracked in Supabase — those sections will show limited data for this run.`;
+      dataSourceNote = `Data source: Supabase database (${sold.length} trades)\nNote: near-miss, ATR-trim, peak price, and some momentum-protection detail aren't tracked in Supabase — those sections will show limited data for this run.`;
     } else {
       sold = state.sold;
       dataSourceNote = `Data source: localStorage fallback (${sold.length} trades)`;
@@ -4754,6 +5087,7 @@ async function generateClaudeReport() {
   }
 
   const ratingSnapshotSection = await buildRatingSnapshotHistorySection(sold);
+  const winnerExitTimingSection = await buildWinnerExitTimingSection(sold);
 
   const now = new Date();
   const dateStr = now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
@@ -5195,6 +5529,8 @@ ${topFactorsFor(s => s.unifiedRecommendationAtSale.startsWith('SELL NOW'), 'topE
 Top factors that appeared most in HIGH CONVICTION HOLD:
 ${topFactorsFor(s => s.unifiedRecommendationAtSale === 'HIGH CONVICTION HOLD', 'topHoldFactorsAtSale', 'case')}`;
 })()}
+
+${winnerExitTimingSection}
 
 ${ratingSnapshotSection}
 
@@ -6223,7 +6559,7 @@ function updateNavBadges() {
         const price = state.portfolioPrices[p.ticker] || p.buyPrice;
         const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
         const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy }, currentSignal, state.macroContext);
-        if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING'].includes(result.label)) warnCount++;
+        if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(result.label)) warnCount++;
       });
     }
     pfBadge.textContent = warnCount;

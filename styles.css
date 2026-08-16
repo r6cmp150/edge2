@@ -814,6 +814,9 @@ a { color: var(--blue); }
   background: rgba(0,255,136,0.22); border-color: var(--green); color: var(--green);
   font-size: 15px;
 }
+.ur-lock-profits {
+  background: rgba(122,92,0,0.3); border-color: #ffd166; color: #ffd166;
+}
 
 /* Portfolio banner — Line 1 label + Line 2 top factors, per Step 4 spec */
 .ur-banner { text-align: left; }
@@ -838,15 +841,15 @@ a { color: var(--blue); }
   opacity: 0.6;
   font-weight: 700;
 }
-.ur-conflicted {
+.ur-exit-window {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px dashed var(--border);
+  border-top: 1px dashed #ffd166;
   font-family: var(--sans);
   font-size: 11px;
-  font-weight: 400;
+  font-weight: 700;
   letter-spacing: normal;
-  color: var(--yellow);
+  color: #ffd166;
   text-align: center;
 }
 
@@ -886,6 +889,15 @@ a { color: var(--blue); }
   font-family: var(--mono);
   font-size: 12px;
   padding: 2px 0 2px 8px;
+}
+.ur-modal-recommendation {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #ffd166;
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ffd166;
 }
 
 /* ── Portfolio Card ── */
