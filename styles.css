@@ -316,6 +316,12 @@ a { color: var(--blue); }
   border-color: rgba(74,96,112,0.35);
 }
 .signal-toggle-watch.active { background: rgba(74,96,112,0.2); }
+.signal-toggle-catalyst {
+  background: rgba(0,180,216,0.1);
+  color: var(--blue);
+  border-color: rgba(0,180,216,0.35);
+}
+.signal-toggle-catalyst.active { background: rgba(0,180,216,0.2); }
 
 /* ── Scan Summary ── */
 .scan-summary {

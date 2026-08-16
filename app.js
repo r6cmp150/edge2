@@ -798,7 +798,7 @@ let state = {
   news: [],
   lastScanTime: null,
   activeTab: 'signals',
-  filters: { priceRange: 'all', duration: 'all' },
+  filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
   signalToggles: { strongBuy: true, softBuy: true, watch: true },
   aiCache: {},         // ticker → {bullets, tip} — session only
   portfolioPrices: {}, // ticker → live price — session only
@@ -2573,6 +2573,7 @@ function renderFilterButtons() {
       <button class="signal-toggle signal-toggle-strong ${t.strongBuy?'active':''}" onclick="toggleSignal('strongBuy')">STRONG BUY</button>
       <button class="signal-toggle signal-toggle-soft ${t.softBuy?'active':''}" onclick="toggleSignal('softBuy')">SOFT BUY</button>
       <button class="signal-toggle signal-toggle-watch ${t.watch?'active':''}" onclick="toggleSignal('watch')">WATCH</button>
+      <button class="signal-toggle signal-toggle-catalyst ${state.filters.catalystOnly?'active':''}" onclick="toggleCatalystFilter()">CATALYST</button>
     </div>
     <div class="filter-label">Price Range</div>
     <div class="filter-row">
@@ -2608,6 +2609,11 @@ function toggleSignal(category) {
   renderSignalsTab();
 }
 
+function toggleCatalystFilter() {
+  state.filters.catalystOnly = !state.filters.catalystOnly;
+  renderSignalsTab();
+}
+
 function sigToggleKey(signal) {
   if (signal === 'STRONG BUY' || signal === 'BUY') return 'strongBuy';
   if (signal === 'SOFT BUY') return 'softBuy';
@@ -2619,7 +2625,8 @@ function getFilteredSignals() {
     // Already-owned positions don't belong in buy-signal results.
     if (getOwnedPosition(s.ticker)) return false;
     if (!state.signalToggles[sigToggleKey(s.signal)]) return false;
-    const { priceRange, duration } = state.filters;
+    const { priceRange, duration, catalystOnly } = state.filters;
+    if (catalystOnly && !s.catalystSetup) return false;
     if (priceRange !== 'all' && s.priceRange !== priceRange) return false;
     if (duration !== 'all' && s.duration !== duration) return false;
     return true;
