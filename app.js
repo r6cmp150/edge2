@@ -1,7 +1,12 @@
 'use strict';
 // ================================================================
-// EDGE Trade Signals — app.js  v2.4.0
+// EDGE Trade Signals — app.js  v2.5.0
 // ================================================================
+
+// Pristine index.html body, captured before anything (PIN screen, data
+// loading screen) ever overwrites document.body.innerHTML — restored by
+// runDataLoadAndInit() once Portfolio/Settings finish loading from Supabase.
+const APP_SHELL_HTML = document.body.innerHTML;
 
 // ── 0. PIN GATE ──────────────────────────────────────────────────
 // Runs before anything else. Default PIN hash is SHA-256("0684");
@@ -174,7 +179,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.4.0';
+const VERSION = 'v2.5.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
@@ -818,7 +823,10 @@ let state = {
 };
 
 function loadState() {
-  ['settings','portfolio','sold','signals','lastScanTime','news','signalToggles','lastPassedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI'].forEach(k => {
+  // portfolio and settings are Supabase-backed now (Data Migration project,
+  // Step 4) — no longer read from localStorage here at all. See
+  // runDataLoadAndInit(), which fetches both right after this runs.
+  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -827,6 +835,31 @@ function loadState() {
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
     forcePreMarketMode: false
   }, state.settings);
+  // API keys live in their own localStorage key, edge_apiKeys — authoritative
+  // once present. If it doesn't exist yet but the legacy edge_settings blob
+  // does (a user who saved keys before this update and hasn't resaved them
+  // since), self-heal once: pull the key fields out of the old blob, apply
+  // them, and persist them into edge_apiKeys immediately so this fallback
+  // never has to run again. Needed because edge_settings is no longer read
+  // into state.settings by the loop above at all (Step 4) — without this,
+  // those users would silently lose access to already-saved keys.
+  try {
+    const rawKeys = localStorage.getItem('edge_apiKeys');
+    if (rawKeys) {
+      Object.assign(state.settings, JSON.parse(rawKeys));
+    } else {
+      const legacyRaw = localStorage.getItem('edge_settings');
+      if (legacyRaw) {
+        const legacy = JSON.parse(legacyRaw);
+        if (legacy.alpacaKey || legacy.alpacaSecret || legacy.groqKey) {
+          state.settings.alpacaKey = legacy.alpacaKey || '';
+          state.settings.alpacaSecret = legacy.alpacaSecret || '';
+          state.settings.groqKey = legacy.groqKey || '';
+          persistApiKeys();
+        }
+      }
+    }
+  } catch(e) {}
   state.notifications = Object.assign({
     enabled: true, permission: 'default',
     lastPriceCheck: null, lastDailyCheck: null, alertHistory: {}
@@ -840,25 +873,31 @@ function loadState() {
   TICKERS = baseList.length ? baseList : MASTER_TICKERS;
 }
 
+function persistApiKeys() {
+  try {
+    localStorage.setItem('edge_apiKeys', JSON.stringify({
+      alpacaKey: state.settings.alpacaKey,
+      alpacaSecret: state.settings.alpacaSecret,
+      groqKey: state.settings.groqKey,
+    }));
+  } catch(e) {}
+}
+
 function persist(key) {
   try { localStorage.setItem('edge_' + key, JSON.stringify(state[key])); } catch(e) {}
 }
 
-// Single source of truth for "is this ticker in Portfolio". Reads localStorage
-// directly rather than state.portfolio so it can never disagree with what's
-// actually persisted, and normalizes both sides so casing/whitespace can't
-// cause a false negative.
+// Single source of truth for "is this ticker in Portfolio". Portfolio is
+// Supabase-backed (Data Migration project) — state.portfolio is populated
+// from Supabase at app init and kept current by every write in Step 5, so
+// it's now the reliable source itself rather than a copy that could drift
+// from localStorage. Normalizes both sides so casing/whitespace can't cause
+// a false negative.
 function getOwnedPosition(ticker) {
-  let portfolio = [];
-  try {
-    const raw = localStorage.getItem('edge_portfolio');
-    portfolio = raw ? JSON.parse(raw) : [];
-  } catch(e) { portfolio = []; }
-
   const needle = String(ticker || '').trim().toUpperCase();
   if (!needle) return null;
 
-  return portfolio.find(p => String(p.ticker || '').trim().toUpperCase() === needle) || null;
+  return state.portfolio.find(p => String(p.ticker || '').trim().toUpperCase() === needle) || null;
 }
 
 // ── 3. PACIFIC TIME / MARKET STATUS ─────────────────────────────
@@ -3666,11 +3705,11 @@ function openAddPortfolioModal(ticker) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-success" style="flex:1" onclick="confirmAddPortfolio('${ticker}')">+ Add Position</button>
+      <button class="btn btn-success" style="flex:1" onclick="confirmAddPortfolio('${ticker}', this)">+ Add Position</button>
     </div>`);
 }
 
-function confirmAddPortfolio(ticker) {
+async function confirmAddPortfolio(ticker, btn) {
   const shares = parseFloat(document.getElementById('pf-shares').value);
   const price  = parseFloat(document.getElementById('pf-price').value);
   const date   = document.getElementById('pf-date').value;
@@ -3721,8 +3760,21 @@ function confirmAddPortfolio(ticker) {
     })(),
   };
 
+  // Supabase is now the source of truth for portfolio (Data Migration
+  // project, Step 5) — await the write and only reflect it locally on
+  // success, so state.portfolio can never show a position that isn't
+  // actually saved. On failure, leave the modal open so the user can retry
+  // rather than silently losing the add.
+  if (btn) btn.disabled = true;
+  try {
+    await savePositionToSupabase(position);
+  } catch(e) {
+    alert('Could not save position to Supabase: ' + e.message);
+    if (btn) btn.disabled = false;
+    return;
+  }
+
   state.portfolio.push(position);
-  persist('portfolio');
   closeModal();
   updateNavBadges();
   switchTab('portfolio');
@@ -3811,21 +3863,27 @@ async function renderPortfolioTab() {
     // Update peak + Momentum Protection state (Rule 1). Activation is sticky —
     // once true it never reverts, even if price later pulls back under +20%,
     // so RSI/target suspension (Rule 2) doesn't flicker on and off.
+    // Supabase writes below are fire-and-forget (errors logged, not thrown) —
+    // these are passive background refinements during a render, not a user
+    // action, so blocking the whole Portfolio tab on a network round-trip
+    // per position per field would be a real UX regression. Unlike
+    // confirmAddPortfolio()/confirmMarkSold() (Step 5), a lost write here
+    // just gets recomputed and re-sent on the next render.
     if (currentPrice > (p.peakPrice || 0)) {
       p.peakPrice = currentPrice;
       p.peakPriceDate = new Date().toISOString().split('T')[0];
-      persist('portfolio');
+      savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
     if (!p.momentumProtectionActivated && p.peakPrice >= p.buyPrice * 1.20) {
       p.momentumProtectionActivated = true;
-      persist('portfolio');
+      savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
     // Rule 5 support: first time RSI hits the (soon-to-be-suspended) 72+ threshold
     // while protected, snapshot the gain% at that instant — sticky, never overwritten —
     // so the report can later show what an RSI-based exit would have left on the table.
     if (p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
       p.rsiSuspendedAtGainPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
-      persist('portfolio');
+      savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
 
     state.portfolioPrices[p.ticker] = currentPrice;
@@ -4474,7 +4532,7 @@ function openMarkSoldModal(posId, currentPrice) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-danger" style="flex:1" onclick="confirmMarkSold('${posId}')">Confirm Sale</button>
+      <button class="btn btn-danger" style="flex:1" onclick="confirmMarkSold('${posId}', this)">Confirm Sale</button>
     </div>`);
 
   window._saleDecision = 'app';
@@ -4570,13 +4628,27 @@ function computeUnifiedSaleFields(pos, salePrice) {
   };
 }
 
-function confirmMarkSold(posId) {
+async function confirmMarkSold(posId, btn) {
   const salePrice = parseFloat(document.getElementById('sold-price').value);
   const saleDate  = document.getElementById('sold-date').value;
   if (!salePrice || isNaN(salePrice)) { alert('Enter sale price.'); return; }
 
   const pos = state.portfolio.find(p => p.id === posId);
   if (!pos) { closeModal(); return; }
+
+  // Supabase is now the source of truth for portfolio — await the delete
+  // and only remove the position locally (move it to Sold) on success. A
+  // silent failure here would leave the position "sold" locally but still
+  // open in Supabase, which the next reload would resurrect as an open
+  // position while it's also sitting in Sold history.
+  if (btn) btn.disabled = true;
+  try {
+    await deletePositionFromSupabase(pos.id);
+  } catch(e) {
+    alert('Could not remove position from Supabase: ' + e.message);
+    if (btn) btn.disabled = false;
+    return;
+  }
 
   const days = Math.floor((new Date(saleDate) - new Date(pos.buyDate)) / 86400000);
   const pnlDollar = (salePrice - pos.buyPrice) * pos.shares;
@@ -4640,7 +4712,6 @@ function confirmMarkSold(posId) {
   state.sold.unshift(record);
   state.portfolio = state.portfolio.filter(p => p.id !== posId);
   persist('sold');
-  persist('portfolio');
   // Clear this ticker's RSI-hold tracking now that it's sold, so a future
   // re-buy of the same ticker starts a fresh hold rather than inheriting
   // stale prev/peak RSI from this position — unless another open position
@@ -4851,6 +4922,161 @@ ${topTickersText}
 
 Tickers appearing in both snapshots and trades:
 ${correlationText}`;
+}
+
+// ── PORTFOLIO / SETTINGS SUPABASE MIGRATION ────────────────────────
+// Read/write functions for the `portfolio` and `settings` tables (Data
+// Migration project). Not wired into the app yet — loadState()/persist()
+// still own portfolio and settings until the later wiring step.
+//
+// Unlike writeTradeToSupabase()/writeRatingSnapshots() above, which swallow
+// errors internally (console.error + return, since a failed historical-data
+// write shouldn't block the UI action that triggered it), these THROW on
+// error instead. That's deliberate: the migration button and app-init read
+// path both need to catch a real failure and show it explicitly rather than
+// silently continuing — swallowing the error here would defeat the point.
+
+// position.id (client Date.now().toString()) <-> portfolio.position_id.
+// buy_date/peak_price_date come back from Postgres as full timestamptz
+// strings; sliced to plain yyyy-mm-dd since that's the format the rest of
+// the app assumes (e.g. the p.buyDate.split('-') display code).
+function mapSupabasePortfolioRowToPosition(row) {
+  return {
+    id: row.position_id,
+    ticker: row.ticker,
+    company: row.company,
+    shares: row.shares,
+    buyPrice: row.buy_price,
+    buyDate: row.buy_date ? row.buy_date.split('T')[0] : row.buy_date,
+    target: row.target,
+    stop: row.stop,
+    duration: row.duration,
+    scoreAtBuy: row.score_at_buy,
+    rsiAtBuy: row.rsi_at_buy,
+    volRatioAtBuy: row.vol_ratio_at_buy,
+    riskAtBuy: row.risk_at_buy,
+    newsAtBuy: row.news_at_buy,
+    signalsFiredAtBuy: row.signals_fired_at_buy || [],
+    volBuildNearMiss: row.vol_build_near_miss,
+    meanReversionNearMiss: row.mean_reversion_near_miss,
+    cappedByAtBuy: row.capped_by_at_buy,
+    rawAtrAtBuy: row.raw_atr_at_buy,
+    trimmedAtrAtBuy: row.trimmed_atr_at_buy,
+    macroConditionAtBuy: row.macro_condition_at_buy,
+    thresholdAtBuy: row.threshold_at_buy,
+    catalystSetup: !!row.catalyst_setup,
+    peakPrice: row.peak_price,
+    peakPriceDate: row.peak_price_date ? row.peak_price_date.split('T')[0] : row.peak_price_date,
+    momentumProtectionActivated: !!row.momentum_protection_activated,
+    rsiSuspendedAtGainPct: row.rsi_suspended_at_gain_pct,
+    buyTime: row.buy_time,
+    buyDayOfWeek: row.buy_day_of_week,
+    buySession: row.buy_session,
+    subTenEntryAdjustment: row.sub_ten_entry_adjustment,
+    groqProbabilityAtBuy: row.groq_probability_at_buy,
+  };
+}
+
+function mapPositionToSupabaseRow(position) {
+  return {
+    position_id: position.id,
+    ticker: position.ticker,
+    company: position.company,
+    shares: position.shares,
+    buy_price: position.buyPrice,
+    buy_date: position.buyDate,
+    target: position.target,
+    stop: position.stop,
+    duration: position.duration,
+    score_at_buy: position.scoreAtBuy,
+    rsi_at_buy: position.rsiAtBuy,
+    vol_ratio_at_buy: position.volRatioAtBuy,
+    risk_at_buy: position.riskAtBuy,
+    news_at_buy: position.newsAtBuy,
+    signals_fired_at_buy: position.signalsFiredAtBuy || [],
+    vol_build_near_miss: position.volBuildNearMiss,
+    mean_reversion_near_miss: position.meanReversionNearMiss,
+    capped_by_at_buy: position.cappedByAtBuy,
+    raw_atr_at_buy: position.rawAtrAtBuy,
+    trimmed_atr_at_buy: position.trimmedAtrAtBuy,
+    macro_condition_at_buy: position.macroConditionAtBuy,
+    threshold_at_buy: position.thresholdAtBuy,
+    catalyst_setup: !!position.catalystSetup,
+    peak_price: position.peakPrice,
+    peak_price_date: position.peakPriceDate,
+    momentum_protection_activated: !!position.momentumProtectionActivated,
+    rsi_suspended_at_gain_pct: position.rsiSuspendedAtGainPct,
+    buy_time: position.buyTime,
+    buy_day_of_week: position.buyDayOfWeek,
+    buy_session: position.buySession,
+    sub_ten_entry_adjustment: position.subTenEntryAdjustment,
+    groq_probability_at_buy: position.groqProbabilityAtBuy,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+async function loadPortfolioFromSupabase() {
+  const { data, error } = await supabaseClient.from('portfolio').select('*').order('buy_date', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(mapSupabasePortfolioRowToPosition);
+}
+
+async function savePortfolioToSupabase(portfolio) {
+  if (!portfolio.length) return;
+  const rows = portfolio.map(mapPositionToSupabaseRow);
+  const { error } = await supabaseClient.from('portfolio').upsert(rows, { onConflict: 'position_id' });
+  if (error) throw error;
+}
+
+async function savePositionToSupabase(position) {
+  const row = mapPositionToSupabaseRow(position);
+  const { error } = await supabaseClient.from('portfolio').upsert([row], { onConflict: 'position_id' });
+  if (error) throw error;
+}
+
+async function deletePositionFromSupabase(positionId) {
+  const { error } = await supabaseClient.from('portfolio').delete().eq('position_id', positionId);
+  if (error) throw error;
+}
+
+// settings has no natural unique key (single-row table, no auth/RLS scoping
+// per the migration's explicit scope) — read-then-write against whatever row
+// currently has the highest id, insert a fresh row only if none exists yet.
+// API keys/PIN are intentionally absent from both directions; the caller is
+// responsible for merging those back in from localStorage.
+async function loadSettingsFromSupabase() {
+  const { data, error } = await supabaseClient
+    .from('settings').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    budget: data.budget,
+    includeUnder2: !!data.include_under2,
+    showWatch: !!data.show_watch,
+    minVolume: data.min_volume,
+    forcePreMarketMode: !!data.force_pre_market_mode,
+  };
+}
+
+async function saveSettingsToSupabase(settings) {
+  const row = {
+    budget: settings.budget,
+    include_under2: !!settings.includeUnder2,
+    show_watch: !!settings.showWatch,
+    min_volume: settings.minVolume,
+    force_pre_market_mode: !!settings.forcePreMarketMode,
+    updated_at: new Date().toISOString(),
+  };
+  const { data: existing, error: selectError } = await supabaseClient
+    .from('settings').select('id').order('id', { ascending: false }).limit(1).maybeSingle();
+  if (selectError) throw selectError;
+  if (existing) {
+    const { error } = await supabaseClient.from('settings').update(row).eq('id', existing.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabaseClient.from('settings').insert([row]);
+    if (error) throw error;
+  }
 }
 
 // Normalizes a Supabase trades row (snake_case, ~30 columns) into the same
@@ -5823,7 +6049,7 @@ function renderSettingsTab() {
         <span class="mono muted">${VERSION}</span>
       </div>
       <div class="settings-row">
-        <button class="btn btn-ghost btn-sm" onclick="exportAllData()">Export All Data</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportAllData(this)">Export All Data</button>
         <button class="btn btn-danger btn-sm" onclick="clearAllData()">Clear All Data</button>
       </div>
     </div>
@@ -6245,32 +6471,59 @@ function saveApiKeys() {
   state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || '';
   state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || '';
   state.settings.groqKey      = document.getElementById('set-groq-key')?.value.trim() || '';
-  persist('settings');
+  persistApiKeys();
   alert('API keys saved.');
 }
 
-function saveBudget() {
+async function saveBudget() {
+  const prev = state.settings.budget;
   state.settings.budget = parseFloat(document.getElementById('set-budget')?.value) || 500;
-  persist('settings');
+  try {
+    await saveSettingsToSupabase(state.settings);
+  } catch(e) {
+    state.settings.budget = prev;
+    alert('Could not save budget to Supabase: ' + e.message);
+    return;
+  }
   updateBudgetBar();
   alert('Budget saved.');
 }
 
-function savePref(key, val) {
+async function savePref(key, val) {
+  const prev = state.settings[key];
   state.settings[key] = val;
-  persist('settings');
+  try {
+    await saveSettingsToSupabase(state.settings);
+  } catch(e) {
+    state.settings[key] = prev;
+    alert('Could not save setting to Supabase: ' + e.message);
+    renderSettingsTab();
+  }
 }
 
 // TESTING ONLY — see getMarketStatus()/isPreMarketHours() overrides above.
-function toggleForcePreMarketMode(checked) {
+async function toggleForcePreMarketMode(checked) {
   state.settings.forcePreMarketMode = checked;
-  persist('settings');
+  try {
+    await saveSettingsToSupabase(state.settings);
+  } catch(e) {
+    state.settings.forcePreMarketMode = !checked;
+    alert('Could not save setting to Supabase: ' + e.message);
+    renderSettingsTab();
+    return;
+  }
   updateMarketBanner();
 }
 
-function setMinVol(val) {
+async function setMinVol(val) {
+  const prev = state.settings.minVolume;
   state.settings.minVolume = val;
-  persist('settings');
+  try {
+    await saveSettingsToSupabase(state.settings);
+  } catch(e) {
+    state.settings.minVolume = prev;
+    alert('Could not save setting to Supabase: ' + e.message);
+  }
   renderSettingsTab();
 }
 
@@ -6283,7 +6536,7 @@ async function testConnections() {
   state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
   state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
   state.settings.groqKey      = document.getElementById('set-groq-key')?.value.trim() || state.settings.groqKey;
-  persist('settings');
+  persistApiKeys();
 
   const [alpOk, groqOk, supaOk] = await Promise.all([testAlpacaConnection(), testGroqConnection(), testSupabaseConnection()]);
   el.innerHTML = `<div class="test-result">
@@ -6293,21 +6546,42 @@ async function testConnections() {
   </div>`;
 }
 
-function exportAllData() {
-  const data = {
-    version: VERSION,
-    exported: new Date().toISOString(),
-    settings: { ...state.settings, alpacaKey:'[REDACTED]', alpacaSecret:'[REDACTED]', groqKey:'[REDACTED]' },
-    portfolio: state.portfolio,
-    sold: state.sold,
-  };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url;
-  a.download = `edge-backup-${new Date().toISOString().split('T')[0]}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+// Sources fresh from Supabase rather than in-memory state (Data Migration
+// project, Step 7) — portfolio/settings via the same functions app init
+// uses, trades via the same query/mapper generateClaudeReport() uses for its
+// localStorage fallback. Never touches localStorage, so this still works
+// after Step 6's cleanup has wiped the old local copies. Output JSON shape
+// (version/exported/settings/portfolio/sold keys, redacted key placeholders)
+// is unchanged from before — only the data source moved.
+async function exportAllData(btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const [portfolio, settings, tradesRes] = await Promise.all([
+      loadPortfolioFromSupabase(),
+      loadSettingsFromSupabase(),
+      supabaseClient.from('trades').select('*').order('buy_date', { ascending: true }),
+    ]);
+    if (tradesRes.error) throw tradesRes.error;
+
+    const data = {
+      version: VERSION,
+      exported: new Date().toISOString(),
+      settings: { ...(settings || {}), alpacaKey:'[REDACTED]', alpacaSecret:'[REDACTED]', groqKey:'[REDACTED]' },
+      portfolio,
+      sold: (tradesRes.data || []).map(mapSupabaseTradeToSoldShape),
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `edge-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) {
+    alert('Could not export data from Supabase: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function clearAllData() {
@@ -6580,14 +6854,78 @@ function startClock() {
 
 // ── 24. INIT ─────────────────────────────────────────────────────
 
-async function init() {
-  loadState();
+// Fetches Portfolio and Settings from Supabase and populates state with
+// them (Data Migration project, Step 4). A missing settings row or an empty
+// portfolio table is a normal "nothing migrated yet" state, not a failure —
+// state.settings keeps the defaults loadState() already filled in, and
+// state.portfolio just stays []. A real Supabase error propagates up to the
+// caller, which is what drives the error-with-retry screen rather than a
+// silent localStorage fallback.
+async function loadPortfolioAndSettingsFromSupabase() {
+  const [portfolio, settings] = await Promise.all([
+    loadPortfolioFromSupabase(),
+    loadSettingsFromSupabase(),
+  ]);
+  state.portfolio = portfolio;
+  if (settings) Object.assign(state.settings, settings);
+}
+
+function renderDataLoadingScreen() {
+  document.body.innerHTML = `
+    <div class="pin-screen">
+      <div class="pin-title">EDGE2</div>
+      <div class="pin-subtitle">Loading your data…</div>
+      <div style="margin-top:24px"><span class="spinner"></span></div>
+    </div>`;
+}
+
+function renderDataLoadErrorScreen(message) {
+  document.body.innerHTML = `
+    <div class="pin-screen">
+      <div class="pin-title">EDGE2</div>
+      <div class="pin-subtitle" style="color:var(--red)">Couldn't load your data</div>
+      <div class="pin-error" style="display:block;margin-top:8px">${message}</div>
+      <button class="pin-submit" style="margin-top:24px" onclick="retryDataLoad()">Retry</button>
+    </div>`;
+}
+
+async function retryDataLoad() {
+  await runDataLoadAndInit();
+}
+
+// Permanently removes the old localStorage portfolio/settings entries.
+// Only ever called after a successful Supabase fetch (never on failure —
+// a failed fetch means Supabase couldn't be confirmed as having the data,
+// so the old copy stays put rather than being destroyed for nothing). By
+// this point loadState()'s one-time self-heal has already migrated any
+// legacy embedded API keys into edge_apiKeys, so this can safely wipe
+// edge_settings in full without touching the keys.
+function clearLegacyPortfolioSettingsStorage() {
+  localStorage.removeItem('edge_portfolio');
+  localStorage.removeItem('edge_settings');
+}
+
+async function runDataLoadAndInit() {
+  renderDataLoadingScreen();
+  try {
+    await loadPortfolioAndSettingsFromSupabase();
+  } catch(e) {
+    renderDataLoadErrorScreen(e.message || 'Unknown error — check your connection and try again.');
+    return;
+  }
+  clearLegacyPortfolioSettingsStorage();
+  document.body.innerHTML = APP_SHELL_HTML;
   await registerServiceWorker();
   await requestNotificationPermission();
   startClock();
   startNotificationChecks();
   renderSignalsTab();
   updateNavBadges();
+}
+
+async function init() {
+  loadState();
+  await runDataLoadAndInit();
 }
 
 if (isPinVerified()) {
