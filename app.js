@@ -1,6 +1,6 @@
 'use strict';
 // ================================================================
-// EDGE Trade Signals — app.js  v2.6.0
+// EDGE Trade Signals — app.js  v2.7.0
 // ================================================================
 
 // Pristine index.html body, captured before anything (PIN screen, data
@@ -179,7 +179,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.6.0';
+const VERSION = 'v2.7.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
@@ -1199,6 +1199,195 @@ async function fetchNextDayClose(ticker, sellDateStr) {
     const bars = data.bars || [];
     return bars.length ? bars[0].c : null;
   } catch(e) { return null; }
+}
+
+// Adds n TRADING days (skips Sat/Sun, no holiday calendar — consistent with
+// the rest of the app's date math) to a yyyy-mm-dd string. UTC throughout so
+// this can't drift a day depending on the browser's local timezone, since
+// dateStr carries no time/zone info of its own. Sell Timing Analysis
+// (Lazy Resolution project) — used both as the elapsed-time gate (has
+// today reached sellDate+5 trading days yet?) and as fetchSellTimingBars'
+// window boundary.
+function addTradingDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  let added = 0;
+  while (added < n) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const day = d.getUTCDay();
+    if (day !== 0 && day !== 6) added++;
+  }
+  return d.toISOString().split('T')[0];
+}
+
+// Daily bars spanning the full Sell Timing Analysis window: [buyDate,
+// sellDate + 5 trading days]. Follows the same start+limit convention as
+// every other fetch* helper here (no `end` param is used anywhere in this
+// codebase) — limit is sized to the actual span so unusually long holds
+// (past their intended duration) still get bars covering the whole window
+// rather than being silently truncated by a fixed guess.
+async function fetchSellTimingBars(ticker, buyDate, sellDate) {
+  const windowEnd = addTradingDays(sellDate, 5);
+  const spanDays = Math.ceil((new Date(windowEnd + 'T00:00:00Z') - new Date(buyDate + 'T00:00:00Z')) / 86400000);
+  const limit = Math.max(spanDays + 5, 15);
+  try {
+    const data = await alpacaGet(`/stocks/${ticker}/bars`, {
+      timeframe: '1Day', start: buyDate, limit, sort: 'asc', feed: 'iex'
+    });
+    return data.bars || [];
+  } catch(e) { return []; }
+}
+
+// Counts trading (weekday) days strictly after `fromDateStr` up to and
+// including `toDateStr`. Used only for the State A "tradingDaysRemaining"
+// display — 0 (or the loop never running, if `from` is already >= `to`)
+// means the window has closed, which lines up with computeSellTimingAnalysis'
+// own resolution check.
+function countTradingDaysBetween(fromDateStr, toDateStr) {
+  let count = 0;
+  const d = new Date(fromDateStr + 'T00:00:00Z');
+  const to = new Date(toDateStr + 'T00:00:00Z');
+  while (d < to) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const day = d.getUTCDay();
+    if (day !== 0 && day !== 6) count++;
+  }
+  return count;
+}
+
+// Sell Timing Analysis (Lazy Resolution project) — pure function, takes
+// already-fetched bars (fetchSellTimingBars), no network of its own.
+// bestSoFar/bestSoFarDate use daily HIGHS (bar.h), not closes — the high is
+// the best price actually achievable that day. priceAt5Days is the CLOSE on
+// that specific day (a fixed, single-point comparison, distinct from
+// "best price anywhere in the window").
+//
+// State A (window still open — fewer than 5 trading days have passed since
+// sellDate): { resolved: false, bestSoFar, bestSoFarDate, tradingDaysRemaining }
+// — bestSoFar is a running best over whatever bars are available so far, for
+// the card to show progress while waiting.
+//
+// State B (resolved — 5+ trading days have passed): { resolved: true,
+// bestExitPrice, bestExitDate, bestExitTiming, priceAt5Days } — bestExitTiming
+// is BEFORE/ON/AFTER, comparing bestExitDate to trade.sellDate. If the bar for
+// the exact +5-trading-day date is missing (a market holiday landed there —
+// no holiday calendar anywhere in this app, same as elsewhere), priceAt5Days
+// comes back null rather than guessing a nearby day.
+function computeSellTimingAnalysis(trade, bars) {
+  const resolveDate = addTradingDays(trade.sellDate, 5);
+  const today = new Date().toISOString().split('T')[0];
+
+  let bestSoFar = null, bestSoFarDate = null;
+  (bars || []).forEach(b => {
+    if (b.h == null) return;
+    const barDate = (b.t || '').split('T')[0];
+    if (bestSoFar == null || b.h > bestSoFar) {
+      bestSoFar = b.h;
+      bestSoFarDate = barDate;
+    }
+  });
+
+  if (today < resolveDate) {
+    return {
+      resolved: false,
+      bestSoFar,
+      bestSoFarDate,
+      tradingDaysRemaining: countTradingDaysBetween(today, resolveDate),
+    };
+  }
+
+  const priceAt5DaysBar = (bars || []).find(b => (b.t || '').split('T')[0] === resolveDate);
+  const priceAt5Days = priceAt5DaysBar ? priceAt5DaysBar.c : null;
+
+  const bestExitTiming = bestSoFarDate == null ? null
+    : bestSoFarDate < trade.sellDate ? 'BEFORE'
+    : bestSoFarDate === trade.sellDate ? 'ON'
+    : 'AFTER';
+
+  return {
+    resolved: true,
+    bestExitPrice: bestSoFar,
+    bestExitDate: bestSoFarDate,
+    bestExitTiming,
+    priceAt5Days,
+  };
+}
+
+function needsSellTimingResolution(trade) {
+  if (trade.sellTimingResolved || !trade.sellDate) return false;
+  const today = new Date().toISOString().split('T')[0];
+  return today >= addTradingDays(trade.sellDate, 5);
+}
+
+// Mutates `trade` in place — it's the same object reference living in
+// state.sold, matching the mutate-then-persist pattern already used
+// throughout this file (e.g. renderPortfolioTab's peak-price tracking).
+// Returns false (leaves the trade untouched) if computeSellTimingAnalysis
+// still comes back State A despite the elapsed-time gate above having
+// passed — shouldn't happen in practice, but defensive rather than writing
+// half-resolved data.
+async function resolveOneSellTiming(trade) {
+  const bars = await fetchSellTimingBars(trade.ticker, trade.buyDate, trade.sellDate);
+  const analysis = computeSellTimingAnalysis(trade, bars);
+  if (!analysis.resolved) return false;
+  trade.sellTimingResolved = true;
+  trade.bestExitPrice = analysis.bestExitPrice;
+  trade.bestExitDate = analysis.bestExitDate;
+  trade.bestExitTiming = analysis.bestExitTiming;
+  trade.priceAt5Days = analysis.priceAt5Days;
+  return true;
+}
+
+// Fire-and-forget like every other background Supabase write in this file
+// (writeTradeToSupabase, the renderPortfolioTab peak-price updates) — this
+// runs lazily on Sold tab open, not from a direct user action, so a failure
+// here shouldn't surface as an alert; it just retries next time the tab
+// opens since trade.sellTimingResolved was already set locally regardless
+// (state.sold is the source of truth for the Sold tab display either way).
+// Matches by trade.supabaseId when available (set by writeTradeToSupabase
+// for any trade sold after that capture was added); falls back to
+// ticker+buy_date+sell_date for trades sold before then.
+async function writeSellTimingToSupabase(trade) {
+  const row = {
+    sell_timing_resolved: true,
+    best_exit_price: trade.bestExitPrice,
+    best_exit_date: trade.bestExitDate,
+    best_exit_timing: trade.bestExitTiming,
+    price_at_plus5_days: trade.priceAt5Days,
+  };
+  try {
+    let query = supabaseClient.from('trades').update(row);
+    query = trade.supabaseId != null
+      ? query.eq('id', trade.supabaseId)
+      : query.eq('ticker', trade.ticker).eq('buy_date', trade.buyDate).eq('sell_date', trade.sellDate);
+    const { error } = await query;
+    if (error) console.error('Supabase sell-timing update failed:', error.message);
+  } catch(e) {
+    console.error('Supabase sell-timing update failed:', e.message);
+  }
+}
+
+// Lazy Resolution orchestrator — called (not awaited) when the Sold tab
+// opens. Only fetches for trades that actually need it (needsSellTiming
+// Resolution), batches every trade's fetch+compute+write together via
+// Promise.all rather than resolving one at a time, and persists state.sold
+// once after the whole batch settles rather than once per trade. Returns
+// whether anything was actually resolved, so the caller knows whether the
+// card display needs to be refreshed.
+async function resolveSellTimingForSoldTrades() {
+  const pending = state.sold.filter(needsSellTimingResolution);
+  if (!pending.length) return false;
+
+  const results = await Promise.all(pending.map(async (trade) => {
+    const resolved = await resolveOneSellTiming(trade);
+    if (resolved) writeSellTimingToSupabase(trade); // fire-and-forget, see above
+    return resolved;
+  }));
+
+  if (results.some(Boolean)) {
+    persist('sold');
+    return true;
+  }
+  return false;
 }
 
 // 1-minute bars for the "1 Day" chart range — closer in resolution to
@@ -4562,7 +4751,7 @@ function selectDecision(dec) {
 async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
   try {
     const signalLabel = pos.scoreAtBuy >= 80 ? 'STRONG BUY' : pos.scoreAtBuy >= 50 ? 'SOFT BUY' : 'WATCH';
-    const { error } = await supabaseClient.from('trades').insert([{
+    const { data, error } = await supabaseClient.from('trades').insert([{
       ticker: pos.ticker,
       company: pos.company,
       buy_date: pos.buyDate,
@@ -4599,8 +4788,17 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       peak_risk_score_at_sale: record.peakRiskScoreAtSale,
       peak_rsi_during_hold: record.peakRsiDuringHold,
       top_peak_risk_factors_at_sale: record.topPeakRiskFactorsAtSale,
-    }]);
-    if (error) console.error('Supabase trade write failed:', error.message);
+    }]).select('id');
+    if (error) { console.error('Supabase trade write failed:', error.message); return; }
+    // record is the same object reference already sitting in state.sold —
+    // capturing the Supabase row id here lets Sell Timing Analysis (Lazy
+    // Resolution project) later UPDATE this exact row instead of matching
+    // on ticker+dates. persist('sold') re-runs here since confirmMarkSold's
+    // own persist('sold') already fired before this async write completed.
+    if (data && data[0]) {
+      record.supabaseId = data[0].id;
+      persist('sold');
+    }
   } catch(e) {
     console.error('Supabase trade write failed:', e.message);
   }
@@ -4742,6 +4940,55 @@ async function confirmMarkSold(posId, btn) {
 
 // ── 18. SOLD TAB ──────────────────────────────────────────────────
 
+// Sold-trade card display for Sell Timing Analysis — replaces the old
+// live "what if held" comparison (removed along with its fetchSnapshots
+// call above) per the Lazy Resolution project. No fetch of its own: State
+// A trades show a static "resolves in N trading days" message computed
+// from sellDate alone (per your call not to live-fetch for still-open
+// trades), State B trades read the already-resolved/persisted fields
+// straight off the trade record.
+function buildSellTimingHtml(s) {
+  if (!s.sellDate) return '';
+
+  if (s.sellTimingResolved) {
+    if (s.bestExitPrice == null || s.bestExitTiming == null) {
+      return `<div class="sell-timing pending">Sell timing data unavailable</div>`;
+    }
+    const gapPct = ((s.bestExitPrice - s.sellPrice) / s.sellPrice) * 100;
+    const daysDiff = Math.abs(Math.round((new Date(s.bestExitDate) - new Date(s.sellDate)) / 86400000));
+
+    let timingLine;
+    if (s.bestExitTiming === 'ON') {
+      timingLine = `<span class="good">Sold at peak — perfect timing ✓</span>`;
+    } else if (s.bestExitTiming === 'BEFORE') {
+      timingLine = `Best exit was $${s.bestExitPrice.toFixed(2)} on ${s.bestExitDate} (${daysDiff}d before sale) — <span class="bad">missed +${gapPct.toFixed(1)}%</span>`;
+    } else {
+      timingLine = `Best exit was $${s.bestExitPrice.toFixed(2)} on ${s.bestExitDate} (${daysDiff}d after sale) — <span class="bad">could have gained +${gapPct.toFixed(1)}%</span>`;
+    }
+
+    let plus5Line = '';
+    if (s.priceAt5Days != null) {
+      const plus5Pct = ((s.priceAt5Days - s.sellPrice) / s.sellPrice) * 100;
+      const higher = plus5Pct > 0;
+      plus5Line = `<div class="mt4">+5 trading days: $${s.priceAt5Days.toFixed(2)} →
+        <span class="${higher?'bad':'good'}">
+          ${higher ? `Should have held longer (+${plus5Pct.toFixed(1)}%)` : `Selling was right ✓ (${plus5Pct.toFixed(1)}%)`}
+        </span>
+      </div>`;
+    }
+
+    return `<div class="sell-timing">${timingLine}${plus5Line}</div>`;
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const resolveDate = addTradingDays(s.sellDate, 5);
+  if (today >= resolveDate) {
+    return `<div class="sell-timing pending">Resolving sell timing…</div>`;
+  }
+  const remaining = countTradingDaysBetween(today, resolveDate);
+  return `<div class="sell-timing pending">Sell timing resolves in ${remaining} trading day${remaining===1?'':'s'}</div>`;
+}
+
 async function renderSoldTab() {
   const container = document.getElementById('tab-content');
 
@@ -4752,6 +4999,15 @@ async function renderSoldTab() {
     </div>`;
     return;
   }
+
+  // Sell Timing Analysis lazy resolution — not awaited, so the tab renders
+  // immediately with whatever's already resolved; re-renders itself once
+  // any pending trades finish (fetch+compute+Supabase write all happen
+  // inside resolveSellTimingForSoldTrades). A no-op call when nothing needs
+  // resolving (the common case), so this doesn't fetch on every tab open.
+  resolveSellTimingForSoldTrades().then(anyResolved => {
+    if (anyResolved) renderSoldTab();
+  });
 
   const wins = state.sold.filter(s => s.pnlPct > 0);
   const losses = state.sold.filter(s => s.pnlPct <= 0);
@@ -4786,30 +5042,9 @@ async function renderSoldTab() {
     <div id="sold-list"><div class="empty-state"><span class="spinner"></span></div></div>
   `;
 
-  // Fetch current prices for "what if held"
-  const tickers = [...new Set(state.sold.map(s => s.ticker))];
-  let snapshots = {};
-  try {
-    if (state.settings.alpacaKey) snapshots = await fetchSnapshots(tickers);
-  } catch(e) {}
-
   let html = '';
   state.sold.forEach(s => {
-    const snap = snapshots[s.ticker];
-    const currentPrice = getLivePrice(snap) || null;
     const pnlCls = s.pnlDollar >= 0 ? 'profit' : 'loss';
-
-    let whifHtml = '';
-    if (currentPrice) {
-      const whif = (currentPrice - s.buyPrice) * s.shares;
-      const better = whif > s.pnlDollar;
-      whifHtml = `<div class="whif">
-        What if held? Current: $${currentPrice.toFixed(2)} →
-        <span class="${better?'bad':'good'}">
-          ${better ? `Should have held (+$${(whif-s.pnlDollar).toFixed(2)})` : `Selling was right ✓ (saved $${(s.pnlDollar-whif).toFixed(2)})`}
-        </span>
-      </div>`;
-    }
 
     html += `<div class="sold-card ${pnlCls}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -4830,7 +5065,7 @@ async function renderSoldTab() {
       <div class="card-sub mt4">
         Score ${s.scoreAtBuy}/100 · RSI ${s.rsiAtBuy?.toFixed(0)} · ${s.duration} · ${s.sellWarningAtSale?.replace('_',' ')||'HOLDING'} at sale
       </div>
-      ${whifHtml}
+      ${buildSellTimingHtml(s)}
     </div>`;
   });
 
@@ -5157,6 +5392,11 @@ function mapSupabaseTradeToSoldShape(row) {
     peakRiskScoreAtSale: row.peak_risk_score_at_sale,
     peakRsiDuringHold: row.peak_rsi_during_hold,
     topPeakRiskFactorsAtSale: row.top_peak_risk_factors_at_sale || [],
+    sellTimingResolved: !!row.sell_timing_resolved,
+    bestExitPrice: row.best_exit_price,
+    bestExitDate: row.best_exit_date,
+    bestExitTiming: row.best_exit_timing,
+    priceAt5Days: row.price_at_plus5_days,
   };
 }
 
@@ -5290,6 +5530,56 @@ ${rsiBucketBlock}
 ${peakFactorsBlock}`;
 }
 
+// Sell Timing Analysis (Lazy Resolution project) — only included once at
+// least 5 trades have fully resolved (sellTimingResolved with real price
+// data), same "not enough data yet" gate the doc specifies. gapPct/plus5Pct
+// are derived here from the stored raw prices, same as everywhere else in
+// this report — nothing about these percentages is persisted separately.
+function buildSellTimingAnalysisSection(sold) {
+  const resolved = sold.filter(s => s.sellTimingResolved && s.bestExitPrice != null && s.bestExitTiming != null);
+  if (resolved.length < 5) return '';
+
+  const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : 0;
+  const gapPct = (s) => ((s.bestExitPrice - s.sellPrice) / s.sellPrice) * 100;
+  const plus5Pct = (s) => ((s.priceAt5Days - s.sellPrice) / s.sellPrice) * 100;
+
+  const before = resolved.filter(s => s.bestExitTiming === 'BEFORE');
+  const on = resolved.filter(s => s.bestExitTiming === 'ON');
+  const after = resolved.filter(s => s.bestExitTiming === 'AFTER');
+
+  const withPlus5 = resolved.filter(s => s.priceAt5Days != null);
+  const higher = withPlus5.filter(s => plus5Pct(s) > 0);
+  const lower = withPlus5.filter(s => plus5Pct(s) <= 0);
+
+  // Best timed exit: smallest |gap| to the peak — closest to selling right
+  // at the top. "% better than average" compares its gap to the average
+  // gap across every resolved trade.
+  const avgAbsGap = avg(resolved, s => Math.abs(gapPct(s)));
+  const best = resolved.reduce((a, b) => Math.abs(gapPct(b)) < Math.abs(gapPct(a)) ? b : a);
+  const bestLine = `Best timed exit: ${best.ticker} — sold at peak, ${(avgAbsGap - Math.abs(gapPct(best))).toFixed(1)}% better than average`;
+
+  // Worst timed exit: BEFORE-timing only — "days earlier" only makes sense
+  // when the peak actually preceded the sale.
+  let worstLine = '';
+  if (before.length) {
+    const worst = before.reduce((a, b) => gapPct(b) > gapPct(a) ? b : a);
+    const daysDiff = Math.abs(Math.round((new Date(worst.bestExitDate) - new Date(worst.sellDate)) / 86400000));
+    worstLine = `\nWorst timed exit: ${worst.ticker} — best price was ${gapPct(worst).toFixed(1)}% higher ${daysDiff} days earlier`;
+  }
+
+  return `=== SELL TIMING ANALYSIS ===
+
+Trades where best exit was BEFORE sale date:    ${before.length} | avg missed: +${avg(before, gapPct).toFixed(1)}%
+Trades where best exit was ON sale date:         ${on.length} | avg: perfect timing
+Trades where best exit was AFTER sale date:      ${after.length} | avg extra gain: +${avg(after, gapPct).toFixed(1)}%
+
+At +5 trading days vs actual sale:
+  Higher than sale (should have held longer):    ${higher.length} trades | avg ${avg(higher, plus5Pct).toFixed(1)}%
+  Lower than sale (selling was right):           ${lower.length} trades | avg ${avg(lower, plus5Pct).toFixed(1)}%
+
+${bestLine}${worstLine}`;
+}
+
 async function generateClaudeReport() {
   const btn = document.getElementById('report-btn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Fetching data…'; }
@@ -5328,6 +5618,7 @@ async function generateClaudeReport() {
 
   const ratingSnapshotSection = await buildRatingSnapshotHistorySection(sold);
   const winnerExitTimingSection = await buildWinnerExitTimingSection(sold);
+  const sellTimingAnalysisSection = buildSellTimingAnalysisSection(sold);
 
   const now = new Date();
   const dateStr = now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
@@ -5771,6 +6062,8 @@ ${topFactorsFor(s => s.unifiedRecommendationAtSale === 'HIGH CONVICTION HOLD', '
 })()}
 
 ${winnerExitTimingSection}
+
+${sellTimingAnalysisSection}
 
 ${ratingSnapshotSection}
 
