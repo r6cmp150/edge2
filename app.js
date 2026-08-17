@@ -1,6 +1,6 @@
 'use strict';
 // ================================================================
-// EDGE Trade Signals — app.js  v2.5.0
+// EDGE Trade Signals — app.js  v2.6.0
 // ================================================================
 
 // Pristine index.html body, captured before anything (PIN screen, data
@@ -179,7 +179,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.5.0';
+const VERSION = 'v2.6.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
@@ -833,7 +833,7 @@ function loadState() {
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
-    forcePreMarketMode: false
+    forcePreMarketMode: false, disableMacroOverlay: false
   }, state.settings);
   // API keys live in their own localStorage key, edge_apiKeys — authoritative
   // once present. If it doesn't exist yet but the legacy edge_settings blob
@@ -1518,6 +1518,7 @@ const SECTOR_WEAKNESS_DISPLAY_NAME = {
 // falls back to the original copy unchanged for conditions with no threshold
 // change (BROAD_RALLY, MOMENTUM_DAY, TECH_ROTATION_OUT).
 function buildMacroBanner() {
+  if (state.settings.disableMacroOverlay) return '';
   const ctx = state.macroContext;
   if (!ctx || !ctx.condition || ctx.condition === 'CHOPPY') return '';
 
@@ -2115,8 +2116,17 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
   // of the normalized 0-100 score above, which is otherwise untouched. Re-clamped
   // 0-100 per spec. macroCondition is null (adjustment 0) if macroContext hasn't
   // loaded yet or the fetch failed — never blocks scoring.
+  // "Disable macro overlay" (state.settings.disableMacroOverlay) forces the
+  // adjustment itself to 0 rather than skipping detection — macroCondition/
+  // macroChanges below stay populated as normal (fetchMacroContext still runs
+  // and the condition is still classified every session), only its effect on
+  // score is suppressed. Forcing macroAdjustment to 0 here (not just skipping
+  // the += below) also keeps it accurate for anything downstream that reads
+  // s.macroAdjustment for display (e.g. the score breakdown row) — it
+  // correctly shows no macro effect rather than a would-be value that was
+  // never actually applied.
   const macroCondition = state.macroContext?.condition || null;
-  const macroAdjustment = getMacroAdjustment(macroCondition, category);
+  const macroAdjustment = state.settings.disableMacroOverlay ? 0 : getMacroAdjustment(macroCondition, category);
   const macroChanges = state.macroContext?.changes || null;
   score = Math.max(0, Math.min(100, score + macroAdjustment));
 
@@ -4221,9 +4231,11 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
     }
   }
 
-  // ── Macro condition
+  // ── Macro condition — skipped entirely (treated as 0 pts) when the
+  // "Disable macro overlay" setting is on, same as scoreStock()'s
+  // macroAdjustment gate above.
   const condition = macroContext?.condition;
-  if (condition) {
+  if (condition && !state.settings.disableMacroOverlay) {
     if (BROAD_ELEVATED_CONDITIONS.includes(condition)) {
       add(`Macro: ${condition}`, -20);
     } else if (MACRO_TAILWIND_CONDITIONS.includes(condition)) {
@@ -5055,6 +5067,7 @@ async function loadSettingsFromSupabase() {
     showWatch: !!data.show_watch,
     minVolume: data.min_volume,
     forcePreMarketMode: !!data.force_pre_market_mode,
+    disableMacroOverlay: !!data.disable_macro_overlay,
   };
 }
 
@@ -5065,6 +5078,7 @@ async function saveSettingsToSupabase(settings) {
     show_watch: !!settings.showWatch,
     min_volume: settings.minVolume,
     force_pre_market_mode: !!settings.forcePreMarketMode,
+    disable_macro_overlay: !!settings.disableMacroOverlay,
     updated_at: new Date().toISOString(),
   };
   const { data: existing, error: selectError } = await supabaseClient
@@ -5906,6 +5920,16 @@ function renderSettingsTab() {
         </div>
         <label class="toggle-wrap">
           <input type="checkbox" id="set-under2" ${s.includeUnder2?'checked':''} onchange="savePref('includeUnder2',this.checked)">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Disable macro overlay</div>
+          <div class="settings-hint">Show pure technical signals only — ignores market condition adjustments</div>
+        </div>
+        <label class="toggle-wrap">
+          <input type="checkbox" id="set-disable-macro" ${s.disableMacroOverlay?'checked':''} onchange="savePref('disableMacroOverlay',this.checked)">
           <span class="toggle-slider"></span>
         </label>
       </div>
