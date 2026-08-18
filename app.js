@@ -181,7 +181,7 @@ async function newPinSubmit() {
 
 const VERSION = 'v2.7.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 // ── Supabase ─────────────────────────────────────────────────────
 // Client is named supabaseClient (not `supabase`) — the CDN bundle's UMD
