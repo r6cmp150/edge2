@@ -179,7 +179,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.7.0';
+const VERSION = 'v2.8.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -3908,6 +3908,33 @@ function openAddPortfolioModal(ticker) {
     </div>`);
 }
 
+// Buy-time signal-component derivation for trade-record capture (data
+// capture only — duplicates scoreStock()'s bucket logic rather than
+// refactoring it, since scoring itself must not change). Keep these in
+// sync with scoreStock() (app.js ~2178-2271) if any bucket ever changes.
+function deriveVolSpikePts(volRatio) {
+  if (volRatio == null) return null;
+  if (volRatio >= 3) return -10;
+  if (volRatio >= 2) return 10;
+  if (volRatio >= 1) return 20;
+  if (volRatio >= 0.5) return 15;
+  return 0;
+}
+function derivePriceMomentumPts(todayChange) {
+  if (todayChange == null) return null;
+  if (todayChange >= 4) return 20;
+  if (todayChange >= 2) return 10;
+  return 0;
+}
+function deriveRsiPts(rsi) {
+  if (rsi == null) return null;
+  if (rsi >= 55 && rsi <= 65) return 20;
+  if (rsi >= 35 && rsi < 55) return 15;
+  if (rsi < 35) return 10;
+  if (rsi > 65 && rsi <= 75) return 0;
+  return -10; // rsi > 75
+}
+
 async function confirmAddPortfolio(ticker, btn) {
   const shares = parseFloat(document.getElementById('pf-shares').value);
   const price  = parseFloat(document.getElementById('pf-price').value);
@@ -3952,6 +3979,26 @@ async function confirmAddPortfolio(ticker, btn) {
     buyDayOfWeek: DAY_NAMES[getPT().getDay()],
     buySession: isPreMarketHours() ? 'PRE_MARKET' : 'REGULAR',
     subTenEntryAdjustment: sig?.sub10Pts ?? 0,
+    // Buy-time score breakdown capture (data capture only) — see audit:
+    // rawScoreAtBuy is an approximation, not an exact reconstruction. It
+    // reverses the macro-adjustment step but re-projects onto the /145
+    // scale using RAW_SCORE_MAX, even though sub10Pts (subTenEntryAdjustment
+    // above) is deliberately excluded from that denominator (see comment at
+    // RAW_SCORE_MAX's definition) while still being part of the pre-macro
+    // sum. For sub-$10 trades this is a structural approximation, not just
+    // rounding noise — treat rawScoreAtBuy as indicative only.
+    priceMomentumPts: sig ? derivePriceMomentumPts(sig.todayChange) : null,
+    volSpikePts:      sig ? deriveVolSpikePts(sig.volRatio) : null,
+    rsiPts:           sig ? deriveRsiPts(sig.rsi) : null,
+    maPts:            sig ? (sig.price > sig.ma20 ? 10 : 0) : null,
+    volBuildPts:      sig ? (sig.volBuild ? 15 : 0) : null,
+    meanReversionPts: sig ? (sig.meanReversion ? 20 : 0) : null,
+    consUpDays:       sig?.consUpDays ?? null,
+    consUpPts:        sig?.consUpPts ?? null,
+    relStrengthPts:   sig?.relStrengthPts ?? null,
+    macroAdjustmentPts: sig?.macroAdjustment ?? null,
+    maPctAtBuy:       sig?.maPct ?? null,
+    rawScoreAtBuy:    sig ? Math.round((sig.score - sig.macroAdjustment) * RAW_SCORE_MAX / 100) : null,
     groqProbabilityAtBuy: (() => {
       const cached = state.aiCache[ticker];
       const firstPair = cached?.pairs?.[0];
@@ -4788,6 +4835,20 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       peak_risk_score_at_sale: record.peakRiskScoreAtSale,
       peak_rsi_during_hold: record.peakRsiDuringHold,
       top_peak_risk_factors_at_sale: record.topPeakRiskFactorsAtSale,
+      price_momentum_pts: pos.priceMomentumPts,
+      vol_spike_pts: pos.volSpikePts,
+      rsi_pts: pos.rsiPts,
+      ma_pts: pos.maPts,
+      vol_build_pts: pos.volBuildPts,
+      mean_reversion_pts: pos.meanReversionPts,
+      cons_up_days: pos.consUpDays,
+      cons_up_pts: pos.consUpPts,
+      rel_strength_pts: pos.relStrengthPts,
+      macro_adjustment_pts: pos.macroAdjustmentPts,
+      ma_pct_at_buy: pos.maPctAtBuy,
+      raw_score_at_buy: pos.rawScoreAtBuy,
+      full_ure_factors_at_sale: record.fullUreFactorsAtSale,
+      full_peak_risk_factors_at_sale: record.fullPeakRiskFactorsAtSale,
     }]).select('id');
     if (error) { console.error('Supabase trade write failed:', error.message); return; }
     // record is the same object reference already sitting in state.sold —
@@ -4824,6 +4885,8 @@ function computeUnifiedSaleFields(pos, salePrice) {
       peakRiskScoreAtSale: null,
       topPeakRiskFactorsAtSale: [],
       peakRsiDuringHold,
+      fullUreFactorsAtSale: ur.factors,
+      fullPeakRiskFactorsAtSale: null,
     };
   }
   return {
@@ -4835,6 +4898,8 @@ function computeUnifiedSaleFields(pos, salePrice) {
     peakRiskScoreAtSale: ur.peakRisk ? ur.peakRisk.score : null,
     topPeakRiskFactorsAtSale: ur.peakRisk ? ur.peakRisk.topFactors.map(f => f.name) : [],
     peakRsiDuringHold,
+    fullUreFactorsAtSale: ur.factors,
+    fullPeakRiskFactorsAtSale: ur.peakRisk ? ur.peakRisk.factors : null,
   };
 }
 
@@ -5221,6 +5286,18 @@ function mapSupabasePortfolioRowToPosition(row) {
     buySession: row.buy_session,
     subTenEntryAdjustment: row.sub_ten_entry_adjustment,
     groqProbabilityAtBuy: row.groq_probability_at_buy,
+    priceMomentumPts: row.price_momentum_pts,
+    volSpikePts: row.vol_spike_pts,
+    rsiPts: row.rsi_pts,
+    maPts: row.ma_pts,
+    volBuildPts: row.vol_build_pts,
+    meanReversionPts: row.mean_reversion_pts,
+    consUpDays: row.cons_up_days,
+    consUpPts: row.cons_up_pts,
+    relStrengthPts: row.rel_strength_pts,
+    macroAdjustmentPts: row.macro_adjustment_pts,
+    maPctAtBuy: row.ma_pct_at_buy,
+    rawScoreAtBuy: row.raw_score_at_buy,
   };
 }
 
@@ -5258,6 +5335,18 @@ function mapPositionToSupabaseRow(position) {
     buy_session: position.buySession,
     sub_ten_entry_adjustment: position.subTenEntryAdjustment,
     groq_probability_at_buy: position.groqProbabilityAtBuy,
+    price_momentum_pts: position.priceMomentumPts,
+    vol_spike_pts: position.volSpikePts,
+    rsi_pts: position.rsiPts,
+    ma_pts: position.maPts,
+    vol_build_pts: position.volBuildPts,
+    mean_reversion_pts: position.meanReversionPts,
+    cons_up_days: position.consUpDays,
+    cons_up_pts: position.consUpPts,
+    rel_strength_pts: position.relStrengthPts,
+    macro_adjustment_pts: position.macroAdjustmentPts,
+    ma_pct_at_buy: position.maPctAtBuy,
+    raw_score_at_buy: position.rawScoreAtBuy,
     updated_at: new Date().toISOString(),
   };
 }
@@ -5397,6 +5486,20 @@ function mapSupabaseTradeToSoldShape(row) {
     bestExitDate: row.best_exit_date,
     bestExitTiming: row.best_exit_timing,
     priceAt5Days: row.price_at_plus5_days,
+    priceMomentumPts: row.price_momentum_pts,
+    volSpikePts: row.vol_spike_pts,
+    rsiPts: row.rsi_pts,
+    maPts: row.ma_pts,
+    volBuildPts: row.vol_build_pts,
+    meanReversionPts: row.mean_reversion_pts,
+    consUpDays: row.cons_up_days,
+    consUpPts: row.cons_up_pts,
+    relStrengthPts: row.rel_strength_pts,
+    macroAdjustmentPts: row.macro_adjustment_pts,
+    maPctAtBuy: row.ma_pct_at_buy,
+    rawScoreAtBuy: row.raw_score_at_buy,
+    fullUreFactorsAtSale: row.full_ure_factors_at_sale || [],
+    fullPeakRiskFactorsAtSale: row.full_peak_risk_factors_at_sale || null,
   };
 }
 
@@ -5580,6 +5683,147 @@ At +5 trading days vs actual sale:
 ${bestLine}${worstLine}`;
 }
 
+// Individual Signal Performance — breaks down win rate by the actual point
+// value each scoring component awarded at buy time (Step 5, full-breakdown
+// capture project). Gated on volSpikePts as a stand-in for "has buy-time
+// breakdown data" since all breakdown fields are captured together in
+// confirmAddPortfolio() — presence of one implies presence of all.
+function buildIndividualSignalPerformanceSection(sold) {
+  const withBreakdown = sold.filter(s => s.volSpikePts != null);
+  if (withBreakdown.length < 10) return '';
+
+  const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : 0;
+  const bucket = (arr, label) => {
+    const w = arr.filter(s => s.pnlPct > 0);
+    return `    ${label.padEnd(28)}${arr.length} trades | ${arr.length ? (w.length/arr.length*100).toFixed(0) : '—'}% win rate | avg ${arr.length ? avg(arr, s=>s.pnlPct).toFixed(1) : '—'}%`;
+  };
+  const byPts = (field, points) => withBreakdown.filter(s => s[field] === points);
+
+  const volSpikeBlock = `  Volume spike points:
+${bucket(byPts('volSpikePts', 20),  'Got +20 (1-2x vol):')}
+${bucket(byPts('volSpikePts', 15),  'Got +15 (0.5-1x vol):')}
+${bucket(byPts('volSpikePts', 10),  'Got +10 (2-3x vol):')}
+${bucket(byPts('volSpikePts', -10), 'Got −10 (3x+ vol):')}`;
+
+  const rsiPtsBlock = `  RSI points:
+${bucket(byPts('rsiPts', 20),  'Got +20 (RSI 55-65):')}
+${bucket(byPts('rsiPts', 15),  'Got +15 (RSI 35-55):')}
+${bucket(byPts('rsiPts', 10),  'Got +10 (RSI <35):')}
+${bucket(byPts('rsiPts', 0),   'Got 0 (RSI 65-75):')}
+${bucket(byPts('rsiPts', -10), 'Got −10 (RSI 75+):')}`;
+
+  const momentumBlock = `  Price momentum points:
+${bucket(byPts('priceMomentumPts', 20), 'Got +20 (up 4%+):')}
+${bucket(byPts('priceMomentumPts', 10), 'Got +10 (up 2-4%):')}
+${bucket(byPts('priceMomentumPts', 0),  'Got 0 (under 2%):')}`;
+
+  const maBlock = `  Above 20-day MA:
+${bucket(byPts('maPts', 10), 'Yes (+10 pts):')}
+${bucket(byPts('maPts', 0),  'No (0 pts):')}`;
+
+  const volBuildBlock = `  Volume build fired:
+${bucket(byPts('volBuildPts', 15), 'Yes (+15 pts):')}
+${bucket(byPts('volBuildPts', 0),  'No (0 pts):')}`;
+
+  const meanReversionBlock = `  Mean reversion fired:
+${bucket(byPts('meanReversionPts', 20), 'Yes (+20 pts):')}
+${bucket(byPts('meanReversionPts', 0),  'No (0 pts):')}`;
+
+  const relStrengthBlock = `  Relative strength vs SPY:
+${bucket(byPts('relStrengthPts', 15), 'Got +15 (outperform 2%+):')}
+${bucket(byPts('relStrengthPts', 10), 'Got +10 (outperform 1%+):')}
+${bucket(byPts('relStrengthPts', 5),  'Got +5 (outperform >0%):')}
+${bucket(byPts('relStrengthPts', 0),  'Got 0 (underperform):')}`;
+
+  const macroAdjBlock = `  Macro adjustment applied:
+${bucket(withBreakdown.filter(s => s.macroAdjustmentPts > 0), 'Positive adjustment:')}
+${bucket(withBreakdown.filter(s => s.macroAdjustmentPts === 0), 'Zero (CHOPPY):')}
+${bucket(withBreakdown.filter(s => s.macroAdjustmentPts < 0), 'Negative adjustment:')}`;
+
+  return `=== INDIVIDUAL SIGNAL PERFORMANCE ===
+
+Win rate by signal component at purchase:
+${volSpikeBlock}
+
+${rsiPtsBlock}
+
+${momentumBlock}
+
+${maBlock}
+
+${volBuildBlock}
+
+${meanReversionBlock}
+
+${relStrengthBlock}
+
+${macroAdjBlock}`;
+}
+
+// URE Factor Accuracy — cross-references the complete factors array captured
+// at sale time (Step 6, full-breakdown capture project) against win/loss
+// outcome to see which URE factors actually track with profitable exits.
+// Gated on fullUreFactorsAtSale (non-empty) as the "has full URE factor
+// data" signal — hard-floor stop-loss sales carry a single-factor array
+// ('Stop-loss breach') rather than an empty one, so they're included here
+// same as any other sale.
+function buildUreFactorAccuracySection(sold) {
+  const withFactors = sold.filter(s => s.fullUreFactorsAtSale && s.fullUreFactorsAtSale.length);
+  if (withFactors.length < 10) return '';
+
+  const wins = withFactors.filter(s => s.pnlPct > 0);
+  const losses = withFactors.filter(s => s.pnlPct <= 0);
+
+  const countFactors = (trades) => {
+    const counts = {};
+    trades.forEach(s => {
+      new Set(s.fullUreFactorsAtSale.map(f => f.name)).forEach(name => {
+        counts[name] = (counts[name] || 0) + 1;
+      });
+    });
+    return counts;
+  };
+  const winCounts = countFactors(wins);
+  const lossCounts = countFactors(losses);
+
+  const topFactorLines = (counts, total, label) => {
+    const ranked = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 3);
+    return ranked.length
+      ? ranked.map(([name, c], i) => `  ${i+1}. ${name}: appeared in ${c} of ${total} ${label} trades`).join('\n')
+      : `  No completed ${label} trades with factor data yet.`;
+  };
+
+  const separationLines = (() => {
+    if (!wins.length || !losses.length) {
+      return '  Not enough winning and losing trades with factor data yet.';
+    }
+    const names = new Set([...Object.keys(winCounts), ...Object.keys(lossCounts)]);
+    const rows = [...names].map(name => {
+      const winPct = ((winCounts[name] || 0) / wins.length) * 100;
+      const lossPct = ((lossCounts[name] || 0) / losses.length) * 100;
+      return { name, winPct, lossPct };
+    }).filter(r => (r.winPct >= 60 && r.lossPct < 40) || (r.lossPct >= 60 && r.winPct < 40));
+    if (!rows.length) return '  No factors met the 60%/40% separation threshold yet.';
+    rows.sort((a, b) => Math.abs(b.winPct - b.lossPct) - Math.abs(a.winPct - a.lossPct));
+    return rows.map(r => {
+      const signal = r.winPct > r.lossPct ? 'bullish signal' : 'bearish signal';
+      return `  ${r.name}: wins ${r.winPct.toFixed(0)}% | losses ${r.lossPct.toFixed(0)}% — ${signal}`;
+    }).join('\n');
+  })();
+
+  return `=== URE FACTOR ACCURACY AT SALE ===
+
+Most common factors in winning trades at sale:
+${topFactorLines(winCounts, wins.length, 'winning')}
+
+Most common factors in losing trades at sale:
+${topFactorLines(lossCounts, losses.length, 'losing')}
+
+Factors that most strongly separated winners from losers:
+(factor appearing in 60%+ of wins but <40% of losses, or vice versa)
+${separationLines}`;
+}
+
 async function generateClaudeReport() {
   const btn = document.getElementById('report-btn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Fetching data…'; }
@@ -5619,6 +5863,8 @@ async function generateClaudeReport() {
   const ratingSnapshotSection = await buildRatingSnapshotHistorySection(sold);
   const winnerExitTimingSection = await buildWinnerExitTimingSection(sold);
   const sellTimingAnalysisSection = buildSellTimingAnalysisSection(sold);
+  const individualSignalPerformanceSection = buildIndividualSignalPerformanceSection(sold);
+  const ureFactorAccuracySection = buildUreFactorAccuracySection(sold);
 
   const now = new Date();
   const dateStr = now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
@@ -6067,9 +6313,20 @@ ${sellTimingAnalysisSection}
 
 ${ratingSnapshotSection}
 
+${individualSignalPerformanceSection}
+
+${ureFactorAccuracySection}
+
 === FULL TRADE HISTORY ===
 
 `;
+
+  // Bucket-label lookups for the two annotations that only have derived
+  // points captured, not the underlying raw percentage (todayChange/
+  // rsVsSPY were never persisted — see Step 7 clarification).
+  const fmtPts = (v) => v == null ? 'N/A' : `${v >= 0 ? '+' : ''}${v} pts`;
+  const momentumBucketLabel = (pts) => ({20:' (up 4%+)', 10:' (up 2-4%)', 0:' (under 2%)'}[pts] ?? '');
+  const relStrengthBucketLabel = (pts) => ({15:' (outperform 2%+)', 10:' (outperform 1%+)', 5:' (outperform >0%)', 0:' (underperform)'}[pts] ?? '');
 
   sold.forEach((s, i) => {
     // Change 4 (Data & Reporting): pre-update trades won't have these fields —
@@ -6106,6 +6363,20 @@ ${ratingSnapshotSection}
   Sub-$10 entry adjustment: ${subTenLine}
   Groq at purchase: ${s.groqProbabilityAtBuy || 'Not run'}
   Distance from target at sale: ${distLine}
+  Score breakdown at purchase:
+    Volume spike:      ${fmtPts(s.volSpikePts)} (${s.volRatioAtBuy!=null?s.volRatioAtBuy.toFixed(2):'N/A'}x avg)
+    Price momentum:    ${fmtPts(s.priceMomentumPts)}${momentumBucketLabel(s.priceMomentumPts)}
+    RSI position:      ${fmtPts(s.rsiPts)} (RSI ${s.rsiAtBuy!=null?s.rsiAtBuy.toFixed(1):'N/A'})
+    Above 20-day MA:   ${fmtPts(s.maPts)}
+    Volume build:      ${fmtPts(s.volBuildPts)}
+    Mean reversion:    ${fmtPts(s.meanReversionPts)}
+    Consecutive days:  ${fmtPts(s.consUpPts)} (${s.consUpDays!=null?s.consUpDays:'N/A'} days)
+    Relative strength: ${fmtPts(s.relStrengthPts)}${relStrengthBucketLabel(s.relStrengthPts)}
+    Catalyst setup:    ${fmtPts(s.catalystSetup ? 10 : 0)}
+    Sub-$10 timing:    ${fmtPts(s.subTenEntryAdjustment)}
+    Raw total:         ${s.rawScoreAtBuy!=null?`${s.rawScoreAtBuy}/${RAW_SCORE_MAX} (approximate)`:'N/A'}
+    Macro adjustment:  ${fmtPts(s.macroAdjustmentPts)} (${s.macroConditionAtBuy||'none'})
+    Final score:       ${s.scoreAtBuy}/100
 
 `;
   });
