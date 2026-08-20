@@ -1579,7 +1579,7 @@ async function resolveMacroConditionWithGroq(changes) {
         model: GROQ_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.2,
-        max_tokens: 150
+        max_tokens: 2000
       })
     });
     if (!r.ok) throw new Error(`Groq ${r.status}`);
@@ -2787,7 +2787,7 @@ async function analyzePreMarketMover(ticker) {
         model: GROQ_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
-        max_tokens: 512
+        max_tokens: 2000
       })
     });
     if (!r.ok) throw new Error(`Groq ${r.status}`);
