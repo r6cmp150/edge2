@@ -179,7 +179,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.8.0';
+const VERSION = 'v2.9.0';
 const ALPACA_BASE = 'https://data.alpaca.markets/v2';
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -1636,8 +1636,8 @@ function getMacroAdjustment(condition, category) {
 // CHOPPY, null) is a no-op and falls through to the base 20.
 // Evaluated once per scan against the single scan-wide category, not per
 // stock — see call site in runScreener().
-const BASE_SCORE_THRESHOLD = 20;
-const ELEVATED_SCORE_THRESHOLD = 50;
+const BASE_SCORE_THRESHOLD = 29;
+const ELEVATED_SCORE_THRESHOLD = 73;
 const SECTOR_WEAKNESS_THRESHOLD_CATEGORIES = {
   SECTOR_WEAKNESS_TECH: ['TECH', 'RETAIL'],
   SECTOR_WEAKNESS_BIOTECH: ['HEALTHCARE'],
@@ -2293,17 +2293,10 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
     score += sub10Pts;
   }
 
-  // Normalize: raw score is a sum of independent per-signal points (see
-  // RAW_SCORE_MAX), not already on a 0-100 scale. Since Scoring Formula v2,
-  // score can go negative (RSI 75+, Volume 3x+ penalties) if no positive
-  // signal offsets them — left unclamped here and allowed to normalize
-  // proportionally; the macro-adjustment step below floors the final
-  // result at 0, so nothing negative is ever actually displayed.
-  score = Math.round((score / RAW_SCORE_MAX) * 100);
-
   // Macro Market Overlay (Step 3): category-specific adjustment applied on top
-  // of the normalized 0-100 score above, which is otherwise untouched. Re-clamped
-  // 0-100 per spec. macroCondition is null (adjustment 0) if macroContext hasn't
+  // of the raw accumulated score above, which is otherwise untouched. Floored
+  // at 0 per spec (no upper cap — raw score can run up to RAW_SCORE_MAX plus
+  // whatever macroAdjustment adds). macroCondition is null (adjustment 0) if macroContext hasn't
   // loaded yet or the fetch failed — never blocks scoring.
   // "Disable macro overlay" (state.settings.disableMacroOverlay) forces the
   // adjustment itself to 0 rather than skipping detection — macroCondition/
@@ -2317,11 +2310,11 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
   const macroCondition = state.macroContext?.condition || null;
   const macroAdjustment = state.settings.disableMacroOverlay ? 0 : getMacroAdjustment(macroCondition, category);
   const macroChanges = state.macroContext?.changes || null;
-  score = Math.max(0, Math.min(100, score + macroAdjustment));
+  score = Math.max(0, score + macroAdjustment);
 
   const risk = calcRiskScore(price, atr, rsi, volRatio, hasNegNews);
   const priceRange = price <= 3 ? '$1–$3' : price <= 9 ? '$4–$9' : '$10–$20';
-  const signal = score >= 80 ? 'STRONG BUY' : score >= 50 ? 'SOFT BUY' : 'WATCH';
+  const signal = score >= 116 ? 'STRONG BUY' : score >= 73 ? 'SOFT BUY' : 'WATCH';
 
   return {
     ticker, company: COMPANY_NAMES[ticker] || ticker,
@@ -3208,18 +3201,7 @@ function computeScoreBreakdown(s) {
     });
   }
 
-  // Raw signal points above sum to at most RAW_SCORE_MAX (145), not 100 — score
-  // is normalized (see scoreStock). Add an explicit reconciliation row so every
-  // row's pts still sums to s.score instead of the breakdown silently not adding up.
   const rawTotal = rows.reduce((sum, r) => sum + r.pts, 0);
-  const normalizedScore = Math.round((rawTotal / RAW_SCORE_MAX) * 100);
-  rows.push({
-    key: 'norm', short: 'normalized',
-    label: `Normalized: raw ${rawTotal}/${RAW_SCORE_MAX} → ${normalizedScore}/100`,
-    pts: normalizedScore - rawTotal,
-    fired: false,
-    neutral: normalizedScore === rawTotal,
-  });
 
   // Macro Market Overlay (Step 4) — only shown once macroContext has actually
   // loaded (s.macroCondition truthy); omitted entirely otherwise rather than
@@ -3235,12 +3217,12 @@ function computeScoreBreakdown(s) {
     });
   }
 
-  // The real final score: normalized + macro adjustment, clamped 0-100
+  // The real final score: raw signal points + macro adjustment, floored at 0
   // exactly like scoreStock() does. Callers should display this, not s.score
   // — s.score can be stale or a hardcoded placeholder (see openStockModal's
   // fallback stock object for tickers no longer in the current scan), while
   // this is always freshly derived from the rows just computed above.
-  const total = Math.max(0, Math.min(100, normalizedScore + macroPts));
+  const total = Math.max(0, rawTotal + macroPts);
 
   return { rows, total };
 }
@@ -3280,9 +3262,8 @@ function buildScoreBreakdown(s) {
   const id   = `sb-${s.ticker}`;
 
   // Compact contributions line: every row that actually moved the score
-  // (excludes the always-present 'norm' reconciliation row and any 0-pt
-  // rows), dot-separated, colored by category.
-  const contribRows = rows.filter(r => r.key !== 'norm' && r.pts !== 0);
+  // (excludes any 0-pt rows), dot-separated, colored by category.
+  const contribRows = rows.filter(r => r.pts !== 0);
   const contribsHtml = contribRows.length
     ? contribRows.map(r => `<span class="sc-contrib ${sbContribClass(r.key, r.pts)}">${r.short} ${r.pts > 0 ? '+' : ''}${r.pts}</span>`).join('<span class="sc-contrib-dot">·</span>')
     : `<span class="sc-contrib sc-contrib-neutral">No contributing signals</span>`;
@@ -3327,7 +3308,7 @@ function buildScoreBreakdown(s) {
 function buildModalScoreBreakdown(s, authoritativeTotal, authoritativeSignal) {
   const { rows, total: freshTotal } = computeScoreBreakdown(s);
   const total = authoritativeTotal != null ? authoritativeTotal : freshTotal;
-  const signal = authoritativeSignal || (total >= 80 ? 'STRONG BUY' : total >= 50 ? 'SOFT BUY' : 'WATCH');
+  const signal = authoritativeSignal || (total >= 116 ? 'STRONG BUY' : total >= 73 ? 'SOFT BUY' : 'WATCH');
   const sigCls = signal === 'STRONG BUY' ? 'msb-strong'
                : signal === 'SOFT BUY' ? 'msb-soft' : 'msb-watch';
 
@@ -3507,7 +3488,7 @@ async function openStockModal(ticker) {
       modalScoreSignal = ownedScoreEntry.label;
     } else {
       modalScoreTotal = computeScoreBreakdown(stock).total;
-      modalScoreSignal = modalScoreTotal >= 80 ? 'STRONG BUY' : modalScoreTotal >= 50 ? 'SOFT BUY' : 'WATCH';
+      modalScoreSignal = modalScoreTotal >= 116 ? 'STRONG BUY' : modalScoreTotal >= 73 ? 'SOFT BUY' : 'WATCH';
     }
 
     const chgCls  = stock.todayChange >= 0 ? 'change-pos' : 'change-neg';
@@ -3979,14 +3960,12 @@ async function confirmAddPortfolio(ticker, btn) {
     buyDayOfWeek: DAY_NAMES[getPT().getDay()],
     buySession: isPreMarketHours() ? 'PRE_MARKET' : 'REGULAR',
     subTenEntryAdjustment: sig?.sub10Pts ?? 0,
-    // Buy-time score breakdown capture (data capture only) — see audit:
-    // rawScoreAtBuy is an approximation, not an exact reconstruction. It
-    // reverses the macro-adjustment step but re-projects onto the /145
-    // scale using RAW_SCORE_MAX, even though sub10Pts (subTenEntryAdjustment
-    // above) is deliberately excluded from that denominator (see comment at
-    // RAW_SCORE_MAX's definition) while still being part of the pre-macro
-    // sum. For sub-$10 trades this is a structural approximation, not just
-    // rounding noise — treat rawScoreAtBuy as indicative only.
+    // Buy-time score breakdown capture (data capture only). scoreStock() no
+    // longer normalizes (Change 1, raw-score project) — sig.score IS the raw
+    // score now, so rawScoreAtBuy trivially mirrors scoreAtBuy for any trade
+    // captured from this version forward. Kept as a separate field (rather
+    // than deleted) for continuity with trades captured before this change,
+    // where it really was a distinct back-calculated approximation.
     priceMomentumPts: sig ? derivePriceMomentumPts(sig.todayChange) : null,
     volSpikePts:      sig ? deriveVolSpikePts(sig.volRatio) : null,
     rsiPts:           sig ? deriveRsiPts(sig.rsi) : null,
@@ -3998,7 +3977,7 @@ async function confirmAddPortfolio(ticker, btn) {
     relStrengthPts:   sig?.relStrengthPts ?? null,
     macroAdjustmentPts: sig?.macroAdjustment ?? null,
     maPctAtBuy:       sig?.maPct ?? null,
-    rawScoreAtBuy:    sig ? Math.round((sig.score - sig.macroAdjustment) * RAW_SCORE_MAX / 100) : null,
+    rawScoreAtBuy:    sig ? sig.score : null,
     groqProbabilityAtBuy: (() => {
       const cached = state.aiCache[ticker];
       const firstPair = cached?.pairs?.[0];
@@ -4194,8 +4173,8 @@ async function renderPortfolioTab() {
 
     // Score at purchase — same STRONG BUY/SOFT BUY/WATCH thresholds as the live
     // scoring formula (scoreStock), applied to the score snapshotted at buy time.
-    const scoreBuyLabel = p.scoreAtBuy >= 80 ? 'STRONG BUY' : p.scoreAtBuy >= 50 ? 'SOFT BUY' : 'WATCH';
-    const scoreBuyCls   = p.scoreAtBuy >= 80 ? 'pf-score-green' : 'pf-score-yellow';
+    const scoreBuyLabel = p.scoreAtBuy >= 116 ? 'STRONG BUY' : p.scoreAtBuy >= 73 ? 'SOFT BUY' : 'WATCH';
+    const scoreBuyCls   = p.scoreAtBuy >= 116 ? 'pf-score-green' : 'pf-score-yellow';
 
     // Score now — state.ownedScores is snapshotted every screener run for owned
     // tickers specifically (see runScreener), even when they no longer clear the
@@ -4215,7 +4194,7 @@ async function renderPortfolioTab() {
       ? ownedScore
       : liveSignal ? { score: liveSignal.score, label: liveSignal.signal } : null;
     const scoreNowDisplay = nowScore
-      ? `${nowScore.score} <span class="pf-score-label ${nowScore.score >= 80 ? 'pf-score-green' : 'pf-score-yellow'}">${nowScore.label}</span>${ownedScore ? ' <span class="pf-score-stale">(last scan)</span>' : ''}`
+      ? `${nowScore.score} <span class="pf-score-label ${nowScore.score >= 116 ? 'pf-score-green' : 'pf-score-yellow'}">${nowScore.label}</span>${ownedScore ? ' <span class="pf-score-stale">(last scan)</span>' : ''}`
       : `<span class="pf-score-na">—</span>`;
 
     // Duration urgency — same maxHoldDays map used for the card sort order above.
@@ -4452,16 +4431,16 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
   // ── Current signal score (tier + drift vs score at buy)
   const nowScore = currentSignal?.score;
   if (nowScore != null) {
-    if (nowScore > 80) add(`Current score ${nowScore} — support signal`, 50);
-    else if (nowScore >= 65) add(`Current score ${nowScore} — support signal`, 30);
-    else if (nowScore >= 50) add(`Current score ${nowScore} — support signal`, 15);
-    else if (nowScore >= 30) add(`Current score ${nowScore} — weak signal`, -10);
+    if (nowScore > 116) add(`Current score ${nowScore} — support signal`, 50);
+    else if (nowScore >= 94) add(`Current score ${nowScore} — support signal`, 30);
+    else if (nowScore >= 73) add(`Current score ${nowScore} — support signal`, 15);
+    else if (nowScore >= 44) add(`Current score ${nowScore} — weak signal`, -10);
     else add(`Current score ${nowScore} — weak signal`, -25);
 
     if (position.scoreAtBuy != null) {
       if (nowScore > position.scoreAtBuy) {
         add(`Score improved from ${position.scoreAtBuy} → ${nowScore}`, 20);
-      } else if (position.scoreAtBuy - nowScore > 20) {
+      } else if (position.scoreAtBuy - nowScore > 29) {
         add(`Score dropped from ${position.scoreAtBuy} → ${nowScore}`, -15);
       }
     }
@@ -4797,7 +4776,7 @@ function selectDecision(dec) {
 // of truth; this is purely additive persistence for later analysis/export.
 async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
   try {
-    const signalLabel = pos.scoreAtBuy >= 80 ? 'STRONG BUY' : pos.scoreAtBuy >= 50 ? 'SOFT BUY' : 'WATCH';
+    const signalLabel = pos.scoreAtBuy >= 116 ? 'STRONG BUY' : pos.scoreAtBuy >= 73 ? 'SOFT BUY' : 'WATCH';
     const { data, error } = await supabaseClient.from('trades').insert([{
       ticker: pos.ticker,
       company: pos.company,
@@ -6049,9 +6028,9 @@ Performance by duration classification:
   ${durStats('WEEK','Est. 5-7 Days')}
 
 Performance by signal score at purchase:
-  ${scoreStats(20,49)}
-  ${scoreStats(50,79)}
-  ${scoreStats(80,100)}
+  ${scoreStats(29,72)}
+  ${scoreStats(73,115)}
+  ${scoreStats(116,Infinity)}
 
 === NEAR-MISS SIGNAL ANALYSIS ===
 
@@ -6130,8 +6109,8 @@ ${macroSectorWeaknessStats(          'SECTOR_WEAKNESS_*:   ')}
 ${macroCondStats('CHOPPY',            'CHOPPY:              ')}
 
 Threshold at time of purchase:
-${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) >= ELEVATED_SCORE_THRESHOLD, 'Trades bought under elevated threshold (50+):')}
-${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) < ELEVATED_SCORE_THRESHOLD, 'Trades bought under normal threshold (20+):  ')}
+${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) >= ELEVATED_SCORE_THRESHOLD, 'Trades bought under elevated threshold (73+):')}
+${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) < ELEVATED_SCORE_THRESHOLD, 'Trades bought under normal threshold (29+):  ')}
 
 ${(()=>{
   // Change 4 (Data & Reporting) — entry timing, sub-$10 adjustment, Groq
@@ -6383,9 +6362,9 @@ ${ureFactorAccuracySection}
 
   report += `=== CURRENT SCORING FORMULA (for Claude's reference) ===
 
-Scoring System — Scoring Formula v2 (raw signal points normalized to 0–100 via
-round(raw / ${RAW_SCORE_MAX} * 100), then clamped 0–100 after the Macro Market Overlay
-adjustment below is applied):
+Scoring System — Scoring Formula v2 (raw signal points, summed directly — no
+longer normalized to a 0-100 scale. Floored at 0 after the Macro Market
+Overlay adjustment below is applied; uncapped above):
   Volume spike:        −10 to +20 pts (<0.5x=0, 0.5-1x=15, 1-2x=20 best zone, 2-3x=10, 3x+=−10)
   Volume build:        0–15 pts (2 consecutive days rising + today >=1.3x avg)
   Price momentum:      0–20 pts (2-4%=10, 4%+=20)
@@ -6395,10 +6374,20 @@ adjustment below is applied):
   Consecutive up days: 0–15 pts (2 days=5, 3 days=10, 4+ days=15)
   Mean reversion:      0–20 pts (price 8-15% below MA, RSI<45, RSI turning up)
 
-RAW_SCORE_MAX (${RAW_SCORE_MAX}) is the sum of max POSITIVE points only, so a score
-can never exceed 100 regardless of which negative signals fire.
+RAW_SCORE_MAX (${RAW_SCORE_MAX}) is the sum of max POSITIVE points only. The
+displayed score IS this raw sum plus the macro adjustment below — it can
+exceed ${RAW_SCORE_MAX} when that adjustment is positive, and floors at 0
+when negative signals and a negative macro adjustment combine.
 
-Labels: 80–100=STRONG BUY | 50–79=SOFT BUY | 20–49=WATCH | <20=excluded
+Labels: 116+=STRONG BUY | 73–115=SOFT BUY | 29–72=WATCH | <29=excluded
+
+Note for Claude: scores were normalized to a 0-100 scale in earlier app
+versions. Trades from before this version show a 0-100 scoreAtBuy; trades
+from this version forward show the raw, unnormalized score instead (so
+rawScoreAtBuy and scoreAtBuy are identical going forward). Keep this in mind
+when comparing scoreAtBuy across trades that span the transition — a
+scoreAtBuy of 65 means something very different depending on which side of
+that line the trade falls on.
 
 Risk Score (1–10):
   Base by price tier: $1–$3=6, $4–$9=4, $10–$20=3
@@ -6883,9 +6872,9 @@ Performance by duration classification:
   ${durStats('WEEK','Est. 5-7 Days')}
 
 Performance by signal score at purchase:
-  ${scoreStats(20,49)}
-  ${scoreStats(50,79)}
-  ${scoreStats(80,100)}
+  ${scoreStats(29,72)}
+  ${scoreStats(73,115)}
+  ${scoreStats(116,Infinity)}
 
 === MACRO CONDITION AT TIME OF PURCHASE ===
 ${macroCondStats('RISK_OFF',          'RISK_OFF:            ')}
