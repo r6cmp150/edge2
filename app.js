@@ -820,6 +820,7 @@ let state = {
   ownedPrevRSI: {},       // ticker → RSI from the previous portfolio render, for detecting "declining from peak" in calcPeakRiskScore — persisted
   ownedPeakRSI: {},       // ticker → highest RSI seen across the current hold, for peakRsiDuringHold on the sold record — persisted
   preMarketGroqCache: {}, // ticker → {pairs}|{raw} Groq pre-market read — session only, tap-triggered
+  deletedPositionIds: new Set(), // position IDs deleted this session — guards renderPortfolioTab()'s fire-and-forget saves from resurrecting a just-sold row; session only, not persisted
 };
 
 function loadState() {
@@ -4097,10 +4098,12 @@ async function renderPortfolioTab() {
     if (currentPrice > (p.peakPrice || 0)) {
       p.peakPrice = currentPrice;
       p.peakPriceDate = new Date().toISOString().split('T')[0];
+      if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
     if (!p.momentumProtectionActivated && p.peakPrice >= p.buyPrice * 1.20) {
       p.momentumProtectionActivated = true;
+      if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
     // Rule 5 support: first time RSI hits the (soon-to-be-suspended) 72+ threshold
@@ -4108,6 +4111,7 @@ async function renderPortfolioTab() {
     // so the report can later show what an RSI-based exit would have left on the table.
     if (p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
       p.rsiSuspendedAtGainPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
+      if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
 
@@ -4896,6 +4900,7 @@ async function confirmMarkSold(posId, btn) {
   // open in Supabase, which the next reload would resurrect as an open
   // position while it's also sitting in Sold history.
   if (btn) btn.disabled = true;
+  state.deletedPositionIds.add(pos.id);
   try {
     await deletePositionFromSupabase(pos.id);
   } catch(e) {
