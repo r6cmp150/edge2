@@ -1740,14 +1740,12 @@ async function groqAnalyze(ticker, prompt) {
       model: GROQ_MODEL,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
-      max_tokens: 512
+      max_tokens: 2000
     })
   });
   if (!r.ok) throw new Error(`Groq ${r.status}`);
   const data = await r.json();
   const text = data.choices?.[0]?.message?.content || '';
-  console.log('[TEMP DEBUG] Groq raw response for', ticker, ':', JSON.stringify(text));
-  console.log('[TEMP DEBUG] Groq full response object:', JSON.stringify(data));
 
   const result = parseAIAnswers(text);
   state.aiCache[ticker] = result;
