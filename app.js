@@ -1746,6 +1746,8 @@ async function groqAnalyze(ticker, prompt) {
   if (!r.ok) throw new Error(`Groq ${r.status}`);
   const data = await r.json();
   const text = data.choices?.[0]?.message?.content || '';
+  console.log('[TEMP DEBUG] Groq raw response for', ticker, ':', JSON.stringify(text));
+  console.log('[TEMP DEBUG] Groq full response object:', JSON.stringify(data));
 
   const result = parseAIAnswers(text);
   state.aiCache[ticker] = result;
