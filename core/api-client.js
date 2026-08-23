@@ -24,8 +24,12 @@ function alpacaHeaders() {
   };
 }
 
-async function alpacaGet(path, params = {}) {
-  const url = new URL(ALPACA_BASE + path);
+// `base` defaults to ALPACA_BASE ('.../v2') — the market-data endpoints all
+// live there. News is the one exception: Alpaca serves it from '/v1beta1',
+// not '/v2' (see core/news.js), so callers on a different base pass it
+// explicitly rather than this function guessing per-path.
+async function alpacaGet(path, params = {}, base = ALPACA_BASE) {
+  const url = new URL(base + path);
   Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
   const r = await fetch(url.toString(), { headers: alpacaHeaders() });
   if (!r.ok) throw new Error(`Alpaca ${r.status}: ${await r.text()}`);
