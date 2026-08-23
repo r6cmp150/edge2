@@ -2,4 +2,54 @@
 // Alpaca auth + transport only (keys, headers, the bare fetch wrapper).
 // The shared rate-limit queue is Phase 0.5 — not built here; see
 // docs/warrior-engine-spec-v2.md Phase 0.5 before adding an enqueue() layer.
-// Phase 0 scaffold — content moves here from app.js in a later commit.
+// Moved from app.js's "── 6. ALPACA API ───" section (Phase 0 extraction).
+
+const ALPACA_BASE = 'https://data.alpaca.markets/v2';
+
+// Pre-approved Phase 0 exception to "move-only" (see spec's "Known debt to
+// record, not fix" note + explicit sign-off on this one guard): asserts an
+// ordering assumption instead of silently trusting it. Today alpacaHeaders()
+// is never called before loadState() populates state.settings, because
+// init() runs last — but that's implicit, and Warrior will call through this
+// same path on a different schedule, which is exactly when an implicit
+// ordering assumption becomes a real bug. Throwing here instead of sending
+// an empty key turns a confusing 401 into a diagnosable error at the source.
+function alpacaHeaders() {
+  if (typeof state.settings.alpacaKey !== 'string' || typeof state.settings.alpacaSecret !== 'string') {
+    throw new Error('AlpacaSettingsNotLoadedError: alpacaHeaders() called before state.settings was populated by loadState() — caller is running ahead of app init.');
+  }
+  return {
+    'APCA-API-KEY-ID': state.settings.alpacaKey,
+    'APCA-API-SECRET-KEY': state.settings.alpacaSecret,
+  };
+}
+
+async function alpacaGet(path, params = {}) {
+  const url = new URL(ALPACA_BASE + path);
+  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
+  const r = await fetch(url.toString(), { headers: alpacaHeaders() });
+  if (!r.ok) throw new Error(`Alpaca ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+function chunk(arr, n) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
+// Alpaca rejects an entire batch request with a 400 if ANY symbol in it is
+// malformed (confirmed in production via AAC-U) — a hyphen, space, or other
+// non-alphanumeric character kills the whole batch, not just that ticker.
+// Applied at every batch-request entry point below so a single bad ticker
+// in any universe can't take down an entire scan.
+function sanitizeTickerBatch(tickers) {
+  return tickers.filter(t => /^[A-Z0-9]+$/.test(t));
+}
+
+async function testAlpacaConnection() {
+  try {
+    await alpacaGet('/stocks/snapshots', { symbols: 'AAPL', feed:'iex' });
+    return true;
+  } catch(e) { return false; }
+}

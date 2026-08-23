@@ -180,7 +180,7 @@ async function newPinSubmit() {
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
 const VERSION = 'v2.9.1';
-const ALPACA_BASE = 'https://data.alpaca.markets/v2';
+// ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 // ── Supabase ─────────────────────────────────────────────────────
@@ -987,36 +987,8 @@ function getFreshnessHtml(triggerId) {
 }
 
 // ── 6. ALPACA API ─────────────────────────────────────────────────
-
-function alpacaHeaders() {
-  return {
-    'APCA-API-KEY-ID': state.settings.alpacaKey,
-    'APCA-API-SECRET-KEY': state.settings.alpacaSecret,
-  };
-}
-
-async function alpacaGet(path, params = {}) {
-  const url = new URL(ALPACA_BASE + path);
-  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
-  const r = await fetch(url.toString(), { headers: alpacaHeaders() });
-  if (!r.ok) throw new Error(`Alpaca ${r.status}: ${await r.text()}`);
-  return r.json();
-}
-
-function chunk(arr, n) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
-  return out;
-}
-
-// Alpaca rejects an entire batch request with a 400 if ANY symbol in it is
-// malformed (confirmed in production via AAC-U) — a hyphen, space, or other
-// non-alphanumeric character kills the whole batch, not just that ticker.
-// Applied at every batch-request entry point below so a single bad ticker
-// in any universe can't take down an entire scan.
-function sanitizeTickerBatch(tickers) {
-  return tickers.filter(t => /^[A-Z0-9]+$/.test(t));
-}
+// alpacaHeaders/alpacaGet/chunk/sanitizeTickerBatch moved to
+// core/api-client.js (Phase 0 extraction).
 
 async function fetchSnapshots(tickers, onProgress) {
   const clean = sanitizeTickerBatch(tickers);
@@ -1332,12 +1304,7 @@ async function fetchNewsForTickers(tickers) {
   } catch(e) { return []; }
 }
 
-async function testAlpacaConnection() {
-  try {
-    await alpacaGet('/stocks/snapshots', { symbols: 'AAPL', feed:'iex' });
-    return true;
-  } catch(e) { return false; }
-}
+// testAlpacaConnection moved to core/api-client.js (Phase 0 extraction).
 
 // ── 6b. MACRO MARKET OVERLAY ─────────────────────────────────────
 
