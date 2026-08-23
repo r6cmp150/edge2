@@ -1168,15 +1168,7 @@ async function resolveSellTimingForSoldTrades() {
 
 // fetchMinuteBars/fetchHourlyBars moved to core/market-data.js (Phase 0 extraction).
 
-async function fetchNewsForTickers(tickers) {
-  const clean = sanitizeTickerBatch(tickers);
-  if (!clean.length) return [];
-  try {
-    const syms = clean.slice(0, 50).join(',');
-    const data = await alpacaGet('/news', { symbols: syms, limit: 50, sort:'desc' });
-    return data.news || [];
-  } catch(e) { return []; }
-}
+// fetchNewsForTickers moved to core/news.js (Phase 0 extraction).
 
 // testAlpacaConnection moved to core/api-client.js (Phase 0 extraction).
 
