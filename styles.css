@@ -331,9 +331,10 @@ a { color: var(--blue); }
   padding: 4px 16px 10px;
   letter-spacing: 0.2px;
 }
-.scan-summary .ss-strong { color: var(--green); }
-.scan-summary .ss-soft   { color: var(--yellow); }
-.scan-summary .ss-watch  { color: var(--muted); }
+.scan-summary .ss-strong  { color: var(--green); }
+.scan-summary .ss-soft    { color: var(--yellow); }
+.scan-summary .ss-watch   { color: var(--muted); }
+.scan-summary .ss-dropped { color: var(--muted); }
 
 /* ── After Hours Strip ── */
 .ah-strip {

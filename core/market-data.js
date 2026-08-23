@@ -80,10 +80,18 @@ async function fetchAHSnapshots(tickers) {
 // pagination loop should essentially never iterate more than once under the
 // current 180-day lookback / 30-symbol chunk size; it exists so a future
 // change to either doesn't silently reintroduce this bug.
+// Phase 0.6 Bug 3 fix. A transient failure on one chunk's request (network
+// blip, 429, timeout) hits the catch below and drops ~30 symbols from the
+// scan with nothing but a console.warn — the same disappearing-stock
+// symptom as Bug 1, from a stochastic cause instead of a deterministic one.
+// Scoped narrowly per the spec: surface it, don't fix it — retry/backoff is
+// Phase 0.5's job. `droppedSymbols` lets the caller show a count in the scan
+// header rather than silently presenting a partial scan as a complete one.
 async function fetchMultiBars(tickers, limit = 10000) {
   const clean = sanitizeTickerBatch(tickers);
-  if (!clean.length) return {};
+  if (!clean.length) return { results: {}, droppedSymbols: [] };
   const results = {};
+  const droppedSymbols = [];
   const start = (() => {
     const d = new Date(); d.setDate(d.getDate() - 180); return d.toISOString().split('T')[0];
   })();
@@ -114,9 +122,12 @@ async function fetchMultiBars(tickers, limit = 10000) {
       if (missing.length) {
         console.warn(`fetchMultiBars: no bars returned for ${missing.length} requested symbol(s) after full pagination: ${missing.join(', ')}`);
       }
-    } catch(e) { console.warn('bars batch error', e.message); }
+    } catch(e) {
+      console.warn('bars batch error', e.message);
+      droppedSymbols.push(...batch);
+    }
   }
-  return results;
+  return { results, droppedSymbols };
 }
 
 async function fetchSingleBars(ticker, limit = 300) {

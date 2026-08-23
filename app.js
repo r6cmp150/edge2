@@ -791,6 +791,7 @@ let state = {
   loading: false,
   _confirmCb: null,
   lastPassedCount: 0,
+  lastScanDroppedCount: 0, // symbols dropped from the last scan's bars fetch by a chunk-level error (Bug 3) — persisted
   selectedUniverse: 'OTHER',
   notifications: {},     // push notification state — persisted
   ownedScores: {},        // ticker → {score, label} snapshotted at each screener run, for owned positions that no longer clear the display threshold — persisted
@@ -804,7 +805,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI'].forEach(k => {
+  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -2040,7 +2041,9 @@ async function runScreener() {
     const ctickers = candidates.map(([t]) => t);
 
     // 3. Historical bars
-    const allBars = await fetchMultiBars(ctickers, 10000);
+    const { results: allBars, droppedSymbols: barsDroppedSymbols } = await fetchMultiBars(ctickers, 10000);
+    state.lastScanDroppedCount = barsDroppedSymbols.length;
+    persist('lastScanDroppedCount');
 
     // 4. News
     const newsItems = await fetchNewsForTickers(ctickers);
@@ -2109,10 +2112,13 @@ async function runScreener() {
     const missingOwnedTickers = ownedTickers.filter(t => !updatedOwnedTickers.has(t));
     if (missingOwnedTickers.length) {
       try {
-        const [extraSnaps, extraBars] = await Promise.all([
+        const [extraSnaps, extraBarsResult] = await Promise.all([
           fetchSnapshots(missingOwnedTickers),
           fetchMultiBars(missingOwnedTickers, 10000),
         ]);
+        // Owned-ticker refresh, not part of the main scan — its dropped
+        // symbols (if any) aren't rolled into the scan header's count.
+        const extraBars = extraBarsResult.results;
         missingOwnedTickers.forEach(ticker => {
           const snap = extraSnaps[ticker];
           if (!snap) return;
@@ -2208,6 +2214,16 @@ function handleRefresh() {
 
 // ── 11. SIGNALS TAB ───────────────────────────────────────────────
 
+// Phase 0.6 Bug 3: a scan that dropped a chunk's worth of symbols to a
+// transient bars-fetch failure is not a complete scan and must not present
+// itself as one. Muted, but present — not an error banner, just an honest
+// count appended to the existing scan-summary line.
+function buildDroppedSuffixHtml() {
+  const n = state.lastScanDroppedCount || 0;
+  if (!n) return '';
+  return ` — <span class="ss-dropped">${n} could not be checked</span>`;
+}
+
 function renderSignalsTab() {
   const container = document.getElementById('tab-content');
   updateBudgetBar();
@@ -2256,7 +2272,7 @@ function renderSignalsTab() {
       <p>Tap Refresh to run your first scan.</p>
     </div>`;
   } else if (!state.signals.length) {
-    html += `<div class="scan-summary">Market is quiet — no signals above threshold.</div>`;
+    html += `<div class="scan-summary">Market is quiet — no signals above threshold.${buildDroppedSuffixHtml()}</div>`;
     html += `<div class="empty-state">
       <div class="empty-icon">🔇</div>
       <p>Market is quiet right now. Try refreshing later.</p>
@@ -2270,7 +2286,7 @@ function renderSignalsTab() {
     const w   = unowned.filter(s => s.signal === 'WATCH').length;
     const total = TICKERS.length;
     const universe = state.selectedUniverse || 'OTHER';
-    html += `<div class="scan-summary">Scanned ${total} stocks <span class="ss-universe">[${universe}]</span> — <span class="ss-strong">${sb} strong buy</span>, <span class="ss-soft">${sfb} soft buy</span>, <span class="ss-watch">${w} watch</span></div>`;
+    html += `<div class="scan-summary">Scanned ${total} stocks <span class="ss-universe">[${universe}]</span> — <span class="ss-strong">${sb} strong buy</span>, <span class="ss-soft">${sfb} soft buy</span>, <span class="ss-watch">${w} watch</span>${buildDroppedSuffixHtml()}</div>`;
 
     const filtered = getFilteredSignals();
     if (!filtered.length) {
@@ -3703,7 +3719,8 @@ async function renderPortfolioTab() {
       const fetches = [fetchSnapshots(tickers), fetchMultiBars(tickers, 10000)];
       if (isAfterHoursMode()) fetches.push(fetchAHSnapshots(tickers));
       const results = await Promise.all(fetches);
-      [snapshots, allBars] = results;
+      snapshots = results[0];
+      allBars = results[1].results; // dropped symbols (if any) not surfaced here — Portfolio isn't the scan header
       if (isAfterHoursMode()) pfAHSnaps = results[2] || {};
     }
   } catch(e) {}
