@@ -955,8 +955,8 @@ function getFreshnessHtml(triggerId) {
 
 // fetchSnapshots/checkUnresolvedSymbols/fetchAHSnapshots/fetchMultiBars/
 // fetchSingleBars/fetchNextDayClose moved to core/market-data.js (Phase 0
-// extraction). Moved as-is, including the unpatched next_page_token gap in
-// fetchMultiBars and the feed:'iex' defaults — see Phase 0.6, not fixed here.
+// extraction). fetchMultiBars' pagination gap was fixed in Phase 0.6 (Bug 1).
+// feed:'iex' defaults are separate known debt, still not fixed here.
 
 // Adds n TRADING days (skips Sat/Sun, no holiday calendar — consistent with
 // the rest of the app's date math) to a yyyy-mm-dd string. UTC throughout so
