@@ -778,6 +778,7 @@ let state = {
   signals: [],
   news: [],
   newsUnavailable: false, // set by core/news.js when the last news fetch failed (e.g. wrong path, network) — distinct from "fetched fine, zero results"
+  newsTruncatedSymbols: [], // tickers whose news may be incomplete because their batch hit the 50-item page cap — distinct from "confirmed zero news"
   lastScanTime: null,
   activeTab: 'signals',
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
@@ -2351,7 +2352,7 @@ function buildPreMarketDetailPanel(m) {
     </div>
     <div class="premarket-detail-row">
       <span class="premarket-detail-label">News</span>
-      <span>${state.newsUnavailable ? 'News unavailable' : (headline ? `"${headline}"` : 'No recent news')}</span>
+      <span>${state.newsUnavailable ? 'News unavailable' : headline ? `"${headline}"` : state.newsTruncatedSymbols.includes(m.ticker) ? 'News check incomplete' : 'No recent news'}</span>
     </div>
     <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="event.stopPropagation();analyzePreMarketMover('${m.ticker}')">📊 Analyze with Groq</button>
     <div id="premarket-groq-${m.ticker}" class="premarket-groq-result"></div>
@@ -2780,6 +2781,7 @@ function getNewsSentiment(hasNeg, createdAt) {
 
 function buildCardNewsSnippet(s) {
   if (state.newsUnavailable) return `<div class="sc-news"><span class="sc-news-nonews">News unavailable</span></div>`;
+  if (!s.news && state.newsTruncatedSymbols.includes(s.ticker)) return `<div class="sc-news"><span class="sc-news-nonews">News check incomplete</span></div>`;
   if (!s.news) return `<div class="sc-news"><span class="sc-news-nonews">No recent news</span></div>`;
   const ageH = (Date.now() - new Date(s.news.created_at).getTime()) / 3600000;
   if (ageH > 24) return `<div class="sc-news"><span class="sc-news-nonews">No recent news</span></div>`;
@@ -3036,7 +3038,10 @@ function buildModalNewsSection(ticker) {
   const items = (state.news || [])
     .filter(n => (n.symbols || []).includes(ticker))
     .slice(0, 3);
-  if (!items.length) return `<div class="section-label">Recent News</div><div class="card-no-news" style="padding:4px 0 8px">No recent news</div>`;
+  if (!items.length) {
+    const msg = state.newsTruncatedSymbols.includes(ticker) ? 'News check incomplete' : 'No recent news';
+    return `<div class="section-label">Recent News</div><div class="card-no-news" style="padding:4px 0 8px">${msg}</div>`;
+  }
   const rowsHtml = items.map(n => {
     const ageH = (now - new Date(n.created_at).getTime()) / 3600000;
     const ageStr = ageH < 1 ? `${Math.floor(ageH*60)}m ago` : ageH < 24 ? `${Math.floor(ageH)}h ago` : `${Math.floor(ageH/24)}d ago`;
