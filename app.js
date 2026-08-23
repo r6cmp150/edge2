@@ -2040,7 +2040,7 @@ async function runScreener() {
     const ctickers = candidates.map(([t]) => t);
 
     // 3. Historical bars
-    const allBars = await fetchMultiBars(ctickers, 100);
+    const allBars = await fetchMultiBars(ctickers, 10000);
 
     // 4. News
     const newsItems = await fetchNewsForTickers(ctickers);
@@ -2111,7 +2111,7 @@ async function runScreener() {
       try {
         const [extraSnaps, extraBars] = await Promise.all([
           fetchSnapshots(missingOwnedTickers),
-          fetchMultiBars(missingOwnedTickers, 100),
+          fetchMultiBars(missingOwnedTickers, 10000),
         ]);
         missingOwnedTickers.forEach(ticker => {
           const snap = extraSnaps[ticker];
@@ -3700,7 +3700,7 @@ async function renderPortfolioTab() {
   let pfAHSnaps = {};
   try {
     if (state.settings.alpacaKey) {
-      const fetches = [fetchSnapshots(tickers), fetchMultiBars(tickers, 100)];
+      const fetches = [fetchSnapshots(tickers), fetchMultiBars(tickers, 10000)];
       if (isAfterHoursMode()) fetches.push(fetchAHSnapshots(tickers));
       const results = await Promise.all(fetches);
       [snapshots, allBars] = results;

@@ -1,10 +1,10 @@
 // core/market-data.js — owned by neither engine. core/ never imports from engines/.
 // Snapshot + daily/minute/hourly bar fetchers. Feed ('iex' | 'sip') is always
 // an explicit parameter at each call site — never a default baked in here.
-// Moved from app.js verbatim (Phase 0 extraction) — this includes the known,
-// not-yet-fixed next_page_token gap in fetchMultiBars (see Phase 0.6 in
-// docs/warrior-engine-spec-v2.md). Every fetcher here still hardcodes
-// feed:'iex'; that's the same known debt, not touched by this move.
+// Moved from app.js verbatim (Phase 0 extraction). fetchMultiBars' pagination
+// gap was fixed in Phase 0.6 (Bug 1) — see the comment on that function.
+// Every fetcher here still hardcodes feed:'iex'; that's separate known debt,
+// not part of Phase 0.6, not touched here.
 
 // Confirmed in production: Alpaca rejects a batch /stocks/snapshots request
 // with a 400 ("invalid symbol") the moment it contains one malformed ticker
@@ -65,7 +65,22 @@ async function fetchAHSnapshots(tickers) {
   return results;
 }
 
-async function fetchMultiBars(tickers, limit = 100) {
+// Phase 0.6 Bug 1 fix. Alpaca's multi-symbol bars endpoint caps `limit` at
+// the TOTAL bar count across the whole response, not per symbol — sorted by
+// symbol first, then timestamp. At the old limit:100 default, a 30-symbol
+// chunk needing ~3,000 daily bars returned exactly one symbol's worth
+// (confirmed live: a 30-symbol request came back with only `ABSI`, the
+// alphabetically-first symbol, plus an ignored next_page_token) and every
+// other symbol in the chunk silently vanished.
+//
+// Fix (option D from the spec's cost table): raise `limit` to Alpaca's
+// platform ceiling (10000) so a realistic chunk's total bar need fits in one
+// page — AND follow next_page_token to exhaustion as a safety net, so
+// correctness doesn't rest on trusting the ceiling is never exceeded. The
+// pagination loop should essentially never iterate more than once under the
+// current 180-day lookback / 30-symbol chunk size; it exists so a future
+// change to either doesn't silently reintroduce this bug.
+async function fetchMultiBars(tickers, limit = 10000) {
   const clean = sanitizeTickerBatch(tickers);
   if (!clean.length) return {};
   const results = {};
@@ -74,10 +89,31 @@ async function fetchMultiBars(tickers, limit = 100) {
   })();
   for (const batch of chunk(clean, 30)) {
     try {
-      const data = await alpacaGet('/stocks/bars', {
-        symbols: batch.join(','), timeframe:'1Day', start, limit, sort:'asc', feed:'iex'
-      });
-      if (data.bars) Object.assign(results, data.bars);
+      let pageToken;
+      do {
+        const params = { symbols: batch.join(','), timeframe:'1Day', start, limit, sort:'asc', feed:'iex' };
+        if (pageToken) params.page_token = pageToken;
+        const data = await alpacaGet('/stocks/bars', params);
+        if (data.bars) {
+          for (const sym of Object.keys(data.bars)) {
+            results[sym] = (results[sym] || []).concat(data.bars[sym]);
+          }
+        }
+        pageToken = data.next_page_token || null;
+      } while (pageToken);
+
+      // Completeness assertion: every symbol in `batch` already cleared the
+      // Stage 1 price/volume snapshot filter upstream, meaning Alpaca has
+      // confirmed trade data for it — so a symbol with zero bars back here
+      // after exhausting pagination is an anomaly, not "too new to have
+      // history." Log it explicitly rather than letting it fall through
+      // scoreStock's `bars.length < 15` gate indistinguishable from "failed
+      // the score threshold" (that gate still correctly excludes genuinely
+      // short-history symbols; this only flags the zero-bars case).
+      const missing = batch.filter(sym => !results[sym] || !results[sym].length);
+      if (missing.length) {
+        console.warn(`fetchMultiBars: no bars returned for ${missing.length} requested symbol(s) after full pagination: ${missing.join(', ')}`);
+      }
     } catch(e) { console.warn('bars batch error', e.message); }
   }
   return results;
