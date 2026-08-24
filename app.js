@@ -6793,7 +6793,10 @@ async function checkPriceAlerts() {
 
   try {
     const tickers = [...new Set(state.portfolio.map(p => p.ticker))];
-    const snaps = await fetchSnapshots(tickers);
+    // Phase 0.5: this is the background poller the rate-limit queue's
+    // priority ordering exists to isolate from whatever the user is
+    // actively looking at — see withBackgroundPriority in core/api-client.js.
+    const snaps = await withBackgroundPriority(() => fetchSnapshots(tickers));
 
     for (const pos of state.portfolio) {
       const snap = snaps[pos.ticker];
