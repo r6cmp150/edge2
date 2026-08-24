@@ -135,6 +135,10 @@ function _isEligibleInstrument(asset) {
 // call) but the response is large (~14k rows) — this is the only strategy
 // this phase actually calls it from (movers/most-actives need it purely to
 // cross-reference instrument type; they don't return name/class themselves).
+// CLAUDE.md pagination rule, exemption proof: /v2/assets takes no `limit`
+// and returns no `next_page_token` — confirmed live, the full 14,203-row
+// active us_equity list came back in this one call (see file header). Not a
+// truncatable list endpoint the way /stocks/bars is.
 async function _getAssetIndex() {
   const cache = state.universeAssetCache;
   if (cache && cache.fetchedAt && (Date.now() - new Date(cache.fetchedAt).getTime()) < ASSET_CACHE_MAX_AGE_MS) {
@@ -162,6 +166,13 @@ function _assetIndexBySymbol(assets) {
 // doesn't block the call), since callers choose the strategy for their
 // session via the strategy param, but a miscall here would silently return
 // stale data with nothing to indicate it.
+// CLAUDE.md pagination rule, exemption proof: `top` is the screener
+// endpoint's own request size, not a response cap it can silently truncate
+// against — it returns exactly `top` rows or fewer, no next_page_token
+// exists for this endpoint. top:50 is Alpaca's documented ceiling for this
+// endpoint (not ours to raise); logged explicitly below so a thin result
+// reads as "the cap may be cutting off real candidates," not silently as
+// "the market is quiet."
 async function _getMoversUniverse(session) {
   if (session && session !== 'OPEN' && session !== 'AH') {
     console.warn(`getUniverse('movers'): called during session=${session} — movers returns stale prior-day data before market open; consider 'premarket-gap' instead.`);

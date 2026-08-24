@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.3-phase1-dev8';
+const VERSION = 'v2.9.3-phase1-dev9';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -3147,7 +3147,7 @@ async function openStockModal(ticker) {
   `);
 
   try {
-    const [bars, minuteBars, hourlyBars] = await Promise.all([fetchSingleBars(ticker, 300), fetchMinuteBars(ticker), fetchHourlyBars(ticker)]);
+    const [bars, minuteBars, hourlyBars] = await Promise.all([fetchSingleBars(ticker, 10000), fetchMinuteBars(ticker), fetchHourlyBars(ticker)]);
     const sorted = [...bars].sort((a,b) => new Date(a.t) - new Date(b.t));
     _chartBarsMinute = [...minuteBars].sort((a,b) => new Date(a.t) - new Date(b.t));
     _chartBarsHourly = [...hourlyBars].sort((a,b) => new Date(a.t) - new Date(b.t));
@@ -5120,12 +5120,28 @@ async function buildWinnerExitTimingSection(sold) {
   No completed trades with LOCK IN PROFITS on record yet.`;
     const wins = lockInTrades.filter(s => s.pnlPct > 0);
     const withPeak = lockInTrades.filter(s => s.peakPrice != null && s.buyPrice);
-    const gainPreserved = withPeak.length
-      ? `${avg(withPeak, s => {
+    // "% of peak gain preserved" is only a meaningful question when a peak
+    // gain actually happened (peakGainPct > 0) — a trade whose peak never
+    // rose above its buy price never had an unrealized gain to preserve.
+    // The old `: 100` default conflated that "no peak observed" case with
+    // "captured the full gain," reporting the single most optimistic
+    // outcome for exactly the trades with no real peak data. Split instead:
+    // average only the trades where the metric applies, and surface the
+    // excluded count so a missing/flat peak stays visible rather than
+    // silently reading as a perfect exit.
+    const withRealPeakGain = withPeak.filter(s => ((s.peakPrice - s.buyPrice) / s.buyPrice) * 100 > 0);
+    const noPeakGainCount = withPeak.length - withRealPeakGain.length;
+    const noPeakGainNote = noPeakGainCount
+      ? ` (${noPeakGainCount} of ${withPeak.length} excluded — peak price never rose above buy price, so no gain was ever there to preserve)`
+      : '';
+    const gainPreserved = withRealPeakGain.length
+      ? `${avg(withRealPeakGain, s => {
           const peakGainPct = ((s.peakPrice - s.buyPrice) / s.buyPrice) * 100;
-          return peakGainPct > 0 ? (s.pnlPct / peakGainPct) * 100 : 100;
-        }).toFixed(1)}%`
-      : '— (peakPrice not tracked for this data source)';
+          return (s.pnlPct / peakGainPct) * 100;
+        }).toFixed(1)}%${noPeakGainNote}`
+      : withPeak.length
+        ? `— (no trade in this set ever recorded a peak above its buy price)`
+        : '— (peakPrice not tracked for this data source)';
     return `Trades where LOCK IN PROFITS was showing at time of sale:
   Total: ${lockInTrades.length} | win rate ${(wins.length/lockInTrades.length*100).toFixed(0)}% | avg outcome ${avg(lockInTrades, s=>s.pnlPct).toFixed(1)}%
   Avg gain preserved at exit: ${gainPreserved}`;
