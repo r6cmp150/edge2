@@ -5985,6 +5985,7 @@ function renderSettingsTab() {
       <div id="test-results"></div>
       <div class="settings-row">
         <button class="btn btn-ghost btn-sm" onclick="testUniverseEndpoints()">Test Universe Endpoints (Phase 1)</button>
+        <button class="btn btn-ghost btn-sm" onclick="testInstrumentFilter()">Test Instrument Filter (Phase 1)</button>
       </div>
     </div>
 
@@ -6698,6 +6699,40 @@ async function testUniverseEndpoints() {
     ${buildScreenerRow('movers', report.movers)}
     <div class="section-label mt12">Most active (most-actives)</div>
     ${buildScreenerRow('most-actives', report.mostActives)}
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
+// Compares the exclude-list actually in use against the old include-list it
+// replaced, against the real live asset list — not fixtures. See
+// core/universe.js:diagnoseInstrumentFilter for what each number means.
+function buildInstrumentSampleList(names) {
+  if (!names.length) return '<div class="card-sub mt4">(none)</div>';
+  return `<div class="card-sub mt4" style="white-space:pre-wrap">${names.join('\n')}</div>`;
+}
+async function testInstrumentFilter() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>Instrument Filter Diagnostic</h2></div>
+    <div class="test-result"><span class="spinner"></span> Fetching live asset list…</div>`);
+
+  const r = await diagnoseInstrumentFilter();
+
+  showModal(`<div class="modal-header"><h2>Instrument Filter Diagnostic</h2></div>
+    <div class="test-result">${r.rawTotal} raw active us_equity assets -> ${r.baselineTotal} tradable on NASDAQ/NYSE/AMEX (baseline)</div>
+
+    <div class="section-label mt12">OLD include-list ("Common Stock" required)</div>
+    <div class="test-result">Keeps ${r.includeList.keptCount} / ${r.baselineTotal} — excludes ${r.includeList.excludedCount}</div>
+    <div class="settings-label mt4">20 sample names it would exclude:</div>
+    ${buildInstrumentSampleList(r.includeList.excludedSample)}
+
+    <div class="section-label mt12">NEW exclude-list (drop warrant/unit/right/preferred/note/debenture)</div>
+    <div class="test-result">Keeps ${r.excludeList.keptCount} / ${r.baselineTotal} — excludes ${r.excludeList.excludedCount}</div>
+    <div class="settings-label mt4">20 sample names it drops:</div>
+    ${buildInstrumentSampleList(r.excludeList.excludedSample)}
+
     <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
   `);
 }

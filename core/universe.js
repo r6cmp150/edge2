@@ -31,15 +31,24 @@ function _inPriceRange(price) {
 // us_option/crypto/etc. (a SPAC's units/warrants/rights all still come back
 // class:"us_equity", same as the common stock). `attributes` is trading
 // features (fractionable, options-enabled), not instrument type. The only
-// documented signal at all is free text in `name` — Alpaca's own schema
-// example is literally "Apple Inc. Common Stock" — so this requires that
-// substring rather than trying to enumerate every non-common-stock suffix
-// (unit/warrant/right/preferred/depositary share/...), which risks missing
-// one. RFAIU ($51.76, a SPAC unit) in the movers diagnostic sample next to
-// RFAI (the underlying common stock) is exactly the contamination this
-// exists to catch.
-function _isCommonStock(asset) {
-  return typeof asset.name === 'string' && /common stock/i.test(asset.name);
+// documented signal at all is free text in `name`.
+//
+// This is deliberately an EXCLUDE-list, not an include-list. An earlier cut
+// required `name` to contain "Common Stock" — but Alpaca's naming isn't
+// uniform: ADRs say "American Depositary Shares", foreign issuers "Ordinary
+// Shares", REITs "Common Shares of Beneficial Interest", and plenty of
+// entries carry no instrument phrase at all. All tradeable, all
+// Ross-eligible, all silently dropped by an include-list — the same
+// silent-exclusion failure mode as Bug 1 (bars pagination) and Bug 4 (news
+// window): a real runner excluded looks identical to "nothing here," while
+// a junk instrument slipping through an exclude-list is one visible bad
+// card, not an invisible loss. Word-boundary matched (`\b`) so "unit"
+// doesn't false-positive on "United Airlines" or similar.
+const EXCLUDED_INSTRUMENT_NAME_RE = /\b(warrants?|units?|rights?|preferred|notes?|debentures?)\b/i;
+
+function _isEligibleInstrument(asset) {
+  if (typeof asset.name !== 'string') return true; // no name to judge by — exclude-list philosophy defaults to keep, not drop
+  return !EXCLUDED_INSTRUMENT_NAME_RE.test(asset.name);
 }
 
 // ── Asset list — 24h cache, shared by every strategy that needs to know
@@ -55,7 +64,7 @@ async function _getAssetIndex() {
   const raw = await alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);
   const assets = (raw || [])
     .filter(a => a.tradable && ALLOWED_EXCHANGES.has(a.exchange))
-    .map(a => ({ symbol: a.symbol, exchange: a.exchange, name: a.name, isCommonStock: _isCommonStock(a) }));
+    .map(a => ({ symbol: a.symbol, exchange: a.exchange, name: a.name, isEligibleInstrument: _isEligibleInstrument(a) }));
   state.universeAssetCache = { fetchedAt: new Date().toISOString(), assets };
   persist('universeAssetCache');
   console.log(`core/universe.js: refreshed asset list — ${raw.length} total active us_equity, ${assets.length} tradable on ${[...ALLOWED_EXCHANGES].join('/')}`);
@@ -128,7 +137,11 @@ async function _getMoversUniverse(session) {
   const priceFiltered = combined.filter(c => _inPriceRange(c.price));
   const instrumentFiltered = priceFiltered.filter(c => {
     const asset = assetsBySymbol[c.symbol];
-    return !!(asset && asset.isCommonStock);
+    // A symbol missing from the asset index (wrong exchange, not tradable,
+    // not in the us_equity active list) is excluded here — absence from the
+    // index is itself informative, unlike a missing `name` on a present
+    // asset (see _isEligibleInstrument).
+    return !!(asset && asset.isEligibleInstrument);
   });
 
   // `top=50` is a hard cap Alpaca imposes on each endpoint, not "everything
@@ -136,7 +149,7 @@ async function _getMoversUniverse(session) {
   // explicitly so a thin count here is visibly "the cap may be cutting off
   // real candidates," not indistinguishable from "the market is quiet."
   // There is no way to tell those two apart from this endpoint alone.
-  console.log(`getUniverse('movers'): ${rawGainersCount} movers + ${rawActivesCount} actives (top=50 cap each) -> ${combined.length} after dedupe -> ${priceFiltered.length} in $1-$20 -> ${instrumentFiltered.length} common stock`);
+  console.log(`getUniverse('movers'): ${rawGainersCount} movers + ${rawActivesCount} actives (top=50 cap each) -> ${combined.length} after dedupe -> ${priceFiltered.length} in $1-$20 -> ${instrumentFiltered.length} eligible instrument`);
 
   return instrumentFiltered.map(c => ({
     symbol: c.symbol, price: c.price, prevClose: c.prevClose, changePct: c.changePct, volume: c.volume, source: c.source,
@@ -214,4 +227,58 @@ async function diagnoseUniverseEndpoints() {
     _checkMostActives(),
   ]);
   return { assets, movers, mostActives };
+}
+
+// The OLD include-list rule, kept here ONLY for side-by-side comparison
+// against the exclude-list actually in use (_isEligibleInstrument above).
+// Not called from getUniverse() or anywhere else in the request path.
+function _wasCommonStockIncludeList(asset) {
+  return typeof asset.name === 'string' && /common stock/i.test(asset.name);
+}
+
+// Fetches the real, live /v2/assets list (bypassing the 24h cache — this
+// needs a fresh read to answer "what does the filter do against reality
+// right now"), applies the tradable+exchange baseline both strategies use,
+// then runs BOTH the old include-list and the current exclude-list against
+// that same baseline. Reports how many each keeps and a sample of what each
+// would additionally exclude relative to the other, so a false-exclusion
+// (a real, tradeable, Ross-eligible instrument the include-list drops) or a
+// false-inclusion (genuine junk the exclude-list misses) is visible before
+// this filter feeds a live strategy.
+async function diagnoseInstrumentFilter() {
+  const raw = await alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);
+  const baseline = (raw || []).filter(a => a.tradable && ALLOWED_EXCHANGES.has(a.exchange));
+
+  const includeListKept = [];
+  const includeListExcluded = [];
+  const excludeListKept = [];
+  const excludeListExcluded = [];
+
+  baseline.forEach(a => {
+    if (_wasCommonStockIncludeList(a)) includeListKept.push(a); else includeListExcluded.push(a);
+    if (_isEligibleInstrument(a)) excludeListKept.push(a); else excludeListExcluded.push(a);
+  });
+
+  return {
+    rawTotal: raw.length,
+    baselineTotal: baseline.length, // tradable + NASDAQ/NYSE/AMEX, before either instrument filter
+    includeList: {
+      keptCount: includeListKept.length,
+      excludedCount: includeListExcluded.length,
+      // Names the OLD filter would have dropped — the loss this change
+      // exists to fix. Includes anything without "Common Stock" verbatim:
+      // ADRs, ordinary shares, REIT common shares, and unlabeled entries,
+      // NOT just genuine junk.
+      excludedSample: includeListExcluded.slice(0, 20).map(a => `${a.symbol}: ${a.name}`),
+    },
+    excludeList: {
+      keptCount: excludeListKept.length,
+      excludedCount: excludeListExcluded.length,
+      // Names the NEW filter drops — should be warrants/units/rights/
+      // preferred/notes/debentures and little else. Worth checking for
+      // over-reach (a legitimate common-stock name that happens to contain
+      // one of these words).
+      excludedSample: excludeListExcluded.slice(0, 20).map(a => `${a.symbol}: ${a.name}`),
+    },
+  };
 }
