@@ -24,13 +24,13 @@
 //
 //   First scan of a trading day (prior-close cache cold):
 //     ~58 requests to fetch prior closes for all ~5,714 eligible symbols
-//     (once, cached for the rest of the day) + ~18-29 requests to snapshot
-//     whichever survive the $1-$20 prior-close filter (estimated 30-50% of
-//     5,714 ≈ 1,700-2,850 symbols — this fraction is a real unknown until
-//     a live run reports it) = ~76-87 requests. Exceeds the spec's <30
-//     acceptance bullet.
+//     (once, cached for the rest of the day) + ~18-29 requests for the live
+//     step over whichever survive the $1-$20 prior-close filter (estimated
+//     30-50% of 5,714 ≈ 1,700-2,850 symbols — this fraction is a real
+//     unknown until a live run reports it) = ~76-87 requests. Exceeds the
+//     spec's <30 acceptance bullet.
 //   Every subsequent same-day scan (prior-close cache warm):
-//     ~18-29 requests — the snapshot step only. Clears <30.
+//     ~18-29 requests — the live step only. Clears <30.
 //
 // The first-scan overshoot is a real, deliberate tradeoff, not an oversight:
 // prior close is stable all day and expensive to (re)fetch; live price
@@ -38,9 +38,16 @@
 // that checks more than once or twice through the ~6:00-6:25am PT window
 // (which is the whole point of checking pre-market at all) amortizes the
 // one-time ~58-request cost across every scan after the first, and comes
-// out cheaper than re-snapshotting all 5,714 symbols on every single scan
-// would. The <30 bullet is met by every scan except literally the first
-// one of the day.
+// out cheaper than re-fetching all 5,714 symbols' live data on every single
+// scan would. The <30 bullet is met by every scan except literally the
+// first one of the day.
+//
+// The "live step" was originally a snapshot batch; Bug A (found live,
+// 2026-08-24) rules that out entirely — see
+// _fetchLatestSipMinuteBars/_getPremarketGapUniverse below — and replaces it
+// with a SIP minute-bar batch of the same shape and chunk size, so this
+// cost estimate is unchanged in magnitude, just sourced from a different
+// endpoint.
 
 const ALPACA_TRADING_BASE = 'https://paper-api.alpaca.markets';
 const ALPACA_SCREENER_BASE = 'https://data.alpaca.markets/v1beta1';
@@ -290,6 +297,55 @@ async function _getPriorCloses(symbols) {
   return cache.closes;
 }
 
+// Bug A (found live, 2026-08-24): snapshots 403 on feed:'sip' — "subscription
+// does not permit querying recent SIP data". Basic permits SIP only for data
+// >= 15 minutes old; snapshots are inherently recent, no exceptions. Falling
+// back to feed:'iex' for snapshots isn't a fix either — pre-market IEX
+// volume is negligible, so gap%/price from it would be unreliable or absent
+// for most symbols, the same problem SIP was chosen to avoid in the first
+// place. Rebuilt on 15-minute-delayed SIP MINUTE BARS instead: a 6:00am PT
+// scan sees data through ~5:45am, which is entirely adequate for detecting
+// a gap. `end` is set explicitly to now-16min (15min delay + 1min buffer) —
+// omitting `end` and letting it default to "now" risks the same "recent
+// data" rejection bars get when a caller doesn't account for the delay.
+const PREMARKET_BAR_DELAY_MIN = 16;
+
+async function _fetchLatestSipMinuteBars(symbols) {
+  const end = new Date(Date.now() - PREMARKET_BAR_DELAY_MIN * 60 * 1000);
+  const start = new Date(end.getTime() - 3 * 60 * 60 * 1000); // 3h lookback comfortably covers pre-market open (4:00am ET) through end
+
+  const latestBySymbol = {};
+  for (const batch of chunk(symbols, SNAPSHOT_CHUNK_SIZE)) {
+    try {
+      const barsBySymbol = {};
+      let pageToken;
+      do {
+        const params = {
+          symbols: batch.join(','), timeframe: '1Min',
+          start: start.toISOString(), end: end.toISOString(),
+          limit: batch.length * 5, sort: 'desc', feed: 'sip',
+        };
+        if (pageToken) params.page_token = pageToken;
+        const data = await alpacaGet('/stocks/bars', params);
+        if (data.bars) {
+          for (const sym of Object.keys(data.bars)) {
+            (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
+          }
+        }
+        pageToken = data.next_page_token || null;
+      } while (pageToken);
+      // sort:'desc' -> each symbol's first bar is its most recent within [start, end].
+      batch.forEach(sym => {
+        const bars = barsBySymbol[sym];
+        if (bars && bars.length) latestBySymbol[sym] = bars[0];
+      });
+    } catch (e) {
+      console.warn(`_fetchLatestSipMinuteBars: batch error for ${batch.length} symbols: ${e.message}`);
+    }
+  }
+  return latestBySymbol;
+}
+
 async function _getPremarketGapUniverse() {
   const assetIndex = await _getAssetIndex();
   const eligibleSymbols = assetIndex.map(a => a.symbol);
@@ -300,21 +356,11 @@ async function _getPremarketGapUniverse() {
   console.log(`getUniverse('premarket-gap'): ${eligibleSymbols.length} instrument-eligible -> ${priceFilteredSymbols.length} with prior close in $1-$20`);
   if (!priceFilteredSymbols.length) return [];
 
-  // SIP, not iex — pre-market volume/price on IEX alone is a small fraction
-  // of the tape (Bug 2's original finding, same reasoning applies here).
-  const snaps = {};
-  for (const batch of chunk(priceFilteredSymbols, SNAPSHOT_CHUNK_SIZE)) {
-    try {
-      const data = await alpacaGet('/stocks/snapshots', { symbols: batch.join(','), feed: 'sip' });
-      Object.assign(snaps, data);
-    } catch (e) {
-      console.warn(`getUniverse('premarket-gap'): snapshot batch error for ${batch.length} symbols: ${e.message}`);
-    }
-  }
+  const latestBars = await _fetchLatestSipMinuteBars(priceFilteredSymbols);
 
   const withGap = priceFilteredSymbols.map(sym => {
-    const snap = snaps[sym];
-    const premarketPrice = getLivePrice(snap);
+    const bar = latestBars[sym];
+    const premarketPrice = bar ? bar.c : null;
     const prevClose = priorCloses[sym];
     if (!premarketPrice || !prevClose) return null;
     return {
@@ -322,7 +368,7 @@ async function _getPremarketGapUniverse() {
       price: premarketPrice,
       prevClose,
       changePct: ((premarketPrice - prevClose) / prevClose) * 100,
-      volume: snap?.dailyBar?.v ?? null,
+      volume: bar ? bar.v : null,
       source: 'premarket-gap',
     };
   }).filter(Boolean);
@@ -517,15 +563,22 @@ async function diagnoseFundKeywordCandidates() {
   return { eligibleTotal: eligible.length, candidates, wordBoundaryFalsePositivesAvoided };
 }
 
-// Checks whether snapshot's prevDailyBar is actually populated on a real,
-// live sample — not just documented. Alpaca's schema lists prevDailyBar as
-// a field of stock_snapshot (confirmed against docs before this), but marks
-// every field optional with no stated guarantee about pre-market
-// reliability specifically. If this comes back clean, _getPremarketGapUniverse
-// can snapshot the eligible universe once and take both prevClose and live
-// price from the same response, deleting the separate prior-close bars
-// fetch entirely (cold-path cost ~58 instead of ~76-87). If it doesn't,
-// the current two-step design stays as built.
+// ORIGINAL PURPOSE MOOT, KEPT AS A DIFFERENT CHECK: this existed to decide
+// whether _getPremarketGapUniverse could snapshot the eligible universe once
+// and take both prevClose and live price from the same response. That
+// question is closed by Bug A instead — snapshots can't be used pre-market
+// at all (feed:'sip' 403s, "subscription does not permit querying recent
+// SIP data"; feed:'iex' is allowed but its pre-market volume is negligible,
+// unreliable for gap detection), independent of whether prevDailyBar itself
+// is populated. _getPremarketGapUniverse now uses SIP minute bars, not
+// snapshots, and keeps its own prior-close cache regardless of this result.
+//
+// Still worth running, for a different reason: _getMoversUniverse's `actives`
+// path (movers/most-actives strategy, not premarket-gap) reads
+// snap.prevDailyBar?.c from a feed:'iex' snapshot (core/market-data.js's
+// fetchSnapshots — audited, confirmed iex, never affected by Bug A). This
+// checks that specific reliance is sound. Feed corrected to 'iex' below —
+// 'sip' would just 403 here the same way it did in _getPremarketGapUniverse.
 async function diagnosePrevDailyBarCoverage() {
   const session = getMarketStatus().status;
   const assetIndex = await _getAssetIndex();
@@ -533,7 +586,7 @@ async function diagnosePrevDailyBarCoverage() {
 
   const snaps = {};
   for (const batch of chunk(sampleSymbols, SNAPSHOT_CHUNK_SIZE)) {
-    const data = await alpacaGet('/stocks/snapshots', { symbols: batch.join(','), feed: 'sip' });
+    const data = await alpacaGet('/stocks/snapshots', { symbols: batch.join(','), feed: 'iex' });
     Object.assign(snaps, data);
   }
 
