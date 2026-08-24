@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.3-phase1-dev9';
+const VERSION = 'v2.9.3-phase1-dev10';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -3152,34 +3152,53 @@ async function openStockModal(ticker) {
     _chartBarsMinute = [...minuteBars].sort((a,b) => new Date(a.t) - new Date(b.t));
     _chartBarsHourly = [...hourlyBars].sort((a,b) => new Date(a.t) - new Date(b.t));
     const closes = sorted.map(b => b.c);
-    const vols   = sorted.map(b => b.v);
 
     const price   = (s?.price) || sorted[sorted.length-1]?.c || 0;
     _chartCurrentPrice = price;
-    const prevClose = closes.length >= 2 ? closes[closes.length-2] : price;
-    const fallbackTodayChange = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
     const rsi     = calcRSI(closes);
-    const atr     = calcATR(sorted);
-    const trimmedAtr = calcTrimmedATR(sorted);
-    const ma20    = calcMA(closes, 20);
-    const avgVol10 = calcAvgVolume(vols, 10);
-    const volRatio = avgVol10 > 0 ? ((sorted[sorted.length-1]?.v||0) / avgVol10) : 1;
 
+    // high52/low52 are used directly in the template below, unconditionally
+    // — unlike everything in the s-absent branch below, these are NOT dead
+    // when s exists. That asymmetry (some fresh values live, most dead) is
+    // exactly what the last two impact reviews got wrong by assuming
+    // top-level consts here were all feeding the display.
     const last252 = sorted.slice(-252);
     const high52  = last252.length ? Math.max(...last252.map(b => b.h)) : price;
     const low52   = last252.length ? Math.min(...last252.map(b => b.l)) : price;
-    const last10ExclToday = sorted.slice(-11, -1);
-    const swingHigh10 = last10ExclToday.length ? Math.max(...last10ExclToday.map(b => b.h)) : null;
 
-    const stock = s || {
-      ticker, company: COMPANY_NAMES[ticker]||ticker,
-      price, rsi, atr, ma20, volRatio, bars: sorted,
-      duration: classifyDuration(rsi, volRatio, closes),
-      ...calcEntryTargetStop(price, trimmedAtr, classifyDuration(rsi, volRatio, closes), { high52, swingHigh10, ma20 }),
-      score: 0, risk: calcRiskScore(price, atr, rsi, volRatio, false),
-      priceRange: price <= 3 ? '$1–$3' : price <= 9 ? '$4–$9' : '$10–$20',
-      todayChange: fallbackTodayChange, signal: 'WATCH', news: null
-    };
+    // `s || {...}` only ever CONSTRUCTS the object when s is falsy (||
+    // short-circuits) — so atr/trimmedAtr/ma20/volRatio/vols/swingHigh10/
+    // prevClose/todayChange are dead whenever a Signals-tab card already
+    // exists for this ticker (the common case: stock becomes literally the
+    // same object as the card's, s.rsi/s.ma20/s.volRatio/s.entry etc., not
+    // anything computed here). Wrapped as an IIFE instead of separate
+    // top-level consts so that's structurally unreachable when s exists,
+    // not merely unused — the previous shape let two separate reviews this
+    // session both wrongly assume these fed the display, since they read
+    // as ordinary live top-level variables. Also collapses the old code's
+    // two identical classifyDuration(rsi, volRatio, closes) calls into one.
+    const stock = s || (() => {
+      const vols = sorted.map(b => b.v);
+      const prevClose = closes.length >= 2 ? closes[closes.length-2] : price;
+      const todayChange = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+      const atr = calcATR(sorted);
+      const trimmedAtr = calcTrimmedATR(sorted);
+      const ma20 = calcMA(closes, 20);
+      const avgVol10 = calcAvgVolume(vols, 10);
+      const volRatio = avgVol10 > 0 ? ((sorted[sorted.length-1]?.v||0) / avgVol10) : 1;
+      const last10ExclToday = sorted.slice(-11, -1);
+      const swingHigh10 = last10ExclToday.length ? Math.max(...last10ExclToday.map(b => b.h)) : null;
+      const duration = classifyDuration(rsi, volRatio, closes);
+      return {
+        ticker, company: COMPANY_NAMES[ticker]||ticker,
+        price, rsi, atr, ma20, volRatio, bars: sorted,
+        duration,
+        ...calcEntryTargetStop(price, trimmedAtr, duration, { high52, swingHigh10, ma20 }),
+        score: 0, risk: calcRiskScore(price, atr, rsi, volRatio, false),
+        priceRange: price <= 3 ? '$1–$3' : price <= 9 ? '$4–$9' : '$10–$20',
+        todayChange, signal: 'WATCH', news: null
+      };
+    })();
     _modalStock = stock;
     // Genuinely live price/RSI from this modal's own fresh bar fetch — distinct from
     // stock.price/stock.rsi, which can be a stale state.signals cache entry when the
