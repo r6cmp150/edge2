@@ -33,18 +33,39 @@ function _inPriceRange(price) {
 // features (fractionable, options-enabled), not instrument type. The only
 // documented signal at all is free text in `name`.
 //
-// This is deliberately an EXCLUDE-list, not an include-list. An earlier cut
-// required `name` to contain "Common Stock" — but Alpaca's naming isn't
-// uniform: ADRs say "American Depositary Shares", foreign issuers "Ordinary
-// Shares", REITs "Common Shares of Beneficial Interest", and plenty of
-// entries carry no instrument phrase at all. All tradeable, all
-// Ross-eligible, all silently dropped by an include-list — the same
-// silent-exclusion failure mode as Bug 1 (bars pagination) and Bug 4 (news
-// window): a real runner excluded looks identical to "nothing here," while
-// a junk instrument slipping through an exclude-list is one visible bad
-// card, not an invisible loss. Word-boundary matched (`\b`) so "unit"
-// doesn't false-positive on "United Airlines" or similar.
-const EXCLUDED_INSTRUMENT_NAME_RE = /\b(warrants?|units?|rights?|preferred|notes?|debentures?)\b/i;
+// This is deliberately an EXCLUDE-list, not an include-list, and that
+// choice is settled — do not reintroduce an include-list here. An earlier
+// cut required `name` to contain "Common Stock" and was rejected after
+// checking it against the real, live 8,799-name baseline (not fixtures):
+// it kept only 2,487 and dropped 6,312, including HUBS, EMN, IEX, NOV,
+// KULR, and MESO — major, ordinary, currently-listed common stocks whose
+// Alpaca `name` simply doesn't contain that exact phrase, alongside every
+// ADR ("American Depositary Shares"), every foreign ordinary-share issuer
+// ("Ordinary Shares"), every REIT ("Common Shares of Beneficial Interest"),
+// and anything with no instrument phrase in its name at all. All tradeable,
+// all Ross-eligible, all silently dropped. That's the same silent-exclusion
+// failure mode as Bug 1 (bars pagination) and Bug 4 (news window): a real
+// runner excluded looks identical to "nothing here," while a junk
+// instrument slipping through an exclude-list is one visible bad card, not
+// an invisible loss — asymmetric enough that "the exclude-list might let
+// something through" is not a reason to go back. Word-boundary matched
+// (`\b`) so "unit" doesn't false-positive on "United Airlines" or similar,
+// and "fund" doesn't false-positive on "Fundamental" — verified against
+// live data before each keyword was added, not assumed; see
+// diagnoseFundKeywordCandidates below for the tooling that's still deciding
+// whether "Fund" joins this list.
+//
+// ETF/ETN added after a live run: ETF excluded 1,250 names off the
+// (ADR-carve-out-adjusted) 7,309-name eligible baseline, all 20 sampled
+// were genuine funds; ETN excluded 3, same result. Two candidates
+// considered and rejected: "Exchange Traded Fund" is a strict subset of
+// ETF (every sample also contained "ETF"); "Trust" excluded fewer (1,117)
+// than ETF while carrying real REIT risk (KKR Real Estate Finance Trust
+// appeared in its own exclusion sample) — strictly worse on both axes, not
+// added. Leveraged/inverse pattern (2x/3x/leveraged/inverse/daily
+// target/bull/bear) also rejected as redundant: all 201 of its live
+// matches, including MSTU, already contained "ETF".
+const EXCLUDED_INSTRUMENT_NAME_RE = /\b(warrants?|units?|rights?|preferred|notes?|debentures?|etfs?|etns?)\b/i;
 
 // American Depositary Shares (ADRs) are foreign-issuer common-stock
 // equivalents — Ross-eligible. Their name often describes what the ADS
@@ -299,31 +320,40 @@ async function diagnoseInstrumentFilter() {
   };
 }
 
-// ETFs/ETNs/leveraged funds (confirmed live: KJD, KIQQ, BAIV kept by the
-// exclude-list; MSTU — a 2x leveraged MicroStrategy ETF at $2.725 — passed
-// price AND was in the live most-actives sample) survive the current
-// exclude-list. Ross would never trade a fund; Phase 6's float check would
-// eventually catch these too, but that's a later phase and this gap is live
-// now. NOT adding keywords for this without seeing real impact first —
-// "Trust" alone would drop legitimate REITs, and there may be other traps
-// like it. Each candidate below is tested INDEPENDENTLY against real data by
-// diagnoseFundKeywordCandidates(); none of them affect _isEligibleInstrument
-// until a candidate's sample confirms it's safe and something adds it there.
+// ETF/ETN settled and added to EXCLUDED_INSTRUMENT_NAME_RE above (see that
+// comment for the live numbers). "Exchange Traded Fund", "Trust", and the
+// leveraged/inverse pattern were tested and rejected — see the same
+// comment. "Fund" is the one remaining open candidate: confirmed live to
+// exclude 689 names ETF alone misses (closed-end funds like KIO, EDF), but
+// "fund" is a substring of "Fundamental", and Fundamental Global Inc. is a
+// real listed small-cap — worth confirming the match is genuinely
+// word-bounded against live data before adding it, not just trusting the
+// regex. diagnoseFundKeywordCandidates() tests it, plus a same-pattern
+// self-check (see below) that surfaces any name where "fund" appears
+// inside a longer word, so that check is answered with real names, not
+// asserted from reading the regex.
 const FUND_KEYWORD_CANDIDATES = {
-  'ETF (explicit)': /\bETFs?\b/i,
-  'ETN (explicit)': /\bETNs?\b/i,
-  '"Exchange Traded/Exchange-Traded Fund"': /exchange[- ]traded fund/i,
   '"Fund"': /\bfunds?\b/i,
-  '"Trust" — known risky, REITs use this too': /\btrusts?\b/i,
-  'Leveraged/inverse (2x, 3x, leveraged, inverse, daily target, bull, bear)': /\b(2x|3x|leveraged|inverse|daily target|bull|bear)\b/i,
 };
+
+// A raw, unbounded substring check for "fund" — deliberately NOT used
+// anywhere in filtering, only to compare against the word-bounded pattern
+// above. Any name matching this but NOT the word-bounded pattern is a name
+// where "fund" is embedded in a longer word (e.g. "Fundamental") — exactly
+// the case being checked for. If that list is empty, the boundary isn't
+// just assumed correct, it's shown to have nothing to catch in real data
+// either way.
+const FUND_SUBSTRING_RE_UNBOUNDED = /fund/i;
 
 // Tests each FUND_KEYWORD_CANDIDATES pattern independently against the
 // currently-eligible pool (baseline minus what _isEligibleInstrument already
 // excludes) — i.e., what's left for a fund/ETF filter to still catch.
 // Read-only: does not modify state or the production filter. Report counts
 // + a 20-name sample per candidate so each can be judged against what it
-// actually excludes, not guessed at.
+// actually excludes, not guessed at. For "Fund" specifically, also reports
+// wordBoundaryFalsePositivesAvoided: real names containing "fund" as a
+// substring inside a longer word, which the word-bounded pattern correctly
+// left alone.
 async function diagnoseFundKeywordCandidates() {
   const raw = await alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);
   const baseline = (raw || []).filter(a => a.tradable && ALLOWED_EXCHANGES.has(a.exchange));
@@ -337,5 +367,13 @@ async function diagnoseFundKeywordCandidates() {
       excludedSample: excluded.slice(0, 20).map(a => `${a.symbol}: ${a.name}`),
     };
   }
-  return { eligibleTotal: eligible.length, candidates };
+
+  const wordBoundedMatches = new Set(
+    eligible.filter(a => typeof a.name === 'string' && FUND_KEYWORD_CANDIDATES['"Fund"'].test(a.name)).map(a => a.symbol)
+  );
+  const wordBoundaryFalsePositivesAvoided = eligible
+    .filter(a => typeof a.name === 'string' && FUND_SUBSTRING_RE_UNBOUNDED.test(a.name) && !wordBoundedMatches.has(a.symbol))
+    .map(a => `${a.symbol}: ${a.name}`);
+
+  return { eligibleTotal: eligible.length, candidates, wordBoundaryFalsePositivesAvoided };
 }

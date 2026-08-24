@@ -6762,6 +6762,9 @@ async function testFundKeywordCandidates() {
   showModal(`<div class="modal-header"><h2>Fund/ETF Keyword Candidates</h2></div>
     <div class="test-result">${r.eligibleTotal} assets currently pass the exclude-list — none of these candidates are wired in yet</div>
     ${sections}
+    <div class="section-label mt12">Word-boundary check for "Fund"</div>
+    <div class="test-result">Names containing "fund" as a substring inside a longer word (e.g. "Fundamental"), which the word-bounded pattern correctly left alone: ${r.wordBoundaryFalsePositivesAvoided.length}</div>
+    ${buildInstrumentSampleList(r.wordBoundaryFalsePositivesAvoided)}
     <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
   `);
 }
