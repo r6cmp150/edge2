@@ -91,7 +91,7 @@ const _refillPerMs = RATE_LIMIT_TARGET_PER_MIN / WINDOW_MS;
 const _engineTimestamps = { EDGE: [], WARRIOR: [], CORE: [] }; // rolling log of send times, last WINDOW_MS, per engine
 
 const _queue = []; // { run, resolve, reject, engine, priority }
-let _draining = false;
+let _activeWorkers = 0;
 let _backoffUntil = 0;
 
 let _ambientPriority = 'foreground';
@@ -174,14 +174,45 @@ function _nextEligibleIndex() {
   return bestIdx;
 }
 
-// Concurrency work (MAX_CONCURRENT / multi-worker _drain) reverted here
-// pending root-causing a 290.7/min pacing violation found while testing it
-// — the token bucket itself needs to be verified correct in isolation
-// before concurrency is reintroduced on top of it. See
-// docs/warrior-engine-spec-v2.md Phase 0.5's rewritten acceptance criteria.
-async function _drain() {
-  if (_draining) return;
-  _draining = true;
+// Found live, 2026-08-24: a single-worker _drain made wall-clock bounded by
+// requests * round-trip latency, not by the token bucket — a ~3,854-symbol
+// premarket-gap scan needing 36 requests took 61s at ~1.7s/round-trip, even
+// though the bucket had budget to clear them in ~13s.
+//
+// First attempt at fixing this (a fixed one-time Promise.all(MAX_CONCURRENT
+// workers) inside _drain) had a real bug, caught by tests/priority-ordering
+// -style dispatch-order testing rather than assumed correct: when _drain()
+// fires while _queue is still shallow (e.g. mid-burst-enqueue), most of the
+// N workers find nothing and exit immediately, leaving only 1 effective
+// worker — and the old _draining boolean then blocked any later _drain()
+// call from spinning up replacements until that original Promise.all
+// resolved, which doesn't happen until the queue is fully drained. Net
+// effect: silently back to serial.
+//
+// Fixed by making worker count elastic instead of a one-time fixed batch:
+// _activeWorkers tracks how many are currently alive, and _drain() (now
+// synchronous — it doesn't await anything itself, workers run
+// independently) tops up to MAX_CONCURRENT on every call, including every
+// enqueue(). A worker that finds the queue empty decrements _activeWorkers
+// in its own finally and exits; the NEXT enqueue() (or any concurrent
+// worker finishing its current request) can then spin up a replacement.
+// This self-corrects regardless of how shallow the queue was at any one
+// _drain() call — see tests/concurrency.test.js for the max-in-flight and
+// pacing-under-genuine-exhaustion proof.
+//
+// Every worker shares the same _nextEligibleIndex()/_tokens gate below, and
+// the pick-token-splice sequence (_nextEligibleIndex through
+// _engineTimestamps[...].push) has no `await` in it — JS's
+// run-to-completion means that whole sequence is already atomic across
+// however many workers call it, so N workers can't double-spend a token or
+// pick the same queue entry twice. MAX_CONCURRENT only changes how many
+// workers are ready to grab a token the instant it's available; it can
+// never cause more tokens to be spent per unit time than _refillTokens()
+// allows (proven under genuine exhaustion in tests/queue-pacing.test.js,
+// independent of concurrency).
+const MAX_CONCURRENT = 6;
+
+async function _drainWorker() {
   try {
     while (_queue.length) {
       const idx = _nextEligibleIndex();
@@ -200,7 +231,22 @@ async function _drain() {
       }
     }
   } finally {
-    _draining = false;
+    _activeWorkers--;
+  }
+}
+
+// Synchronous by design (doesn't await _drainWorker — workers run
+// independently once spun up). Tops up active workers to MAX_CONCURRENT
+// whenever there's queue depth to justify them; the `_activeWorkers <
+// _queue.length` guard avoids spawning a worker that would just find
+// nothing (harmless either way, since it self-corrects via its own
+// finally, but this keeps worker count from overshooting actual demand).
+// Called on every enqueue() so a worker can always be topped back up after
+// one exits, however shallow the queue was at any single call.
+function _drain() {
+  while (_activeWorkers < MAX_CONCURRENT && _activeWorkers < _queue.length) {
+    _activeWorkers++;
+    _drainWorker();
   }
 }
 

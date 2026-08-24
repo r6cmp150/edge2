@@ -342,7 +342,18 @@ async function _fetchMinuteBarsWindow(symbols, end, windowMin) {
   const start = new Date(end.getTime() - windowMin * 60 * 1000);
   const latestBySymbol = {};
   let requests = 0;
-  for (const batch of chunk(symbols, SNAPSHOT_CHUNK_SIZE)) {
+  // Chunks submitted concurrently (Promise.all), not sequentially awaited
+  // one at a time — a sequential for-await loop here means at most 1 item
+  // is ever in core/api-client.js's shared queue from this call site,
+  // making that queue's concurrency (MAX_CONCURRENT workers) inert
+  // regardless of how parallel the queue itself is capable of being. This
+  // was found live: the queue's concurrency fix alone measured zero
+  // wall-clock improvement here until this loop was also made concurrent.
+  // Safe to parallelize freely — chunk() partitions symbols into disjoint
+  // sets, so each iteration writes to different latestBySymbol keys, and
+  // each chunk's error handling is already independent (a failed chunk
+  // doesn't abort the others, same as the old sequential version).
+  await Promise.all(chunk(symbols, SNAPSHOT_CHUNK_SIZE).map(async batch => {
     try {
       const barsBySymbol = {};
       let pageToken;
@@ -370,7 +381,7 @@ async function _fetchMinuteBarsWindow(symbols, end, windowMin) {
     } catch (e) {
       console.warn(`_fetchMinuteBarsWindow: batch error for ${batch.length} symbols (${windowMin}min window): ${e.message}`);
     }
-  }
+  }));
   return { latestBySymbol, requests };
 }
 

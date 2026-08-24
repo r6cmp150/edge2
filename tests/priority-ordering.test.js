@@ -12,14 +12,14 @@ const { readSource, run } = require('./_lib');
 const apiClientSrc = readSource('core/api-client.js');
 
 function loadFreshQueue() {
-  const exposeCode = 'global.__enqueue = enqueue;';
+  const exposeCode = 'global.__enqueue = enqueue; global.__MAX_CONCURRENT = MAX_CONCURRENT;';
   // eslint-disable-next-line no-eval
   eval(apiClientSrc + '\n' + exposeCode);
-  return { enqueue: global.__enqueue };
+  return { enqueue: global.__enqueue, MAX_CONCURRENT: global.__MAX_CONCURRENT };
 }
 
 async function testForegroundPreemptsQueuedBackgroundBurst() {
-  const { enqueue } = loadFreshQueue();
+  const { enqueue, MAX_CONCURRENT } = loadFreshQueue();
   const MOCK_LATENCY_MS = 300; // slow enough that the background burst is still mostly queued when the foreground request arrives
   const dispatchOrder = [];
 
@@ -52,11 +52,12 @@ async function testForegroundPreemptsQueuedBackgroundBurst() {
   console.log(`Foreground dispatched at position ${fgDispatchIndex + 1} of ${BACKGROUND_COUNT + 1} total.`);
   console.log(`Background items dispatched BEFORE foreground: ${bgDispatchedBeforeFg} (of ${BACKGROUND_COUNT} total).`);
 
-  // With a single worker, whatever background item is ALREADY in flight
-  // when foreground is enqueued can't be preempted mid-request — up to 1
-  // background dispatch ahead of foreground is expected and correct. More
-  // than 1 would mean priority ordering isn't actually working.
-  assert.ok(bgDispatchedBeforeFg <= 1, `expected at most 1 background item ahead of foreground (the one already in flight), got ${bgDispatchedBeforeFg} — priority ordering is not preempting the queued burst`);
+  // Whatever background items are ALREADY in flight (up to MAX_CONCURRENT
+  // of them, with the elastic-worker concurrency fix) when foreground is
+  // enqueued can't be preempted mid-request — up to MAX_CONCURRENT
+  // background dispatches ahead of foreground is expected and correct.
+  // More than that would mean priority ordering isn't actually working.
+  assert.ok(bgDispatchedBeforeFg <= MAX_CONCURRENT, `expected at most ${MAX_CONCURRENT} background items ahead of foreground (the ones already in flight), got ${bgDispatchedBeforeFg} — priority ordering is not preempting the queued burst`);
 }
 
 (async () => {
