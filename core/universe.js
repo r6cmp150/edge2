@@ -12,10 +12,35 @@
 //
 // /v2/assets lives on paper-api.alpaca.markets, not data.alpaca.markets —
 // confirmed against the account's key prefix (PK..., Alpaca's paper-account
-// convention). Live count on that run: 14,203 tradable us_equity assets —
-// meaningfully above the spec's ~11k estimate; see getUniverse's header
-// comment for what that changes about the premarket-gap cost estimate
-// (not yet built).
+// convention). Live count on that run: 14,203 raw active us_equity assets,
+// narrowing through the instrument filter to ~5,714 (see
+// EXCLUDED_INSTRUMENT_NAME_RE's comment for the full funnel).
+//
+// premarket-gap cost, recomputed against that real ~5,714 base rather than
+// the spec's original ~11k-total estimate — and using PRIOR_CLOSE_CHUNK_SIZE/
+// SNAPSHOT_CHUNK_SIZE = 100 (fetchSnapshots' proven chunk size) rather than
+// the spec's untested "~200 per request" suggestion, per this phase's own
+// rule about not relying on unverified assumptions:
+//
+//   First scan of a trading day (prior-close cache cold):
+//     ~58 requests to fetch prior closes for all ~5,714 eligible symbols
+//     (once, cached for the rest of the day) + ~18-29 requests to snapshot
+//     whichever survive the $1-$20 prior-close filter (estimated 30-50% of
+//     5,714 ≈ 1,700-2,850 symbols — this fraction is a real unknown until
+//     a live run reports it) = ~76-87 requests. Exceeds the spec's <30
+//     acceptance bullet.
+//   Every subsequent same-day scan (prior-close cache warm):
+//     ~18-29 requests — the snapshot step only. Clears <30.
+//
+// The first-scan overshoot is a real, deliberate tradeoff, not an oversight:
+// prior close is stable all day and expensive to (re)fetch; live price
+// isn't and must be fetched every scan regardless. A pre-market workflow
+// that checks more than once or twice through the ~6:00-6:25am PT window
+// (which is the whole point of checking pre-market at all) amortizes the
+// one-time ~58-request cost across every scan after the first, and comes
+// out cheaper than re-snapshotting all 5,714 symbols on every single scan
+// would. The <30 bullet is met by every scan except literally the first
+// one of the day.
 
 const ALPACA_TRADING_BASE = 'https://paper-api.alpaca.markets';
 const ALPACA_SCREENER_BASE = 'https://data.alpaca.markets/v1beta1';
@@ -203,16 +228,125 @@ async function _getMoversUniverse(session) {
   }));
 }
 
+// ── premarket-gap ────────────────────────────────────────────────────────
+// movers/most-actives return stale prior-day data before market open, so
+// this is the one the pre-market workflow — and Gap and Go — actually
+// depends on.
+//
+// Deliberately NOT the "~200 symbols per request" the spec suggested for
+// the snapshot batch: that number was never verified against this account,
+// and this phase's own discipline (movers/most-actives, the instrument
+// filter) has twice found that unverified assumptions here fail silently.
+// 100 is what fetchSnapshots already uses successfully in production —
+// proven, not guessed. A larger chunk size is a real future optimization,
+// but it needs its own live check before being relied on, same as
+// movers/most-actives did.
+const PRIOR_CLOSE_CHUNK_SIZE = 100;
+const SNAPSHOT_CHUNK_SIZE = 100;
+
+// Prior closes are stable within a trading day (spec: cache daily) — this
+// is genuinely new fetching work, not free infrastructure that already
+// existed. Cost is real and one-time per calendar day: at ~5,714
+// instrument-eligible symbols / 100 per request, ~58 requests on the first
+// call of a new day, ~0 on every later same-day call (cache hit). See
+// getUniverse's premarket-gap comment for why that one-time cost is still
+// the right tradeoff for a workflow that scans repeatedly through the
+// pre-market window.
+async function _getPriorCloses(symbols) {
+  const today = ptDateStr(getPT());
+  let cache = state.universePriorCloseCache;
+  if (!cache || cache.date !== today) cache = { date: today, closes: {} };
+
+  const missing = symbols.filter(sym => !(sym in cache.closes));
+  if (missing.length) {
+    const start = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split('T')[0]; })();
+    for (const batch of chunk(missing, PRIOR_CLOSE_CHUNK_SIZE)) {
+      try {
+        const barsBySymbol = {};
+        let pageToken;
+        do {
+          const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: batch.length * 3, sort: 'desc', feed: 'iex' };
+          if (pageToken) params.page_token = pageToken;
+          const data = await alpacaGet('/stocks/bars', params);
+          if (data.bars) {
+            for (const sym of Object.keys(data.bars)) {
+              (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
+            }
+          }
+          pageToken = data.next_page_token || null;
+        } while (pageToken);
+        // sort:'desc' -> each symbol's first bar is its most recent close.
+        batch.forEach(sym => {
+          const bars = barsBySymbol[sym];
+          if (bars && bars.length) cache.closes[sym] = bars[0].c;
+        });
+      } catch (e) {
+        console.warn(`_getPriorCloses: batch error for ${batch.length} symbols: ${e.message}`);
+      }
+    }
+  }
+  state.universePriorCloseCache = cache;
+  persist('universePriorCloseCache');
+  return cache.closes;
+}
+
+async function _getPremarketGapUniverse() {
+  const assetIndex = await _getAssetIndex();
+  const eligibleSymbols = assetIndex.map(a => a.symbol);
+
+  const priorCloses = await _getPriorCloses(eligibleSymbols);
+  const priceFilteredSymbols = eligibleSymbols.filter(sym => _inPriceRange(priorCloses[sym]));
+
+  console.log(`getUniverse('premarket-gap'): ${eligibleSymbols.length} instrument-eligible -> ${priceFilteredSymbols.length} with prior close in $1-$20`);
+  if (!priceFilteredSymbols.length) return [];
+
+  // SIP, not iex — pre-market volume/price on IEX alone is a small fraction
+  // of the tape (Bug 2's original finding, same reasoning applies here).
+  const snaps = {};
+  for (const batch of chunk(priceFilteredSymbols, SNAPSHOT_CHUNK_SIZE)) {
+    try {
+      const data = await alpacaGet('/stocks/snapshots', { symbols: batch.join(','), feed: 'sip' });
+      Object.assign(snaps, data);
+    } catch (e) {
+      console.warn(`getUniverse('premarket-gap'): snapshot batch error for ${batch.length} symbols: ${e.message}`);
+    }
+  }
+
+  const withGap = priceFilteredSymbols.map(sym => {
+    const snap = snaps[sym];
+    const premarketPrice = getLivePrice(snap);
+    const prevClose = priorCloses[sym];
+    if (!premarketPrice || !prevClose) return null;
+    return {
+      symbol: sym,
+      price: premarketPrice,
+      prevClose,
+      changePct: ((premarketPrice - prevClose) / prevClose) * 100,
+      volume: snap?.dailyBar?.v ?? null,
+      source: 'premarket-gap',
+    };
+  }).filter(Boolean);
+
+  withGap.sort((a, b) => b.changePct - a.changePct);
+  const top50 = withGap.slice(0, 50);
+  const top50Symbols = new Set(top50.map(w => w.symbol));
+  const above10pct = withGap.filter(w => w.changePct >= 10 && !top50Symbols.has(w.symbol));
+
+  console.log(`getUniverse('premarket-gap'): ${withGap.length} priced -> top 50 by gap% + ${above10pct.length} additional >=10% gap = ${top50.length + above10pct.length} returned`);
+
+  return [...top50, ...above10pct];
+}
+
 // getUniverse({session, strategy}) — docs/warrior-engine-spec-v2.md Phase 1.
 // strategy: 'movers' | 'premarket-gap' | 'full-filtered'
 // → [{ symbol, price, prevClose, changePct, volume, source }]
 //
-// Only 'movers' is implemented this phase (see file header for why).
-// 'premarket-gap' and 'full-filtered' are not yet built — calling either
-// throws rather than silently returning an empty/wrong universe.
+// 'full-filtered' is not yet built — calling it throws rather than
+// silently returning an empty/wrong universe.
 async function getUniverse({ session, strategy }) {
   if (strategy === 'movers') return _getMoversUniverse(session);
-  throw new Error(`getUniverse: strategy '${strategy}' is not implemented yet — only 'movers' this phase.`);
+  if (strategy === 'premarket-gap') return _getPremarketGapUniverse();
+  throw new Error(`getUniverse: strategy '${strategy}' is not implemented yet.`);
 }
 
 async function _checkAssetsHost() {

@@ -781,6 +781,7 @@ let state = {
   newsTruncatedSymbols: [], // tickers whose news may be incomplete because their batch hit the 50-item page cap — distinct from "confirmed zero news"
   newsLookbackHours: 72, // actual fetch window used by the last news request (core/news.js) — card-render visibility gate matches this exactly, not a duplicated literal
   universeAssetCache: null, // { fetchedAt, assets: [{symbol,exchange,name,isCommonStock}] } — core/universe.js, 24h cache — persisted
+  universePriorCloseCache: null, // { date, closes: {symbol: price} } — core/universe.js, daily cache — persisted
   lastScanTime: null,
   activeTab: 'signals',
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
@@ -808,7 +809,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache'].forEach(k => {
+  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
