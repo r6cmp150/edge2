@@ -2112,17 +2112,6 @@ async function runScreener() {
     state.signals.sort((a,b) => b.score - a.score);
     state.lastScanTime = Date.now();
 
-    // TEMPORARY DIAGNOSTIC — Bug 4 news-mapping investigation. Remove before merge.
-    {
-      const articleSymbols = Object.keys(newsMap);
-      const cardTickers = getFilteredSignals().map(s => s.ticker);
-      const intersection = articleSymbols.filter(sym => cardTickers.includes(sym));
-      console.log('[NEWS DIAGNOSTIC] total articles returned:', newsItems.length);
-      console.log('[NEWS DIAGNOSTIC] symbols with >=1 article:', articleSymbols);
-      console.log('[NEWS DIAGNOSTIC] symbols rendered as cards:', cardTickers);
-      console.log('[NEWS DIAGNOSTIC] intersection:', intersection);
-    }
-
     // 7b. Owned tickers the main scan never reached at all — failed the
     // Stage 1 price/volume filter, or aren't in the currently selected
     // universe (TICKERS) in the first place — still need a fresh score, or
