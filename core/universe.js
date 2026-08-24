@@ -745,6 +745,20 @@ async function diagnosePremarketGap() {
     ? (priceFilteredSymbols.length - missingSymbols.length) / priceFilteredSymbols.length
     : null;
 
+  // Phase 1 acceptance #2 ("no alphabetical bias"): the original v1 bias
+  // came from fetchMultiBars' pagination truncation plus a stable-sort
+  // tie-break, both absent from this path (this sorts by changePct, not
+  // symbol, and the Bug 1 fix means no truncation feeds it) — but that's a
+  // reason to expect no bias, not proof of it. Measured every run instead
+  // of asserted once, so it's live evidence on an ongoing basis rather than
+  // a one-time manual check that goes stale.
+  const resultSymbols = [...top50, ...above10pct].map(w => w.symbol);
+  const letterDistribution = {};
+  resultSymbols.forEach(sym => {
+    const letter = (sym[0] || '?').toUpperCase();
+    letterDistribution[letter] = (letterDistribution[letter] || 0) + 1;
+  });
+
   return {
     session,
     tradableCount: assetIndex.length,
@@ -752,6 +766,7 @@ async function diagnosePremarketGap() {
     priceFilteredCount: priceFilteredSymbols.length,
     resultCount: top50.length + above10pct.length,
     sample: [...top50, ...above10pct].slice(0, 10),
+    letterDistribution,
     requests: {
       assetIndex: assetIndexRequests,
       priorCloses: priorClosesRequests,

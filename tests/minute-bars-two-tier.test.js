@@ -107,6 +107,16 @@ async function testTwoTierCoverageAndMissingSurfaced() {
   const pass2SymbolCount = pass2Calls.reduce((n, c) => n + c.params.symbols.split(',').length, 0);
   console.log('pass2 symbols requested:', pass2SymbolCount, '(expected 5, not 150)');
   assert.strictEqual(pass2SymbolCount, 5, 'pass 2 re-requested more than just the symbols pass 1 missed');
+
+  // Phase 1 acceptance #2 ("no alphabetical bias") — letterDistribution
+  // must actually be present and its counts must sum to resultCount, or
+  // the diagnostic's distribution line would be silently wrong/incomplete.
+  console.log('letterDistribution:', diag.letterDistribution);
+  assert.ok(diag.letterDistribution && typeof diag.letterDistribution === 'object', 'letterDistribution missing from diagnosePremarketGap result');
+  const letterSum = Object.values(diag.letterDistribution).reduce((a, b) => a + b, 0);
+  assert.strictEqual(letterSum, diag.resultCount, 'letterDistribution counts do not sum to resultCount');
+  // Fixture symbols are all "GOOD..." -> everything should land under 'G'.
+  assert.strictEqual(diag.letterDistribution.G, diag.resultCount, 'expected all fixture results under letter G');
 }
 
 (async () => {

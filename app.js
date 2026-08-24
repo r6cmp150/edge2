@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.3-phase1-dev13';
+const VERSION = 'v2.9.3';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -6992,6 +6992,13 @@ async function testPremarketGap() {
     ? `${coverageLabel} of eligible symbols had a SIP minute bar (${r.missingAfterBothPasses} of ${r.priceFilteredCount} did not — during OPEN this should stay high; a low number here is worth investigating).`
     : `${coverageLabel} of eligible symbols showed premarket trading activity in this window (${r.missingAfterBothPasses} of ${r.priceFilteredCount} had none). Most $1-$20 names don't trade before the open at all — a low number here is expected pre-market behavior, not a failure.`;
 
+  // Phase 1 acceptance #2 ("no alphabetical bias") — measured every run
+  // rather than checked once and left to go stale. See the comment on
+  // letterDistribution in core/universe.js:diagnosePremarketGap.
+  const letterDistLine = Object.keys(r.letterDistribution).sort()
+    .map(letter => `${letter}:${r.letterDistribution[letter]}`)
+    .join(' ');
+
   showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
     <div class="test-result">Session: ${r.session}</div>
     <div class="test-result">${r.tradableCount} tradable -> ${r.eligibleCount} instrument-eligible -> ${r.priceFilteredCount} with prior close in \$1-\$20 -> ${r.resultCount} returned (top 50 by gap% + anything >=10%)</div>
@@ -6999,6 +7006,8 @@ async function testPremarketGap() {
     <div class="test-result">Asset index: ${r.requests.assetIndex} | Prior closes: ${r.requests.priorCloses} | Minute bars pass 1 (45min): ${r.requests.minuteBarsPass1} | Minute bars pass 2 (3h fallback): ${r.requests.minuteBarsPass2} | Total: ${r.requests.total}</div>
     <div class="test-result">Wall clock: ${(r.wallClockMs / 1000).toFixed(1)}s</div>
     <div class="test-result">${coverageNote}</div>
+    <div class="section-label mt12">First-letter distribution (${r.resultCount} results)</div>
+    <div class="test-result" style="white-space:pre-wrap">${letterDistLine || '(no results)'}</div>
     <div class="section-label mt12">Top 10 sample</div>
     ${buildPremarketGapSampleList(r.sample)}
     <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
