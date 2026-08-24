@@ -8,6 +8,51 @@
 // runDataLoadAndInit() once Portfolio/Settings finish loading from Supabase.
 const APP_SHELL_HTML = document.body.innerHTML;
 
+// ── GLOBAL ERROR BOUNDARY ────────────────────────────────────────
+// Pulled forward from Phase 2's error boundary spec. Rationale: a rejected
+// promise with no .catch() doesn't hang — it settles almost immediately —
+// but the async function awaiting it stops executing at that line, so any
+// code after it (typically the call that would replace a loading/spinner
+// state) never runs, leaving the UI stuck with no visible error (this is
+// exactly what the Bug B diagnostic proved for the Settings diagnostics,
+// and what generateClaudeReport/renderPortfolioTab were independently fixed
+// for). One handler here beats auditing every await in the codebase, and
+// it covers awaits in code not yet written. Deliberately placed before the
+// PIN gate so it's armed for the app's entire lifetime, including the PIN
+// and data-loading screens.
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason);
+  const message = event.reason?.message || String(event.reason);
+  showGlobalErrorToast(message);
+});
+
+// Builds the toast via DOM methods rather than innerHTML — the message can
+// come from a network error body (e.g. Alpaca's error text), so it's
+// treated as untrusted text, not HTML. Deliberately independent of
+// tab-content/modal-overlay/modal-body: this handler can fire during the
+// PIN screen or the data-loading screen, before those elements exist, and
+// document.body.innerHTML gets replaced wholesale at several points during
+// boot — a toast tied to one of those transient screens is expected to go
+// with it, not survive across the swap.
+function showGlobalErrorToast(message) {
+  document.getElementById('global-error-toast')?.remove();
+  const toast = document.createElement('div');
+  toast.id = 'global-error-toast';
+  toast.className = 'global-error-toast';
+
+  const msgEl = document.createElement('span');
+  msgEl.textContent = '⚠ ' + message;
+  toast.appendChild(msgEl);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'global-error-toast-close';
+  closeBtn.textContent = '✕';
+  closeBtn.onclick = () => toast.remove();
+  toast.appendChild(closeBtn);
+
+  document.body.appendChild(toast);
+}
+
 // ── 0. PIN GATE ──────────────────────────────────────────────────
 // Runs before anything else. Default PIN hash is SHA-256("0684");
 // default security-answer hash is SHA-256("Rainbow6") — the plain
@@ -179,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.3-phase1-dev7';
+const VERSION = 'v2.9.3-phase1-dev8';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -3735,6 +3780,13 @@ async function renderPortfolioTab() {
   let snapshots = {};
   let allBars   = {};
   let pfAHSnaps = {};
+  // priceFetchFailed: getLivePrice(snap) falls back to p.buyPrice below when
+  // snap is missing, which makes every card compute pnlDollar/pnlPct as
+  // exactly 0 — visually identical to a real breakeven position. That's worse
+  // than an obviously-blank card, so this flag exists to make the fallback
+  // visible instead of silent (see staleBanner and the per-card pf-now-stale
+  // styling below).
+  let priceFetchFailed = false;
   try {
     if (state.settings.alpacaKey) {
       const fetches = [fetchSnapshots(tickers), fetchMultiBars(tickers, 10000)];
@@ -3744,7 +3796,13 @@ async function renderPortfolioTab() {
       allBars = results[1].results; // dropped symbols (if any) not surfaced here — Portfolio isn't the scan header
       if (isAfterHoursMode()) pfAHSnaps = results[2] || {};
     }
-  } catch(e) {}
+  } catch(e) {
+    priceFetchFailed = true;
+    console.error('Portfolio live price fetch failed, falling back to buy price:', e.message);
+  }
+  const staleBanner = priceFetchFailed
+    ? `<div class="pf-stale-banner">⚠ Live prices unavailable — prices and P&L below are your buy price, not current. Pull to refresh once the connection recovers.</div>`
+    : '';
 
   let totalCost = 0, totalValue = 0;
   let html = '';
@@ -3798,13 +3856,17 @@ async function renderPortfolioTab() {
     // per position per field would be a real UX regression. Unlike
     // confirmAddPortfolio()/confirmMarkSold() (Step 5), a lost write here
     // just gets recomputed and re-sent on the next render.
-    if (currentPrice > (p.peakPrice || 0)) {
+    // Guarded on !priceFetchFailed: currentPrice is the buy-price fallback
+    // during a fetch failure, not a real observation — writing it into
+    // peakPrice/momentumProtectionActivated/rsiSuspendedAtGainPct would
+    // persist fabricated data to Supabase instead of just degrading display.
+    if (!priceFetchFailed && currentPrice > (p.peakPrice || 0)) {
       p.peakPrice = currentPrice;
       p.peakPriceDate = new Date().toISOString().split('T')[0];
       if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
-    if (!p.momentumProtectionActivated && p.peakPrice >= p.buyPrice * 1.20) {
+    if (!priceFetchFailed && !p.momentumProtectionActivated && p.peakPrice >= p.buyPrice * 1.20) {
       p.momentumProtectionActivated = true;
       if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
@@ -3812,7 +3874,7 @@ async function renderPortfolioTab() {
     // Rule 5 support: first time RSI hits the (soon-to-be-suspended) 72+ threshold
     // while protected, snapshot the gain% at that instant — sticky, never overwritten —
     // so the report can later show what an RSI-based exit would have left on the table.
-    if (p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
+    if (!priceFetchFailed && p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
       p.rsiSuspendedAtGainPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
       if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
@@ -3828,6 +3890,9 @@ async function renderPortfolioTab() {
     const pnlDollar = value - cost;
     const pnlPct    = ((currentPrice - p.buyPrice) / p.buyPrice * 100);
     const pnlCls    = pnlDollar >= 0 ? 'pos' : 'neg';
+    // priceFetchFailed makes pnlDollar/pnlPct compute to exactly 0 (currentPrice
+    // fell back to buyPrice) — real numbers, but not real data. Card markup
+    // below shows "—" instead so this doesn't read as a genuine breakeven.
 
     const days = Math.floor((Date.now() - new Date(p.buyDate).getTime()) / 86400000);
     const durLabel = durHoldLabel(p.duration);
@@ -3837,8 +3902,9 @@ async function renderPortfolioTab() {
     const portBanner = buildUnifiedPortfolioBanner(unifiedResult);
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
     const priceDiffPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
-    const nowCls = Math.abs(priceDiffPct) < 1 ? 'pf-now-flat' : priceDiffPct > 0 ? 'pf-now-up' : 'pf-now-down';
-    const priceBarCls = pnlDollar >= 0 ? 'pf-bar-profit' : 'pf-bar-loss';
+    const nowCls = priceFetchFailed ? 'pf-now-stale'
+      : Math.abs(priceDiffPct) < 1 ? 'pf-now-flat' : priceDiffPct > 0 ? 'pf-now-up' : 'pf-now-down';
+    const priceBarCls = priceFetchFailed ? 'pf-bar-stale' : pnlDollar >= 0 ? 'pf-bar-profit' : 'pf-bar-loss';
 
     // Display-only target (sell warnings keep using p.target) — same >5% drift
     // threshold used for the card's "⚠ Shifted" note and the SELL SOON banner.
@@ -3930,8 +3996,10 @@ async function renderPortfolioTab() {
           <div class="pf-company">${p.company}</div>
         </div>
         <div class="pf-header-pnl">
-          <div class="pf-pnl-dollar ${pnlCls}">${pnlDollar>=0?'+':''}$${pnlDollar.toFixed(2)}</div>
-          <div class="pf-pnl-pct ${pnlCls}">${pnlDollar>=0?'▲':'▼'}${Math.abs(pnlPct).toFixed(1)}%</div>
+          ${priceFetchFailed
+            ? `<div class="pf-pnl-dollar pf-now-stale">—</div><div class="pf-pnl-pct pf-now-stale">price unavailable</div>`
+            : `<div class="pf-pnl-dollar ${pnlCls}">${pnlDollar>=0?'+':''}$${pnlDollar.toFixed(2)}</div>
+          <div class="pf-pnl-pct ${pnlCls}">${pnlDollar>=0?'▲':'▼'}${Math.abs(pnlPct).toFixed(1)}%</div>`}
         </div>
       </div>
       ${pfAHHtml}
@@ -3941,7 +4009,7 @@ async function renderPortfolioTab() {
           <div class="pf-price-val pf-muted">$${p.buyPrice.toFixed(2)}</div>
         </div>
         <div class="pf-price-cell">
-          <div class="pf-price-label">Now</div>
+          <div class="pf-price-label">Now${priceFetchFailed ? ' <span class="pf-stale-tag">(stale)</span>' : ''}</div>
           <div class="pf-price-val ${nowCls}">$${currentPrice.toFixed(2)}</div>
         </div>
         <div class="pf-price-divider"></div>
@@ -3994,14 +4062,14 @@ async function renderPortfolioTab() {
 
   const sumHtml = `<div class="pf-summary">
     <div class="section-label">Portfolio Summary</div>
-    <div class="pf-summary-row"><span>Total Value</span><span class="mono">$${totalValue.toFixed(2)}</span></div>
-    <div class="pf-summary-row"><span>Unrealized P&L</span><span class="mono ${totalPnL>=0?'pos':'neg'}">${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)} (${totalPnLPct.toFixed(1)}%)</span></div>
+    <div class="pf-summary-row"><span>Total Value</span><span class="mono">${priceFetchFailed ? '<span class="pf-now-stale">unavailable</span>' : `$${totalValue.toFixed(2)}`}</span></div>
+    <div class="pf-summary-row"><span>Unrealized P&L</span><span class="mono ${priceFetchFailed ? 'pf-now-stale' : totalPnL>=0?'pos':'neg'}">${priceFetchFailed ? 'unavailable' : `${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)} (${totalPnLPct.toFixed(1)}%)`}</span></div>
     <div class="pf-summary-row"><span>All-Time Realized P&L</span><span class="mono ${allTimePnL>=0?'pos':'neg'}">${allTimePnL>=0?'+':''}$${allTimePnL.toFixed(2)}</span></div>
   </div>`;
 
   const listEl = document.getElementById('pf-list');
   const sumEl  = document.getElementById('pf-summary');
-  if (listEl) listEl.innerHTML = html;
+  if (listEl) listEl.innerHTML = staleBanner + html;
   if (sumEl)  sumEl.innerHTML  = sumHtml;
 }
 
@@ -4757,6 +4825,11 @@ async function renderSoldTab() {
   // any pending trades finish (fetch+compute+Supabase write all happen
   // inside resolveSellTimingForSoldTrades). A no-op call when nothing needs
   // resolving (the common case), so this doesn't fetch on every tab open.
+  // No .catch(): safe only because resolveOneSellTiming/writeSellTimingToSupabase
+  // are already internally try/catch-protected and never throw past this call.
+  // If that guarantee ever changes, this becomes an unhandled rejection —
+  // caught by the global handler now, but silently, since nothing here
+  // re-renders on failure.
   resolveSellTimingForSoldTrades().then(anyResolved => {
     if (anyResolved) renderSoldTab();
   });
@@ -5069,6 +5142,13 @@ async function buildWinnerExitTimingSection(sold) {
       .filter(s => s.sellDate)
       .sort((a, b) => new Date(b.sellDate) - new Date(a.sellDate))
       .slice(0, 25);
+    // No try/catch here: safe only because fetchNextDayClose already
+    // swallows its own errors and returns null on failure (see
+    // core/market-data.js) rather than throwing. If that contract ever
+    // changes, this Promise.all rejects with no local catch — it would
+    // propagate up into generateClaudeReport's wrapping try/catch, so it
+    // wouldn't hang, but it would abort the whole report instead of just
+    // this one section.
     const whatIfResults = await Promise.all(sample.map(async s => {
       const nextClose = await fetchNextDayClose(s.ticker, s.sellDate);
       return nextClose != null ? ((nextClose - s.sellPrice) / s.sellPrice) * 100 : null;
@@ -5376,6 +5456,14 @@ async function generateClaudeReport() {
     return;
   }
 
+  // Everything below (section builders through the Blob download) used to
+  // sit outside any try/catch — a single throw anywhere in this ~550-line
+  // span left report-btn permanently disabled on "Fetching data…" with no
+  // visible error, recoverable only by reloading the page. Wrapped as one
+  // span rather than reindented line-by-line to keep this diff reviewable;
+  // the catch below re-enables the button and alerts, same pattern as
+  // confirmAddPortfolio/confirmMarkSold's error handling.
+  try {
   const ratingSnapshotSection = await buildRatingSnapshotHistorySection(sold);
   const winnerExitTimingSection = await buildWinnerExitTimingSection(sold);
   const sellTimingAnalysisSection = buildSellTimingAnalysisSection(sold);
@@ -5947,6 +6035,11 @@ Trade Duration:
   a.click();
   URL.revokeObjectURL(url);
   if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
+  } catch(e) {
+    console.error('generateClaudeReport failed:', e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
+    alert('Report generation failed: ' + e.message);
+  }
 }
 
 // ── 19. SETTINGS TAB ──────────────────────────────────────────────
@@ -6659,6 +6752,11 @@ async function testConnections() {
   state.settings.groqKey      = document.getElementById('set-groq-key')?.value.trim() || state.settings.groqKey;
   persistApiKeys();
 
+  // No try/catch: safe only because testAlpacaConnection/testGroqConnection/
+  // testSupabaseConnection are each internally hardened to resolve true/false
+  // and never throw. If any of the three is ever changed to throw instead of
+  // returning false, this Promise.all rejects with no catch and el is left
+  // stuck on the spinner — same failure shape generateClaudeReport had.
   const [alpOk, groqOk, supaOk] = await Promise.all([testAlpacaConnection(), testGroqConnection(), testSupabaseConnection()]);
   el.innerHTML = `<div class="test-result">
     <span class="${alpOk?'test-ok':'test-err'}">${alpOk?'✓':'✗'} Alpaca ${alpOk?'connected':'failed'}</span>
@@ -7212,11 +7310,17 @@ async function runDataLoadAndInit() {
   clearLegacyPortfolioSettingsStorage();
   document.body.innerHTML = APP_SHELL_HTML;
   await registerServiceWorker();
-  await requestNotificationPermission();
   startClock();
   startNotificationChecks();
   renderSignalsTab();
   updateNavBadges();
+  // Fire-and-forget, deliberately after first paint: nothing about the
+  // notification permission prompt should be able to block the app's first
+  // render. startNotificationChecks()'s first check fires 3s later and
+  // reads Notification.permission itself, so no ordering dependency here.
+  // A rejection surfaces via the global unhandledrejection handler instead
+  // of being awaited.
+  requestNotificationPermission();
 }
 
 async function init() {
