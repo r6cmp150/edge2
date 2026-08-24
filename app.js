@@ -5986,6 +5986,7 @@ function renderSettingsTab() {
       <div class="settings-row">
         <button class="btn btn-ghost btn-sm" onclick="testUniverseEndpoints()">Test Universe Endpoints (Phase 1)</button>
         <button class="btn btn-ghost btn-sm" onclick="testInstrumentFilter()">Test Instrument Filter (Phase 1)</button>
+        <button class="btn btn-ghost btn-sm" onclick="testFundKeywordCandidates()">Test Fund Keywords (Phase 1)</button>
       </div>
     </div>
 
@@ -6733,6 +6734,34 @@ async function testInstrumentFilter() {
     <div class="settings-label mt4">20 sample names it drops:</div>
     ${buildInstrumentSampleList(r.excludeList.excludedSample)}
 
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
+// Tests fund/ETF/ETN exclusion-keyword candidates independently against the
+// live asset list — none of them are wired into the production filter yet.
+// Each candidate's count + 20-name sample is shown so it can be judged on
+// what it actually excludes (e.g. "Trust" catching REITs) before adding any.
+async function testFundKeywordCandidates() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>Fund/ETF Keyword Candidates</h2></div>
+    <div class="test-result"><span class="spinner"></span> Fetching live asset list…</div>`);
+
+  const r = await diagnoseFundKeywordCandidates();
+
+  const sections = Object.entries(r.candidates).map(([label, c]) => `
+    <div class="section-label mt12">${label}</div>
+    <div class="test-result">Would exclude ${c.excludedCount} / ${r.eligibleTotal}</div>
+    <div class="settings-label mt4">Sample:</div>
+    ${buildInstrumentSampleList(c.excludedSample)}
+  `).join('');
+
+  showModal(`<div class="modal-header"><h2>Fund/ETF Keyword Candidates</h2></div>
+    <div class="test-result">${r.eligibleTotal} assets currently pass the exclude-list — none of these candidates are wired in yet</div>
+    ${sections}
     <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
   `);
 }

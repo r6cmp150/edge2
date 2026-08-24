@@ -46,8 +46,24 @@ function _inPriceRange(price) {
 // doesn't false-positive on "United Airlines" or similar.
 const EXCLUDED_INSTRUMENT_NAME_RE = /\b(warrants?|units?|rights?|preferred|notes?|debentures?)\b/i;
 
+// American Depositary Shares (ADRs) are foreign-issuer common-stock
+// equivalents — Ross-eligible. Their name often describes what the ADS
+// represents in a parenthetical, e.g. BAK: "Braskem S.A. American
+// Depositary Shares (Each representing Two Class A Preferred Shares)" —
+// that "Preferred" describes the underlying, not the ADS itself, but would
+// otherwise trip EXCLUDED_INSTRUMENT_NAME_RE. Confirmed live: this false
+// positive was real, not hypothetical (BAK, ~$3-4, liquid, silently
+// dropped). A bare "Depositary Shares" WITHOUT "American" is the genuinely
+// different structure — a bank preferred stock sold via depositary shares
+// (e.g. "Depositary Shares representing 1/1000th interest in a 6% Preferred
+// Stock") — and needs no separate rule: it's correctly caught by the
+// "preferred" keyword below on its own, since this carve-out only fires on
+// the literal "American Depositary Shares" phrase.
+const ADR_RE = /american depositary shares/i;
+
 function _isEligibleInstrument(asset) {
   if (typeof asset.name !== 'string') return true; // no name to judge by — exclude-list philosophy defaults to keep, not drop
+  if (ADR_RE.test(asset.name)) return true;
   return !EXCLUDED_INSTRUMENT_NAME_RE.test(asset.name);
 }
 
@@ -281,4 +297,45 @@ async function diagnoseInstrumentFilter() {
       excludedSample: excludeListExcluded.slice(0, 20).map(a => `${a.symbol}: ${a.name}`),
     },
   };
+}
+
+// ETFs/ETNs/leveraged funds (confirmed live: KJD, KIQQ, BAIV kept by the
+// exclude-list; MSTU — a 2x leveraged MicroStrategy ETF at $2.725 — passed
+// price AND was in the live most-actives sample) survive the current
+// exclude-list. Ross would never trade a fund; Phase 6's float check would
+// eventually catch these too, but that's a later phase and this gap is live
+// now. NOT adding keywords for this without seeing real impact first —
+// "Trust" alone would drop legitimate REITs, and there may be other traps
+// like it. Each candidate below is tested INDEPENDENTLY against real data by
+// diagnoseFundKeywordCandidates(); none of them affect _isEligibleInstrument
+// until a candidate's sample confirms it's safe and something adds it there.
+const FUND_KEYWORD_CANDIDATES = {
+  'ETF (explicit)': /\bETFs?\b/i,
+  'ETN (explicit)': /\bETNs?\b/i,
+  '"Exchange Traded/Exchange-Traded Fund"': /exchange[- ]traded fund/i,
+  '"Fund"': /\bfunds?\b/i,
+  '"Trust" — known risky, REITs use this too': /\btrusts?\b/i,
+  'Leveraged/inverse (2x, 3x, leveraged, inverse, daily target, bull, bear)': /\b(2x|3x|leveraged|inverse|daily target|bull|bear)\b/i,
+};
+
+// Tests each FUND_KEYWORD_CANDIDATES pattern independently against the
+// currently-eligible pool (baseline minus what _isEligibleInstrument already
+// excludes) — i.e., what's left for a fund/ETF filter to still catch.
+// Read-only: does not modify state or the production filter. Report counts
+// + a 20-name sample per candidate so each can be judged against what it
+// actually excludes, not guessed at.
+async function diagnoseFundKeywordCandidates() {
+  const raw = await alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);
+  const baseline = (raw || []).filter(a => a.tradable && ALLOWED_EXCHANGES.has(a.exchange));
+  const eligible = baseline.filter(a => _isEligibleInstrument(a));
+
+  const candidates = {};
+  for (const [label, re] of Object.entries(FUND_KEYWORD_CANDIDATES)) {
+    const excluded = eligible.filter(a => typeof a.name === 'string' && re.test(a.name));
+    candidates[label] = {
+      excludedCount: excluded.length,
+      excludedSample: excluded.slice(0, 20).map(a => `${a.symbol}: ${a.name}`),
+    };
+  }
+  return { eligibleTotal: eligible.length, candidates };
 }
