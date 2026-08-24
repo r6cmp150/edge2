@@ -516,3 +516,68 @@ async function diagnoseFundKeywordCandidates() {
 
   return { eligibleTotal: eligible.length, candidates, wordBoundaryFalsePositivesAvoided };
 }
+
+// Checks whether snapshot's prevDailyBar is actually populated on a real,
+// live sample — not just documented. Alpaca's schema lists prevDailyBar as
+// a field of stock_snapshot (confirmed against docs before this), but marks
+// every field optional with no stated guarantee about pre-market
+// reliability specifically. If this comes back clean, _getPremarketGapUniverse
+// can snapshot the eligible universe once and take both prevClose and live
+// price from the same response, deleting the separate prior-close bars
+// fetch entirely (cold-path cost ~58 instead of ~76-87). If it doesn't,
+// the current two-step design stays as built.
+async function diagnosePrevDailyBarCoverage() {
+  const session = getMarketStatus().status;
+  const assetIndex = await _getAssetIndex();
+  const sampleSymbols = assetIndex.slice(0, 200).map(a => a.symbol);
+
+  const snaps = {};
+  for (const batch of chunk(sampleSymbols, SNAPSHOT_CHUNK_SIZE)) {
+    const data = await alpacaGet('/stocks/snapshots', { symbols: batch.join(','), feed: 'sip' });
+    Object.assign(snaps, data);
+  }
+
+  const present = [];
+  const missing = [];
+  sampleSymbols.forEach(sym => {
+    const snap = snaps[sym];
+    const prevClose = snap?.prevDailyBar?.c;
+    if (typeof prevClose === 'number' && prevClose > 0) {
+      present.push(`${sym}: prevDailyBar.c=${prevClose}`);
+    } else {
+      missing.push(`${sym}: ${snap ? (snap.prevDailyBar ? 'prevDailyBar present but no valid c' : 'no prevDailyBar field') : 'no snapshot returned at all'}`);
+    }
+  });
+
+  return {
+    session, // interpret pre-market reliability against this — same check run at OPEN doesn't answer the pre-market question
+    sampledCount: sampleSymbols.length,
+    presentCount: present.length,
+    missingCount: missing.length,
+    presentSample: present.slice(0, 10),
+    missingSample: missing.slice(0, 10),
+  };
+}
+
+// Runs the real premarket-gap strategy and reports the funnel counts + a
+// sample of what it surfaces, without wiring it into anything user-facing
+// yet. Re-derives eligibleCount/priceFilteredCount by calling the same
+// cached functions getUniverse itself calls — costs nothing extra once
+// those caches are warm (which they will be, since getUniverse below
+// populates them regardless of call order).
+async function diagnosePremarketGap() {
+  const session = getMarketStatus().status;
+  const assetIndex = await _getAssetIndex();
+  const priorCloses = await _getPriorCloses(assetIndex.map(a => a.symbol));
+  const priceFilteredCount = assetIndex.filter(a => _inPriceRange(priorCloses[a.symbol])).length;
+
+  const result = await getUniverse({ session, strategy: 'premarket-gap' });
+
+  return {
+    session,
+    eligibleCount: assetIndex.length,
+    priceFilteredCount,
+    resultCount: result.length,
+    sample: result.slice(0, 10),
+  };
+}

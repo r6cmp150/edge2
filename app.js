@@ -5988,6 +5988,8 @@ function renderSettingsTab() {
         <button class="btn btn-ghost btn-sm" onclick="testUniverseEndpoints()">Test Universe Endpoints (Phase 1)</button>
         <button class="btn btn-ghost btn-sm" onclick="testInstrumentFilter()">Test Instrument Filter (Phase 1)</button>
         <button class="btn btn-ghost btn-sm" onclick="testFundKeywordCandidates()">Test Fund Keywords (Phase 1)</button>
+        <button class="btn btn-ghost btn-sm" onclick="testPrevDailyBarCoverage()">Test PrevDailyBar Coverage (Phase 1)</button>
+        <button class="btn btn-ghost btn-sm" onclick="testPremarketGap()">Test Premarket-Gap (Phase 1)</button>
       </div>
     </div>
 
@@ -6766,6 +6768,57 @@ async function testFundKeywordCandidates() {
     <div class="section-label mt12">Word-boundary check for "Fund"</div>
     <div class="test-result">Names containing "fund" as a substring inside a longer word (e.g. "Fundamental"), which the word-bounded pattern correctly left alone: ${r.wordBoundaryFalsePositivesAvoided.length}</div>
     ${buildInstrumentSampleList(r.wordBoundaryFalsePositivesAvoided)}
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
+// Live check for the prevDailyBar optimization: if this comes back clean,
+// _getPremarketGapUniverse can drop its separate prior-close bars fetch
+// entirely and take both prevClose and live price from one snapshot pass.
+async function testPrevDailyBarCoverage() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>prevDailyBar Coverage</h2></div>
+    <div class="test-result"><span class="spinner"></span> Sampling live snapshots…</div>`);
+
+  const r = await diagnosePrevDailyBarCoverage();
+
+  showModal(`<div class="modal-header"><h2>prevDailyBar Coverage</h2></div>
+    <div class="test-result">Session: ${r.session} — sampled ${r.sampledCount} symbols</div>
+    <div class="test-result">${r.presentCount} / ${r.sampledCount} have a populated prevDailyBar.c</div>
+
+    <div class="section-label mt12">Sample WITH prevDailyBar</div>
+    ${buildInstrumentSampleList(r.presentSample)}
+
+    <div class="section-label mt12">Sample WITHOUT prevDailyBar (${r.missingCount} total)</div>
+    ${buildInstrumentSampleList(r.missingSample)}
+
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
+function buildPremarketGapSampleList(rows) {
+  if (!rows.length) return '<div class="card-sub mt4">(none)</div>';
+  const lines = rows.map(r => `${r.symbol}: $${r.price?.toFixed(2)} (prev $${r.prevClose?.toFixed(2)}, ${r.changePct >= 0 ? '+' : ''}${r.changePct?.toFixed(1)}%) [${r.source}]`);
+  return `<div class="card-sub mt4" style="white-space:pre-wrap">${lines.join('\n')}</div>`;
+}
+async function testPremarketGap() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
+    <div class="test-result"><span class="spinner"></span> Running the real strategy — this may take a while on a cold cache (est. ~76-87 requests)…</div>`);
+
+  const r = await diagnosePremarketGap();
+
+  showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
+    <div class="test-result">Session: ${r.session}</div>
+    <div class="test-result">${r.eligibleCount} instrument-eligible -> ${r.priceFilteredCount} with prior close in \$1-\$20 -> ${r.resultCount} returned (top 50 by gap% + anything >=10%)</div>
+    <div class="section-label mt12">Top 10 sample</div>
+    ${buildPremarketGapSampleList(r.sample)}
     <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
   `);
 }
