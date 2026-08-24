@@ -5982,6 +5982,9 @@ function renderSettingsTab() {
         <button class="btn btn-ghost btn-sm" onclick="testConnections()">Test Connections</button>
       </div>
       <div id="test-results"></div>
+      <div class="settings-row">
+        <button class="btn btn-ghost btn-sm" onclick="testUniverseEndpoints()">Test Universe Endpoints (Phase 1)</button>
+      </div>
     </div>
 
     <div class="settings-section mt12">
@@ -6656,6 +6659,46 @@ async function testConnections() {
     <span class="${groqOk?'test-ok':'test-err'}">${groqOk?'✓':'✗'} Groq ${groqOk?'connected':'failed'}</span>
     <span class="${supaOk?'test-ok':'test-err'}">${supaOk?'✓':'✗'} Supabase ${supaOk?'connected':'failed'}</span>
   </div>`;
+}
+
+// Phase 1 pre-flight check (docs/warrior-engine-spec-v2.md Phase 1) — answers
+// two questions that can't be resolved from documentation alone: which
+// trading host (paper/live) this key authenticates against for /v2/assets,
+// and whether movers/most-actives' top-50 results are actually priced in the
+// $1-$20 range this strategy needs, or too coarse to be useful as-is.
+function buildAssetsHostRow(r) {
+  if (r.status === 200) return `<div class="test-result"><span class="test-ok">✓ ${r.label} (${r.host})</span> — ${r.count} assets</div>`;
+  return `<div class="test-result"><span class="test-err">✗ ${r.label} (${r.host})</span> — ${r.error}</div>`;
+}
+function buildScreenerRow(name, r) {
+  if (r.status !== 200) return `<div class="test-result"><span class="test-err">✗ ${name}</span> — ${r.error}</div>`;
+  const cov = r.priceCoverage;
+  const sampleStr = (r.sample || []).map(s => `${s.symbol} $${s.price ?? '?'}`).join(', ');
+  return `<div class="test-result">
+    <span class="test-ok">✓ ${name}</span> — ${r.count} results, ${cov.in1to20}/${cov.total} in \$1-\$20
+    <div class="card-sub mt4">Sample: ${sampleStr || '(none)'}</div>
+  </div>`;
+}
+async function testUniverseEndpoints() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>Universe Endpoint Diagnostic</h2></div>
+    <div class="test-result"><span class="spinner"></span> Testing…</div>`);
+
+  const report = await diagnoseUniverseEndpoints();
+
+  showModal(`<div class="modal-header"><h2>Universe Endpoint Diagnostic</h2></div>
+    <div class="section-label mt12">/v2/assets — which host authenticates</div>
+    ${buildAssetsHostRow(report.assets.paper)}
+    ${buildAssetsHostRow(report.assets.live)}
+    <div class="section-label mt12">Top gainers (movers)</div>
+    ${buildScreenerRow('movers', report.movers)}
+    <div class="section-label mt12">Most active (most-actives)</div>
+    ${buildScreenerRow('most-actives', report.mostActives)}
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
 }
 
 // Sources fresh from Supabase rather than in-memory state (Data Migration
