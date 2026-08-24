@@ -1870,6 +1870,16 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
     const hl = (newsItem.headline || '').toLowerCase();
     hasNegNews = NEG_KEYWORDS.some(kw => hl.includes(kw));
   }
+  // Bug 4 follow-up (behavior restoration, not a new rule): calcRiskScore's
+  // negative-news penalty below was implicitly bounded before Bug 4, because
+  // the old "since midnight" fetch window meant nothing more than a few
+  // hours old could ever reach it. Widening the fetch to 72h silently
+  // widened this penalty's reach too — a 3-day-old headline started adding
+  // the same +2 as a 10-minute-old one. hasRecentNegNews restores the prior
+  // effective ~24h reach. hasNegNews itself stays unbounded — it also drives
+  // the sentiment badge (getNewsSentiment), which this doesn't touch.
+  const newsAgeH = newsItem ? (Date.now() - new Date(newsItem.created_at).getTime()) / 3600000 : Infinity;
+  const hasRecentNegNews = hasNegNews && newsAgeH <= 24;
 
   // Volume Build: 2 consecutive days of rising volume + today >= 1.3x avg (0–15)
   // Change 10 (Scoring Formula v2): loosened from 3 to 2 consecutive days —
@@ -1978,7 +1988,7 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
   const macroChanges = state.macroContext?.changes || null;
   score = Math.max(0, score + macroAdjustment);
 
-  const risk = calcRiskScore(price, atr, rsi, volRatio, hasNegNews);
+  const risk = calcRiskScore(price, atr, rsi, volRatio, hasRecentNegNews);
   const priceRange = price <= 3 ? '$1–$3' : price <= 9 ? '$4–$9' : '$10–$20';
   const signal = score >= 116 ? 'STRONG BUY' : score >= 73 ? 'SOFT BUY' : 'WATCH';
 
