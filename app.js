@@ -6686,6 +6686,24 @@ function buildScreenerRow(name, r) {
     <div class="card-sub mt4">Sample: ${sampleStr || '(none)'}</div>
   </div>`;
 }
+// Bug B (Phase 1, found live): every diagnostic handler below used to
+// `await diagnoseX()` with no try/catch. A rejected promise still settles
+// immediately — the Phase 0.5 queue was cleared of blame by an isolated
+// test showing a rejection reaching an uncaught awaiter within 200ms, not
+// hanging — but an async function with no catch around a throw simply
+// stops executing at that line. The second showModal() call (the one that
+// replaces the spinner with real content) never ran, so the modal was
+// stuck showing its spinner forever, and the actual error only ever
+// reached the console as "Uncaught (in promise)". A failed request must
+// surface, never hang: this wraps every diagnostic call so a rejection
+// replaces the spinner with a visible error instead of leaving it spinning.
+function showDiagnosticError(title, err) {
+  showModal(`<div class="modal-header"><h2>${title}</h2></div>
+    <div class="test-result"><span class="test-err">✗ Failed: ${err.message}</span></div>
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
 async function testUniverseEndpoints() {
   state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
   state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
@@ -6694,7 +6712,10 @@ async function testUniverseEndpoints() {
   showModal(`<div class="modal-header"><h2>Universe Endpoint Diagnostic</h2></div>
     <div class="test-result"><span class="spinner"></span> Testing…</div>`);
 
-  const report = await diagnoseUniverseEndpoints();
+  let report;
+  try {
+    report = await diagnoseUniverseEndpoints();
+  } catch (e) { return showDiagnosticError('Universe Endpoint Diagnostic', e); }
 
   showModal(`<div class="modal-header"><h2>Universe Endpoint Diagnostic</h2></div>
     <div class="section-label mt12">/v2/assets (paper-api.alpaca.markets)</div>
@@ -6722,7 +6743,10 @@ async function testInstrumentFilter() {
   showModal(`<div class="modal-header"><h2>Instrument Filter Diagnostic</h2></div>
     <div class="test-result"><span class="spinner"></span> Fetching live asset list…</div>`);
 
-  const r = await diagnoseInstrumentFilter();
+  let r;
+  try {
+    r = await diagnoseInstrumentFilter();
+  } catch (e) { return showDiagnosticError('Instrument Filter Diagnostic', e); }
 
   showModal(`<div class="modal-header"><h2>Instrument Filter Diagnostic</h2></div>
     <div class="test-result">${r.rawTotal} raw active us_equity assets -> ${r.baselineTotal} tradable on NASDAQ/NYSE/AMEX (baseline)</div>
@@ -6753,7 +6777,10 @@ async function testFundKeywordCandidates() {
   showModal(`<div class="modal-header"><h2>Fund/ETF Keyword Candidates</h2></div>
     <div class="test-result"><span class="spinner"></span> Fetching live asset list…</div>`);
 
-  const r = await diagnoseFundKeywordCandidates();
+  let r;
+  try {
+    r = await diagnoseFundKeywordCandidates();
+  } catch (e) { return showDiagnosticError('Fund/ETF Keyword Candidates', e); }
 
   const sections = Object.entries(r.candidates).map(([label, c]) => `
     <div class="section-label mt12">${label}</div>
@@ -6783,7 +6810,10 @@ async function testPrevDailyBarCoverage() {
   showModal(`<div class="modal-header"><h2>prevDailyBar Coverage</h2></div>
     <div class="test-result"><span class="spinner"></span> Sampling live snapshots…</div>`);
 
-  const r = await diagnosePrevDailyBarCoverage();
+  let r;
+  try {
+    r = await diagnosePrevDailyBarCoverage();
+  } catch (e) { return showDiagnosticError('prevDailyBar Coverage', e); }
 
   showModal(`<div class="modal-header"><h2>prevDailyBar Coverage</h2></div>
     <div class="test-result">Session: ${r.session} — sampled ${r.sampledCount} symbols</div>
@@ -6810,9 +6840,12 @@ async function testPremarketGap() {
   persistApiKeys();
 
   showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
-    <div class="test-result"><span class="spinner"></span> Running the real strategy — this may take a while on a cold cache (est. ~76-87 requests)…</div>`);
+    <div class="test-result"><span class="spinner"></span> Running the real strategy — this may take a while on a cold cache…</div>`);
 
-  const r = await diagnosePremarketGap();
+  let r;
+  try {
+    r = await diagnosePremarketGap();
+  } catch (e) { return showDiagnosticError('Premarket-Gap Diagnostic', e); }
 
   showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
     <div class="test-result">Session: ${r.session}</div>
