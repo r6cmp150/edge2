@@ -179,7 +179,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.2';
+const VERSION = 'v2.9.3-phase1-dev';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -6662,13 +6662,14 @@ async function testConnections() {
 }
 
 // Phase 1 pre-flight check (docs/warrior-engine-spec-v2.md Phase 1) — answers
-// two questions that can't be resolved from documentation alone: which
-// trading host (paper/live) this key authenticates against for /v2/assets,
-// and whether movers/most-actives' top-50 results are actually priced in the
-// $1-$20 range this strategy needs, or too coarse to be useful as-is.
+// the one question that can't be resolved from documentation alone: whether
+// movers/most-actives' top-50 results are actually priced in the $1-$20
+// range this strategy needs, or too coarse to be useful as-is. /v2/assets'
+// host is paper-api.alpaca.markets, confirmed from the account's key prefix
+// rather than a live probe — this just confirms that assumption still holds.
 function buildAssetsHostRow(r) {
-  if (r.status === 200) return `<div class="test-result"><span class="test-ok">✓ ${r.label} (${r.host})</span> — ${r.count} assets</div>`;
-  return `<div class="test-result"><span class="test-err">✗ ${r.label} (${r.host})</span> — ${r.error}</div>`;
+  if (r.status === 200) return `<div class="test-result"><span class="test-ok">✓ ${r.host}</span> — ${r.count} assets</div>`;
+  return `<div class="test-result"><span class="test-err">✗ ${r.host}</span> — ${r.error}</div>`;
 }
 function buildScreenerRow(name, r) {
   if (r.status !== 200) return `<div class="test-result"><span class="test-err">✗ ${name}</span> — ${r.error}</div>`;
@@ -6690,9 +6691,8 @@ async function testUniverseEndpoints() {
   const report = await diagnoseUniverseEndpoints();
 
   showModal(`<div class="modal-header"><h2>Universe Endpoint Diagnostic</h2></div>
-    <div class="section-label mt12">/v2/assets — which host authenticates</div>
-    ${buildAssetsHostRow(report.assets.paper)}
-    ${buildAssetsHostRow(report.assets.live)}
+    <div class="section-label mt12">/v2/assets (paper-api.alpaca.markets)</div>
+    ${buildAssetsHostRow(report.assets)}
     <div class="section-label mt12">Top gainers (movers)</div>
     ${buildScreenerRow('movers', report.movers)}
     <div class="section-label mt12">Most active (most-actives)</div>

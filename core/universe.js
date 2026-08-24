@@ -7,36 +7,32 @@
 //
 // This file currently holds only the pre-flight connectivity/coverage check
 // (diagnoseUniverseEndpoints) — deliberately built and run FIRST, before any
-// strategy logic, because two things can't be confirmed from documentation
-// alone and materially change the design if they turn out unfavorable:
+// strategy logic, because movers/most-actives' actual price coverage can't
+// be confirmed from documentation alone and materially changes the design
+// if it turns out unfavorable: they cap at `top=50` and apply no price
+// filter, so if a typical day's top 50 are mostly outside $1-$20, the
+// endpoint is too coarse for a Warrior-scale ($1-$20 microcap) scan, and
+// deriving gainers from full-filtered's own snapshots becomes the primary
+// mechanism instead.
 //
-// 1. Alpaca keys are account-scoped to paper OR live — a paper key 401s
-//    against api.alpaca.markets and vice versa for /v2/assets (the trading-
-//    account host premarket-gap and full-filtered both need for the asset
-//    list). Whichever host authenticates is the one this file must use.
-// 2. movers/most-actives cap at `top=50` and apply no price filter — if a
-//    typical day's top 50 are mostly outside $1-$20, the endpoint is too
-//    coarse for a Warrior-scale ($1-$20 microcap) scan, and deriving
-//    gainers from full-filtered's own snapshots becomes the primary
-//    mechanism instead of movers/most-actives. That's a bigger fork than
-//    plain availability, and this same check answers both at once.
+// /v2/assets (the trading-account host premarket-gap and full-filtered both
+// need for the asset list) lives on paper-api.alpaca.markets, not
+// data.alpaca.markets — confirmed against the account's key prefix (PK...,
+// Alpaca's paper-account convention) rather than a live probe of both hosts.
 
-const ALPACA_TRADING_HOSTS = {
-  paper: 'https://paper-api.alpaca.markets',
-  live: 'https://api.alpaca.markets',
-};
+const ALPACA_TRADING_BASE = 'https://paper-api.alpaca.markets';
 const ALPACA_SCREENER_BASE = 'https://data.alpaca.markets/v1beta1';
 
 function _inPriceRange(price) {
   return typeof price === 'number' && price >= 1 && price <= 20;
 }
 
-async function _checkAssetsHost(label, host) {
+async function _checkAssetsHost() {
   try {
-    const data = await alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, host);
-    return { label, host, status: 200, count: Array.isArray(data) ? data.length : null };
+    const data = await alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);
+    return { host: ALPACA_TRADING_BASE, status: 200, count: Array.isArray(data) ? data.length : null };
   } catch (e) {
-    return { label, host, status: 'error', error: e.message };
+    return { host: ALPACA_TRADING_BASE, status: 'error', error: e.message };
   }
 }
 
@@ -79,15 +75,14 @@ async function _checkMostActives() {
   }
 }
 
-// Run all four checks and return a single report. Read-only, side-effect
+// Run all three checks and return a single report. Read-only, side-effect
 // free (no caching, no state writes) — this is a diagnostic, not part of
 // getUniverse()'s eventual request path.
 async function diagnoseUniverseEndpoints() {
-  const [paperAssets, liveAssets, movers, mostActives] = await Promise.all([
-    _checkAssetsHost('paper', ALPACA_TRADING_HOSTS.paper),
-    _checkAssetsHost('live', ALPACA_TRADING_HOSTS.live),
+  const [assets, movers, mostActives] = await Promise.all([
+    _checkAssetsHost(),
     _checkMovers(),
     _checkMostActives(),
   ]);
-  return { assets: { paper: paperAssets, live: liveAssets }, movers, mostActives };
+  return { assets, movers, mostActives };
 }
