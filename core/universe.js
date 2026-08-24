@@ -65,7 +65,17 @@ function _inPriceRange(price) {
 // added. Leveraged/inverse pattern (2x/3x/leveraged/inverse/daily
 // target/bull/bear) also rejected as redundant: all 201 of its live
 // matches, including MSTU, already contained "ETF".
-const EXCLUDED_INSTRUMENT_NAME_RE = /\b(warrants?|units?|rights?|preferred|notes?|debentures?|etfs?|etns?)\b/i;
+//
+// "fund" added after the word-boundary self-check came back clean on live
+// data: 315 excluded off the post-ETF/ETN baseline, all 20 sampled genuine
+// closed-end funds, and diagnoseFundKeywordCandidates' unbounded-vs-bounded
+// diff found zero real names with "fund" embedded in a longer word (the
+// "Fundamental Global Inc." risk this was checked against specifically).
+//
+// Full funnel on the live run that settled this filter: 14,203 raw active
+// us_equity -> 8,799 tradable on NASDAQ/NYSE/AMEX -> 6,029 after
+// instrument+ETF/ETN -> ~5,714 after adding fund.
+const EXCLUDED_INSTRUMENT_NAME_RE = /\b(warrants?|units?|rights?|preferred|notes?|debentures?|etfs?|etns?|funds?)\b/i;
 
 // American Depositary Shares (ADRs) are foreign-issuer common-stock
 // equivalents — Ross-eligible. Their name often describes what the ADS
@@ -320,18 +330,13 @@ async function diagnoseInstrumentFilter() {
   };
 }
 
-// ETF/ETN settled and added to EXCLUDED_INSTRUMENT_NAME_RE above (see that
-// comment for the live numbers). "Exchange Traded Fund", "Trust", and the
-// leveraged/inverse pattern were tested and rejected — see the same
-// comment. "Fund" is the one remaining open candidate: confirmed live to
-// exclude 689 names ETF alone misses (closed-end funds like KIO, EDF), but
-// "fund" is a substring of "Fundamental", and Fundamental Global Inc. is a
-// real listed small-cap — worth confirming the match is genuinely
-// word-bounded against live data before adding it, not just trusting the
-// regex. diagnoseFundKeywordCandidates() tests it, plus a same-pattern
-// self-check (see below) that surfaces any name where "fund" appears
-// inside a longer word, so that check is answered with real names, not
-// asserted from reading the regex.
+// ETF/ETN/fund are all settled and live in EXCLUDED_INSTRUMENT_NAME_RE above
+// (see that comment for the numbers each was added on). "Exchange Traded
+// Fund", "Trust", and the leveraged/inverse pattern were tested and
+// rejected — same comment. Nothing left pending as of this filter's
+// settlement. FUND_KEYWORD_CANDIDATES and diagnoseFundKeywordCandidates
+// below are kept as a live regression check, not an open decision — re-run
+// if Alpaca's naming conventions or the exclude-list itself ever change.
 const FUND_KEYWORD_CANDIDATES = {
   '"Fund"': /\bfunds?\b/i,
 };
