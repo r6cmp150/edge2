@@ -115,6 +115,27 @@ function isMarketHoursNow() {
   return isTradingDay(pt) && tMin >= 390 && tMin < 780; // 6:30am–1:00pm PT
 }
 
+// Bug 4 follow-up. Hours since the most recent trading day's regular-session
+// close STRICTLY BEFORE `now` — e.g. on a Tuesday after a Monday holiday,
+// this reaches back to the preceding Friday's close (~85h), not Monday's
+// (which never opened). Used to size the news-fetch lookback window wide
+// enough to cover a long weekend without hardcoding session lengths
+// elsewhere. Walks backward day-by-day, mirroring getCountdownToOpen's
+// forward walk above, so both share the same isTradingDay/HOLIDAYS source
+// of truth rather than reasoning about weekends independently.
+function hoursSincePreviousClose(now = new Date()) {
+  const ptNow = getPT(now);
+  for (let d = 1; d <= 10; d++) {
+    const dayPT = new Date(ptNow);
+    dayPT.setDate(ptNow.getDate() - d);
+    if (!isTradingDay(dayPT)) continue;
+    const closePT = new Date(dayPT);
+    closePT.setHours(13, 0, 0, 0); // 1:00pm PT regular session close
+    return (ptNow - closePT) / 3600000;
+  }
+  return null; // no trading day found in the last 10 days — shouldn't happen
+}
+
 function businessDaysBetween(startDateStr, endDateStr) {
   const start = new Date(startDateStr + 'T12:00:00');
   const end   = new Date(endDateStr   + 'T12:00:00');

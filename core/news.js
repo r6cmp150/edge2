@@ -11,7 +11,7 @@
 // of the current day, which is empty on a Sunday and covers only since
 // midnight on a Monday-morning scan, missing the Friday-evening/weekend
 // catalysts that scan exists to find, and undersizing the 4-12hr scoring
-// bucket. Fixed by passing start = now - 72h.
+// bucket (retired from scoring itself, but still true of the fetch gap).
 //
 // Widening the window reintroduces Bug 1's shape in news form: `limit` maxes
 // at 50 (a hard cap — unlike bars' limit, Alpaca does not allow raising it)
@@ -26,20 +26,38 @@
 // has no predictable ceiling, so "follow until exhausted" has no natural
 // stopping point and risks an open-ended request count on a single newsy
 // batch.
+//
+// Bug 4 follow-up: a flat 72h base still under-covers a 3-day holiday
+// weekend (Friday close -> Tuesday open is ~85-90h — see
+// core/clock.js:hoursSincePreviousClose). The actual lookback used is
+// max(BASE, hours since the previous trading day's close), capped at MAX so
+// a long-idle app doesn't balloon the window indefinitely — a week-old
+// article isn't a fresh catalyst anymore, it's history. state.newsLookbackHours
+// records whatever value was actually used so the card-render visibility
+// gate (app.js:buildCardNewsSnippet) can match it exactly rather than
+// duplicating a number that may not be this scan's actual window.
 const ALPACA_NEWS_BASE = 'https://data.alpaca.markets/v1beta1';
-const NEWS_LOOKBACK_HOURS = 72;
+const NEWS_LOOKBACK_HOURS_BASE = 72;   // covers a normal weekend
+const NEWS_LOOKBACK_HOURS_MAX  = 120;  // caps a long holiday weekend at 5 days
 const NEWS_CHUNK_SIZE = 10;       // symbols per news request
 const NEWS_MAX_PAGES_PER_CHUNK = 3; // bounds worst case at NEWS_MAX_PAGES_PER_CHUNK * 50 items per chunk
 
 async function fetchNewsForTickers(tickers) {
   const clean = sanitizeTickerBatch(tickers);
+
+  const sincePrevClose = hoursSincePreviousClose();
+  const lookbackHours = sincePrevClose == null
+    ? NEWS_LOOKBACK_HOURS_BASE
+    : Math.min(Math.max(NEWS_LOOKBACK_HOURS_BASE, sincePrevClose), NEWS_LOOKBACK_HOURS_MAX);
+  state.newsLookbackHours = lookbackHours;
+
   if (!clean.length) {
     state.newsUnavailable = false;
     state.newsTruncatedSymbols = [];
     return [];
   }
 
-  const start = new Date(Date.now() - NEWS_LOOKBACK_HOURS * 3600 * 1000).toISOString();
+  const start = new Date(Date.now() - lookbackHours * 3600 * 1000).toISOString();
   const allNews = [];
   const truncatedSymbols = [];
 

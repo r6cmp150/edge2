@@ -779,6 +779,7 @@ let state = {
   news: [],
   newsUnavailable: false, // set by core/news.js when the last news fetch failed (e.g. wrong path, network) — distinct from "fetched fine, zero results"
   newsTruncatedSymbols: [], // tickers whose news may be incomplete because their batch hit the 50-item page cap — distinct from "confirmed zero news"
+  newsLookbackHours: 72, // actual fetch window used by the last news request (core/news.js) — card-render visibility gate matches this exactly, not a duplicated literal
   lastScanTime: null,
   activeTab: 'signals',
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
@@ -2794,7 +2795,10 @@ function buildCardNewsSnippet(s) {
   if (!s.news && state.newsTruncatedSymbols.includes(s.ticker)) return `<div class="sc-news"><span class="sc-news-nonews">News check incomplete</span></div>`;
   if (!s.news) return `<div class="sc-news"><span class="sc-news-nonews">No recent news</span></div>`;
   const ageH = (Date.now() - new Date(s.news.created_at).getTime()) / 3600000;
-  if (ageH > 24) return `<div class="sc-news"><span class="sc-news-nonews">No recent news</span></div>`;
+  // Matches core/news.js's actual fetch window for this scan (state.newsLookbackHours),
+  // not a duplicated literal — a display gate tighter than the fetch window
+  // throws away data we specifically fetched to show (Bug 4 follow-up).
+  if (ageH > state.newsLookbackHours) return `<div class="sc-news"><span class="sc-news-nonews">No recent news</span></div>`;
   const ageStr = newsTimeAgo(s.news);
   const sentiment = getNewsSentiment(s.hasNegNews, s.news.created_at);
   const sentCls = sentiment === 'POSITIVE' ? 'sent-pos' : sentiment === 'NEGATIVE' ? 'sent-neg' : 'sent-neutral';
