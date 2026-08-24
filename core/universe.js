@@ -321,11 +321,27 @@ async function _getPriorCloses(symbols) {
 // data" rejection bars get when a caller doesn't account for the delay.
 const PREMARKET_BAR_DELAY_MIN = 16;
 
-async function _fetchLatestSipMinuteBars(symbols) {
-  const end = new Date(Date.now() - PREMARKET_BAR_DELAY_MIN * 60 * 1000);
-  const start = new Date(end.getTime() - 3 * 60 * 60 * 1000); // 3h lookback comfortably covers pre-market open (4:00am ET) through end
+// Live-measured, not estimated: the old single 3h/limit:batch.length*5
+// design took ~1,329 requests / 5.7min for a ~3,854-symbol run (confirmed
+// against that run's own numbers — 39 chunks * ~34 avg pages/chunk, right
+// where 18,000 worst-case bars against a 500-bar page predicts). A
+// 45-minute window at a 100-symbol chunk has a worst-case bar count of
+// 100*45=4,500 — always under Alpaca's 10,000 platform ceiling, so pass 1
+// is provably single-page per chunk (CLAUDE.md pagination rule: proof, not
+// an estimate). PREMARKET_BAR_WINDOW_WIDE_MIN is the old 3h window, used
+// only as pass 2's fallback for the (expected: small) set of symbols pass 1
+// found nothing for.
+const PREMARKET_BAR_WINDOW_MIN = 45;
+const PREMARKET_BAR_WINDOW_WIDE_MIN = 3 * 60;
 
+// Single-window fetch, factored out so pass 1 and pass 2 (below) share
+// identical chunking/pagination/error-handling instead of drifting apart.
+// Returns requests made so callers can report per-pass cost, same
+// visibility principle as fetchMultiBars' droppedSymbols.
+async function _fetchMinuteBarsWindow(symbols, end, windowMin) {
+  const start = new Date(end.getTime() - windowMin * 60 * 1000);
   const latestBySymbol = {};
+  let requests = 0;
   for (const batch of chunk(symbols, SNAPSHOT_CHUNK_SIZE)) {
     try {
       const barsBySymbol = {};
@@ -334,10 +350,11 @@ async function _fetchLatestSipMinuteBars(symbols) {
         const params = {
           symbols: batch.join(','), timeframe: '1Min',
           start: start.toISOString(), end: end.toISOString(),
-          limit: batch.length * 5, sort: 'desc', feed: 'sip',
+          limit: 10000, sort: 'desc', feed: 'sip',
         };
         if (pageToken) params.page_token = pageToken;
         const data = await alpacaGet('/stocks/bars', params);
+        requests++;
         if (data.bars) {
           for (const sym of Object.keys(data.bars)) {
             (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
@@ -351,26 +368,46 @@ async function _fetchLatestSipMinuteBars(symbols) {
         if (bars && bars.length) latestBySymbol[sym] = bars[0];
       });
     } catch (e) {
-      console.warn(`_fetchLatestSipMinuteBars: batch error for ${batch.length} symbols: ${e.message}`);
+      console.warn(`_fetchMinuteBarsWindow: batch error for ${batch.length} symbols (${windowMin}min window): ${e.message}`);
     }
   }
-  return latestBySymbol;
+  return { latestBySymbol, requests };
 }
 
-async function _getPremarketGapUniverse() {
-  const assetIndex = await _getAssetIndex();
-  const eligibleSymbols = assetIndex.map(a => a.symbol);
+// Two-tier fetch. Pass 1 (45min, provably single-page) covers the vast
+// majority of symbols cheaply. Pass 2 re-requests ONLY the symbols pass 1
+// found nothing for, with the wider 3h window — thin/stale premarket
+// trading, not necessarily junk, so worth a second look rather than an
+// immediate drop. Anything still empty after both passes is a real gap:
+// returned as missingSymbols and logged, same "surface it, don't fix it,
+// never silently drop it" pattern as fetchMultiBars' Bug 3 droppedSymbols —
+// this is not a substitute for narrowing the window, it's what makes
+// narrowing the window safe to do at all.
+async function _fetchLatestSipMinuteBars(symbols) {
+  const end = new Date(Date.now() - PREMARKET_BAR_DELAY_MIN * 60 * 1000);
 
-  const priorCloses = await _getPriorCloses(eligibleSymbols);
-  const priceFilteredSymbols = eligibleSymbols.filter(sym => _inPriceRange(priorCloses[sym]));
+  const pass1 = await _fetchMinuteBarsWindow(symbols, end, PREMARKET_BAR_WINDOW_MIN);
+  const missingAfterPass1 = symbols.filter(sym => !(sym in pass1.latestBySymbol));
 
-  console.log(`getUniverse('premarket-gap'): ${eligibleSymbols.length} instrument-eligible -> ${priceFilteredSymbols.length} with prior close in $1-$20`);
-  if (!priceFilteredSymbols.length) return [];
+  let pass2 = { latestBySymbol: {}, requests: 0 };
+  if (missingAfterPass1.length) {
+    pass2 = await _fetchMinuteBarsWindow(missingAfterPass1, end, PREMARKET_BAR_WINDOW_WIDE_MIN);
+  }
 
-  const latestBars = await _fetchLatestSipMinuteBars(priceFilteredSymbols);
+  const latestBySymbol = { ...pass1.latestBySymbol, ...pass2.latestBySymbol };
+  const missingSymbols = symbols.filter(sym => !(sym in latestBySymbol));
+  if (missingSymbols.length) {
+    console.warn(`_fetchLatestSipMinuteBars: no SIP minute bar for ${missingSymbols.length} of ${symbols.length} symbol(s) even after the ${PREMARKET_BAR_WINDOW_WIDE_MIN}min fallback pass: ${missingSymbols.slice(0, 20).join(', ')}${missingSymbols.length > 20 ? '…' : ''}`);
+  }
 
+  return { latestBySymbol, missingSymbols, pass1Requests: pass1.requests, pass2Requests: pass2.requests };
+}
+
+// Shared by _getPremarketGapUniverse and diagnosePremarketGap so the ranking
+// logic can't drift between the real path and the diagnostic measuring it.
+function _buildGapResults(priceFilteredSymbols, latestBySymbol, priorCloses) {
   const withGap = priceFilteredSymbols.map(sym => {
-    const bar = latestBars[sym];
+    const bar = latestBySymbol[sym];
     const premarketPrice = bar ? bar.c : null;
     const prevClose = priorCloses[sym];
     if (!premarketPrice || !prevClose) return null;
@@ -388,6 +425,31 @@ async function _getPremarketGapUniverse() {
   const top50 = withGap.slice(0, 50);
   const top50Symbols = new Set(top50.map(w => w.symbol));
   const above10pct = withGap.filter(w => w.changePct >= 10 && !top50Symbols.has(w.symbol));
+  return { withGap, top50, above10pct };
+}
+
+async function _getPremarketGapUniverse() {
+  const assetIndex = await _getAssetIndex();
+  // Bug (found live, 2026-08-24): this used to be assetIndex.map(a =>
+  // a.symbol) — every tradable/exchange-filtered symbol, ignoring
+  // isEligibleInstrument entirely. _getMoversUniverse always applied that
+  // filter; this path never did, so warrants/units/leveraged ETFs (HQWWW,
+  // FVNNU, BTDL — the GraniteShares 2x Long BTDR ETF, one of the exact
+  // names from the ETF exclusion sample) reached the ranked output.
+  const eligibleSymbols = assetIndex.filter(a => a.isEligibleInstrument).map(a => a.symbol);
+
+  const priorCloses = await _getPriorCloses(eligibleSymbols);
+  const priceFilteredSymbols = eligibleSymbols.filter(sym => _inPriceRange(priorCloses[sym]));
+
+  console.log(`getUniverse('premarket-gap'): ${assetIndex.length} tradable -> ${eligibleSymbols.length} instrument-eligible -> ${priceFilteredSymbols.length} with prior close in $1-$20`);
+  if (!priceFilteredSymbols.length) return [];
+
+  const { latestBySymbol, missingSymbols } = await _fetchLatestSipMinuteBars(priceFilteredSymbols);
+  if (missingSymbols.length) {
+    console.warn(`getUniverse('premarket-gap'): ${missingSymbols.length} of ${priceFilteredSymbols.length} symbols had no SIP minute bar in either window pass — excluded from gap ranking, not silently absent.`);
+  }
+
+  const { withGap, top50, above10pct } = _buildGapResults(priceFilteredSymbols, latestBySymbol, priorCloses);
 
   console.log(`getUniverse('premarket-gap'): ${withGap.length} priced -> top 50 by gap% + ${above10pct.length} additional >=10% gap = ${top50.length + above10pct.length} returned`);
 
@@ -623,25 +685,71 @@ async function diagnosePrevDailyBarCoverage() {
   };
 }
 
-// Runs the real premarket-gap strategy and reports the funnel counts + a
-// sample of what it surfaces, without wiring it into anything user-facing
-// yet. Re-derives eligibleCount/priceFilteredCount by calling the same
-// cached functions getUniverse itself calls — costs nothing extra once
-// those caches are warm (which they will be, since getUniverse below
-// populates them regardless of call order).
+// Temporarily wraps the shared alpacaGet to count requests made during fn(),
+// without changing alpacaGet's signature or any production caller's
+// contract — this is a diagnostic-only need, not a reason to thread a
+// counter through _getAssetIndex/_getPriorCloses's real return shapes.
+// Restored in a finally so a thrown error never leaves the global wrapped.
+async function _countRequests(fn) {
+  const real = alpacaGet;
+  let count = 0;
+  alpacaGet = (...args) => { count++; return real(...args); };
+  try {
+    const result = await fn();
+    return { result, count };
+  } finally {
+    alpacaGet = real;
+  }
+}
+
+// Runs the real premarket-gap strategy stage by stage — NOT via
+// getUniverse(), which would hide per-stage cost behind one total and (with
+// no cache for minute bars) double the actual SIP request cost if this then
+// called getUniverse separately for the real result. Reports each stage's
+// request count on its own: a single combined total is exactly what let the
+// fetchLatestSipMinuteBars fix look like the whole story last time —
+// _getPriorCloses alone is ~58 chunks with its own pagination on a cold
+// cache and was entirely absent from that analysis. Also reports wall-clock
+// time and coverage rate (symbols that got a bar, after both minute-bar
+// passes, divided by symbols requested) so the two-tier fetch's tradeoff
+// (see _fetchLatestSipMinuteBars) is measured, not assumed away.
 async function diagnosePremarketGap() {
   const session = getMarketStatus().status;
-  const assetIndex = await _getAssetIndex();
-  const priorCloses = await _getPriorCloses(assetIndex.map(a => a.symbol));
-  const priceFilteredCount = assetIndex.filter(a => _inPriceRange(priorCloses[a.symbol])).length;
+  const t0 = Date.now();
 
-  const result = await getUniverse({ session, strategy: 'premarket-gap' });
+  const { result: assetIndex, count: assetIndexRequests } = await _countRequests(() => _getAssetIndex());
+  const eligibleSymbols = assetIndex.filter(a => a.isEligibleInstrument).map(a => a.symbol);
+
+  const { result: priorCloses, count: priorClosesRequests } = await _countRequests(() => _getPriorCloses(eligibleSymbols));
+  const priceFilteredSymbols = eligibleSymbols.filter(sym => _inPriceRange(priorCloses[sym]));
+
+  const barsResult = priceFilteredSymbols.length
+    ? await _fetchLatestSipMinuteBars(priceFilteredSymbols)
+    : { latestBySymbol: {}, missingSymbols: [], pass1Requests: 0, pass2Requests: 0 };
+  const { latestBySymbol, missingSymbols, pass1Requests, pass2Requests } = barsResult;
+
+  const { withGap, top50, above10pct } = _buildGapResults(priceFilteredSymbols, latestBySymbol, priorCloses);
+  const wallClockMs = Date.now() - t0;
+  const coverageRate = priceFilteredSymbols.length
+    ? (priceFilteredSymbols.length - missingSymbols.length) / priceFilteredSymbols.length
+    : null;
 
   return {
     session,
-    eligibleCount: assetIndex.length,
-    priceFilteredCount,
-    resultCount: result.length,
-    sample: result.slice(0, 10),
+    tradableCount: assetIndex.length,
+    eligibleCount: eligibleSymbols.length,
+    priceFilteredCount: priceFilteredSymbols.length,
+    resultCount: top50.length + above10pct.length,
+    sample: [...top50, ...above10pct].slice(0, 10),
+    requests: {
+      assetIndex: assetIndexRequests,
+      priorCloses: priorClosesRequests,
+      minuteBarsPass1: pass1Requests,
+      minuteBarsPass2: pass2Requests,
+      total: assetIndexRequests + priorClosesRequests + pass1Requests + pass2Requests,
+    },
+    wallClockMs,
+    coverageRate,
+    missingAfterBothPasses: missingSymbols.length,
   };
 }

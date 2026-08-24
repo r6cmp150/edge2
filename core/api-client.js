@@ -174,6 +174,11 @@ function _nextEligibleIndex() {
   return bestIdx;
 }
 
+// Concurrency work (MAX_CONCURRENT / multi-worker _drain) reverted here
+// pending root-causing a 290.7/min pacing violation found while testing it
+// — the token bucket itself needs to be verified correct in isolation
+// before concurrency is reintroduced on top of it. See
+// docs/warrior-engine-spec-v2.md Phase 0.5's rewritten acceptance criteria.
 async function _drain() {
   if (_draining) return;
   _draining = true;

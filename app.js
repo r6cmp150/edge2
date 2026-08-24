@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.3-phase1-dev10';
+const VERSION = 'v2.9.3-phase1-dev12';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -6980,9 +6980,25 @@ async function testPremarketGap() {
     r = await diagnosePremarketGap();
   } catch (e) { return showDiagnosticError('Premarket-Gap Diagnostic', e); }
 
+  // Coverage means something different depending on session: during OPEN,
+  // regular-hours names should mostly be trading, so a low number is a real
+  // signal something's off. Pre-market, most $1-$20 names simply don't
+  // trade before the open at all — "no bar" there means "no premarket
+  // trade happened," which is correct behavior, not missing data. Framed
+  // per-session so a genuinely low pre-market number (this can be well
+  // under 50% at 6am) doesn't read as a failure rate.
+  const coverageLabel = r.coverageRate == null ? 'n/a' : (r.coverageRate * 100).toFixed(1) + '%';
+  const coverageNote = r.session === 'OPEN'
+    ? `${coverageLabel} of eligible symbols had a SIP minute bar (${r.missingAfterBothPasses} of ${r.priceFilteredCount} did not — during OPEN this should stay high; a low number here is worth investigating).`
+    : `${coverageLabel} of eligible symbols showed premarket trading activity in this window (${r.missingAfterBothPasses} of ${r.priceFilteredCount} had none). Most $1-$20 names don't trade before the open at all — a low number here is expected pre-market behavior, not a failure.`;
+
   showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
     <div class="test-result">Session: ${r.session}</div>
-    <div class="test-result">${r.eligibleCount} instrument-eligible -> ${r.priceFilteredCount} with prior close in \$1-\$20 -> ${r.resultCount} returned (top 50 by gap% + anything >=10%)</div>
+    <div class="test-result">${r.tradableCount} tradable -> ${r.eligibleCount} instrument-eligible -> ${r.priceFilteredCount} with prior close in \$1-\$20 -> ${r.resultCount} returned (top 50 by gap% + anything >=10%)</div>
+    <div class="section-label mt12">Requests by stage</div>
+    <div class="test-result">Asset index: ${r.requests.assetIndex} | Prior closes: ${r.requests.priorCloses} | Minute bars pass 1 (45min): ${r.requests.minuteBarsPass1} | Minute bars pass 2 (3h fallback): ${r.requests.minuteBarsPass2} | Total: ${r.requests.total}</div>
+    <div class="test-result">Wall clock: ${(r.wallClockMs / 1000).toFixed(1)}s</div>
+    <div class="test-result">${coverageNote}</div>
     <div class="section-label mt12">Top 10 sample</div>
     ${buildPremarketGapSampleList(r.sample)}
     <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
