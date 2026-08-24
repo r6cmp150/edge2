@@ -930,6 +930,7 @@ a { color: var(--blue); }
 }
 .pf-bar-profit { background: rgba(0,255,136,0.08); }
 .pf-bar-loss   { background: rgba(255,209,102,0.08); }
+.pf-bar-stale  { background: rgba(255,77,109,0.08); }
 .pf-price-cell { flex: 1; text-align: center; }
 .pf-price-divider { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
 .pf-price-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: 2px; }
@@ -940,6 +941,8 @@ a { color: var(--blue); }
 .pf-now-up   { color: var(--green); }
 .pf-now-down { color: var(--red); }
 .pf-now-flat { color: var(--yellow); }
+.pf-now-stale { color: var(--red); }
+.pf-stale-tag { font-size: 10px; color: var(--red); font-weight: 600; }
 
 .pf-grid {
   display: grid;
@@ -1549,6 +1552,19 @@ input:checked + .toggle-slider::before { transform: translateX(20px); }
   margin: 0 12px 10px;
 }
 
+/* ── Portfolio Stale-Price Banner ── */
+.pf-stale-banner {
+  background: rgba(255,77,109,0.12);
+  color: var(--red);
+  border: 1px solid rgba(255,77,109,0.35);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-family: var(--cond);
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 12px 10px;
+}
+
 /* ── Friday Card Flag ── */
 .friday-flag {
   background: rgba(255,209,102,0.1);
@@ -1687,6 +1703,39 @@ input:checked + .toggle-slider::before { transform: translateX(20px); }
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Global Error Toast (unhandledrejection safety net) ── */
+.global-error-toast {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 76px; /* clears bottom-nav */
+  z-index: 10000;
+  background: #2a0f16;
+  color: var(--red);
+  border: 1px solid rgba(255,77,109,0.5);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-family: var(--cond);
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.global-error-toast span { flex: 1; word-break: break-word; }
+.global-error-toast-close {
+  background: none;
+  border: none;
+  color: var(--red);
+  font-size: 16px;
+  font-weight: 700;
+  padding: 0 2px;
+  cursor: pointer;
+  line-height: 1;
+}
 
 /* ── PIN Screen ── */
 .pin-screen {

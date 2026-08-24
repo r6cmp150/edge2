@@ -8,6 +8,51 @@
 // runDataLoadAndInit() once Portfolio/Settings finish loading from Supabase.
 const APP_SHELL_HTML = document.body.innerHTML;
 
+// ── GLOBAL ERROR BOUNDARY ────────────────────────────────────────
+// Pulled forward from Phase 2's error boundary spec. Rationale: a rejected
+// promise with no .catch() doesn't hang — it settles almost immediately —
+// but the async function awaiting it stops executing at that line, so any
+// code after it (typically the call that would replace a loading/spinner
+// state) never runs, leaving the UI stuck with no visible error (this is
+// exactly what the Bug B diagnostic proved for the Settings diagnostics,
+// and what generateClaudeReport/renderPortfolioTab were independently fixed
+// for). One handler here beats auditing every await in the codebase, and
+// it covers awaits in code not yet written. Deliberately placed before the
+// PIN gate so it's armed for the app's entire lifetime, including the PIN
+// and data-loading screens.
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason);
+  const message = event.reason?.message || String(event.reason);
+  showGlobalErrorToast(message);
+});
+
+// Builds the toast via DOM methods rather than innerHTML — the message can
+// come from a network error body (e.g. Alpaca's error text), so it's
+// treated as untrusted text, not HTML. Deliberately independent of
+// tab-content/modal-overlay/modal-body: this handler can fire during the
+// PIN screen or the data-loading screen, before those elements exist, and
+// document.body.innerHTML gets replaced wholesale at several points during
+// boot — a toast tied to one of those transient screens is expected to go
+// with it, not survive across the swap.
+function showGlobalErrorToast(message) {
+  document.getElementById('global-error-toast')?.remove();
+  const toast = document.createElement('div');
+  toast.id = 'global-error-toast';
+  toast.className = 'global-error-toast';
+
+  const msgEl = document.createElement('span');
+  msgEl.textContent = '⚠ ' + message;
+  toast.appendChild(msgEl);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'global-error-toast-close';
+  closeBtn.textContent = '✕';
+  closeBtn.onclick = () => toast.remove();
+  toast.appendChild(closeBtn);
+
+  document.body.appendChild(toast);
+}
+
 // ── 0. PIN GATE ──────────────────────────────────────────────────
 // Runs before anything else. Default PIN hash is SHA-256("0684");
 // default security-answer hash is SHA-256("Rainbow6") — the plain
@@ -179,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.2';
+const VERSION = 'v2.9.3';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -780,6 +825,8 @@ let state = {
   newsUnavailable: false, // set by core/news.js when the last news fetch failed (e.g. wrong path, network) — distinct from "fetched fine, zero results"
   newsTruncatedSymbols: [], // tickers whose news may be incomplete because their batch hit the 50-item page cap — distinct from "confirmed zero news"
   newsLookbackHours: 72, // actual fetch window used by the last news request (core/news.js) — card-render visibility gate matches this exactly, not a duplicated literal
+  universeAssetCache: null, // { fetchedAt, assets: [{symbol,exchange,name,isCommonStock}] } — core/universe.js, 24h cache — persisted
+  universePriorCloseCache: null, // { date, closes: {symbol: price} } — core/universe.js, daily cache — persisted
   lastScanTime: null,
   activeTab: 'signals',
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
@@ -807,7 +854,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI'].forEach(k => {
+  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -3100,39 +3147,58 @@ async function openStockModal(ticker) {
   `);
 
   try {
-    const [bars, minuteBars, hourlyBars] = await Promise.all([fetchSingleBars(ticker, 300), fetchMinuteBars(ticker), fetchHourlyBars(ticker)]);
+    const [bars, minuteBars, hourlyBars] = await Promise.all([fetchSingleBars(ticker, 10000), fetchMinuteBars(ticker), fetchHourlyBars(ticker)]);
     const sorted = [...bars].sort((a,b) => new Date(a.t) - new Date(b.t));
     _chartBarsMinute = [...minuteBars].sort((a,b) => new Date(a.t) - new Date(b.t));
     _chartBarsHourly = [...hourlyBars].sort((a,b) => new Date(a.t) - new Date(b.t));
     const closes = sorted.map(b => b.c);
-    const vols   = sorted.map(b => b.v);
 
     const price   = (s?.price) || sorted[sorted.length-1]?.c || 0;
     _chartCurrentPrice = price;
-    const prevClose = closes.length >= 2 ? closes[closes.length-2] : price;
-    const fallbackTodayChange = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
     const rsi     = calcRSI(closes);
-    const atr     = calcATR(sorted);
-    const trimmedAtr = calcTrimmedATR(sorted);
-    const ma20    = calcMA(closes, 20);
-    const avgVol10 = calcAvgVolume(vols, 10);
-    const volRatio = avgVol10 > 0 ? ((sorted[sorted.length-1]?.v||0) / avgVol10) : 1;
 
+    // high52/low52 are used directly in the template below, unconditionally
+    // — unlike everything in the s-absent branch below, these are NOT dead
+    // when s exists. That asymmetry (some fresh values live, most dead) is
+    // exactly what the last two impact reviews got wrong by assuming
+    // top-level consts here were all feeding the display.
     const last252 = sorted.slice(-252);
     const high52  = last252.length ? Math.max(...last252.map(b => b.h)) : price;
     const low52   = last252.length ? Math.min(...last252.map(b => b.l)) : price;
-    const last10ExclToday = sorted.slice(-11, -1);
-    const swingHigh10 = last10ExclToday.length ? Math.max(...last10ExclToday.map(b => b.h)) : null;
 
-    const stock = s || {
-      ticker, company: COMPANY_NAMES[ticker]||ticker,
-      price, rsi, atr, ma20, volRatio, bars: sorted,
-      duration: classifyDuration(rsi, volRatio, closes),
-      ...calcEntryTargetStop(price, trimmedAtr, classifyDuration(rsi, volRatio, closes), { high52, swingHigh10, ma20 }),
-      score: 0, risk: calcRiskScore(price, atr, rsi, volRatio, false),
-      priceRange: price <= 3 ? '$1–$3' : price <= 9 ? '$4–$9' : '$10–$20',
-      todayChange: fallbackTodayChange, signal: 'WATCH', news: null
-    };
+    // `s || {...}` only ever CONSTRUCTS the object when s is falsy (||
+    // short-circuits) — so atr/trimmedAtr/ma20/volRatio/vols/swingHigh10/
+    // prevClose/todayChange are dead whenever a Signals-tab card already
+    // exists for this ticker (the common case: stock becomes literally the
+    // same object as the card's, s.rsi/s.ma20/s.volRatio/s.entry etc., not
+    // anything computed here). Wrapped as an IIFE instead of separate
+    // top-level consts so that's structurally unreachable when s exists,
+    // not merely unused — the previous shape let two separate reviews this
+    // session both wrongly assume these fed the display, since they read
+    // as ordinary live top-level variables. Also collapses the old code's
+    // two identical classifyDuration(rsi, volRatio, closes) calls into one.
+    const stock = s || (() => {
+      const vols = sorted.map(b => b.v);
+      const prevClose = closes.length >= 2 ? closes[closes.length-2] : price;
+      const todayChange = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+      const atr = calcATR(sorted);
+      const trimmedAtr = calcTrimmedATR(sorted);
+      const ma20 = calcMA(closes, 20);
+      const avgVol10 = calcAvgVolume(vols, 10);
+      const volRatio = avgVol10 > 0 ? ((sorted[sorted.length-1]?.v||0) / avgVol10) : 1;
+      const last10ExclToday = sorted.slice(-11, -1);
+      const swingHigh10 = last10ExclToday.length ? Math.max(...last10ExclToday.map(b => b.h)) : null;
+      const duration = classifyDuration(rsi, volRatio, closes);
+      return {
+        ticker, company: COMPANY_NAMES[ticker]||ticker,
+        price, rsi, atr, ma20, volRatio, bars: sorted,
+        duration,
+        ...calcEntryTargetStop(price, trimmedAtr, duration, { high52, swingHigh10, ma20 }),
+        score: 0, risk: calcRiskScore(price, atr, rsi, volRatio, false),
+        priceRange: price <= 3 ? '$1–$3' : price <= 9 ? '$4–$9' : '$10–$20',
+        todayChange, signal: 'WATCH', news: null
+      };
+    })();
     _modalStock = stock;
     // Genuinely live price/RSI from this modal's own fresh bar fetch — distinct from
     // stock.price/stock.rsi, which can be a stale state.signals cache entry when the
@@ -3733,6 +3799,13 @@ async function renderPortfolioTab() {
   let snapshots = {};
   let allBars   = {};
   let pfAHSnaps = {};
+  // priceFetchFailed: getLivePrice(snap) falls back to p.buyPrice below when
+  // snap is missing, which makes every card compute pnlDollar/pnlPct as
+  // exactly 0 — visually identical to a real breakeven position. That's worse
+  // than an obviously-blank card, so this flag exists to make the fallback
+  // visible instead of silent (see staleBanner and the per-card pf-now-stale
+  // styling below).
+  let priceFetchFailed = false;
   try {
     if (state.settings.alpacaKey) {
       const fetches = [fetchSnapshots(tickers), fetchMultiBars(tickers, 10000)];
@@ -3742,7 +3815,13 @@ async function renderPortfolioTab() {
       allBars = results[1].results; // dropped symbols (if any) not surfaced here — Portfolio isn't the scan header
       if (isAfterHoursMode()) pfAHSnaps = results[2] || {};
     }
-  } catch(e) {}
+  } catch(e) {
+    priceFetchFailed = true;
+    console.error('Portfolio live price fetch failed, falling back to buy price:', e.message);
+  }
+  const staleBanner = priceFetchFailed
+    ? `<div class="pf-stale-banner">⚠ Live prices unavailable — prices and P&L below are your buy price, not current. Pull to refresh once the connection recovers.</div>`
+    : '';
 
   let totalCost = 0, totalValue = 0;
   let html = '';
@@ -3796,13 +3875,17 @@ async function renderPortfolioTab() {
     // per position per field would be a real UX regression. Unlike
     // confirmAddPortfolio()/confirmMarkSold() (Step 5), a lost write here
     // just gets recomputed and re-sent on the next render.
-    if (currentPrice > (p.peakPrice || 0)) {
+    // Guarded on !priceFetchFailed: currentPrice is the buy-price fallback
+    // during a fetch failure, not a real observation — writing it into
+    // peakPrice/momentumProtectionActivated/rsiSuspendedAtGainPct would
+    // persist fabricated data to Supabase instead of just degrading display.
+    if (!priceFetchFailed && currentPrice > (p.peakPrice || 0)) {
       p.peakPrice = currentPrice;
       p.peakPriceDate = new Date().toISOString().split('T')[0];
       if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
-    if (!p.momentumProtectionActivated && p.peakPrice >= p.buyPrice * 1.20) {
+    if (!priceFetchFailed && !p.momentumProtectionActivated && p.peakPrice >= p.buyPrice * 1.20) {
       p.momentumProtectionActivated = true;
       if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
@@ -3810,7 +3893,7 @@ async function renderPortfolioTab() {
     // Rule 5 support: first time RSI hits the (soon-to-be-suspended) 72+ threshold
     // while protected, snapshot the gain% at that instant — sticky, never overwritten —
     // so the report can later show what an RSI-based exit would have left on the table.
-    if (p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
+    if (!priceFetchFailed && p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
       p.rsiSuspendedAtGainPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
       if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
@@ -3826,6 +3909,9 @@ async function renderPortfolioTab() {
     const pnlDollar = value - cost;
     const pnlPct    = ((currentPrice - p.buyPrice) / p.buyPrice * 100);
     const pnlCls    = pnlDollar >= 0 ? 'pos' : 'neg';
+    // priceFetchFailed makes pnlDollar/pnlPct compute to exactly 0 (currentPrice
+    // fell back to buyPrice) — real numbers, but not real data. Card markup
+    // below shows "—" instead so this doesn't read as a genuine breakeven.
 
     const days = Math.floor((Date.now() - new Date(p.buyDate).getTime()) / 86400000);
     const durLabel = durHoldLabel(p.duration);
@@ -3835,8 +3921,9 @@ async function renderPortfolioTab() {
     const portBanner = buildUnifiedPortfolioBanner(unifiedResult);
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
     const priceDiffPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
-    const nowCls = Math.abs(priceDiffPct) < 1 ? 'pf-now-flat' : priceDiffPct > 0 ? 'pf-now-up' : 'pf-now-down';
-    const priceBarCls = pnlDollar >= 0 ? 'pf-bar-profit' : 'pf-bar-loss';
+    const nowCls = priceFetchFailed ? 'pf-now-stale'
+      : Math.abs(priceDiffPct) < 1 ? 'pf-now-flat' : priceDiffPct > 0 ? 'pf-now-up' : 'pf-now-down';
+    const priceBarCls = priceFetchFailed ? 'pf-bar-stale' : pnlDollar >= 0 ? 'pf-bar-profit' : 'pf-bar-loss';
 
     // Display-only target (sell warnings keep using p.target) — same >5% drift
     // threshold used for the card's "⚠ Shifted" note and the SELL SOON banner.
@@ -3928,8 +4015,10 @@ async function renderPortfolioTab() {
           <div class="pf-company">${p.company}</div>
         </div>
         <div class="pf-header-pnl">
-          <div class="pf-pnl-dollar ${pnlCls}">${pnlDollar>=0?'+':''}$${pnlDollar.toFixed(2)}</div>
-          <div class="pf-pnl-pct ${pnlCls}">${pnlDollar>=0?'▲':'▼'}${Math.abs(pnlPct).toFixed(1)}%</div>
+          ${priceFetchFailed
+            ? `<div class="pf-pnl-dollar pf-now-stale">—</div><div class="pf-pnl-pct pf-now-stale">price unavailable</div>`
+            : `<div class="pf-pnl-dollar ${pnlCls}">${pnlDollar>=0?'+':''}$${pnlDollar.toFixed(2)}</div>
+          <div class="pf-pnl-pct ${pnlCls}">${pnlDollar>=0?'▲':'▼'}${Math.abs(pnlPct).toFixed(1)}%</div>`}
         </div>
       </div>
       ${pfAHHtml}
@@ -3939,7 +4028,7 @@ async function renderPortfolioTab() {
           <div class="pf-price-val pf-muted">$${p.buyPrice.toFixed(2)}</div>
         </div>
         <div class="pf-price-cell">
-          <div class="pf-price-label">Now</div>
+          <div class="pf-price-label">Now${priceFetchFailed ? ' <span class="pf-stale-tag">(stale)</span>' : ''}</div>
           <div class="pf-price-val ${nowCls}">$${currentPrice.toFixed(2)}</div>
         </div>
         <div class="pf-price-divider"></div>
@@ -3992,14 +4081,14 @@ async function renderPortfolioTab() {
 
   const sumHtml = `<div class="pf-summary">
     <div class="section-label">Portfolio Summary</div>
-    <div class="pf-summary-row"><span>Total Value</span><span class="mono">$${totalValue.toFixed(2)}</span></div>
-    <div class="pf-summary-row"><span>Unrealized P&L</span><span class="mono ${totalPnL>=0?'pos':'neg'}">${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)} (${totalPnLPct.toFixed(1)}%)</span></div>
+    <div class="pf-summary-row"><span>Total Value</span><span class="mono">${priceFetchFailed ? '<span class="pf-now-stale">unavailable</span>' : `$${totalValue.toFixed(2)}`}</span></div>
+    <div class="pf-summary-row"><span>Unrealized P&L</span><span class="mono ${priceFetchFailed ? 'pf-now-stale' : totalPnL>=0?'pos':'neg'}">${priceFetchFailed ? 'unavailable' : `${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)} (${totalPnLPct.toFixed(1)}%)`}</span></div>
     <div class="pf-summary-row"><span>All-Time Realized P&L</span><span class="mono ${allTimePnL>=0?'pos':'neg'}">${allTimePnL>=0?'+':''}$${allTimePnL.toFixed(2)}</span></div>
   </div>`;
 
   const listEl = document.getElementById('pf-list');
   const sumEl  = document.getElementById('pf-summary');
-  if (listEl) listEl.innerHTML = html;
+  if (listEl) listEl.innerHTML = staleBanner + html;
   if (sumEl)  sumEl.innerHTML  = sumHtml;
 }
 
@@ -4755,6 +4844,11 @@ async function renderSoldTab() {
   // any pending trades finish (fetch+compute+Supabase write all happen
   // inside resolveSellTimingForSoldTrades). A no-op call when nothing needs
   // resolving (the common case), so this doesn't fetch on every tab open.
+  // No .catch(): safe only because resolveOneSellTiming/writeSellTimingToSupabase
+  // are already internally try/catch-protected and never throw past this call.
+  // If that guarantee ever changes, this becomes an unhandled rejection —
+  // caught by the global handler now, but silently, since nothing here
+  // re-renders on failure.
   resolveSellTimingForSoldTrades().then(anyResolved => {
     if (anyResolved) renderSoldTab();
   });
@@ -5045,12 +5139,28 @@ async function buildWinnerExitTimingSection(sold) {
   No completed trades with LOCK IN PROFITS on record yet.`;
     const wins = lockInTrades.filter(s => s.pnlPct > 0);
     const withPeak = lockInTrades.filter(s => s.peakPrice != null && s.buyPrice);
-    const gainPreserved = withPeak.length
-      ? `${avg(withPeak, s => {
+    // "% of peak gain preserved" is only a meaningful question when a peak
+    // gain actually happened (peakGainPct > 0) — a trade whose peak never
+    // rose above its buy price never had an unrealized gain to preserve.
+    // The old `: 100` default conflated that "no peak observed" case with
+    // "captured the full gain," reporting the single most optimistic
+    // outcome for exactly the trades with no real peak data. Split instead:
+    // average only the trades where the metric applies, and surface the
+    // excluded count so a missing/flat peak stays visible rather than
+    // silently reading as a perfect exit.
+    const withRealPeakGain = withPeak.filter(s => ((s.peakPrice - s.buyPrice) / s.buyPrice) * 100 > 0);
+    const noPeakGainCount = withPeak.length - withRealPeakGain.length;
+    const noPeakGainNote = noPeakGainCount
+      ? ` (${noPeakGainCount} of ${withPeak.length} excluded — peak price never rose above buy price, so no gain was ever there to preserve)`
+      : '';
+    const gainPreserved = withRealPeakGain.length
+      ? `${avg(withRealPeakGain, s => {
           const peakGainPct = ((s.peakPrice - s.buyPrice) / s.buyPrice) * 100;
-          return peakGainPct > 0 ? (s.pnlPct / peakGainPct) * 100 : 100;
-        }).toFixed(1)}%`
-      : '— (peakPrice not tracked for this data source)';
+          return (s.pnlPct / peakGainPct) * 100;
+        }).toFixed(1)}%${noPeakGainNote}`
+      : withPeak.length
+        ? `— (no trade in this set ever recorded a peak above its buy price)`
+        : '— (peakPrice not tracked for this data source)';
     return `Trades where LOCK IN PROFITS was showing at time of sale:
   Total: ${lockInTrades.length} | win rate ${(wins.length/lockInTrades.length*100).toFixed(0)}% | avg outcome ${avg(lockInTrades, s=>s.pnlPct).toFixed(1)}%
   Avg gain preserved at exit: ${gainPreserved}`;
@@ -5067,6 +5177,13 @@ async function buildWinnerExitTimingSection(sold) {
       .filter(s => s.sellDate)
       .sort((a, b) => new Date(b.sellDate) - new Date(a.sellDate))
       .slice(0, 25);
+    // No try/catch here: safe only because fetchNextDayClose already
+    // swallows its own errors and returns null on failure (see
+    // core/market-data.js) rather than throwing. If that contract ever
+    // changes, this Promise.all rejects with no local catch — it would
+    // propagate up into generateClaudeReport's wrapping try/catch, so it
+    // wouldn't hang, but it would abort the whole report instead of just
+    // this one section.
     const whatIfResults = await Promise.all(sample.map(async s => {
       const nextClose = await fetchNextDayClose(s.ticker, s.sellDate);
       return nextClose != null ? ((nextClose - s.sellPrice) / s.sellPrice) * 100 : null;
@@ -5374,6 +5491,14 @@ async function generateClaudeReport() {
     return;
   }
 
+  // Everything below (section builders through the Blob download) used to
+  // sit outside any try/catch — a single throw anywhere in this ~550-line
+  // span left report-btn permanently disabled on "Fetching data…" with no
+  // visible error, recoverable only by reloading the page. Wrapped as one
+  // span rather than reindented line-by-line to keep this diff reviewable;
+  // the catch below re-enables the button and alerts, same pattern as
+  // confirmAddPortfolio/confirmMarkSold's error handling.
+  try {
   const ratingSnapshotSection = await buildRatingSnapshotHistorySection(sold);
   const winnerExitTimingSection = await buildWinnerExitTimingSection(sold);
   const sellTimingAnalysisSection = buildSellTimingAnalysisSection(sold);
@@ -5945,6 +6070,11 @@ Trade Duration:
   a.click();
   URL.revokeObjectURL(url);
   if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
+  } catch(e) {
+    console.error('generateClaudeReport failed:', e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
+    alert('Report generation failed: ' + e.message);
+  }
 }
 
 // ── 19. SETTINGS TAB ──────────────────────────────────────────────
@@ -5982,6 +6112,13 @@ function renderSettingsTab() {
         <button class="btn btn-ghost btn-sm" onclick="testConnections()">Test Connections</button>
       </div>
       <div id="test-results"></div>
+      <div class="settings-row">
+        <button class="btn btn-ghost btn-sm" onclick="testUniverseEndpoints()">Test Universe Endpoints (Phase 1)</button>
+        <button class="btn btn-ghost btn-sm" onclick="testInstrumentFilter()">Test Instrument Filter (Phase 1)</button>
+        <button class="btn btn-ghost btn-sm" onclick="testFundKeywordCandidates()">Test Fund Keywords (Phase 1)</button>
+        <button class="btn btn-ghost btn-sm" onclick="testPrevDailyBarCoverage()">Test PrevDailyBar Coverage (Phase 1)</button>
+        <button class="btn btn-ghost btn-sm" onclick="testPremarketGap()">Test Premarket-Gap (Phase 1)</button>
+      </div>
     </div>
 
     <div class="settings-section mt12">
@@ -6650,12 +6787,231 @@ async function testConnections() {
   state.settings.groqKey      = document.getElementById('set-groq-key')?.value.trim() || state.settings.groqKey;
   persistApiKeys();
 
+  // No try/catch: safe only because testAlpacaConnection/testGroqConnection/
+  // testSupabaseConnection are each internally hardened to resolve true/false
+  // and never throw. If any of the three is ever changed to throw instead of
+  // returning false, this Promise.all rejects with no catch and el is left
+  // stuck on the spinner — same failure shape generateClaudeReport had.
   const [alpOk, groqOk, supaOk] = await Promise.all([testAlpacaConnection(), testGroqConnection(), testSupabaseConnection()]);
   el.innerHTML = `<div class="test-result">
     <span class="${alpOk?'test-ok':'test-err'}">${alpOk?'✓':'✗'} Alpaca ${alpOk?'connected':'failed'}</span>
     <span class="${groqOk?'test-ok':'test-err'}">${groqOk?'✓':'✗'} Groq ${groqOk?'connected':'failed'}</span>
     <span class="${supaOk?'test-ok':'test-err'}">${supaOk?'✓':'✗'} Supabase ${supaOk?'connected':'failed'}</span>
   </div>`;
+}
+
+// Phase 1 pre-flight check (docs/warrior-engine-spec-v2.md Phase 1) — answers
+// the one question that can't be resolved from documentation alone: whether
+// movers/most-actives' top-50 results are actually priced in the $1-$20
+// range this strategy needs, or too coarse to be useful as-is. /v2/assets'
+// host is paper-api.alpaca.markets, confirmed from the account's key prefix
+// rather than a live probe — this just confirms that assumption still holds.
+function buildAssetsHostRow(r) {
+  if (r.status === 200) return `<div class="test-result"><span class="test-ok">✓ ${r.host}</span> — ${r.count} assets</div>`;
+  return `<div class="test-result"><span class="test-err">✗ ${r.host}</span> — ${r.error}</div>`;
+}
+function buildScreenerRow(name, r) {
+  if (r.status !== 200) return `<div class="test-result"><span class="test-err">✗ ${name}</span> — ${r.error}</div>`;
+  const cov = r.priceCoverage;
+  const sampleStr = (r.sample || []).map(s => `${s.symbol} $${s.price ?? '?'}`).join(', ');
+  return `<div class="test-result">
+    <span class="test-ok">✓ ${name}</span> — ${r.count} results, ${cov.in1to20}/${cov.total} in \$1-\$20
+    <div class="card-sub mt4">Sample: ${sampleStr || '(none)'}</div>
+  </div>`;
+}
+// Bug B (Phase 1, found live): every diagnostic handler below used to
+// `await diagnoseX()` with no try/catch. A rejected promise still settles
+// immediately — the Phase 0.5 queue was cleared of blame by an isolated
+// test showing a rejection reaching an uncaught awaiter within 200ms, not
+// hanging — but an async function with no catch around a throw simply
+// stops executing at that line. The second showModal() call (the one that
+// replaces the spinner with real content) never ran, so the modal was
+// stuck showing its spinner forever, and the actual error only ever
+// reached the console as "Uncaught (in promise)". A failed request must
+// surface, never hang: this wraps every diagnostic call so a rejection
+// replaces the spinner with a visible error instead of leaving it spinning.
+function showDiagnosticError(title, err) {
+  showModal(`<div class="modal-header"><h2>${title}</h2></div>
+    <div class="test-result"><span class="test-err">✗ Failed: ${err.message}</span></div>
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
+async function testUniverseEndpoints() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>Universe Endpoint Diagnostic</h2></div>
+    <div class="test-result"><span class="spinner"></span> Testing…</div>`);
+
+  let report;
+  try {
+    report = await diagnoseUniverseEndpoints();
+  } catch (e) { return showDiagnosticError('Universe Endpoint Diagnostic', e); }
+
+  showModal(`<div class="modal-header"><h2>Universe Endpoint Diagnostic</h2></div>
+    <div class="section-label mt12">/v2/assets (paper-api.alpaca.markets)</div>
+    ${buildAssetsHostRow(report.assets)}
+    <div class="section-label mt12">Top gainers (movers)</div>
+    ${buildScreenerRow('movers', report.movers)}
+    <div class="section-label mt12">Most active (most-actives)</div>
+    ${buildScreenerRow('most-actives', report.mostActives)}
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
+// Compares the exclude-list actually in use against the old include-list it
+// replaced, against the real live asset list — not fixtures. See
+// core/universe.js:diagnoseInstrumentFilter for what each number means.
+function buildInstrumentSampleList(names) {
+  if (!names.length) return '<div class="card-sub mt4">(none)</div>';
+  return `<div class="card-sub mt4" style="white-space:pre-wrap">${names.join('\n')}</div>`;
+}
+async function testInstrumentFilter() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>Instrument Filter Diagnostic</h2></div>
+    <div class="test-result"><span class="spinner"></span> Fetching live asset list…</div>`);
+
+  let r;
+  try {
+    r = await diagnoseInstrumentFilter();
+  } catch (e) { return showDiagnosticError('Instrument Filter Diagnostic', e); }
+
+  showModal(`<div class="modal-header"><h2>Instrument Filter Diagnostic</h2></div>
+    <div class="test-result">${r.rawTotal} raw active us_equity assets -> ${r.baselineTotal} tradable on NASDAQ/NYSE/AMEX (baseline)</div>
+
+    <div class="section-label mt12">OLD include-list ("Common Stock" required)</div>
+    <div class="test-result">Keeps ${r.includeList.keptCount} / ${r.baselineTotal} — excludes ${r.includeList.excludedCount}</div>
+    <div class="settings-label mt4">20 sample names it would exclude:</div>
+    ${buildInstrumentSampleList(r.includeList.excludedSample)}
+
+    <div class="section-label mt12">NEW exclude-list (drop warrant/unit/right/preferred/note/debenture)</div>
+    <div class="test-result">Keeps ${r.excludeList.keptCount} / ${r.baselineTotal} — excludes ${r.excludeList.excludedCount}</div>
+    <div class="settings-label mt4">20 sample names it drops:</div>
+    ${buildInstrumentSampleList(r.excludeList.excludedSample)}
+
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
+// Tests fund/ETF/ETN exclusion-keyword candidates independently against the
+// live asset list — none of them are wired into the production filter yet.
+// Each candidate's count + 20-name sample is shown so it can be judged on
+// what it actually excludes (e.g. "Trust" catching REITs) before adding any.
+async function testFundKeywordCandidates() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>Fund/ETF Keyword Candidates</h2></div>
+    <div class="test-result"><span class="spinner"></span> Fetching live asset list…</div>`);
+
+  let r;
+  try {
+    r = await diagnoseFundKeywordCandidates();
+  } catch (e) { return showDiagnosticError('Fund/ETF Keyword Candidates', e); }
+
+  const sections = Object.entries(r.candidates).map(([label, c]) => `
+    <div class="section-label mt12">${label}</div>
+    <div class="test-result">Would exclude ${c.excludedCount} / ${r.eligibleTotal}</div>
+    <div class="settings-label mt4">Sample:</div>
+    ${buildInstrumentSampleList(c.excludedSample)}
+  `).join('');
+
+  showModal(`<div class="modal-header"><h2>Fund/ETF Keyword Candidates</h2></div>
+    <div class="test-result">${r.eligibleTotal} assets currently pass the exclude-list — none of these candidates are wired in yet</div>
+    ${sections}
+    <div class="section-label mt12">Word-boundary check for "Fund"</div>
+    <div class="test-result">Names containing "fund" as a substring inside a longer word (e.g. "Fundamental"), which the word-bounded pattern correctly left alone: ${r.wordBoundaryFalsePositivesAvoided.length}</div>
+    ${buildInstrumentSampleList(r.wordBoundaryFalsePositivesAvoided)}
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
+// Live check for the prevDailyBar optimization: if this comes back clean,
+// _getPremarketGapUniverse can drop its separate prior-close bars fetch
+// entirely and take both prevClose and live price from one snapshot pass.
+async function testPrevDailyBarCoverage() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>prevDailyBar Coverage</h2></div>
+    <div class="test-result"><span class="spinner"></span> Sampling live snapshots…</div>`);
+
+  let r;
+  try {
+    r = await diagnosePrevDailyBarCoverage();
+  } catch (e) { return showDiagnosticError('prevDailyBar Coverage', e); }
+
+  showModal(`<div class="modal-header"><h2>prevDailyBar Coverage</h2></div>
+    <div class="test-result">Session: ${r.session} — sampled ${r.sampledCount} symbols</div>
+    <div class="test-result">${r.presentCount} / ${r.sampledCount} have a populated prevDailyBar.c</div>
+
+    <div class="section-label mt12">Sample WITH prevDailyBar</div>
+    ${buildInstrumentSampleList(r.presentSample)}
+
+    <div class="section-label mt12">Sample WITHOUT prevDailyBar (${r.missingCount} total)</div>
+    ${buildInstrumentSampleList(r.missingSample)}
+
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
+}
+
+function buildPremarketGapSampleList(rows) {
+  if (!rows.length) return '<div class="card-sub mt4">(none)</div>';
+  const lines = rows.map(r => `${r.symbol}: $${r.price?.toFixed(2)} (prev $${r.prevClose?.toFixed(2)}, ${r.changePct >= 0 ? '+' : ''}${r.changePct?.toFixed(1)}%) [${r.source}]`);
+  return `<div class="card-sub mt4" style="white-space:pre-wrap">${lines.join('\n')}</div>`;
+}
+async function testPremarketGap() {
+  state.settings.alpacaKey    = document.getElementById('set-alpaca-key')?.value.trim() || state.settings.alpacaKey;
+  state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || state.settings.alpacaSecret;
+  persistApiKeys();
+
+  showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
+    <div class="test-result"><span class="spinner"></span> Running the real strategy — this may take a while on a cold cache…</div>`);
+
+  let r;
+  try {
+    r = await diagnosePremarketGap();
+  } catch (e) { return showDiagnosticError('Premarket-Gap Diagnostic', e); }
+
+  // Coverage means something different depending on session: during OPEN,
+  // regular-hours names should mostly be trading, so a low number is a real
+  // signal something's off. Pre-market, most $1-$20 names simply don't
+  // trade before the open at all — "no bar" there means "no premarket
+  // trade happened," which is correct behavior, not missing data. Framed
+  // per-session so a genuinely low pre-market number (this can be well
+  // under 50% at 6am) doesn't read as a failure rate.
+  const coverageLabel = r.coverageRate == null ? 'n/a' : (r.coverageRate * 100).toFixed(1) + '%';
+  const coverageNote = r.session === 'OPEN'
+    ? `${coverageLabel} of eligible symbols had a SIP minute bar (${r.missingAfterBothPasses} of ${r.priceFilteredCount} did not — during OPEN this should stay high; a low number here is worth investigating).`
+    : `${coverageLabel} of eligible symbols showed premarket trading activity in this window (${r.missingAfterBothPasses} of ${r.priceFilteredCount} had none). Most $1-$20 names don't trade before the open at all — a low number here is expected pre-market behavior, not a failure.`;
+
+  // Phase 1 acceptance #2 ("no alphabetical bias") — measured every run
+  // rather than checked once and left to go stale. See the comment on
+  // letterDistribution in core/universe.js:diagnosePremarketGap.
+  const letterDistLine = Object.keys(r.letterDistribution).sort()
+    .map(letter => `${letter}:${r.letterDistribution[letter]}`)
+    .join(' ');
+
+  showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
+    <div class="test-result">Session: ${r.session}</div>
+    <div class="test-result">${r.tradableCount} tradable -> ${r.eligibleCount} instrument-eligible -> ${r.priceFilteredCount} with prior close in \$1-\$20 -> ${r.resultCount} returned (top 50 by gap% + anything >=10%)</div>
+    <div class="section-label mt12">Requests by stage</div>
+    <div class="test-result">Asset index: ${r.requests.assetIndex} | Prior closes: ${r.requests.priorCloses} | Minute bars pass 1 (45min): ${r.requests.minuteBarsPass1} | Minute bars pass 2 (3h fallback): ${r.requests.minuteBarsPass2} | Total: ${r.requests.total}</div>
+    <div class="test-result">Wall clock: ${(r.wallClockMs / 1000).toFixed(1)}s</div>
+    <div class="test-result">${coverageNote}</div>
+    <div class="section-label mt12">First-letter distribution (${r.resultCount} results)</div>
+    <div class="test-result" style="white-space:pre-wrap">${letterDistLine || '(no results)'}</div>
+    <div class="section-label mt12">Top 10 sample</div>
+    ${buildPremarketGapSampleList(r.sample)}
+    <button class="btn btn-ghost btn-sm mt12" onclick="closeModal()">Close</button>
+  `);
 }
 
 // Sources fresh from Supabase rather than in-memory state (Data Migration
@@ -6793,7 +7149,10 @@ async function checkPriceAlerts() {
 
   try {
     const tickers = [...new Set(state.portfolio.map(p => p.ticker))];
-    const snaps = await fetchSnapshots(tickers);
+    // Phase 0.5: this is the background poller the rate-limit queue's
+    // priority ordering exists to isolate from whatever the user is
+    // actively looking at — see withBackgroundPriority in core/api-client.js.
+    const snaps = await withBackgroundPriority(() => fetchSnapshots(tickers));
 
     for (const pos of state.portfolio) {
       const snap = snaps[pos.ticker];
@@ -7011,11 +7370,17 @@ async function runDataLoadAndInit() {
   clearLegacyPortfolioSettingsStorage();
   document.body.innerHTML = APP_SHELL_HTML;
   await registerServiceWorker();
-  await requestNotificationPermission();
   startClock();
   startNotificationChecks();
   renderSignalsTab();
   updateNavBadges();
+  // Fire-and-forget, deliberately after first paint: nothing about the
+  // notification permission prompt should be able to block the app's first
+  // render. startNotificationChecks()'s first check fires 3s later and
+  // reads Notification.permission itself, so no ordering dependency here.
+  // A rejection surfaces via the global unhandledrejection handler instead
+  // of being awaited.
+  requestNotificationPermission();
 }
 
 async function init() {

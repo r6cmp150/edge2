@@ -28,6 +28,14 @@ function getLivePrice(snap) {
   return snap.dailyBar?.c || snap.latestTrade?.p || 0;
 }
 
+// CLAUDE.md pagination rule, exemption proof: /stocks/snapshots has no
+// `limit` or `next_page_token` at all — it returns exactly one snapshot
+// object per requested symbol, keyed by symbol, so the only way to lose data
+// here is requesting more symbols than the endpoint accepts in one call.
+// chunk(clean, 100) is the size proven safe in production (see
+// core/universe.js's SNAPSHOT_CHUNK_SIZE comment) — not a limit that could
+// silently truncate a batch, since Alpaca either serves the whole batch or
+// errors on the request, it doesn't return a partial page.
 async function fetchSnapshots(tickers, onProgress) {
   const clean = sanitizeTickerBatch(tickers);
   const results = {};
@@ -53,6 +61,8 @@ function checkUnresolvedSymbols(requestedTickers, snapshots) {
   }
 }
 
+// Same exemption proof as fetchSnapshots above — snapshots has no
+// limit/next_page_token to lose data against, only a proven batch size.
 async function fetchAHSnapshots(tickers) {
   const clean = sanitizeTickerBatch(tickers);
   const results = {};
@@ -130,15 +140,30 @@ async function fetchMultiBars(tickers, limit = 10000) {
   return { results, droppedSymbols };
 }
 
-async function fetchSingleBars(ticker, limit = 300) {
+// Had the identical defect to Bug 1 above, unaudited for two days: limit:300,
+// sort:'asc', no next_page_token follow. 450 calendar days holds ~310-320
+// NYSE trading days (450*5/7 minus ~9-10 annual holidays) — always more than
+// 300 — so this silently returned only the OLDEST 300 bars in the window and
+// dropped the most recent ~2-4 weeks every single call, with next_page_token
+// sitting unread in the response. Confirmed live: a ticker bought days ago
+// came back with zero bars since its buy date. Same option D fix as Bug 1:
+// limit raised to Alpaca's platform ceiling, next_page_token followed to
+// exhaustion so correctness doesn't depend on the ceiling never being hit.
+async function fetchSingleBars(ticker, limit = 10000) {
   const start = (() => {
     const d = new Date(); d.setDate(d.getDate() - 450); return d.toISOString().split('T')[0];
   })();
   try {
-    const data = await alpacaGet(`/stocks/${ticker}/bars`, {
-      timeframe:'1Day', start, limit, sort:'asc', feed:'iex'
-    });
-    return data.bars || [];
+    let bars = [];
+    let pageToken;
+    do {
+      const params = { timeframe:'1Day', start, limit, sort:'asc', feed:'iex' };
+      if (pageToken) params.page_token = pageToken;
+      const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
+      bars = bars.concat(data.bars || []);
+      pageToken = data.next_page_token || null;
+    } while (pageToken);
+    return bars;
   } catch(e) { return []; }
 }
 
@@ -146,6 +171,11 @@ async function fetchSingleBars(ticker, limit = 300) {
 // 1 more day" metric in the Winner Exit Timing Analysis report section
 // (URE v2, Change 5). limit:3 gives slack for the day after a Friday/holiday
 // sale to land on the next actual trading session.
+// CLAUDE.md pagination rule, exemption proof: this call can never need more
+// than 1 bar (the next trading day's close) — limit:3 is slack for a
+// Friday/holiday sale, not headroom the response could actually fill. The
+// window is bounded by construction, not by an assumption about how much
+// data exists in it, so no next_page_token follow is needed.
 async function fetchNextDayClose(ticker, sellDateStr) {
   try {
     const d = new Date(sellDateStr);
@@ -164,14 +194,27 @@ async function fetchNextDayClose(ticker, sellDateStr) {
 // absolute price levels can still differ; see feed note on fetchSnapshots).
 // 4-day lookback window (same as before) so the pre-market/holiday fallback
 // in renderChartRange still has a prior session to fall back to.
+// limit:2000 was arithmetically plausible-safe (regular hours: ~4 trading
+// days * 390min ~= 1560, under 2000) but never verified live, and IEX may
+// include extended-hours bars that push the real count higher — exactly the
+// "the arithmetic looks fine" reasoning that was wrong for fetchSingleBars
+// above. Paginating costs less than proving the arithmetic and is strictly
+// safer either way, so fixed the same way regardless: limit raised to
+// Alpaca's platform ceiling, next_page_token followed to exhaustion.
 async function fetchMinuteBars(ticker) {
   const d = new Date(); d.setDate(d.getDate() - 4);
   const start = d.toISOString().split('T')[0];
   try {
-    const data = await alpacaGet(`/stocks/${ticker}/bars`, {
-      timeframe: '1Min', start, limit: 2000, sort: 'asc', feed: 'iex'
-    });
-    return data.bars || [];
+    let bars = [];
+    let pageToken;
+    do {
+      const params = { timeframe: '1Min', start, limit: 10000, sort: 'asc', feed: 'iex' };
+      if (pageToken) params.page_token = pageToken;
+      const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
+      bars = bars.concat(data.bars || []);
+      pageToken = data.next_page_token || null;
+    } while (pageToken);
+    return bars;
   } catch(e) { return []; }
 }
 
@@ -179,13 +222,25 @@ async function fetchMinuteBars(ticker) {
 // fetchMinuteBars, one level coarser. 45-day lookback comfortably covers a
 // 30-day range plus weekend/holiday slack; renderChartRange filters this
 // single fetch down to the 7-day or 30-day window as needed.
+// limit:500 was the least comfortable margin of the three: regular hours
+// gives ~30-33 trading days * 7 buckets/day ~= 210-230 (safe), but with
+// extended-hours bars included that's ~16 buckets/day * 30-33 days ~=
+// 480-528 — potentially over the cap already. Same fix regardless of which
+// side of 500 it actually lands on: limit raised to Alpaca's platform
+// ceiling, next_page_token followed to exhaustion.
 async function fetchHourlyBars(ticker) {
   const d = new Date(); d.setDate(d.getDate() - 45);
   const start = d.toISOString().split('T')[0];
   try {
-    const data = await alpacaGet(`/stocks/${ticker}/bars`, {
-      timeframe: '1Hour', start, limit: 500, sort: 'asc', feed: 'iex'
-    });
-    return data.bars || [];
+    let bars = [];
+    let pageToken;
+    do {
+      const params = { timeframe: '1Hour', start, limit: 10000, sort: 'asc', feed: 'iex' };
+      if (pageToken) params.page_token = pageToken;
+      const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
+      bars = bars.concat(data.bars || []);
+      pageToken = data.next_page_token || null;
+    } while (pageToken);
+    return bars;
   } catch(e) { return []; }
 }
