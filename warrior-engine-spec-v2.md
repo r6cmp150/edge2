@@ -320,8 +320,8 @@ The "fewer than 30 requests per scan" acceptance bullet applies to the two Warri
 
 ### Phase 1 acceptance
 
-- [x] Pre-market run returns tickers **not** present in the v3 seed list — that's the point. Verified directly against the live 2026-08-24 sample (HQWWW, DAAQ, AIFU, FVNNU, JG, BTDL): 5 of 6 are absent from `STOCK_UNIVERSES`. DAAQ *is* in the seed list already — expected overlap, not a failure; the claim is that new tickers surface, not that every result is novel.
-- [ ] No alphabetical bias: run the scan, confirm the first-letter distribution is not concentrated in A–C. The original v1 bias came from `fetchMultiBars`' pagination truncation plus a stable-sort tie-break; this path sorts by `changePct` and the Bug 1 fix removed the truncation, so there's no known mechanism for it here — but that's a reason to expect no bias, not proof of it. `diagnosePremarketGap` now returns `letterDistribution` and the Settings modal renders it (e.g. `A:3 B:5 C:2 ...`) on every run, so this closes on the next live run instead of needing a separate one-off manual check. Leaving unchecked until that run's actual distribution is seen.
+- [ ] Pre-market run returns tickers **not** present in the v3 seed list — that's the point
+- [ ] No alphabetical bias: run the scan, confirm the first-letter distribution is not concentrated in A–C
 - [x] **Universe cost — measured live 2026-08-24, not estimated.**
 
 | | Requests | Wall clock |
@@ -337,7 +337,7 @@ Two things this measurement corrected, both of which arithmetic got wrong:
 - Wall clock was 61s at 36 requests because the queue dispatched strictly serially. Counting requests without timing them hid it for a full day.
 
 **Margin note:** 169 requests sits just under the 200-token bucket buffer. A larger universe or one more page per chunk pushes the cold path into throttling — correct behavior, but noticeably slower. Re-measure if the universe grows.
-- [ ] **Deferred to Phase 4, not open.** Validate against a known past gap day: the stocks you know ran that morning appear in the pre-market universe. The Phase 4 replay harness (feed a past morning's bars through the classifier, check known runners surface) is the right tool for this — a one-off manual check now would be weaker evidence than the replay harness and duplicated effort once it exists. See Phase 4's acceptance section for this as a tracked dependency.
+- [ ] Validate against a known past gap day: the stocks you know ran that morning appear in the pre-market universe
 
 ---
 
@@ -350,6 +350,10 @@ Build the boundary before building anything that depends on it.
 ```js
 registerEngine(id, {
   label,               // 'EDGE' | 'Warrior' — display string
+  renderTab,           // () → void — the engine's own tab content. In the registry
+                       //   deliberately: it keeps dispatch to ONE mechanism, so the
+                       //   boundary check stays mechanical and app.js never stores a
+                       //   module reference.
   renderBadge,         // (position) → HTMLElement — small badge on a portfolio card
   renderSnapshot,      // (signalSnapshot) → HTMLElement — signal detail in modal
   evaluateExit,        // (position, liveData) → { status, reasons[] } — see Phase 6
@@ -411,7 +415,8 @@ Only the active tab's render path executes. The inactive engine is never called 
 
 ### Phase 2 acceptance
 
-- [ ] Delete `engines/warrior/` entirely → Signals, Watchlist, Portfolio, Sold, News, Settings all work normally; the Warrior segment shows "engine unavailable"
+- [ ] Delete `engines/warrior/` entirely → **Signals, Portfolio, Sold, Settings** all work normally; the Warrior tab shows "engine unavailable". (Corrected: an earlier draft listed Watchlist and News — both were removed from the app before v2.9.0.)
+- [ ] `app.js` holds **no** stored reference to the Warrior module after `register()` returns. Every call into Warrior code, including rendering its own tab, goes through the registry — no exceptions, so the boundary check is mechanical rather than a judgement call.
 - [ ] Introduce a deliberate syntax error in `engines/warrior/index.js` → same result, app still loads
 - [ ] Throw deliberately inside the Warrior scan interval → only Warrior stops; EDGE polling continues
 - [ ] `grep -r "ABCD" shell/ engines/edge/` returns nothing
@@ -534,7 +539,6 @@ Hide behind a Settings toggle (`Developer tools`). It is not a user-facing featu
 - [ ] Replay is deterministic — same inputs, same triggers
 - [ ] Output includes forward returns at each horizon
 - [ ] The classifier receives only the bars up to the current replay index — no lookahead. Test this explicitly; a lookahead bug makes every result meaningless and it is the single easiest mistake to make here.
-- [ ] **Carries forward from Phase 1 acceptance:** validate `getUniverse('premarket-gap')` against a known past gap day — feed that morning's bars through and confirm the runners you remember actually surface in the pre-market universe. Deferred here deliberately (2026-08-24) rather than done as a one-off manual check in Phase 1, since this harness is the correct tool for it and a manual check would've been weaker, duplicated evidence.
 
 ---
 
