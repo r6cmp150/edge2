@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.4';
+const VERSION = 'v2.9.4-phase3-dev1';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -827,6 +827,7 @@ let state = {
   newsLookbackHours: 72, // actual fetch window used by the last news request (core/news.js) — card-render visibility gate matches this exactly, not a duplicated literal
   universeAssetCache: null, // { fetchedAt, assets: [{symbol,exchange,name,isCommonStock}] } — core/universe.js, 24h cache — persisted
   universePriorCloseCache: null, // { date, closes: {symbol: price} } — core/universe.js, daily cache — persisted
+  warrior30DayVolumeCache: null, // { date, avgVolumes: {symbol: avgDailyVolume} } — core/universe.js, Phase 3 Pillar 3 (RVOL), daily cache — persisted
   lastScanTime: null,
   activeTab: 'signals',
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
@@ -855,7 +856,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache'].forEach(k => {
+  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -2270,6 +2271,12 @@ function handleRefresh() {
     runScreener();
   }
   else if (state.activeTab === 'portfolio') renderPortfolioTab();
+  // Phase 3: reaches Warrior only through the registry's rescan hook —
+  // never a stored module reference. getEngine('WARRIOR') is null when
+  // Warrior failed to load or hasn't finished loading yet; the button
+  // simply does nothing in that case rather than throwing, same as it did
+  // nothing for Warrior at all before Phase 3 wired this up.
+  else if (state.activeTab === 'warrior') getEngine('WARRIOR')?.rescan?.();
 }
 
 // ── 11. SIGNALS TAB ───────────────────────────────────────────────
@@ -7268,12 +7275,12 @@ function switchTab(name) {
   const showBudget = ['signals','portfolio'].includes(name);
   document.getElementById('budget-bar')?.classList.toggle('hidden', !showBudget);
 
-  // Found live during Phase 2 testing: handleRefresh() already no-ops for
-  // Warrior (nothing to refresh until Phase 3's gate exists), but the
-  // button looked identically active regardless — a visible dead control.
-  // Scoped to Warrior only, not Sold/Settings, which have the same no-op
-  // today but weren't part of this phase's testing or this fix.
-  document.getElementById('refresh-btn')?.classList.toggle('btn-refresh-disabled', name === 'warrior');
+  // Phase 2 disabled this on the Warrior tab (nothing to refresh yet, and a
+  // dead-looking active button was worse than a disabled one). Phase 3
+  // wires it to a real rescan (handleRefresh(), above), so it's live again
+  // here too — re-enabled unconditionally rather than carrying forward a
+  // per-tab disable list.
+  document.getElementById('refresh-btn')?.classList.remove('btn-refresh-disabled');
 
   switch (name) {
     case 'signals':   renderSignalsTab();   break;

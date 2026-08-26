@@ -334,26 +334,24 @@ const PREMARKET_BAR_DELAY_MIN = 16;
 const PREMARKET_BAR_WINDOW_MIN = 45;
 const PREMARKET_BAR_WINDOW_WIDE_MIN = 3 * 60;
 
-// Single-window fetch, factored out so pass 1 and pass 2 (below) share
-// identical chunking/pagination/error-handling instead of drifting apart.
-// Returns requests made so callers can report per-pass cost, same
-// visibility principle as fetchMultiBars' droppedSymbols.
-async function _fetchMinuteBarsWindow(symbols, end, windowMin) {
-  const start = new Date(end.getTime() - windowMin * 60 * 1000);
-  const latestBySymbol = {};
+// Chunked/paginated/concurrent SIP minute-bar fetch, returning EVERY bar in
+// [start, end] per symbol (not reduced to latest-or-summed) — the shared
+// primitive _fetchMinuteBarsWindow (latest bar, below) and
+// _fetchCumulativeMinuteVolume (Phase 3 RVOL, summed) both build on, so the
+// chunking/pagination/error-handling logic lives in exactly one place
+// rather than drifting apart across two call sites that need different
+// reductions of the same underlying fetch. Chunks submitted concurrently
+// (Promise.all), not sequentially awaited — see the comment this block
+// used to carry: a sequential loop here means at most 1 item is ever in
+// core/api-client.js's shared queue from this call site, making the
+// queue's own concurrency inert regardless of how parallel it's capable
+// of being. Safe to parallelize freely — chunk() partitions symbols into
+// disjoint sets, so each iteration writes to different result keys, and
+// each chunk's error handling is already independent.
+async function _fetchRawMinuteBars(symbols, start, end, chunkSize, windowLabel) {
+  const barsBySymbolAll = {};
   let requests = 0;
-  // Chunks submitted concurrently (Promise.all), not sequentially awaited
-  // one at a time — a sequential for-await loop here means at most 1 item
-  // is ever in core/api-client.js's shared queue from this call site,
-  // making that queue's concurrency (MAX_CONCURRENT workers) inert
-  // regardless of how parallel the queue itself is capable of being. This
-  // was found live: the queue's concurrency fix alone measured zero
-  // wall-clock improvement here until this loop was also made concurrent.
-  // Safe to parallelize freely — chunk() partitions symbols into disjoint
-  // sets, so each iteration writes to different latestBySymbol keys, and
-  // each chunk's error handling is already independent (a failed chunk
-  // doesn't abort the others, same as the old sequential version).
-  await Promise.all(chunk(symbols, SNAPSHOT_CHUNK_SIZE).map(async batch => {
+  await Promise.all(chunk(symbols, chunkSize).map(async batch => {
     try {
       const barsBySymbol = {};
       let pageToken;
@@ -373,16 +371,100 @@ async function _fetchMinuteBarsWindow(symbols, end, windowMin) {
         }
         pageToken = data.next_page_token || null;
       } while (pageToken);
-      // sort:'desc' -> each symbol's first bar is its most recent within [start, end].
-      batch.forEach(sym => {
-        const bars = barsBySymbol[sym];
-        if (bars && bars.length) latestBySymbol[sym] = bars[0];
-      });
+      Object.assign(barsBySymbolAll, barsBySymbol);
     } catch (e) {
-      console.warn(`_fetchMinuteBarsWindow: batch error for ${batch.length} symbols (${windowMin}min window): ${e.message}`);
+      console.warn(`_fetchRawMinuteBars: batch error for ${batch.length} symbols (${windowLabel}): ${e.message}`);
     }
   }));
+  return { barsBySymbolAll, requests };
+}
+
+// Single-window fetch, latest bar per symbol. Unchanged contract (existing
+// callers/tests depend on {latestBySymbol, requests}) — now a thin
+// reduction over _fetchRawMinuteBars rather than its own fetch loop.
+async function _fetchMinuteBarsWindow(symbols, end, windowMin) {
+  const start = new Date(end.getTime() - windowMin * 60 * 1000);
+  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, SNAPSHOT_CHUNK_SIZE, `${windowMin}min window`);
+  const latestBySymbol = {};
+  // sort:'desc' -> each symbol's first bar is its most recent within [start, end].
+  for (const sym of Object.keys(barsBySymbolAll)) {
+    const bars = barsBySymbolAll[sym];
+    if (bars && bars.length) latestBySymbol[sym] = bars[0];
+  }
   return { latestBySymbol, requests };
+}
+
+// Phase 3 Pillar 3 (RVOL): sum of every minute bar's volume in [start, end]
+// per symbol, not just the latest. Chunk size is much smaller than
+// SNAPSHOT_CHUNK_SIZE (100) because this window can span a whole regular
+// session (390 min), not premarket-gap's fixed 45 minutes — at 100 symbols/
+// chunk, 390min*100=39,000 worst-case bars would blow the single-page
+// proof badly. 25 keeps worst case at 390*25=9,750, under Alpaca's 10,000
+// ceiling — the same "proof, not estimate" requirement as
+// PREMARKET_BAR_WINDOW_MIN's chunk size, just for a wider window.
+const RVOL_VOLUME_CHUNK_SIZE = 25;
+
+async function _fetchCumulativeMinuteVolume(symbols, start, end) {
+  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, RVOL_VOLUME_CHUNK_SIZE, 'cumulative-volume window');
+  const volumeBySymbol = {};
+  for (const sym of Object.keys(barsBySymbolAll)) {
+    volumeBySymbol[sym] = barsBySymbolAll[sym].reduce((sum, b) => sum + (b.v || 0), 0);
+  }
+  return { volumeBySymbol, requests };
+}
+
+// Phase 3 Pillar 3: 30-day SIP daily-volume average, cached per trading day
+// (same pattern as _getPriorCloses) — a genuinely new fetch, nothing else
+// pulls 30-day SIP daily history. Must be SIP, matching
+// _fetchCumulativeMinuteVolume's feed: mixing an IEX-based historical
+// average against a SIP-based today's-volume numerator would reintroduce
+// the exact "ratio of two different things" problem the Feed section
+// opens with. 30 days * 30-symbol chunks = 900 bars, comfortably under the
+// 10,000 single-page ceiling — proof, plus next_page_token followed
+// regardless as the safety net.
+const RVOL_DAILY_AVG_LOOKBACK_DAYS = 30;
+const RVOL_DAILY_AVG_CHUNK_SIZE = 30;
+
+async function _getSip30DayAvgVolume(symbols) {
+  const today = ptDateStr(getPT());
+  let cache = state.warrior30DayVolumeCache;
+  if (!cache || cache.date !== today) cache = { date: today, avgVolumes: {} };
+
+  const missing = symbols.filter(sym => !(sym in cache.avgVolumes));
+  let requests = 0;
+  if (missing.length) {
+    const start = (() => { const d = new Date(); d.setDate(d.getDate() - RVOL_DAILY_AVG_LOOKBACK_DAYS); return d.toISOString().split('T')[0]; })();
+    await Promise.all(chunk(missing, RVOL_DAILY_AVG_CHUNK_SIZE).map(async batch => {
+      try {
+        const barsBySymbol = {};
+        let pageToken;
+        do {
+          const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: 10000, sort: 'asc', feed: 'sip' };
+          if (pageToken) params.page_token = pageToken;
+          const data = await alpacaGet('/stocks/bars', params);
+          requests++;
+          if (data.bars) {
+            for (const sym of Object.keys(data.bars)) {
+              (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
+            }
+          }
+          pageToken = data.next_page_token || null;
+        } while (pageToken);
+        batch.forEach(sym => {
+          const bars = barsBySymbol[sym];
+          if (bars && bars.length) {
+            const totalVol = bars.reduce((s, b) => s + (b.v || 0), 0);
+            cache.avgVolumes[sym] = totalVol / bars.length;
+          }
+        });
+      } catch (e) {
+        console.warn(`_getSip30DayAvgVolume: batch error for ${batch.length} symbols: ${e.message}`);
+      }
+    }));
+  }
+  state.warrior30DayVolumeCache = cache;
+  persist('warrior30DayVolumeCache');
+  return { avgVolumes: cache.avgVolumes, requests };
 }
 
 // Two-tier fetch. Pass 1 (45min, provably single-page) covers the vast
