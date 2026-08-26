@@ -41,7 +41,7 @@ grep_code() {
   for f in "$@"; do
     awk -v term="$term" '
       { code = $0; sub(/\/\/.*/, "", code) }
-      code ~ /[^ \t]/ && index($0, term) > 0 { print FILENAME ":" FNR }
+      index(code, term) > 0 { print FILENAME ":" FNR }
     ' "$f"
   done
 }
@@ -101,6 +101,47 @@ if [ -d "engines/warrior" ]; then
     hits=$(grep_code "engines/edge" $files)
     if [ -n "$hits" ]; then
       echo "FAIL: engines/warrior/ references engines/edge/ in code:"
+      echo "$hits" | sed 's/^/  /'
+      fail=1
+    fi
+  fi
+fi
+
+# Phase 2 acceptance: "app.js holds no stored reference to the Warrior
+# module after register() returns... every call into Warrior code goes
+# through the registry, no exceptions, so the boundary check is mechanical
+# rather than a judgement call." Enforced here as: app.js may reference
+# engines/warrior/ at most once, and if it does, that one reference must be
+# a dynamic import() — never a static import, require(), or <script> src.
+# More than one hit means something outside loadWarriorEngine() is
+# reaching toward Warrior code (most likely a stored module reference).
+if [ -f "app.js" ]; then
+  hits=$(grep_code "engines/warrior" app.js)
+  if [ -z "$hits" ]; then hit_count=0; else hit_count=$(echo "$hits" | wc -l); fi
+  if [ "$hit_count" -gt 1 ]; then
+    echo "FAIL: app.js references engines/warrior/ more than once — should be exactly the one dynamic import() call in loadWarriorEngine():"
+    echo "$hits" | sed 's/^/  /'
+    fail=1
+  elif [ "$hit_count" -eq 1 ]; then
+    line_no=$(echo "$hits" | head -1 | cut -d: -f2)
+    line_content=$(sed -n "${line_no}p" app.js)
+    if ! echo "$line_content" | grep -q "import("; then
+      echo "FAIL: app.js's one engines/warrior/ reference is not a dynamic import() call:"
+      echo "  app.js:$line_no: $line_content"
+      fail=1
+    fi
+  fi
+fi
+
+# shell/ reaches Warrior only through getEngine() — shell/registry.js's own
+# contract contains no literal path reference at all, so any hit here means
+# some shell/ file is reaching around the registry.
+if [ -d "shell" ]; then
+  files=$(find shell -name '*.js')
+  if [ -n "$files" ]; then
+    hits=$(grep_code "engines/warrior" $files)
+    if [ -n "$hits" ]; then
+      echo "FAIL: shell/ references engines/warrior/ directly (must go through getEngine() only):"
       echo "$hits" | sed 's/^/  /'
       fail=1
     fi
