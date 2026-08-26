@@ -56,6 +56,10 @@
         <span class="nav-icon">📊</span>
         <span class="nav-label">Signals</span>
       </button>
+      <button class="nav-btn" data-tab="warrior" onclick="switchTab('warrior')">
+        <span class="nav-icon">🥋</span>
+        <span class="nav-label">Warrior</span>
+      </button>
       <button class="nav-btn" data-tab="portfolio" onclick="switchTab('portfolio')">
         <span class="nav-icon">💼</span>
         <span class="nav-label">Portfolio</span>
@@ -99,14 +103,23 @@
        global scope with app.js, loaded in the dependency order app.js needs
        (api-client before market-data/news, everything before app.js's own
        top-level code runs). See CLAUDE.md for the isolation rules these files
-       must keep to, and scripts/check-boundaries.sh for the enforcement. -->
-  <script src="core/clock.js?v=20260824140000"></script>
-  <script src="core/indicators.js?v=20260824140000"></script>
-  <script src="core/api-client.js?v=20260824140000"></script>
-  <script src="core/market-data.js?v=20260824140000"></script>
-  <script src="core/news.js?v=20260824140000"></script>
-  <script src="core/store.js?v=20260824140000"></script>
-  <script src="core/universe.js?v=20260824140000"></script>
-  <script src="app.js?v=20260824140000"></script>
+       must keep to, and scripts/check-boundaries.sh for the enforcement.
+
+       shell/registry.js loads last of the classic scripts, right before
+       app.js — it only needs to exist as a global before app.js's dynamic
+       import() of engines/warrior/index.js resolves and calls register().
+       engines/warrior/index.js is NOT listed here: it's a real ES module,
+       fetched only via that one dynamic import() call at runtime, never a
+       <script> tag — that's what keeps a syntax error in Warrior code from
+       blocking page parse. See docs/warrior-engine-spec-v2.md Phase 2. -->
+  <script src="core/clock.js?v=20260825080000"></script>
+  <script src="core/indicators.js?v=20260825080000"></script>
+  <script src="core/api-client.js?v=20260825080000"></script>
+  <script src="core/market-data.js?v=20260825080000"></script>
+  <script src="core/news.js?v=20260825080000"></script>
+  <script src="core/store.js?v=20260825080000"></script>
+  <script src="core/universe.js?v=20260825080000"></script>
+  <script src="shell/registry.js?v=20260825080000"></script>
+  <script src="app.js?v=20260825080000"></script>
 </body>
 </html>

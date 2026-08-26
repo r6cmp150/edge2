@@ -2,7 +2,7 @@
 // installability. Bump CACHE_NAME whenever VERSION changes in app.js (same
 // pattern as the "Bump ?v=" cache-busting comment in index.html) so old
 // caches get cleared on activate rather than accumulating.
-const CACHE_NAME = 'edge2-cache-v2.9.3';
+const CACHE_NAME = 'edge2-cache-v2.9.3-phase2-dev2';
 const APP_SHELL = [
   './',
   './index.html',
@@ -13,11 +13,21 @@ const APP_SHELL = [
   './core/news.js',
   './core/store.js',
   './core/universe.js',
+  './shell/registry.js',
   './app.js',
   './styles.css',
   './manifest.json',
   './icon.svg',
 ];
+// engines/warrior/index.js is deliberately NOT listed here. cache.addAll()
+// below is all-or-nothing — if any one URL in this list 404s, the whole
+// service worker install fails. Phase 2's acceptance explicitly requires
+// the app to keep working when that file is missing or broken; putting it
+// in a list where its absence would take down offline caching for
+// everything else would work against that, not support it. It's fetched
+// live via dynamic import() same as any other request, and gets the same
+// network-first/cache-fallback treatment as everything else below once a
+// successful fetch has happened at least once.
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

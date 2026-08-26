@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.3';
+const VERSION = 'v2.9.3-phase2-dev2';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -848,6 +848,7 @@ let state = {
   ownedPeakRSI: {},       // ticker → highest RSI seen across the current hold, for peakRsiDuringHold on the sold record — persisted
   preMarketGroqCache: {}, // ticker → {pairs}|{raw} Groq pre-market read — session only, tap-triggered
   deletedPositionIds: new Set(), // position IDs deleted this session — guards renderPortfolioTab()'s fire-and-forget saves from resurrecting a just-sold row; session only, not persisted
+  warrior: { status: 'loading' }, // { status: 'loading'|'loaded'|'unavailable', error?, lastScanError? } — set by the dynamic import in runDataLoadAndInit(). Session only, not persisted: re-derived fresh on every boot since it reflects whether THIS load of engines/warrior/index.js succeeded, not a fact about the user's data.
 };
 
 function loadState() {
@@ -7267,14 +7268,48 @@ function switchTab(name) {
   const showBudget = ['signals','portfolio'].includes(name);
   document.getElementById('budget-bar')?.classList.toggle('hidden', !showBudget);
 
+  // Found live during Phase 2 testing: handleRefresh() already no-ops for
+  // Warrior (nothing to refresh until Phase 3's gate exists), but the
+  // button looked identically active regardless — a visible dead control.
+  // Scoped to Warrior only, not Sold/Settings, which have the same no-op
+  // today but weren't part of this phase's testing or this fix.
+  document.getElementById('refresh-btn')?.classList.toggle('btn-refresh-disabled', name === 'warrior');
+
   switch (name) {
     case 'signals':   renderSignalsTab();   break;
+    case 'warrior':   renderWarriorTab();   break;
     case 'portfolio': renderPortfolioTab(); break;
     case 'sold':      renderSoldTab();      break;
     case 'settings':  renderSettingsTab();  break;
   }
 
   updateBudgetBar();
+}
+
+// Shell-side half of Phase 2's registry contract — reaches Warrior only
+// through getEngine(), never a stored reference (see loadWarriorEngine()).
+// No `if (engineSource === 'WARRIOR')` here or anywhere else in this
+// function: the only branch is "is an engine registered under this id or
+// not," which is exactly the generic check the registry exists to make
+// possible.
+function renderWarriorTab() {
+  const container = document.getElementById('tab-content');
+  const engine = getEngine('WARRIOR');
+  if (!engine) {
+    const errLine = state.warrior?.error
+      ? `<div class="card-sub mt4" style="white-space:pre-wrap">${state.warrior.error}</div>`
+      : '';
+    container.innerHTML = `<div class="tab-header">
+      <h1 class="tab-title">WARRIOR</h1>
+    </div>
+    <div class="empty-state">
+      <div class="empty-icon">⚠️</div>
+      <p>Warrior engine not loaded</p>
+      ${errLine}
+    </div>`;
+    return;
+  }
+  container.innerHTML = engine.renderTab();
 }
 
 function updateNavBadges() {
@@ -7381,6 +7416,29 @@ async function runDataLoadAndInit() {
   // A rejection surfaces via the global unhandledrejection handler instead
   // of being awaited.
   requestNotificationPermission();
+  // Same reasoning: Warrior loading (or failing to load) must never delay
+  // EDGE's first render. docs/warrior-engine-spec-v2.md Phase 2.
+  loadWarriorEngine();
+}
+
+// Dynamic import inside try/catch, per CLAUDE.md/Phase 2 — a syntax error
+// or missing file in engines/warrior/index.js rejects this promise instead
+// of blocking page parse, since it's fetched only here, never a <script>
+// tag. No reference to the resolved module is kept past this function:
+// register() is the only thing called on it, and then it goes out of
+// scope — every later call into Warrior code goes through
+// getEngine('WARRIOR') (shell/registry.js), never a stored handle. That's
+// what makes "does anything outside this one function reach Warrior code"
+// a mechanical grep instead of a judgement call (Phase 2 acceptance).
+async function loadWarriorEngine() {
+  try {
+    const warrior = await import('./engines/warrior/index.js');
+    warrior.register();
+    state.warrior = { status: 'loaded' };
+  } catch (err) {
+    state.warrior = { status: 'unavailable', error: err.message };
+    console.warn('Warrior engine failed to load:', err.message);
+  }
 }
 
 async function init() {

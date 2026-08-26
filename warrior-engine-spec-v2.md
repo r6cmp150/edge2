@@ -320,8 +320,8 @@ The "fewer than 30 requests per scan" acceptance bullet applies to the two Warri
 
 ### Phase 1 acceptance
 
-- [x] Pre-market run returns tickers **not** present in the v3 seed list — that's the point. Verified directly against the live 2026-08-24 sample (HQWWW, DAAQ, AIFU, FVNNU, JG, BTDL): 5 of 6 are absent from `STOCK_UNIVERSES`. DAAQ *is* in the seed list already — expected overlap, not a failure; the claim is that new tickers surface, not that every result is novel.
-- [ ] No alphabetical bias: run the scan, confirm the first-letter distribution is not concentrated in A–C. The original v1 bias came from `fetchMultiBars`' pagination truncation plus a stable-sort tie-break; this path sorts by `changePct` and the Bug 1 fix removed the truncation, so there's no known mechanism for it here — but that's a reason to expect no bias, not proof of it. `diagnosePremarketGap` now returns `letterDistribution` and the Settings modal renders it (e.g. `A:3 B:5 C:2 ...`) on every run, so this closes on the next live run instead of needing a separate one-off manual check. Leaving unchecked until that run's actual distribution is seen.
+- [ ] Pre-market run returns tickers **not** present in the v3 seed list — that's the point
+- [ ] No alphabetical bias: run the scan, confirm the first-letter distribution is not concentrated in A–C
 - [x] **Universe cost — measured live 2026-08-24, not estimated.**
 
 | | Requests | Wall clock |
@@ -337,7 +337,7 @@ Two things this measurement corrected, both of which arithmetic got wrong:
 - Wall clock was 61s at 36 requests because the queue dispatched strictly serially. Counting requests without timing them hid it for a full day.
 
 **Margin note:** 169 requests sits just under the 200-token bucket buffer. A larger universe or one more page per chunk pushes the cold path into throttling — correct behavior, but noticeably slower. Re-measure if the universe grows.
-- [ ] **Deferred to Phase 4, not open.** Validate against a known past gap day: the stocks you know ran that morning appear in the pre-market universe. The Phase 4 replay harness (feed a past morning's bars through the classifier, check known runners surface) is the right tool for this — a one-off manual check now would be weaker evidence than the replay harness and duplicated effort once it exists. See Phase 4's acceptance section for this as a tracked dependency.
+- [ ] Validate against a known past gap day: the stocks you know ran that morning appear in the pre-market universe
 
 ---
 
@@ -350,6 +350,10 @@ Build the boundary before building anything that depends on it.
 ```js
 registerEngine(id, {
   label,               // 'EDGE' | 'Warrior' — display string
+  renderTab,           // () → void — the engine's own tab content. In the registry
+                       //   deliberately: it keeps dispatch to ONE mechanism, so the
+                       //   boundary check stays mechanical and app.js never stores a
+                       //   module reference.
   renderBadge,         // (position) → HTMLElement — small badge on a portfolio card
   renderSnapshot,      // (signalSnapshot) → HTMLElement — signal detail in modal
   evaluateExit,        // (position, liveData) → { status, reasons[] } — see Phase 6
@@ -411,10 +415,17 @@ Only the active tab's render path executes. The inactive engine is never called 
 
 ### Phase 2 acceptance
 
-- [ ] Delete `engines/warrior/` entirely → Signals, Watchlist, Portfolio, Sold, News, Settings all work normally; the Warrior segment shows "engine unavailable"
-- [ ] Introduce a deliberate syntax error in `engines/warrior/index.js` → same result, app still loads
-- [ ] Throw deliberately inside the Warrior scan interval → only Warrior stops; EDGE polling continues
-- [ ] `grep -r "ABCD" shell/ engines/edge/` returns nothing
+**Verified live in the browser, 2026-08-25 — not just in Node.** Each of the three behavioral checks was run for real: `engines/warrior/` renamed away, a genuine syntax error injected into `index.js` (confirmed with `node --check` before handing it off), and `_scanTick` made to throw on every call for 8+ consecutive ticks while the app stayed open and in active use.
+
+- [x] Delete `engines/warrior/` entirely → **Signals, Portfolio, Sold, Settings** all work normally; the Warrior tab shows "engine unavailable". (Corrected: an earlier draft listed Watchlist and News — both were removed from the app before v2.9.0.) Confirmed live: Warrior tab showed "Warrior engine not loaded" with the real fetch error, the other four tabs and the Portfolio badge worked normally.
+- [x] `app.js` holds **no** stored reference to the Warrior module after `register()` returns. Every call into Warrior code, including rendering its own tab, goes through the registry — no exceptions, so the boundary check is mechanical rather than a judgement call. `scripts/check-boundaries.sh` enforces this mechanically (app.js may reference `engines/warrior/` at most once, and that reference must be a dynamic `import(`); sanity-tested by injecting a second reference and confirming the check fails before confirming it passes clean.
+- [x] Introduce a deliberate syntax error in `engines/warrior/index.js` → same result, app still loads. Confirmed live: `SyntaxError: Unexpected token ';'` surfaced as the Warrior tab's real error message, the app booted normally otherwise. This is the check that would have white-screened the whole app under the old single-bundle loading — the one that matters most.
+- [x] Throw deliberately inside the Warrior scan interval → only Warrior stops; EDGE polling continues. Confirmed live, not just proxied: 8 consecutive `[Warrior]`-tagged failures in the console, each caught, while EDGE ran an Afternoon Review scan (239 stocks, 10 soft buys), the budget bar recalculated live, a manual Signals refresh returned fresh data, and the Portfolio badge updated from 1 to 2 from a live price-alert check — all while Warrior's interval was failing on every tick.
+- [x] `grep -r "ABCD" shell/ engines/edge/` returns nothing. The literal command errors today (`engines/edge/` doesn't exist yet — EDGE stays in `app.js`, correctly out of scope for this phase); `scripts/check-boundaries.sh` treats a missing directory as a vacuous pass and found zero real hits across `shell/`, `engines/`, `core/`, and `app.js` for any of the four restricted setup terms.
+
+**Found live, fixed in the same pass:** the header's ↻ Refresh button did nothing on the Warrior tab but looked identically active — a dead control, since there's nothing to refresh until Phase 3's gate exists. Now visibly disabled (`.btn-refresh-disabled`, `pointer-events:none`) whenever Warrior is the active tab; `handleRefresh()` already no-op'd for it, this just makes the UI stop lying about it. Wire it to a real Warrior rescan when Phase 3 lands. Note: Sold and Settings have the identical no-op today and weren't touched — out of scope for this fix.
+
+**Noted in passing, not a Phase 2 issue — tracked here so it isn't lost before Phase 7:** EDGE's own scan is still running against the single curated `OTHER` sector list (`STOCK_UNIVERSES`/`TICKERS` in `app.js`), not `core/universe.js`'s `full-filtered` strategy — which exists (Phase 1) but is deliberately unwired (`getUniverse` throws for `'full-filtered'` today, per spec). Migrating EDGE's own scan onto it is out of scope for every phase between here and Phase 7 as currently written; flagging so that migration doesn't quietly fall through the gap.
 
 ---
 
@@ -534,7 +545,6 @@ Hide behind a Settings toggle (`Developer tools`). It is not a user-facing featu
 - [ ] Replay is deterministic — same inputs, same triggers
 - [ ] Output includes forward returns at each horizon
 - [ ] The classifier receives only the bars up to the current replay index — no lookahead. Test this explicitly; a lookahead bug makes every result meaningless and it is the single easiest mistake to make here.
-- [ ] **Carries forward from Phase 1 acceptance:** validate `getUniverse('premarket-gap')` against a known past gap day — feed that morning's bars through and confirm the runners you remember actually surface in the pre-market universe. Deferred here deliberately (2026-08-24) rather than done as a one-off manual check in Phase 1, since this harness is the correct tool for it and a manual check would've been weaker, duplicated evidence.
 
 ---
 
