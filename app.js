@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.3-phase2-dev1';
+const VERSION = 'v2.9.3-phase2-dev2';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -7267,6 +7267,13 @@ function switchTab(name) {
 
   const showBudget = ['signals','portfolio'].includes(name);
   document.getElementById('budget-bar')?.classList.toggle('hidden', !showBudget);
+
+  // Found live during Phase 2 testing: handleRefresh() already no-ops for
+  // Warrior (nothing to refresh until Phase 3's gate exists), but the
+  // button looked identically active regardless — a visible dead control.
+  // Scoped to Warrior only, not Sold/Settings, which have the same no-op
+  // today but weren't part of this phase's testing or this fix.
+  document.getElementById('refresh-btn')?.classList.toggle('btn-refresh-disabled', name === 'warrior');
 
   switch (name) {
     case 'signals':   renderSignalsTab();   break;

@@ -109,6 +109,11 @@ a { color: var(--blue); }
 }
 .btn-refresh:hover { color: var(--green); }
 .btn-refresh.spinning { animation: spin 0.8s linear infinite; }
+/* Warrior tab (Phase 2): nothing to refresh until Phase 3's gate exists —
+   handleRefresh() already no-ops for it, but the button looked identically
+   active regardless, a dead control found during live Phase 2 testing.
+   pointer-events:none makes the no-op unreachable, not just dimmed. */
+.btn-refresh-disabled { opacity: 0.3; pointer-events: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Market Banner ── */

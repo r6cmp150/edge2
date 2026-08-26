@@ -2,7 +2,7 @@
 // installability. Bump CACHE_NAME whenever VERSION changes in app.js (same
 // pattern as the "Bump ?v=" cache-busting comment in index.html) so old
 // caches get cleared on activate rather than accumulating.
-const CACHE_NAME = 'edge2-cache-v2.9.3-phase2-dev1';
+const CACHE_NAME = 'edge2-cache-v2.9.3-phase2-dev2';
 const APP_SHELL = [
   './',
   './index.html',
