@@ -415,17 +415,11 @@ Only the active tab's render path executes. The inactive engine is never called 
 
 ### Phase 2 acceptance
 
-**Verified live in the browser, 2026-08-25 — not just in Node.** Each of the three behavioral checks was run for real: `engines/warrior/` renamed away, a genuine syntax error injected into `index.js` (confirmed with `node --check` before handing it off), and `_scanTick` made to throw on every call for 8+ consecutive ticks while the app stayed open and in active use.
-
-- [x] Delete `engines/warrior/` entirely → **Signals, Portfolio, Sold, Settings** all work normally; the Warrior tab shows "engine unavailable". (Corrected: an earlier draft listed Watchlist and News — both were removed from the app before v2.9.0.) Confirmed live: Warrior tab showed "Warrior engine not loaded" with the real fetch error, the other four tabs and the Portfolio badge worked normally.
-- [x] `app.js` holds **no** stored reference to the Warrior module after `register()` returns. Every call into Warrior code, including rendering its own tab, goes through the registry — no exceptions, so the boundary check is mechanical rather than a judgement call. `scripts/check-boundaries.sh` enforces this mechanically (app.js may reference `engines/warrior/` at most once, and that reference must be a dynamic `import(`); sanity-tested by injecting a second reference and confirming the check fails before confirming it passes clean.
-- [x] Introduce a deliberate syntax error in `engines/warrior/index.js` → same result, app still loads. Confirmed live: `SyntaxError: Unexpected token ';'` surfaced as the Warrior tab's real error message, the app booted normally otherwise. This is the check that would have white-screened the whole app under the old single-bundle loading — the one that matters most.
-- [x] Throw deliberately inside the Warrior scan interval → only Warrior stops; EDGE polling continues. Confirmed live, not just proxied: 8 consecutive `[Warrior]`-tagged failures in the console, each caught, while EDGE ran an Afternoon Review scan (239 stocks, 10 soft buys), the budget bar recalculated live, a manual Signals refresh returned fresh data, and the Portfolio badge updated from 1 to 2 from a live price-alert check — all while Warrior's interval was failing on every tick.
-- [x] `grep -r "ABCD" shell/ engines/edge/` returns nothing. The literal command errors today (`engines/edge/` doesn't exist yet — EDGE stays in `app.js`, correctly out of scope for this phase); `scripts/check-boundaries.sh` treats a missing directory as a vacuous pass and found zero real hits across `shell/`, `engines/`, `core/`, and `app.js` for any of the four restricted setup terms.
-
-**Found live, fixed in the same pass:** the header's ↻ Refresh button did nothing on the Warrior tab but looked identically active — a dead control, since there's nothing to refresh until Phase 3's gate exists. Now visibly disabled (`.btn-refresh-disabled`, `pointer-events:none`) whenever Warrior is the active tab; `handleRefresh()` already no-op'd for it, this just makes the UI stop lying about it. Wire it to a real Warrior rescan when Phase 3 lands. Note: Sold and Settings have the identical no-op today and weren't touched — out of scope for this fix.
-
-**Noted in passing, not a Phase 2 issue — tracked here so it isn't lost before Phase 7:** EDGE's own scan is still running against the single curated `OTHER` sector list (`STOCK_UNIVERSES`/`TICKERS` in `app.js`), not `core/universe.js`'s `full-filtered` strategy — which exists (Phase 1) but is deliberately unwired (`getUniverse` throws for `'full-filtered'` today, per spec). Migrating EDGE's own scan onto it is out of scope for every phase between here and Phase 7 as currently written; flagging so that migration doesn't quietly fall through the gap.
+- [ ] Delete `engines/warrior/` entirely → **Signals, Portfolio, Sold, Settings** all work normally; the Warrior tab shows "engine unavailable". (Corrected: an earlier draft listed Watchlist and News — both were removed from the app before v2.9.0.)
+- [ ] `app.js` holds **no** stored reference to the Warrior module after `register()` returns. Every call into Warrior code, including rendering its own tab, goes through the registry — no exceptions, so the boundary check is mechanical rather than a judgement call.
+- [ ] Introduce a deliberate syntax error in `engines/warrior/index.js` → same result, app still loads
+- [ ] Throw deliberately inside the Warrior scan interval → only Warrior stops; EDGE polling continues
+- [ ] `grep -r "ABCD" shell/ engines/edge/` returns nothing
 
 ---
 
@@ -464,12 +458,68 @@ Evaluate in this order and short-circuit. Never spend an FMP call (Phase 6) on a
 |---|---|---|---|
 | 1 | Price range | `$1.00 ≤ price ≤ $20.00` | universe (free) |
 | 2 | Daily % change | `changePct ≥ 10%` | universe (free) |
-| 3 | Relative volume | `todayVolume / avg30DayVolume ≥ 5.0` | cached daily bars + SIP snapshot |
+| 3 | Relative volume | **time-normalized** — see below | cached daily bars + delayed SIP **minute bars** |
 | 4 | News catalyst | Alpaca news item for this symbol within the last 24h | 1 batched call |
 | 5 | Float | `float < 10,000,000` (configurable) | FMP — **Phase 6** |
 | — | **Halt check** | `NOT halted` — see below | Alpaca trading status |
 
-### Halt check — new, not in v1
+### Pillar 3 — relative volume must be time-normalized
+
+**Corrected.** An earlier draft said "SIP snapshot" for today's volume — stale wording from before the Feed section was fixed. Snapshots cannot use SIP. Use delayed SIP **minute bars**, reusing Phase 1's `_fetchLatestSipMinuteBars` fetch path.
+
+Two requirements beyond swapping the source:
+
+1. **Cumulative, not latest.** RVOL needs the sum of today's minute bars so far, not the most recent bar. Same fetch, different aggregation.
+2. **Normalize by time of day.** Comparing 40 minutes of accumulated volume against a *full-day* 30-day average yields ~0.1× for everything in the morning. Nothing would ever clear a ≥5× gate before mid-afternoon, and it would present as a quiet market rather than a broken denominator. Compare today's volume-to-now against **the same time-of-day slice** of the 30-day average.
+
+```
+expectedByNow = avg30DayDailyVolume × intradayCurve(elapsedMinutes)
+rvol          = todayVolumeToNow / expectedByNow
+```
+
+**`intradayCurve` is a static table, not `elapsedMinutes / 390`.** Intraday volume is U-shaped and front-loaded: roughly 13% of daily volume trades in the first thirty minutes against 7.7% of elapsed session time. A linear proxy therefore reads ~1.7× RVOL for *every* stock at the open, and deflates it midday — trading a systematic false negative for a systematic false positive on the pillar that decides what gets surfaced.
+
+A hardcoded cumulative-share table costs zero extra requests and removes a known bias. Approximate shape (cumulative share of daily volume by elapsed session minutes):
+
+| Elapsed | Cumulative share |
+|---|---|
+| 30 min | ~13% |
+| 60 min | ~21% |
+| 120 min | ~32% |
+| 180 min | ~41% |
+| 240 min | ~50% |
+| 300 min | ~61% |
+| 360 min | ~78% |
+| 390 min | 100% |
+
+Interpolate between points. Rejected alternative: fetching 30 days of minute bars per symbol to derive a true per-symbol curve — accurate, but it would blow the request budget by an order of magnitude for a second-order gain.
+
+**Display the basis on the card** (expected-by-now alongside actual), so an implausible RVOL is diagnosable rather than mysterious.
+
+**Pre-market: RVOL is `not-checked`.** The curve is defined over the 390-minute regular session, and cumulative volume since the open is zero before the open — so there is no valid denominator. Pre-market is also the primary Warrior workflow, which makes a silently wrong value here worse than anywhere else. Mark Pillar 3 `not-checked` for the whole pre-market session, same as the first-15-minutes rule, leaving price, change and news as the checkable pillars. That matches how the method actually screens pre-market (gap plus catalyst); a real pre-market RVOL needs a pre-market volume baseline this app doesn't have.
+
+**Edge case that must not compute to zero:** with a 15-minute SIP delay, cumulative volume in the first 15 minutes of the session is genuinely empty. Render "RVOL not yet available" and exclude the candidate from QUALIFIED — never a 0× that reads as a real measurement. The same applies after hours: the curve's domain is the regular session only.
+
+**Phase 4 follow-ups, both for the replay harness:** derive a real intraday curve from historical bars to replace the static table, and derive a pre-market volume baseline so Pillar 3 becomes checkable pre-market too. Cheap once the harness exists; not worth building before it.
+
+### Pillar 4 — the gate window is 24h, the fetch window is 72h
+
+These are deliberately different and must not be conflated. Bug 4 widened the *fetch* to 72 hours so weekend catalysts survive to Monday. The *gate* asks whether there is a catalyst within **24 hours**.
+
+If Pillar 4 simply asks "did any news come back," a Friday-evening headline passes as a fresh catalyst on Monday afternoon. **Filter by article age explicitly inside the gate** — never inherit the fetch window as the criterion.
+
+### Halt check — deferred, with the reason recorded
+
+Alpaca has no REST endpoint for halt status, and **Basic caps WebSocket subscriptions at 30 symbols** — fewer than the candidate universe, so a streaming implementation could not cover the gate even if built, and would leave an unknown subset silently unchecked. Scraping NASDAQ's halt page is worse than nothing for a safety gate: no contract, and silent staleness fails in the direction that says a halted stock is fine.
+
+Deferred deliberately. Two conditions:
+
+- Every candidate card carries a **per-card** line: "Halt status not checked — verify in your broker before buying." Not a page banner; those go invisible within a week.
+- `haltStatus: 'unknown'` is recorded in `signalSnapshot` at buy time, so Phase 8 can distinguish trades made without halt information from ones made with it.
+
+The backstop is real: execution is manual on Robinhood, which shows halt status at order time.
+
+### Halt check — original note
 
 Sub-$20 low-float runners hit LULD volatility halts constantly, and a buy signal on a halted stock is actively dangerous. Query trading status and exclude halted symbols from signals; show them in a separate "halted" strip so you can see what's happening without being told to buy it.
 
@@ -495,24 +545,49 @@ Capture SSR (short sale restriction) status on each candidate for later report a
 }
 ```
 
+### QUALIFIED before float exists (Phase 3 → Phase 6)
+
+Pillar 5 lands in Phase 6. Until then float is **not checked** — which is neither a pass nor a fail, and must not be rendered as either.
+
+- Each pillar carries `status: 'pass' | 'fail' | 'not-checked'`. Float is `'not-checked'` in Phase 3.
+- **QUALIFIED = every *checkable* pillar passes.** Not `passCount === 5`, which would stay permanently empty; not `passCount === 4` with float dropped from the array, which would present a four-pillar method as if it were the whole method.
+- Float stays visible on the card, reading "Float — not checked until Phase 6." A missing pillar teaches the wrong criteria; a visibly unchecked one doesn't.
+- `signalSnapshot` records `float: { status: 'not-checked' }`, so Phase 8 can distinguish trades made before float existed. Same shape as `haltStatus: 'unknown'` — and it means the snapshot format doesn't change when Phase 6 lands.
+
+**Never stub a pillar as passing.** A fabricated check on unverified data is the same failure as the $0.00 P&L: a real-looking number standing in for something never measured.
+
 ### Near-miss tier — required, not optional
 
 A hard AND across 5 rare conditions means an empty screen on most check-ins, and no way to distinguish *"no candidates today"* from *"the engine is broken."*
 
 Render two sections:
 
-- **QUALIFIED** — `passCount === 5 && !halted`
-- **NEAR MISS (4/5)** — `passCount === 4`, each pillar shown pass/fail with its **actual value**
+- **QUALIFIED** — every *checkable* pillar passes (see the section above; `not-checked` pillars are excluded from the count, never treated as passing)
+- **NEAR MISS** — exactly one checkable pillar fails, each pillar shown pass/fail/not-checked with its **actual value**
+
+**Short-circuit only on the free pillars.** Price and change come from universe data at zero request cost, so failing either is a plain disqualification — stop there. But for anything clearing those two, evaluate **both** Pillar 3 and Pillar 4 rather than halting at the first failure.
+
+Reason: short-circuiting past Pillar 3 leaves Pillar 4 `not-checked`, which makes "exactly one checkable pillar fails" vacuously true for *every* rejected candidate — a $25 stock would classify as NEAR MISS identically to a genuine 4-of-5. It also guts the tier's purpose, since a card reading "RVOL fail, news not-checked" only half-explains the rejection.
+
+The cost is bounded: that set is the same batch already receiving RVOL data, and news batches 10 symbols per request — a couple of extra calls. Cheap, and it makes a single failure genuinely single.
 
 This serves debugging and the project's stated goal of understanding why something is or isn't recommended.
 
 ### Phase 3 acceptance
 
-- [ ] All Warrior requests use `feed=sip`; verify in the network log
+**Merged to main 2026-08-26 with two items below marked OUTSTANDING, not verified.** Rationale for merging anyway: a wrong `feed` produces a visible 403 rather than silent bad data, and Phase 2's isolation boundary was verified live under three failure modes, so a broken Warrior tab can't affect EDGE. `engines/warrior/index.js`'s `_scanTick()` logs `[PHASE-3-UNVERIFIED]` to the console with a per-stage request count on every regular-session scan until both are confirmed and that logging block is deleted — see the comment right above it.
+
+- [ ] **OUTSTANDING** — All Warrior requests use `feed=sip`; verify in the network log during a regular-session scan
 - [ ] Gate short-circuits — a stock failing pillar 1 triggers no further calls
 - [ ] Near-miss tier renders with real values on a day with zero qualified candidates
-- [ ] Halted symbols appear in the halted strip, never in QUALIFIED
-- [ ] Full scan of a 50-symbol universe stays under 30 requests
+- [x] Every candidate card displays the halt-status-unknown line (there is no halted boolean — halt detection is deferred; see above) — live-checked 2026-08-26
+- [x] Float renders as `not-checked`, never as a pass, and never absent from the pillar list — live-checked 2026-08-26
+- [ ] RVOL uses the static intraday curve, not a linear elapsed fraction — verify a mid-session candidate's expected-by-now figure is materially above `dailyAvg × elapsed/390`
+- [ ] In the first 15 minutes of a session, RVOL reads "not yet available" rather than 0×
+- [ ] During pre-market, Pillar 3 renders `not-checked` — never 0×, never a divide-by-zero, never a number derived from a regular-session curve (live-checked 2026-08-26, but during CLOSED not PRE specifically — reads "not available outside regular session"; the PRE-specific case is still unverified live)
+- [ ] Pillar 4 passes only on articles under 24h old, verified against a candidate whose only news is 25–72h old — it must fail that pillar despite news being present in the fetched data
+- [ ] **OUTSTANDING** — Full scan of a 50-symbol universe stays under 30 requests, measured during regular session with RVOL's 30-day-average and cumulative-minute-bar fetches actually running. Live-checked 2026-08-26 at ~6 requests, but that run had RVOL skipped entirely (outside regular session) — that number does not satisfy this bullet
+- [ ] QUALIFIED and NEAR MISS section headers carry a caveat outside regular session (or the first 15 minutes of it) — RVOL is the most selective pillar, and a bare "QUALIFIED (10)" label outside the window where RVOL is checkable overclaims what the pillars underneath it actually support. Fixed 2026-08-26 (`evaluateGateBatch`'s `rvolCheckable` flag, read by `renderTab`, unit-tested); not yet visually confirmed live
 
 ---
 
@@ -819,6 +894,12 @@ Each engine produces its own stats block via `summarizeForReport(trades)` from t
 - **Push notifications** — the real fix for the latency problem in Phase 5, and now cheaper than it looks because the Supabase migration provides the server. Separate doc.
 - **Warrior Trading's paid scanner, chat room, and exact execution rules** — proprietary and paywalled; not replicable at any scope.
 - **Automated order placement** — unchanged from the v3 spec; the app never trades.
+
+---
+
+# Known open items (deferred, not yet scheduled)
+
+- **Chart X-axis labels render in browser-local time, not PT** (`app.js:3503-3510`). Every other timestamp in the app is PT; this is the one place that isn't. Found during the 2026-08-26 timezone sweep (prompted by two real getPT()/local-time-mixing bugs found the same day — see CLAUDE.md's rule on `.setHours()`/`.setDate()` on a `getPT()`-derived Date). Not fixed: it's a display-only inconsistency, not a wrong-answer bug like the other two, and no phase currently touches that code path. Revisit if a phase ends up in `app.js`'s charting code anyway, or if it's reported as confusing.
 
 ---
 

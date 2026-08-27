@@ -914,6 +914,42 @@ a { color: var(--blue); }
   margin: 0 12px 10px;
   padding: 12px 14px;
 }
+
+/* ── Warrior card (Phase 3, 5 Pillars gate) — same shape as .portfolio-card ── */
+.warrior-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 0 12px 10px;
+  padding: 12px 14px;
+}
+.warrior-card-header { margin-bottom: 6px; }
+.warrior-card-symbol { font-family: var(--cond); font-size: 20px; font-weight: 700; }
+.warrior-card-halt {
+  font-size: 11px;
+  color: var(--red);
+  background: rgba(255,77,109,0.1);
+  border: 1px solid rgba(255,77,109,0.3);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  margin-bottom: 8px;
+}
+.warrior-pillar-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.warrior-pillar-row:last-child { border-bottom: none; }
+.warrior-pillar-icon { width: 14px; text-align: center; font-weight: 700; }
+.warrior-pillar-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; width: 48px; flex-shrink: 0; }
+.warrior-pillar-value { font-family: var(--mono); flex: 1; word-break: break-word; }
+.warrior-pillar-row.wp-pass .warrior-pillar-icon { color: var(--green); }
+.warrior-pillar-row.wp-fail .warrior-pillar-icon { color: var(--red); }
+.warrior-pillar-row.wp-notchecked .warrior-pillar-icon { color: var(--muted); }
+.warrior-pillar-row.wp-notchecked .warrior-pillar-value { color: var(--muted); font-style: italic; }
 .pf-meta { font-size: 11px; color: var(--muted); margin: 4px 0; }
 
 .pf-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
