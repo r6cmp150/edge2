@@ -47,8 +47,8 @@ async function _scanTick() {
     const session = (typeof getMarketStatus === 'function') ? getMarketStatus().status : 'CLOSED';
     const strategy = _selectStrategy(session);
     const universe = await getUniverse({ session, strategy });
-    const { results } = await evaluateGateBatch(universe, session);
-    _lastScanResults = { session, results, scannedAt: new Date() };
+    const { results, rvolCheckable } = await evaluateGateBatch(universe, session);
+    _lastScanResults = { session, results, scannedAt: new Date(), rvolCheckable };
     if (typeof state !== 'undefined' && state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') {
       renderWarriorTab();
     }
@@ -175,16 +175,25 @@ function renderTab() {
       <p>No scan yet — tap ↻ Refresh to run one.</p>
     </div>`;
   }
-  const { session, results, scannedAt } = _lastScanResults;
+  const { session, results, scannedAt, rvolCheckable } = _lastScanResults;
   const qualified = results.filter(r => r.tier === 'QUALIFIED');
   const nearMiss = results.filter(r => r.tier === 'NEAR_MISS');
+  // RVOL is the most selective of the 5 pillars — a section header that
+  // just says "QUALIFIED (10)" outside regular session (or in the first 15
+  // minutes) claims more confidence than the pillars underneath it earned:
+  // those candidates cleared price+change+news, never RVOL, since RVOL was
+  // structurally not-checked, not passed. Same "say what you don't know"
+  // principle already applied to individual pillar rows, one level up. See
+  // gate.js's evaluateGateBatch/classifyGate comments for why this isn't a
+  // classification change — the tiers themselves are still correct.
+  const rvolCaveat = rvolCheckable ? '' : ' — RVOL not evaluated this session';
   return `<div class="tab-header">
     <h1 class="tab-title">WARRIOR</h1>
   </div>
   <div class="tab-subtitle">Session: ${session} · ${results.length} scanned · last scan ${_formatPTTime(scannedAt)} PT</div>
-  <div class="section-label">QUALIFIED (${qualified.length})</div>
+  <div class="section-label">QUALIFIED (${qualified.length})${rvolCaveat}</div>
   ${qualified.length ? qualified.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>'}
-  <div class="section-label mt12">NEAR MISS (${nearMiss.length})</div>
+  <div class="section-label mt12">NEAR MISS (${nearMiss.length})${rvolCaveat}</div>
   ${nearMiss.length ? nearMiss.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No near-miss candidates this scan.</p></div>'}`;
 }
 

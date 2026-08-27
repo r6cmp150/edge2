@@ -174,6 +174,15 @@ function _elapsedSessionMinutes() {
 // pass or counted against a candidate" rule as float. QUALIFIED requires
 // every stage-2 pillar that WAS checkable to pass; NEAR_MISS requires
 // exactly one of them to fail.
+//
+// This deliberately does NOT downgrade a candidate just because RVOL
+// (the most selective pillar) wasn't checkable this scan — that's still
+// correct per the not-checked rule above. What it doesn't do on its own
+// is communicate that a "QUALIFIED" outside regular session only cleared
+// price+change+news. That's a display concern, not a classification one
+// — engines/warrior/index.js's renderTab reads evaluateGateBatch's
+// rvolCheckable flag and puts the caveat on the section header, one level
+// up from where the per-pillar not-checked labels already do this.
 function classifyGate(gateResult) {
   const byId = {};
   gateResult.pillars.forEach(p => { byId[p.id] = p; });
@@ -240,8 +249,19 @@ async function evaluateGateBatch(candidates, session) {
     return p1.status === 'pass' && p2.status === 'pass';
   });
 
+  // Single source of truth for "could RVOL even be evaluated this scan" —
+  // the same structural gate evaluatePillar3 checks per-candidate (session
+  // + elapsed-since-open), computed once here so the render layer can flag
+  // when QUALIFIED/NEAR MISS only reflect price+change+news, not because
+  // RVOL — the most selective pillar — was actually checked and passed.
+  // Deliberately does NOT account for the rarer per-candidate data-gap
+  // reasons inside evaluatePillar3 ("no volume data" / "no expected-volume
+  // baseline") — those vary by symbol and don't change what's honest to
+  // claim about the scan as a whole.
+  const rvolCheckable = session === 'OPEN' && elapsedMinutes >= RVOL_NOT_YET_AVAILABLE_MIN;
+
   let rvolInputBySymbol = {};
-  if (pillar12Survivors.length && session === 'OPEN' && elapsedMinutes >= RVOL_NOT_YET_AVAILABLE_MIN) {
+  if (pillar12Survivors.length && rvolCheckable) {
     const symbols = pillar12Survivors.map(c => c.symbol);
     // getPT()'s Date object is only safe for reading back hour/minute
     // (core/clock.js's established pattern) — its own .getTime() is NOT a
@@ -288,7 +308,7 @@ async function evaluateGateBatch(candidates, session) {
     now,
   }));
 
-  return { results, requests };
+  return { results, requests, rvolCheckable };
 }
 
 // 'premarket-gap' is the only strategy meaningful before the open —
@@ -307,7 +327,7 @@ function _selectStrategy(session) {
 async function diagnoseGateCost(session) {
   const t0 = Date.now();
   const universe = await getUniverse({ session, strategy: _selectStrategy(session) });
-  const { results, requests: gateRequests } = await evaluateGateBatch(universe, session);
+  const { results, requests: gateRequests, rvolCheckable } = await evaluateGateBatch(universe, session);
   const wallClockMs = Date.now() - t0;
 
   const qualified = results.filter(r => r.tier === 'QUALIFIED');
@@ -318,6 +338,7 @@ async function diagnoseGateCost(session) {
     universeCount: universe.length,
     qualifiedCount: qualified.length,
     nearMissCount: nearMiss.length,
+    rvolCheckable,
     gateRequests,
     wallClockMs,
     sampleQualified: qualified.slice(0, 5),

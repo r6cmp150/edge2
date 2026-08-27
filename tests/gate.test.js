@@ -208,6 +208,46 @@ async function testEvaluateGateBatchNeverCallsPerCandidate() {
   assert.ok(results.every(r => r.tier === 'QUALIFIED'), 'all three should qualify given the mocked inputs');
 }
 
+async function testRvolCheckableFlagReflectsSessionStructurally() {
+  // Live-check finding (2026-08-26): outside regular session, RVOL is
+  // not-checked for every candidate, so a QUALIFIED tier there only
+  // means "cleared price+change+news" — RVOL, the most selective
+  // pillar, was never actually consulted. classifyGate is correct to
+  // still call that QUALIFIED (not-checked never counts against a
+  // candidate); what needed fixing was the render layer's aggregate
+  // label overclaiming. This test locks down the flag renderTab reads
+  // to build that caveat, and confirms it doesn't burn a request when
+  // the answer is already known.
+  const gate = await loadGate();
+  const candidates = [{ symbol: 'A', price: 5, changePct: 20 }];
+
+  let calledOutsideSession = false;
+  global._fetchCumulativeMinuteVolume = async () => { calledOutsideSession = true; return { volumeBySymbol: {}, requests: 1 }; };
+  global._getSip30DayAvgVolume = async () => { calledOutsideSession = true; return { avgVolumes: {}, requests: 1 }; };
+  global.fetchNewsForTickers = async (symbols) => symbols.map(s => ({ symbols: [s], headline: 'x', created_at: new Date().toISOString() }));
+  global.getPT = () => { const d = new Date(); d.setHours(3, 0, 0, 0); return d; }; // irrelevant while session isn't OPEN
+
+  const closedResult = await gate.evaluateGateBatch(candidates, 'CLOSED');
+  console.log('rvolCheckable outside session:', closedResult.rvolCheckable, '| tier:', closedResult.results[0].tier);
+  assert.strictEqual(closedResult.rvolCheckable, false, 'RVOL is not checkable outside the regular session');
+  assert.strictEqual(calledOutsideSession, false, 'must not spend an RVOL request when RVOL is already known to be unavailable this session');
+  assert.strictEqual(closedResult.results[0].tier, 'QUALIFIED', 'classification is unchanged — the caveat is a display concern (see gate.js comment on classifyGate)');
+
+  // OPEN but inside the first 15 minutes — same structural gate evaluatePillar3 checks itself.
+  global.getPT = () => { const d = new Date(); d.setHours(6, 40, 0, 0); return d; }; // 10min after 6:30 open
+  const earlyResult = await gate.evaluateGateBatch(candidates, 'OPEN');
+  assert.strictEqual(earlyResult.rvolCheckable, false, 'first 15 minutes of OPEN must also read as not checkable');
+
+  // OPEN, past the first 15 minutes — genuinely checkable, and the fetchers actually run.
+  let calledInSession = false;
+  global._fetchCumulativeMinuteVolume = async (symbols) => { calledInSession = true; const v = {}; symbols.forEach(s => v[s] = 2_000_000); return { volumeBySymbol: v, requests: 1 }; };
+  global._getSip30DayAvgVolume = async (symbols) => { calledInSession = true; const v = {}; symbols.forEach(s => v[s] = 1_000_000); return { avgVolumes: v, requests: 1 }; };
+  global.getPT = () => { const d = new Date(); d.setHours(7, 30, 0, 0); return d; }; // 60min after open
+  const openResult = await gate.evaluateGateBatch(candidates, 'OPEN');
+  assert.strictEqual(openResult.rvolCheckable, true, 'past the first 15 minutes of OPEN, RVOL is genuinely checkable');
+  assert.strictEqual(calledInSession, true, 'RVOL fetchers must actually run once genuinely checkable');
+}
+
 async function testDiagnoseGateCostShapeAndStrategySelection() {
   const gate = await loadGate();
   let usedStrategy = null;
@@ -248,5 +288,6 @@ async function testDiagnoseGateCostShapeAndStrategySelection() {
   await run('gate: news is genuinely evaluated even when rvol fails (root-cause fix)', testGateEvaluatesNewsEvenWhenRvolFails);
   await run('gate: classify QUALIFIED / NEAR_MISS / neither', testClassifyQualifiedAndNearMiss);
   await run('gate: evaluateGateBatch fetches once for the whole survivor set, not per-candidate', testEvaluateGateBatchNeverCallsPerCandidate);
+  await run('gate: rvolCheckable flag reflects session structurally, without burning a request when already known', testRvolCheckableFlagReflectsSessionStructurally);
   await run('gate: diagnoseGateCost selects the right strategy per session and reports real shape', testDiagnoseGateCostShapeAndStrategySelection);
 })();
