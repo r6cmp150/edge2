@@ -13,12 +13,14 @@
 // Runs in the same global scope as app.js/core/*.js despite being a module
 // (only this file's own top-level declarations are module-scoped) — so it
 // references registerEngine/state/showGlobalErrorToast/getMarketStatus/
-// getUniverse/renderWarriorTab as ordinary globals. That's expected, not a
-// boundary leak: the rule this phase enforces is "nothing outside this
-// file reaches INTO Warrior code except through the registry," not
-// "Warrior code can't read the app's shared globals or call its shared
-// utilities" — Phase 2 already established calling showGlobalErrorToast
-// this way, and Phase 3 does the same for renderWarriorTab.
+// getUniverse/renderWarriorTab/_countRequests as ordinary globals. That's
+// expected, not a boundary leak: the rule this phase enforces is "nothing
+// outside this file reaches INTO Warrior code except through the
+// registry," not "Warrior code can't read the app's shared globals or call
+// its shared utilities" — Phase 2 already established calling
+// showGlobalErrorToast this way, and Phase 3 does the same for
+// renderWarriorTab and (below) core/universe.js's own request-counting
+// diagnostic helper, already relied on by diagnosePremarketGap there.
 import { evaluateGateBatch, _selectStrategy } from './gate.js';
 
 const WARRIOR_SCAN_INTERVAL_MS = 60 * 1000;
@@ -46,8 +48,32 @@ async function _scanTick() {
   try {
     const session = (typeof getMarketStatus === 'function') ? getMarketStatus().status : 'CLOSED';
     const strategy = _selectStrategy(session);
-    const universe = await getUniverse({ session, strategy });
-    const { results, rvolCheckable } = await evaluateGateBatch(universe, session);
+
+    // Wrapped with _countRequests (core/universe.js — already relied on by
+    // diagnosePremarketGap there) unconditionally, not just when logging
+    // below: negligible overhead (it just proxies the shared alpacaGet for
+    // the duration of one call), and keeping it unconditional means the
+    // logging line below can be deleted on its own later without also
+    // having to restore two different call shapes for getUniverse/
+    // evaluateGateBatch.
+    const { result: universe, count: universeRequests } = await _countRequests(() => getUniverse({ session, strategy }));
+    const { result: gateResult, count: gateRequests } = await _countRequests(() => evaluateGateBatch(universe, session));
+    const { results, rvolCheckable } = gateResult;
+
+    // PHASE-3-UNVERIFIED (2026-08-26): Phase 3 merged to main before two
+    // live checks could run during regular market hours — feed=sip in the
+    // network log, and this exact request count against the acceptance
+    // bullet's <30 target (the request count checked during the merge's
+    // own live-check pass excluded the RVOL fetches, since that check ran
+    // outside regular session — see docs/warrior-engine-spec-v2.md Phase 3
+    // acceptance). Logs every regular-session scan, not just the first, so
+    // it's hard to miss glancing at the console once. DELETE this whole
+    // block (and revert the two lines above to plain, unwrapped
+    // getUniverse/evaluateGateBatch calls) once both are confirmed live.
+    if (session === 'OPEN') {
+      console.log(`[PHASE-3-UNVERIFIED] regular-session scan — universe: ${universeRequests} req, gate: ${gateRequests} req, total: ${universeRequests + gateRequests} req (acceptance: <30 for a 50-symbol universe). Also confirm feed=sip in the network log for this scan's requests.`);
+    }
+
     _lastScanResults = { session, results, scannedAt: new Date(), rvolCheckable };
     if (typeof state !== 'undefined' && state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') {
       renderWarriorTab();

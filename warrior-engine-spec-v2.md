@@ -575,7 +575,9 @@ This serves debugging and the project's stated goal of understanding why somethi
 
 ### Phase 3 acceptance
 
-- [ ] All Warrior requests use `feed=sip`; verify in the network log
+**Merged to main 2026-08-26 with two items below marked OUTSTANDING, not verified.** Rationale for merging anyway: a wrong `feed` produces a visible 403 rather than silent bad data, and Phase 2's isolation boundary was verified live under three failure modes, so a broken Warrior tab can't affect EDGE. `engines/warrior/index.js`'s `_scanTick()` logs `[PHASE-3-UNVERIFIED]` to the console with a per-stage request count on every regular-session scan until both are confirmed and that logging block is deleted — see the comment right above it.
+
+- [ ] **OUTSTANDING** — All Warrior requests use `feed=sip`; verify in the network log during a regular-session scan
 - [ ] Gate short-circuits — a stock failing pillar 1 triggers no further calls
 - [ ] Near-miss tier renders with real values on a day with zero qualified candidates
 - [x] Every candidate card displays the halt-status-unknown line (there is no halted boolean — halt detection is deferred; see above) — live-checked 2026-08-26
@@ -584,8 +586,8 @@ This serves debugging and the project's stated goal of understanding why somethi
 - [ ] In the first 15 minutes of a session, RVOL reads "not yet available" rather than 0×
 - [ ] During pre-market, Pillar 3 renders `not-checked` — never 0×, never a divide-by-zero, never a number derived from a regular-session curve (live-checked 2026-08-26, but during CLOSED not PRE specifically — reads "not available outside regular session"; the PRE-specific case is still unverified live)
 - [ ] Pillar 4 passes only on articles under 24h old, verified against a candidate whose only news is 25–72h old — it must fail that pillar despite news being present in the fetched data
-- [ ] Full scan of a 50-symbol universe stays under 30 requests — live-checked 2026-08-26 at ~6 requests, but that run had RVOL skipped entirely (outside regular session); the number that matters (a regular-session scan including the 30-day average and cumulative minute-bar fetches) is still unmeasured
-- [ ] QUALIFIED and NEAR MISS section headers carry a caveat outside regular session (or the first 15 minutes of it) — RVOL is the most selective pillar, and a bare "QUALIFIED (10)" label outside the window where RVOL is checkable overclaims what the pillars underneath it actually support. Fixed 2026-08-26 (`evaluateGateBatch`'s `rvolCheckable` flag, read by `renderTab`); not yet visually confirmed live
+- [ ] **OUTSTANDING** — Full scan of a 50-symbol universe stays under 30 requests, measured during regular session with RVOL's 30-day-average and cumulative-minute-bar fetches actually running. Live-checked 2026-08-26 at ~6 requests, but that run had RVOL skipped entirely (outside regular session) — that number does not satisfy this bullet
+- [ ] QUALIFIED and NEAR MISS section headers carry a caveat outside regular session (or the first 15 minutes of it) — RVOL is the most selective pillar, and a bare "QUALIFIED (10)" label outside the window where RVOL is checkable overclaims what the pillars underneath it actually support. Fixed 2026-08-26 (`evaluateGateBatch`'s `rvolCheckable` flag, read by `renderTab`, unit-tested); not yet visually confirmed live
 
 ---
 
