@@ -65,21 +65,21 @@ function getMarketStatus() {
 
 function getCountdownToOpen() {
   const now = new Date();
+  const ptNow = getPT(now);
   for (let d = 0; d <= 10; d++) {
-    const check = new Date(now);
-    check.setDate(now.getDate() + d);
-    const ptCheck = getPT(check);
-    if (!isTradingDay(ptCheck)) continue;
-
-    const ptOpen = new Date(check);
-    const ptNow = getPT(now);
-    const ptOpenForToday = new Date(ptNow);
-    ptOpenForToday.setHours(6, 30, 0, 0);
-
+    // Built entirely from ptNow (getPT()-derived), never from `now`
+    // directly — advancing a real Date's .getDate() by d here would read
+    // the SYSTEM's local calendar day before any PT conversion happens,
+    // which can pick the wrong day near either timezone's midnight
+    // boundary on a machine not set to Pacific (a real bug, found and
+    // fixed 2026-08-26). Safe here because dayPT is only ever compared
+    // against another getPT()-derived value (ptNow, below) — see
+    // CLAUDE.md's rule on this exact pattern.
     const dayPT = new Date(ptNow);
     dayPT.setDate(ptNow.getDate() + d);
-    dayPT.setHours(6, 30, 0, 0);
+    if (!isTradingDay(dayPT)) continue;
 
+    dayPT.setHours(6, 30, 0, 0);
     const diffMs = dayPT - ptNow;
     if (diffMs > 0) {
       const mins = Math.floor(diffMs / 60000);
@@ -126,6 +126,17 @@ function isMarketHoursNow() {
 function hoursSincePreviousClose(now = new Date()) {
   const ptNow = getPT(now);
   for (let d = 1; d <= 10; d++) {
+    // .setDate()/.setHours() on dayPT/closePT below look identical to the
+    // getCountdownToOpen bug (a real Date's .getDate() read before PT
+    // conversion) — they're safe here for a different reason: both are
+    // derived from ptNow (getPT()-derived), never from a real Date
+    // directly, and the ONLY use of the result is a difference against
+    // ptNow (the return statement below). Same offset on both sides of a
+    // subtraction cancels, so the duration is correct even though neither
+    // dayPT nor closePT is individually a correct real instant. This stops
+    // being safe the moment either one is used as an absolute timestamp
+    // instead — .toISOString()'d, sent to an API, or persisted. See
+    // CLAUDE.md's rule on this exact pattern.
     const dayPT = new Date(ptNow);
     dayPT.setDate(ptNow.getDate() - d);
     if (!isTradingDay(dayPT)) continue;
@@ -137,6 +148,11 @@ function hoursSincePreviousClose(now = new Date()) {
 }
 
 function businessDaysBetween(startDateStr, endDateStr) {
+  // T12:00:00 (no zone -> parsed as local time), not T00:00:00, is
+  // deliberate: noon gives ~12h of slack on either side before a
+  // system/PT timezone offset could shift this onto the wrong calendar
+  // day. Not strictly PT-aware, but that slack covers any realistic
+  // machine timezone — not worth the complexity of a real PT anchor here.
   const start = new Date(startDateStr + 'T12:00:00');
   const end   = new Date(endDateStr   + 'T12:00:00');
   let count = 0;

@@ -498,17 +498,15 @@ Interpolate between points. Rejected alternative: fetching 30 days of minute bar
 
 **Pre-market: RVOL is `not-checked`.** The curve is defined over the 390-minute regular session, and cumulative volume since the open is zero before the open — so there is no valid denominator. Pre-market is also the primary Warrior workflow, which makes a silently wrong value here worse than anywhere else. Mark Pillar 3 `not-checked` for the whole pre-market session, same as the first-15-minutes rule, leaving price, change and news as the checkable pillars. That matches how the method actually screens pre-market (gap plus catalyst); a real pre-market RVOL needs a pre-market volume baseline this app doesn't have.
 
-**Phase 4 follow-up:** the replay harness can derive a pre-market volume baseline from history, at which point Pillar 3 becomes checkable pre-market too.
+**Edge case that must not compute to zero:** with a 15-minute SIP delay, cumulative volume in the first 15 minutes of the session is genuinely empty. Render "RVOL not yet available" and exclude the candidate from QUALIFIED — never a 0× that reads as a real measurement. The same applies after hours: the curve's domain is the regular session only.
+
+**Phase 4 follow-ups, both for the replay harness:** derive a real intraday curve from historical bars to replace the static table, and derive a pre-market volume baseline so Pillar 3 becomes checkable pre-market too. Cheap once the harness exists; not worth building before it.
 
 ### Pillar 4 — the gate window is 24h, the fetch window is 72h
 
 These are deliberately different and must not be conflated. Bug 4 widened the *fetch* to 72 hours so weekend catalysts survive to Monday. The *gate* asks whether there is a catalyst within **24 hours**.
 
 If Pillar 4 simply asks "did any news come back," a Friday-evening headline passes as a fresh catalyst on Monday afternoon. **Filter by article age explicitly inside the gate** — never inherit the fetch window as the criterion.
-
-**Follow-up for Phase 4:** the replay harness can derive a real curve from historical bars offline and replace this table with a measured one. Cheap once that exists; not worth building before it.
-
-**Edge case that must not compute to zero:** with a 15-minute SIP delay, cumulative volume in the first 15 minutes of the session is genuinely empty. Render "RVOL not yet available" and exclude the candidate from QUALIFIED — never a 0× that reads as a real measurement.
 
 ### Halt check — deferred, with the reason recorded
 
@@ -566,6 +564,12 @@ Render two sections:
 
 - **QUALIFIED** — every *checkable* pillar passes (see the section above; `not-checked` pillars are excluded from the count, never treated as passing)
 - **NEAR MISS** — exactly one checkable pillar fails, each pillar shown pass/fail/not-checked with its **actual value**
+
+**Short-circuit only on the free pillars.** Price and change come from universe data at zero request cost, so failing either is a plain disqualification — stop there. But for anything clearing those two, evaluate **both** Pillar 3 and Pillar 4 rather than halting at the first failure.
+
+Reason: short-circuiting past Pillar 3 leaves Pillar 4 `not-checked`, which makes "exactly one checkable pillar fails" vacuously true for *every* rejected candidate — a $25 stock would classify as NEAR MISS identically to a genuine 4-of-5. It also guts the tier's purpose, since a card reading "RVOL fail, news not-checked" only half-explains the rejection.
+
+The cost is bounded: that set is the same batch already receiving RVOL data, and news batches 10 symbols per request — a couple of extra calls. Cheap, and it makes a single failure genuinely single.
 
 This serves debugging and the project's stated goal of understanding why something is or isn't recommended.
 
@@ -887,6 +891,12 @@ Each engine produces its own stats block via `summarizeForReport(trades)` from t
 - **Push notifications** — the real fix for the latency problem in Phase 5, and now cheaper than it looks because the Supabase migration provides the server. Separate doc.
 - **Warrior Trading's paid scanner, chat room, and exact execution rules** — proprietary and paywalled; not replicable at any scope.
 - **Automated order placement** — unchanged from the v3 spec; the app never trades.
+
+---
+
+# Known open items (deferred, not yet scheduled)
+
+- **Chart X-axis labels render in browser-local time, not PT** (`app.js:3503-3510`). Every other timestamp in the app is PT; this is the one place that isn't. Found during the 2026-08-26 timezone sweep (prompted by two real getPT()/local-time-mixing bugs found the same day — see CLAUDE.md's rule on `.setHours()`/`.setDate()` on a `getPT()`-derived Date). Not fixed: it's a display-only inconsistency, not a wrong-answer bug like the other two, and no phase currently touches that code path. Revisit if a phase ends up in `app.js`'s charting code anyway, or if it's reported as confusing.
 
 ---
 

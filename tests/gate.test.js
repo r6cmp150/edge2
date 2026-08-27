@@ -141,8 +141,29 @@ async function testGateShortCircuitsOnPillar1Failure() {
   assert.strictEqual(result.pillars[3].status, 'not-checked'); // news — short-circuited
   // A price failure is a basic disqualification, not "close" — must NOT
   // read as NEAR_MISS just because short-circuiting left only one 'fail'
-  // in the array. See classifyGate's NEAR_MISS_ELIGIBLE_PILLAR_IDS.
+  // in the array. See classifyGate's stage-1/stage-2 comment.
   assert.strictEqual(result.tier, null, 'a price failure must never classify as NEAR_MISS, regardless of how many other pillars are merely not-checked');
+}
+
+async function testGateEvaluatesNewsEvenWhenRvolFails() {
+  // The actual root-cause fix: Pillar 3 failing must NOT short-circuit
+  // Pillar 4 — both are evaluated for real whenever price+change pass, so
+  // a near-miss card always shows a complete picture instead of "RVOL
+  // fail, news not-checked."
+  const gate = await loadGate();
+  const candidate = { symbol: 'ABCD', price: 5.00, changePct: 20 }; // clears price+change
+  const freshArticle = { headline: 'Breaking news', created_at: new Date().toISOString() };
+  const result = gate.evaluateGate(candidate, {
+    session: 'OPEN', elapsedMinutes: 60,
+    rvolInput: { todayVolume: 100, avgDailyVolume: 1_000_000 }, // deliberately far under 5x -> rvol fails
+    newsItemsForSymbol: [freshArticle],
+    now: new Date(),
+  });
+  console.log('rvol-fails result pillars:', result.pillars.map(p => `${p.id}:${p.status}`).join(' '));
+  assert.strictEqual(result.pillars[2].status, 'fail', 'rvol should genuinely fail given the inputs');
+  assert.strictEqual(result.pillars[3].status, 'pass', 'news must still be evaluated for real (and can pass) even though rvol failed — not skipped');
+  assert.strictEqual(result.pillars[3].value, 'Breaking news');
+  assert.strictEqual(result.tier, 'NEAR_MISS', 'exactly one substantive pillar (rvol) failed, with a complete picture — genuine near-miss');
 }
 
 async function testClassifyQualifiedAndNearMiss() {
@@ -155,6 +176,12 @@ async function testClassifyQualifiedAndNearMiss() {
   assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'fail', 'pass', 'not-checked'])), 'NEAR_MISS', 'rvol is the only failure -> NEAR_MISS');
   assert.strictEqual(gate.classifyGate(makeResult(['fail', 'not-checked', 'not-checked', 'not-checked', 'not-checked'])), null, 'price is the (short-circuited) only failure -> NOT NEAR_MISS, a basic disqualification');
   assert.strictEqual(gate.classifyGate(makeResult(['pass', 'fail', 'not-checked', 'not-checked', 'not-checked'])), null, 'change is the (short-circuited) only failure -> NOT NEAR_MISS');
+  // The precise gap a naive "just widen stage 2" fix would have missed:
+  // price fails but change happens to PASS (both are evaluated
+  // unconditionally, independent of each other) — "exactly one checkable
+  // pillar fails" is trivially true here too unless stage 1 is gated as a
+  // pair, not counted individually. Must still be null, not NEAR_MISS.
+  assert.strictEqual(gate.classifyGate(makeResult(['fail', 'pass', 'not-checked', 'not-checked', 'not-checked'])), null, 'price fails even though change independently passes -> still NOT NEAR_MISS, not a vacuous 1-fail count');
   assert.strictEqual(gate.classifyGate(makeResult(['pass', 'fail', 'fail', 'pass', 'not-checked'])), null, 'two failures -> neither tier (defensive — should not occur given short-circuiting, but classify must not misclassify it if it ever did)');
   assert.strictEqual(gate.classifyGate(makeResult(['not-checked', 'not-checked', 'not-checked', 'not-checked', 'not-checked'])), null, 'nothing checkable at all -> neither tier (not a vacuous QUALIFIED)');
 }
@@ -218,6 +245,7 @@ async function testDiagnoseGateCostShapeAndStrategySelection() {
   await run('gate: Pillar 4 — 25-72h-old news fails the 24h gate despite being fetched', testPillar4GateWindowNarrowerThanFetchWindow);
   await run('gate: float pillar never stubbed as passing', testFloatNeverStubbedAsPassing);
   await run('gate: short-circuits on Pillar 1 failure without consulting rvol/news inputs', testGateShortCircuitsOnPillar1Failure);
+  await run('gate: news is genuinely evaluated even when rvol fails (root-cause fix)', testGateEvaluatesNewsEvenWhenRvolFails);
   await run('gate: classify QUALIFIED / NEAR_MISS / neither', testClassifyQualifiedAndNearMiss);
   await run('gate: evaluateGateBatch fetches once for the whole survivor set, not per-candidate', testEvaluateGateBatchNeverCallsPerCandidate);
   await run('gate: diagnoseGateCost selects the right strategy per session and reports real shape', testDiagnoseGateCostShapeAndStrategySelection);

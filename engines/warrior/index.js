@@ -122,6 +122,17 @@ function _stopScanInterval() {
   }
 }
 
+// Matches app.js's own buyTime/sellTime convention (getPT() then read
+// hour/minute) rather than toLocaleTimeString(), which defaults to the
+// viewer's browser-local time — inconsistent with every other timestamp
+// this app shows, all of which are PT. Found and fixed same-session
+// (2026-08-26): this file's own first draft used toLocaleTimeString()
+// with no options at all.
+function _formatPTTime(date) {
+  const pt = getPT(date);
+  return `${String(pt.getHours()).padStart(2, '0')}:${String(pt.getMinutes()).padStart(2, '0')}`;
+}
+
 function _pillarValueDisplay(pillar) {
   if (pillar.status === 'not-checked') return pillar.reason || 'not checked';
   if (pillar.id === 'rvol' && typeof pillar.value === 'number') {
@@ -170,7 +181,7 @@ function renderTab() {
   return `<div class="tab-header">
     <h1 class="tab-title">WARRIOR</h1>
   </div>
-  <div class="tab-subtitle">Session: ${session} · ${results.length} scanned · last scan ${scannedAt.toLocaleTimeString()}</div>
+  <div class="tab-subtitle">Session: ${session} · ${results.length} scanned · last scan ${_formatPTTime(scannedAt)} PT</div>
   <div class="section-label">QUALIFIED (${qualified.length})</div>
   ${qualified.length ? qualified.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>'}
   <div class="section-label mt12">NEAR MISS (${nearMiss.length})</div>

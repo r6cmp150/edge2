@@ -151,49 +151,61 @@ function _elapsedSessionMinutes() {
   return tMin - 390;
 }
 
-// QUALIFIED = every checkable pillar passes (not-checked pillars excluded
-// from the count, never treated as passing) — deliberately NOT
-// passCount===5, which assumes all 5 pillars are always evaluable and
-// would keep QUALIFIED permanently empty before Phase 6.
+// QUALIFIED / NEAR MISS are defined directly in terms of the gate's own
+// two-stage structure, not a generic "count fails across all 5 pillars"
+// rule — a plain fail-count turned out to have a second vacuous case
+// beyond the one the short-circuit-location fix addresses.
 //
-// NEAR MISS = exactly one checkable pillar fails, AND that failure is on
-// Pillar 3 (rvol) or Pillar 4 (news) specifically — not price or change.
-// Short-circuiting (evaluateGate) guarantees the pillars array can never
-// contain more than one 'fail' at all: everything after the first failure
-// is marked not-checked, not fail. That means a plain "exactly one
-// checkable pillar fails" count can't tell a price failure (wrong
-// category entirely — $25 isn't close to $1-$20) apart from a news
-// failure (right price, right change, right volume, just no fresh
-// catalyst) — both trivially satisfy "exactly one fails." Only the second
-// is what "near miss" is supposed to mean; the first is a basic
-// disqualification that happens to have stopped early.
-const NEAR_MISS_ELIGIBLE_PILLAR_IDS = new Set(['rvol', 'news']);
-
+// Stage 1 (price, change): both are free and both are always evaluated for
+// real, independently of each other — pillar2 is never skipped just
+// because pillar1 failed. That means a candidate failing price alone,
+// with change happening to pass, still has "exactly one checkable pillar
+// fails" trivially true under a plain fail-count, the same vacuous shape
+// as the original bug — just shifted from "RVOL fails, news skipped" to
+// "price fails, change happens to pass." Per the spec: failing EITHER
+// free pillar is a plain disqualification, full stop — never NEAR_MISS,
+// regardless of the other one's outcome. So stage 1 is a gate, not a vote:
+// both must pass before stage 2 is even considered.
+//
+// Stage 2 (rvol, news): evaluated together, never one short-circuiting the
+// other (see evaluateGate) — this is the fix for the original bug.
+// Structurally not-checked entries (pre-market RVOL, first-15-min RVOL)
+// are excluded from the count, same "not-checked is never treated as a
+// pass or counted against a candidate" rule as float. QUALIFIED requires
+// every stage-2 pillar that WAS checkable to pass; NEAR_MISS requires
+// exactly one of them to fail.
 function classifyGate(gateResult) {
-  const checkable = gateResult.pillars.filter(p => p.status !== 'not-checked');
-  const failed = checkable.filter(p => p.status === 'fail');
-  if (failed.length === 0 && checkable.length > 0) return 'QUALIFIED';
-  if (failed.length === 1 && NEAR_MISS_ELIGIBLE_PILLAR_IDS.has(failed[0].id)) return 'NEAR_MISS';
+  const byId = {};
+  gateResult.pillars.forEach(p => { byId[p.id] = p; });
+
+  const freePillarsPass = byId.price.status === 'pass' && byId.change.status === 'pass';
+  if (!freePillarsPass) return null; // plain disqualification — see header comment; never NEAR_MISS no matter which one failed
+
+  const substantive = [byId.rvol, byId.news].filter(p => p.status !== 'not-checked');
+  const substantiveFailed = substantive.filter(p => p.status === 'fail');
+  if (substantiveFailed.length === 0 && substantive.length > 0) return 'QUALIFIED';
+  if (substantiveFailed.length === 1) return 'NEAR_MISS';
   return null;
 }
 
 // Evaluates the gate for one candidate, given already-batch-fetched
 // rvol/news inputs (never fetched per-candidate — see evaluateGateBatch).
+// Short-circuit is scoped to price/change ONLY — the two free pillars, at
+// zero request cost, where failing either is a plain disqualification.
+// Anything clearing both gets Pillar 3 AND Pillar 4 evaluated
+// unconditionally, regardless of whether Pillar 3 passed — see
+// classifyGate's comment for why halting between them broke the near-miss
+// tier's whole purpose.
 function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, newsItemsForSymbol, now }) {
   const pillar1 = evaluatePillar1(candidate);
   const pillar2 = evaluatePillar2(candidate);
-  // Short-circuit: pillars evaluated past a failure still appear in the
-  // output (the spec's output shape always shows all pillars), but as
-  // 'not-checked' — no request was spent computing them, so 'fail' would
-  // be a fabricated result the same way a stubbed pass would be.
-  const skip = (id, threshold) => _pillar(id, 'not-checked', null, threshold, { reason: 'gate short-circuited' });
+  const skip = (id, threshold) => _pillar(id, 'not-checked', null, threshold, { reason: 'gate short-circuited (price/change failed)' });
 
-  const pillar3 = pillar1.status === 'pass' && pillar2.status === 'pass'
+  const clearedFreePillars = pillar1.status === 'pass' && pillar2.status === 'pass';
+  const pillar3 = clearedFreePillars
     ? evaluatePillar3(candidate, session, elapsedMinutes, rvolInput)
     : skip('rvol', `≥${RVOL_MIN}×`);
-
-  const pillar3Blocks = pillar3.status === 'fail'; // 'not-checked' does NOT block pillar 4 — only a real fail short-circuits
-  const pillar4 = (pillar1.status === 'pass' && pillar2.status === 'pass' && !pillar3Blocks)
+  const pillar4 = clearedFreePillars
     ? evaluatePillar4(candidate, newsItemsForSymbol, now)
     : skip('news', `<${NEWS_MAX_AGE_HOURS}h`);
 
@@ -211,10 +223,12 @@ function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, newsItems
 }
 
 // Batch orchestration: filters by the free pillars first (no request
-// spent), then fetches RVOL/news ONLY for survivors, in batches — never
-// per-candidate loops. Returns { results, requests } so callers (and
-// diagnoseGateCost) can report real cost, same visibility principle as
-// every other diagnostic this session.
+// spent), then fetches BOTH RVOL and news for that same survivor set, in
+// batches — never per-candidate loops, and never narrowing the news batch
+// by Pillar 3's outcome (that's what made near-miss cards incomplete
+// before — see classifyGate's comment). Returns { results, requests } so
+// callers (and diagnoseGateCost) can report real cost, same visibility
+// principle as every other diagnostic this session.
 async function evaluateGateBatch(candidates, session) {
   const now = new Date();
   const elapsedMinutes = _elapsedSessionMinutes();
@@ -251,20 +265,16 @@ async function evaluateGateBatch(candidates, session) {
     }
   }
 
-  // Pillar 3 needs to be evaluated before batching news, since a real
-  // pillar-3 FAIL (not not-checked) short-circuits pillar 4 the same way
-  // pillars 1-2 do.
-  const pillar3ResultBySymbol = {};
-  const pillar34Survivors = [];
-  for (const c of pillar12Survivors) {
-    const p3 = evaluatePillar3(c, session, elapsedMinutes, rvolInputBySymbol[c.symbol]);
-    pillar3ResultBySymbol[c.symbol] = p3;
-    if (p3.status !== 'fail') pillar34Survivors.push(c);
-  }
-
+  // News is batched for the SAME survivor set as RVOL (pillar12Survivors),
+  // not a narrower set filtered by Pillar 3's outcome — Pillar 3 no longer
+  // gates Pillar 4 (see evaluateGate/classifyGate's comments). Could run
+  // concurrently with the RVOL fetch above rather than after it, but
+  // keeping it sequential here costs nothing extra in requests and keeps
+  // this function easier to read; revisit if wall-clock on a real scan
+  // shows it matters.
   let newsBySymbol = {};
-  if (pillar34Survivors.length) {
-    const symbols = pillar34Survivors.map(c => c.symbol);
+  if (pillar12Survivors.length) {
+    const symbols = pillar12Survivors.map(c => c.symbol);
     const newsItems = await fetchNewsForTickers(symbols);
     requests += Math.ceil(symbols.length / 10); // fetchNewsForTickers's own NEWS_CHUNK_SIZE; exact count also visible via state.newsTruncatedSymbols if pagination capped
     newsBySymbol = _groupNewsBySymbol(newsItems);
