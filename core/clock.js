@@ -22,6 +22,40 @@ function ptDateStr(pt) {
   return pt.toLocaleDateString('en-CA'); // YYYY-MM-DD
 }
 
+// Converts a PT wall-clock date+time into the real absolute instant it
+// represents — correct across the PDT/PST transition and, crucially,
+// independent of the running machine's own system timezone. This is NOT
+// the getPT() pattern (a Date whose local fields read as PT but whose own
+// instant is off by the system-vs-PT offset) — that shape is safe only
+// for a same-frame difference (see CLAUDE.md's rule) and this result gets
+// sent to Alpaca as a bars request's start/end, an absolute instant
+// leaving that coordinate system. Sidesteps the whole class of bug by
+// never mutating a Date's local fields at all: formats a UTC guess back
+// through Intl with an explicit America/Los_Angeles zone, measures how
+// far off that reading is from the wanted wall-clock time, and corrects.
+// Converges in one correction for any time not within a few hours of the
+// DST transition itself (2am PT) — never true for replay's own callers
+// (pre-market open, regular close) — confirmed by a second, idempotent
+// pass rather than assumed.
+function ptWallClockToInstant(dateStr, hour, minute) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  let guess = new Date(Date.UTC(y, m - 1, d, hour, minute, 0));
+  const wantedUTC = Date.UTC(y, m - 1, d, hour, minute, 0);
+  for (let i = 0; i < 2; i++) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles', hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    }).formatToParts(guess).reduce((o, p) => { o[p.type] = p.value; return o; }, {});
+    // hour12:false renders midnight as '24', not '00' — normalize.
+    const shownHour = parts.hour === '24' ? 0 : Number(parts.hour);
+    const shownUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), shownHour, Number(parts.minute), 0);
+    const diffMs = wantedUTC - shownUTC;
+    if (diffMs === 0) break;
+    guess = new Date(guess.getTime() + diffMs);
+  }
+  return guess;
+}
+
 function isTradingDay(pt) {
   const dow = pt.getDay();
   if (dow === 0 || dow === 6) return false;

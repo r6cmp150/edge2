@@ -29,14 +29,21 @@ const exposeCode = `
   global.__getMarketStatus = getMarketStatus;
   global.__getCountdownToOpen = getCountdownToOpen;
   global.__hoursSincePreviousClose = hoursSincePreviousClose;
+  global.__ptWallClockToInstant = ptWallClockToInstant;
 `;
 // eslint-disable-next-line no-eval
 eval(src + '\n' + exposeCode);
 
+// ptWallClockToInstant doesn't depend on FIXED_EPOCH_MS at all (it takes
+// its own dateStr/hour/minute args) — always reported, regardless of
+// argv, so tests/pt-wall-clock.test.js can share this same runner rather
+// than needing its own.
 const result = {
   tz: process.env.TZ || '(system default)',
   marketStatus: global.__getMarketStatus(),
   countdown: global.__getCountdownToOpen(),
   hoursSincePreviousClose: global.__hoursSincePreviousClose(new FakeDate()),
+  ptWallClock_pdt: global.__ptWallClockToInstant('2026-07-15', 6, 30).toISOString(),
+  ptWallClock_pst: global.__ptWallClockToInstant('2026-01-15', 6, 30).toISOString(),
 };
 process.stdout.write(JSON.stringify(result));

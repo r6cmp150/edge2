@@ -1,5 +1,5 @@
 // engines/warrior/index.js — Warrior engine. docs/warrior-engine-spec-v2.md
-// Phase 2 (scaffold) + Phase 3 (5 Pillars gate).
+// Phase 2 (scaffold) + Phase 3 (5 Pillars gate) + Phase 4 (replay harness).
 //
 // Real ES module (uses `export`/`import`) — loaded ONLY via dynamic
 // import() from app.js's boot sequence, never a <script> tag, never
@@ -22,6 +22,7 @@
 // renderWarriorTab and (below) core/universe.js's own request-counting
 // diagnostic helper, already relied on by diagnosePremarketGap there.
 import { evaluateGateBatch, _selectStrategy } from './gate.js';
+import { runReplayForSymbols } from './replay.js';
 
 const WARRIOR_SCAN_INTERVAL_MS = 60 * 1000;
 let _scanIntervalId = null;
@@ -191,7 +192,91 @@ function _renderCandidateCard(gateResult) {
   </div>`;
 }
 
+// ── Phase 4: replay harness UI ──────────────────────────────────────────
+// Dev-only — gated on state.settings.developerTools, a generic toggle
+// (app.js/Settings; no Warrior-specific strings there, CLAUDE.md's rule).
+// Warrior renders its own panel and wires its own handler; shell never
+// stores a reference to any of this (register() below just assigns a
+// plain global function, same connection mechanism every onclick in this
+// app already uses — not a boundary exception).
+let _lastReplayResult = null; // { dateStr, symbols, resultsBySymbol, requests } | null
+let _replayInFlight = false;
+
+async function _runReplayFromUI() {
+  if (_replayInFlight) return;
+  const dateEl = (typeof document !== 'undefined') ? document.getElementById('warrior-replay-date') : null;
+  const symbolsEl = (typeof document !== 'undefined') ? document.getElementById('warrior-replay-symbols') : null;
+  const dateStr = dateEl?.value;
+  const symbols = (symbolsEl?.value || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  if (!dateStr || !symbols.length) {
+    if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast('[Warrior] Replay needs a date and at least one symbol.');
+    return;
+  }
+  _replayInFlight = true;
+  if (typeof renderWarriorTab === 'function') renderWarriorTab();
+  try {
+    const { resultsBySymbol, requests } = await runReplayForSymbols(symbols, dateStr);
+    _lastReplayResult = { dateStr, symbols, resultsBySymbol, requests };
+  } catch (err) {
+    if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast(`[Warrior] Replay failed: ${err.message}`);
+  } finally {
+    _replayInFlight = false;
+    if (typeof renderWarriorTab === 'function') renderWarriorTab();
+  }
+}
+
+function _fmtHorizon(forwardReturns, key) {
+  const f = forwardReturns[key];
+  if (!f || f.return == null) return '—';
+  return `${f.return.toFixed(1)}% (mfe ${f.mfe.toFixed(1)}% / mae ${f.mae.toFixed(1)}%)`;
+}
+
+function _renderTriggerRow(trig) {
+  const t = new Date(trig.triggerTime);
+  const timeStr = isNaN(t.getTime()) ? trig.triggerTime : t.toISOString();
+  return `<div class="settings-hint mono">
+    ${trig.setupId} @ ${timeStr} $${trig.triggerPrice.toFixed(2)} —
+    5m: ${_fmtHorizon(trig.forwardReturns, '5m')} |
+    15m: ${_fmtHorizon(trig.forwardReturns, '15m')} |
+    30m: ${_fmtHorizon(trig.forwardReturns, '30m')} |
+    close: ${_fmtHorizon(trig.forwardReturns, 'close')}
+  </div>`;
+}
+
+function _renderReplaySymbolResult(symbol, result) {
+  if (!result.triggers.length) {
+    return `<div class="settings-row"><span class="mono">${symbol}</span><span class="settings-hint muted">${result.barCount} bars, no triggers</span></div>`;
+  }
+  return `<div class="settings-row" style="flex-direction:column;align-items:stretch;">
+    <div class="mono">${symbol} — ${result.triggers.length} trigger(s), ${result.barCount} bars</div>
+    ${result.triggers.map(_renderTriggerRow).join('')}
+  </div>`;
+}
+
+function renderReplayPanel() {
+  if (!(typeof state !== 'undefined' && state.settings && state.settings.developerTools)) return '';
+  const body = _lastReplayResult
+    ? Object.entries(_lastReplayResult.resultsBySymbol).map(([sym, r]) => _renderReplaySymbolResult(sym, r)).join('')
+    : '<div class="settings-row"><span class="settings-hint muted">No replay run yet.</span></div>';
+  return `<div class="settings-section mt12">
+    <div class="settings-section-title">Replay Harness (dev only)</div>
+    <div class="settings-row">
+      <span class="settings-hint">Phase 4 — replays a symbol's historical minute bars bar-by-bar against an example classifier (price move from window open ≥10%). Not a real Warrior setup — see docs/warrior-engine-spec-v2.md Phase 4.</span>
+    </div>
+    <div class="settings-row">
+      <input type="date" id="warrior-replay-date" class="settings-input" style="max-width:160px;">
+      <input type="text" id="warrior-replay-symbols" class="settings-input" placeholder="AAPL, TSLA">
+    </div>
+    <div class="settings-row">
+      <button class="btn btn-primary btn-sm" onclick="warriorRunReplay()" ${_replayInFlight ? 'disabled' : ''}>${_replayInFlight ? 'Running…' : 'Run Replay'}</button>
+      ${_lastReplayResult ? `<span class="settings-hint">${_lastReplayResult.requests} request(s) for ${_lastReplayResult.dateStr}</span>` : ''}
+    </div>
+    ${body}
+  </div>`;
+}
+
 function renderTab() {
+  const replayPanel = renderReplayPanel();
   if (!_lastScanResults) {
     return `<div class="tab-header">
       <h1 class="tab-title">WARRIOR</h1>
@@ -199,7 +284,8 @@ function renderTab() {
     <div class="empty-state">
       <div class="empty-icon">🥋</div>
       <p>No scan yet — tap ↻ Refresh to run one.</p>
-    </div>`;
+    </div>
+    ${replayPanel}`;
   }
   const { session, results, scannedAt, rvolCheckable } = _lastScanResults;
   const qualified = results.filter(r => r.tier === 'QUALIFIED');
@@ -220,7 +306,8 @@ function renderTab() {
   <div class="section-label">QUALIFIED (${qualified.length})${rvolCaveat}</div>
   ${qualified.length ? qualified.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>'}
   <div class="section-label mt12">NEAR MISS (${nearMiss.length})${rvolCaveat}</div>
-  ${nearMiss.length ? nearMiss.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No near-miss candidates this scan.</p></div>'}`;
+  ${nearMiss.length ? nearMiss.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No near-miss candidates this scan.</p></div>'}
+  ${replayPanel}`;
 }
 
 function renderBadge(position) {
@@ -256,6 +343,11 @@ export function register() {
     summarizeForReport,
     rescan,
   });
+  // Warrior wires its own dev-panel handler here, as a plain global —
+  // the exact same connection mechanism every onclick in this app already
+  // uses, not a registry exception. Shell/app.js never references this
+  // name; only the HTML this file itself renders does.
+  if (typeof window !== 'undefined') window.warriorRunReplay = _runReplayFromUI;
   _startScanInterval();
 }
 

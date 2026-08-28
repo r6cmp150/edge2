@@ -863,7 +863,7 @@ function loadState() {
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
-    forcePreMarketMode: false, disableMacroOverlay: false
+    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false
   }, state.settings);
   // API keys live in their own localStorage key, edge_apiKeys — authoritative
   // once present. If it doesn't exist yet but the legacy edge_settings blob
@@ -6288,6 +6288,16 @@ function renderSettingsTab() {
           <span class="toggle-slider"></span>
         </label>
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Developer tools</div>
+          <div class="settings-hint">Reveals developer-only panels on individual tabs (currently: Warrior's Phase 4 replay harness). Not a user-facing feature.</div>
+        </div>
+        <label class="toggle-wrap">
+          <input type="checkbox" id="set-developer-tools" ${s.developerTools?'checked':''} onchange="toggleDeveloperTools(this.checked)">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
     </div>
 
     <div class="settings-section mt12">
@@ -6770,6 +6780,23 @@ async function toggleForcePreMarketMode(checked) {
     return;
   }
   updateMarketBanner();
+}
+
+// Generic toggle — deliberately carries no engine-specific content here
+// (CLAUDE.md's rule: no engine-specific setup names in shell/). What it
+// reveals (currently: Warrior's Phase 4 replay panel) is rendered by that
+// engine's own renderTab(), gated on this same flag — this function only
+// owns the flag and its persistence.
+async function toggleDeveloperTools(checked) {
+  state.settings.developerTools = checked;
+  try {
+    await saveSettingsToSupabase(state.settings);
+  } catch(e) {
+    state.settings.developerTools = !checked;
+    alert('Could not save setting to Supabase: ' + e.message);
+  }
+  renderSettingsTab();
+  if (state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') renderWarriorTab();
 }
 
 async function setMinVol(val) {
