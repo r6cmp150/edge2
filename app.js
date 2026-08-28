@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.5';
+const VERSION = 'v2.9.6';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
@@ -5047,6 +5047,12 @@ function mapSupabaseTradeToSoldShape(row) {
     : null;
   return {
     id: String(row.id),
+    // Same field writeTradeToSupabase sets after a local sell's mirror
+    // write succeeds (app.js:4641) — populating it here too means every
+    // Supabase-sourced record can be matched precisely by
+    // writeSellTimingToSupabase's primary path (trade.supabaseId) instead
+    // of always falling back to its ticker+buy_date+sell_date match.
+    supabaseId: row.id,
     ticker: row.ticker,
     company: row.company || row.ticker,
     shares: row.shares,
@@ -5117,6 +5123,34 @@ function mapSupabaseTradeToSoldShape(row) {
     fullUreFactorsAtSale: row.full_ure_factors_at_sale || [],
     fullPeakRiskFactorsAtSale: row.full_peak_risk_factors_at_sale || null,
   };
+}
+
+// Sold's Supabase migration, deliberately NOT the same hard-blocking shape
+// as loadPortfolioAndSettingsFromSupabase(): Portfolio/Settings failing to
+// load blocks the whole app on purpose (you can't safely trade without
+// knowing current holdings), but Sold is historical record-keeping — a
+// Supabase hiccup here shouldn't take down Signals/Portfolio too. Called
+// separately in runDataLoadAndInit(), its own try/catch: on success,
+// state.sold becomes Supabase's copy (the synced source of truth across
+// devices — this is the fix for the phone/computer divergence found
+// 2026-08-27) and gets written back to localStorage as a passive offline
+// cache, same key loadState() already reads on boot; on failure,
+// state.sold is simply left as whatever loadState() already populated
+// from that cache, with a non-blocking toast rather than a blocking
+// error screen. Unlike Portfolio's migration, edge_sold is never wiped —
+// it's a cache, not dead legacy storage, and self-heals to match Supabase
+// every time this succeeds.
+async function loadSoldFromSupabase() {
+  const { data, error } = await supabaseClient.from('trades').select('*').order('sell_date', { ascending: false });
+  if (error) throw error;
+  state.sold = (data || []).map(mapSupabaseTradeToSoldShape);
+  persist('sold');
+  // This runs after first paint (see runDataLoadAndInit), so if the user
+  // is already sitting on the Sold tab (or switches to it before this
+  // resolves) they'd otherwise see the stale localStorage copy until a
+  // manual re-navigation — same live-refresh courtesy Warrior's own scan
+  // tick already extends to whichever tab is currently open.
+  if (state.activeTab === 'sold' && typeof renderSoldTab === 'function') renderSoldTab();
 }
 
 // Races a promise against a timeout so a hung Supabase query can never hang
@@ -7426,6 +7460,18 @@ async function runDataLoadAndInit() {
   // Same reasoning: Warrior loading (or failing to load) must never delay
   // EDGE's first render. docs/warrior-engine-spec-v2.md Phase 2.
   loadWarriorEngine();
+  // Fire-and-forget like Warrior above, for the same reason (must never
+  // delay first paint) — but unlike Warrior, failure here is silent to
+  // the user beyond a toast, not a whole-tab degraded state, since
+  // state.sold already has loadState()'s localStorage copy to fall back
+  // to. See loadSoldFromSupabase()'s own header for why this isn't part
+  // of the blocking loadPortfolioAndSettingsFromSupabase() step above.
+  loadSoldFromSupabase().catch(e => {
+    console.error('Sold history sync from Supabase failed:', e.message);
+    if (typeof showGlobalErrorToast === 'function') {
+      showGlobalErrorToast('Could not sync Sold history from the database — showing the last locally cached copy.');
+    }
+  });
 }
 
 // Dynamic import inside try/catch, per CLAUDE.md/Phase 2 — a syntax error
