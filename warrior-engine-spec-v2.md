@@ -597,12 +597,18 @@ This serves debugging and the project's stated goal of understanding why somethi
 
 Historical minute bars are already free on the Basic plan. The harness is cheap and it decouples engine development from live market hours.
 
+**Phase 5 doesn't exist yet, so Phase 4 has nothing real to classify against.** Resolved 2026-08-27: the harness classifier is a plain injectable function (`(barsSoFar) -> trigger | null`), and Phase 4 ships one self-contained example — price change from the session's open crossing Pillar 2's real `CHANGE_MIN_PCT` (10%) threshold, reusing that constant from `gate.js` rather than inventing a new one. It needs no external baseline (unlike an RVOL-based trigger, which would need a 30-day trailing average *as of a past date* — the existing `_getSip30DayAvgVolume` only computes that relative to *today* and would need new date-parameterized logic; building that inside the phase meant to prove the harness works means a bad replay result couldn't be attributed to the harness or the fetcher). Real Phase 5 setups replace the example without changing the harness itself.
+
 ### What it does
 
 1. Pick a date and a symbol list (or reuse a stored universe snapshot)
-2. Fetch that day's 1-minute SIP bars
+2. Fetch that day's 1-minute SIP bars, **including pre-market** — the fetch window is a parameter, defaulting to the extended session starting 4:00am ET (1:00am PT — the same boundary `core/clock.js`'s `isPreMarketHours` already uses) through the regular session close (1:00pm PT). Gap and Go is defined against the pre-market high and triggers on the first post-open bar clearing it; scoping the fetch to the regular session only makes that setup unreplayable, and it's the one the pre-market workflow depends on.
 3. Replay them forward, bar by bar, feeding each prefix to the setup classifier as if it were live
-4. Record every trigger: setup id, trigger time, trigger price, and the forward return at +5m / +15m / +30m / close
+4. Record every trigger: setup id, trigger time, trigger price, and for each horizon (+5m / +15m / +30m / close): the close-based forward return, **plus max favorable and max adverse excursion within that horizon** (the best/worst price touched between the trigger and the horizon, not just the price AT the horizon). Same bars already fetched, no extra request. Ross exits at roughly 2:1 within minutes — a setup that runs +20% and closes flat is a good trade with a normal exit, not a failure, and a close-only return would read it as one. Fixed-horizon close returns alone systematically undervalue the setups this engine exists to find.
+
+### Fetch-window chunk size — proof, not estimate
+
+The default window (4:00am ET to regular close) is 720 minutes. Alpaca's single-page ceiling is 10,000 bars. `floor(10000 / 720) = 13` — 13 symbols/chunk stays single-page (13×720=9,360 ≤ 10,000); 14 does not (14×720=10,080 > 10,000). `REPLAY_CHUNK_SIZE = 13` is proven single-page **for the default window specifically**. Because the window is a caller-supplied parameter, not a compile-time constant, a wider custom window can't carry the same static proof — correctness there falls back to `_fetchRawMinuteBars`'s existing `next_page_token`-following (already tested, `pagination-merge.test.js`), at the cost of extra round trips. Both properties hold: the default case is single-page and cheap; any wider case is still correct, just not free.
 
 ### Why it earns its place
 
@@ -612,14 +618,22 @@ Historical minute bars are already free on the Basic plan. The harness is cheap 
 
 ### Access
 
-Hide behind a Settings toggle (`Developer tools`). It is not a user-facing feature.
+Hide behind a Settings toggle (`Developer tools`). It is not a user-facing feature. The toggle itself is generic (no Warrior-specific strings, per CLAUDE.md's engine-name rule for `shell/`); the replay panel it reveals is rendered by Warrior's own `renderTab()`, inside the Warrior tab.
+
+### No-lookahead — two negative controls, not one positive test
+
+A lookahead bug never errors and makes every setup look excellent — it's the single easiest mistake to make here, and a passing "the classifier only saw bars up to index i" test can be vacuously true if the classifier never happened to check anything sensitive to it. Two controls, both persisted in `tests/`:
+
+1. **Structural control.** A classifier triggers on a sentinel value planted in one specific future bar, using only its own argument. Run through the real replay loop: must trigger exactly at that bar's index. Run the *same classifier* through a deliberately broken stand-in loop that hands it the full array instead of `bars.slice(0, i+1)`: must trigger at index 0. Proves the real loop's truncation is genuine, not a no-op — the same shape as this session's queue-pacing and timezone negative controls.
+2. **Anchoring control.** A classifier that closes over the full bar array from outside the harness — a real, plausible authoring mistake no argument-slicing can prevent, since JS can't sandbox a closure — and self-reports a fabricated future price. The harness never trusts a classifier's self-reported price/time; it derives both strictly from `barsSoFar`'s own last element. Asserts the recorded trigger's price matches the actual current bar, not the cheat's claim. This is a mitigation, not a guarantee: it stops a cheating classifier's *trigger record* from leaking future data, not the cheat's decision to trigger early in the first place. Document it as exactly that — "the harness derives price and time from `barsSoFar` and never trusts the classifier's self-report" is true and useful; "closure-based cheating is prevented" would not be.
 
 ### Phase 4 acceptance
 
-- [ ] Replaying a known past runner produces at least one trigger at a plausible time
-- [ ] Replay is deterministic — same inputs, same triggers
-- [ ] Output includes forward returns at each horizon
-- [ ] The classifier receives only the bars up to the current replay index — no lookahead. Test this explicitly; a lookahead bug makes every result meaningless and it is the single easiest mistake to make here.
+- [x] Replaying a known past runner produces at least one trigger at a plausible time. Live-checked 2026-08-27: HVII 2026-08-24 — 6 triggers across 192 bars, timestamps spread through the session (09:04–13:40 UTC, none at bar 0 — the no-lookahead fingerprint holds live too), forward returns/MFE/MAE populated. AMIX's end-of-window trigger correctly returned nulls instead of a fabricated horizon; DAAQ (5 bars, thin trading) correctly produced zero triggers. Also surfaced a real finding, carried into Phase 5 below (re-arm rule) rather than fixed here — the harness itself already showed its value: every HVII trigger's MFE (~0.4%) against its MAE (-10.4%) and close (-9.0%) shows a bad entry invisible from live scanning alone.
+- [x] Replay is deterministic — same inputs, same triggers. Unit-tested (`tests/replay.test.js`).
+- [x] Output includes forward returns, MFE, and MAE at each horizon. Unit-tested against hand-computed values, including the "+20% then closes flat" shape MFE exists to catch, and the null-when-unreachable case (never a fabricated partial-window number).
+- [x] The classifier receives only the bars up to the current replay index — no lookahead, verified by both negative controls, not just a positive-case test. Unit-tested: the structural control proves the real loop's truncation is genuine (a deliberately broken stand-in, given the same classifier, triggers 6 bars early); the anchoring control proves a self-reporting cheat's trigger record still can't carry a fabricated price/time — documented as a mitigation, not a claim the cheat itself is prevented.
+- [x] Fetch window includes pre-market by default (4:00am ET / 1:00am PT — the same boundary `isPreMarketHours` already uses) and is parameterized. Unit-tested (`tests/pt-wall-clock.test.js`, `tests/replay.test.js`).
 
 ---
 
@@ -696,6 +710,22 @@ These are our definitions, not Ross's. All operate on 1-minute SIP bars for the 
 - Trigger: first bar closing above `prevClose` with volume ≥ 2× the prior-15-bar mean
 - `triggerPrice` = `prevClose`
 
+### Re-arm rule — one event, one trigger
+
+**Found via the Phase 4 replay harness (2026-08-27), on HVII 2026-08-24:** the harness's own edge-triggering (fire once while the classifier stays truthy, reset the instant it goes falsy) recorded six triggers for a price oscillating across a single threshold ($7.66–$7.71) — one HOD break, not six. Harmless for Phase 4's example classifier; not harmless here. Six `hod-momentum` records off one move means Phase 8's per-setup attribution counts it six times, and a setup that chops near its threshold reads as more active — and, once outcomes are attributed, as more reliable or less reliable than one that fires cleanly — than the same real signal fired once.
+
+Every setup above needs a re-arm rule, not just the harness's bar-to-bar edge-trigger. **Primary mechanism: a minimum price retracement away from the trigger level, not a fixed time cooldown.** A time-based cooldown was considered and rejected as the primary rule: it suppresses a genuinely new, later breakout that happens to fall inside the cooldown window (a real second opportunity discarded), and it doesn't scale with a setup's own volatility the way a price-distance threshold naturally does.
+
+Shape of the rule, applied per setup per candidate:
+- On trigger: fire once, enter a **cooling** state, and remember the level the trigger fired against (`hod-momentum`: the broken `hod`; `vwap-momentum`: VWAP; `gap-and-go`: `premarketHigh`; etc. — each setup already has a natural reference level in its own definition above).
+- While cooling: no new trigger for this setup, regardless of how many times the classifier's underlying condition flickers true/false.
+- **Re-arm** only once price retraces beyond a configurable distance from that reference level, in the direction that would invalidate the original setup (a breakout-above setup re-arms once price falls back *below* the level by ≥ `rearmDistancePct`, not merely below the level itself — the retreat has to be real, not a one-tick dip). Default `rearmDistancePct`: start at 1%, per-setup override in the same config object the thresholds already live in (spec's existing "every threshold below goes in a config object" rule).
+- Once re-armed, a later qualifying crossing is a genuinely new episode and fires again.
+
+Secondary, defensive only: a small minimum-bar-count floor between re-arm and the next trigger (e.g. 1–2 bars), purely to absorb same-bar/adjacent-bar noise — not a substitute for the price-distance rule, since a pure time floor has the same false-negative problem as a cooldown, just shorter.
+
+**This is exactly what the replay harness exists to settle, not guess at.** `rearmDistancePct` is a threshold like any other in the setup config — sweep it the same way the spec already calls for sweeping entry/target/stop thresholds, and use the harness to check the actual tradeoff on real history: too tight and HVII's six triggers become three instead of one; too wide and a genuine second breakout 20 minutes later gets silently dropped. Pick the value the data supports, not the value that feels right.
+
 ### Entry / target / stop — Warrior's own math
 
 Do **not** reuse `calcEntryTargetStop`. EDGE's ATR-based multi-day math is wrong for same-day tight-stop trades.
@@ -724,6 +754,7 @@ On a $500 budget with average wins of +$3.47 and losses of −$3.33 (per the Jun
 ### Phase 5 acceptance
 
 - [ ] Every setup validated through the replay harness before shipping
+- [ ] Every setup implements the re-arm rule (price retracement from its own reference level, not the harness's raw edge-trigger) — verified by replaying a real chop-at-threshold day (HVII 2026-08-24 is a confirmed example) and checking trigger count drops to the real event count
 - [ ] Setups return arrays; a stock matching three setups shows all three, with a deterministic primary
 - [ ] `minutesSinceTrigger` displayed on every card; >20min flagged LATE and demoted
 - [ ] Suggested share count present and correct: `shares × (entry − stop) ≈ riskPerTrade`
