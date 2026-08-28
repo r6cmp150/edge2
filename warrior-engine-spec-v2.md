@@ -668,10 +668,16 @@ A stock can be gapping, holding above VWAP, and printing a new HOD in the same m
 
 ```js
 setups: [
-  { id: 'vwap-momentum', triggerPrice: 4.18, triggeredAt: '…', confidence: 0.7 },
-  { id: 'hod-momentum',  triggerPrice: 4.22, triggeredAt: '…', confidence: 0.5 }
+  { id: 'vwap-momentum', triggerPrice: 4.18, triggeredAt: '…',
+    margins: { volumeMultiple: 5.2, threshold: 3.0, distanceAboveVwap: 0.014 } },
+  { id: 'hod-momentum',  triggerPrice: 4.22, triggeredAt: '…',
+    margins: { volumeMultiple: 3.1, threshold: 3.0, distanceAboveHod: 0.003 } }
 ]
 ```
+
+**No `confidence` field.** An earlier draft included one with no formula behind it — an unfounded score presented as a measurement, which is the failure shape this project has found repeatedly elsewhere.
+
+Record **raw margins** instead: how far past its threshold each condition actually got. That is measured data, and it lets the replay harness and Phase 8 discover *empirically* whether margin predicts outcome. Asserting that a 5× volume break beats a 3.01× one would be a guess; recording both and checking is the point of the whole engine.
 
 Choose a display primary by this documented priority: `gap-and-go` → `abcd` → `vwap-momentum` → `hod-momentum` → `red-to-green`. Report by primary, but **persist the full array** so attribution can be revisited once trades exist.
 
