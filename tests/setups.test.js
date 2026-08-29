@@ -327,24 +327,68 @@ async function testDetectSetupsNotLateWithinWindow() {
 
 async function testLateSetupsAreDemotedBelowNonLateRegardlessOfPriority() {
   const setups = await loadSetups();
-  const candidate = { symbol: 'TEST', prevClose: 4.00 };
-  // gap-and-go (highest priority) triggers early -> will be LATE.
-  // red-to-green (lowest priority) triggers just before "now" -> not late.
-  const bars = [
-    bar(5, 0, 4.40, 4.50, 4.35, 4.45, 500),   // premarket, premarketHigh=4.50, gap=11.25%
-    ...flatRun(6, 30, 20, 4.46, 1000),        // regular session baseline, also traded below prevClose(4.00)? no -- keep prevClose low so red-to-green precondition differs; reuse 4.00 prevClose from gap-and-go's own baseline instead
-    bar(6, 50, 4.47, 4.60, 4.46, 4.58, 3000), // gap-and-go trigger (breaks premarketHigh 4.50) -- this will be "old" relative to now
-    ...flatRun(6, 51, 5, 4.58, 1000),
-    bar(6, 56, 4.55, 4.65, 4.54, 4.62, 3000), // hod-momentum trigger too, recent
+  // Direct test of the sort comparator against plain objects — no bars,
+  // no classifiers, no shared-price-action coupling to accidentally get
+  // wrong (see the comment on _sortSetups for why this replaced an
+  // earlier, vacuous version built on a real multi-setup bar fixture).
+  const input = [
+    { id: 'gap-and-go', late: true },   // highest priority, but late
+    { id: 'red-to-green', late: false }, // lowest priority, but not late
+    { id: 'hod-momentum', late: true },
+    { id: 'abcd', late: false },
   ];
-  const now = new Date(t(7, 15)); // 25 min after the gap-and-go trigger (late), 19 min after the hod-momentum one (not late)
-  const { setups: result } = setups.detectSetupsForCandidate(candidate, bars, { now, riskPerTradeDollars: 10, availableBudget: 500 });
-  console.log('demotion order:', result.map(s => `${s.id}(late=${s.late})`));
-  assert.ok(result.length >= 2, 'fixture must produce at least two setups for this test to mean anything');
-  const firstLateIndex = result.findIndex(s => s.late);
-  if (firstLateIndex !== -1) {
-    for (let i = 0; i < firstLateIndex; i++) assert.strictEqual(result[i].late, false, 'every non-late setup must sort before every late one, regardless of priority');
-  }
+  const sorted = setups._sortSetups([...input]);
+  console.log('sort order:', sorted.map(s => `${s.id}(late=${s.late})`));
+  assert.deepStrictEqual(sorted.map(s => s.id), ['abcd', 'red-to-green', 'gap-and-go', 'hod-momentum'],
+    'both non-late setups (sorted by priority: abcd before red-to-green) must come before both late ones (also sorted by priority: gap-and-go before hod-momentum), regardless of gap-and-go being the single highest-priority setup overall');
+}
+
+// ── runSetupReplayForSymbols (Developer Tools replay panel wiring) ──────
+// This is the function the classifier-picker dropdown actually calls —
+// distinct from detectSetupsForCandidate's live-scan path, since the
+// panel needs BOTH naive and re-armed counts (to show the re-arm rule's
+// real effect) and needs prevClose fetched fresh for whatever historical
+// date was requested, not read off a live candidate object.
+
+async function testRunSetupReplayForSymbolsWithoutPrevClose() {
+  const setups = await loadSetups();
+  global._fetchRawMinuteBars = async (symbols) => {
+    const bars = [...flatRun(6, 30, 16, 5.00, 1000), bar(6, 46, 5.00, 5.20, 4.98, 5.15, 4000)];
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); }); // desc, as the real primitive returns
+    return { barsBySymbolAll, requests: 1 };
+  };
+  const { resultsBySymbol, requests } = await setups.runSetupReplayForSymbols('hod-momentum', ['TEST'], TRADING_DATE);
+  console.log('hod-momentum panel run:', { naive: resultsBySymbol.TEST.naiveTriggers.length, rearmed: resultsBySymbol.TEST.rearmedTriggers.length, requests });
+  assert.strictEqual(requests, 1, 'hod-momentum needs no prevClose fetch — only the bar fetch');
+  assert.strictEqual(resultsBySymbol.TEST.naiveTriggers.length, 1);
+  assert.strictEqual(resultsBySymbol.TEST.rearmedTriggers.length, 1);
+  assert.strictEqual(resultsBySymbol.TEST.rearmDistancePct, setups.SETUP_CONFIG.rearmDistancePct);
+}
+
+async function testRunSetupReplayForSymbolsFetchesAndUsesPrevClose() {
+  const setups = await loadSetups();
+  global._fetchRawMinuteBars = async (symbols) => {
+    const bars = [bar(5, 0, 4.40, 4.50, 4.35, 4.45, 500), ...flatRun(6, 30, 3, 4.46, 1000), bar(6, 33, 4.47, 4.60, 4.46, 4.58, 3000)];
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); });
+    return { barsBySymbolAll, requests: 1 };
+  };
+  let capturedPrevCloseFetchSymbols = null;
+  global.alpacaGet = async (path, params) => {
+    capturedPrevCloseFetchSymbols = params.symbols;
+    return { bars: { TEST: [{ t: '2026-08-23T20:00:00Z', c: 4.00 }] } }; // prevClose=4.00 -> gap-and-go's precondition (>=10%) is met by the fixture's premarket price 4.45
+  };
+  const { resultsBySymbol, requests } = await setups.runSetupReplayForSymbols('gap-and-go', ['TEST'], TRADING_DATE);
+  console.log('gap-and-go panel run:', { triggers: resultsBySymbol.TEST.rearmedTriggers.length, requests, capturedPrevCloseFetchSymbols });
+  assert.strictEqual(capturedPrevCloseFetchSymbols, 'TEST', 'must fetch prevClose for the requested symbol');
+  assert.strictEqual(requests, 2, 'gap-and-go needs both the bar fetch and the prevClose fetch');
+  assert.strictEqual(resultsBySymbol.TEST.rearmedTriggers.length, 1, 'the fetched prevClose (4.00) must actually be used — the trigger only fires because the gap precondition is satisfied against it');
+}
+
+async function testRunSetupReplayForSymbolsUnknownIdThrows() {
+  const setups = await loadSetups();
+  await assert.rejects(() => setups.runSetupReplayForSymbols('not-a-real-setup', ['TEST'], TRADING_DATE), /Unknown setup id/);
 }
 
 // ── Phase 5 acceptance: "every setup validated through the replay harness
@@ -411,5 +455,8 @@ async function testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore() {
   await run('setups: detectSetupsForCandidate does not flag LATE within the window', testDetectSetupsNotLateWithinWindow);
   await run('setups: hod-momentum validated through the actual replay harness walk', testHodMomentumValidatedThroughReplayHarness);
   await run('setups: LATE setups are demoted below non-late ones regardless of priority', testLateSetupsAreDemotedBelowNonLateRegardlessOfPriority);
+  await run('setups: runSetupReplayForSymbols (no prevClose needed) — naive/re-armed both computed', testRunSetupReplayForSymbolsWithoutPrevClose);
+  await run('setups: runSetupReplayForSymbols fetches and actually uses prevClose for gap-and-go', testRunSetupReplayForSymbolsFetchesAndUsesPrevClose);
+  await run('setups: runSetupReplayForSymbols rejects an unknown setup id', testRunSetupReplayForSymbolsUnknownIdThrows);
   await run('setups: no path references EDGE\'s calcEntryTargetStop/calcScore', testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore);
 })();

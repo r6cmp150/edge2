@@ -46,6 +46,42 @@ async function fetchReplayBars(symbols, dateStr, { startHour = 1, startMinute = 
   return { barsBySymbol, requests, start, end };
 }
 
+// gap-and-go and red-to-green need prevClose — NOT derivable from the
+// replay window's own bars. core/universe.js's _getPriorCloses does the
+// live equivalent, but it's hardcoded to "today" (getPT()/new Date()) —
+// exactly the "as of a past date" gap Phase 4's own planning flagged and
+// deliberately deferred for an RVOL baseline, now genuinely needed here
+// so the replay panel can run gap-and-go/red-to-green at all. A small,
+// date-parameterized daily-bar fetch, not a reimplementation of
+// _getPriorCloses's caching (replay runs are manual/occasional, a fresh
+// fetch every run is fine).
+async function fetchPrevCloseAsOf(symbols, dateStr) {
+  const end = ptWallClockToInstant(dateStr, 1, 0); // replay window's own start — prevClose must be strictly before this
+  const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 calendar days back, generous over any weekend/holiday gap
+  let requests = 0;
+  const prevCloseBySymbol = {};
+  const params0 = { symbols: symbols.join(','), timeframe: '1Day', start: start.toISOString(), end: end.toISOString(), limit: 10000, sort: 'desc', feed: 'sip' };
+  let pageToken;
+  const barsBySymbol = {};
+  do {
+    const params = pageToken ? { ...params0, page_token: pageToken } : params0;
+    const data = await alpacaGet('/stocks/bars', params);
+    requests++;
+    if (data.bars) {
+      for (const sym of Object.keys(data.bars)) {
+        (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
+      }
+    }
+    pageToken = data.next_page_token || null;
+  } while (pageToken);
+  // sort:'desc' -> each symbol's first bar is its most recent close before the replay window.
+  for (const sym of Object.keys(barsBySymbol)) {
+    const bars = barsBySymbol[sym];
+    if (bars && bars.length) prevCloseBySymbol[sym] = bars[0].c;
+  }
+  return { prevCloseBySymbol, requests };
+}
+
 // ── Forward-return / MFE / MAE scoring ──────────────────────────────────
 // Runs AFTER a trigger is detected, on the FULL bars array — deliberately
 // not subject to the no-lookahead constraint, which applies only to the
@@ -216,6 +252,7 @@ async function runReplayForSymbols(symbols, dateStr, classifier = examplePriceMo
 export {
   REPLAY_CHUNK_SIZE,
   fetchReplayBars,
+  fetchPrevCloseAsOf,
   computeForwardReturns,
   runReplay,
   examplePriceMoveClassifier,

@@ -15,7 +15,7 @@
 // reuse; it's how "every setup validated through the replay harness before
 // shipping" (Phase 5 acceptance) is satisfied literally rather than by
 // separate, divergent implementations.
-import { runReplay, REPLAY_CHUNK_SIZE } from './replay.js';
+import { runReplay, REPLAY_CHUNK_SIZE, fetchReplayBars, fetchPrevCloseAsOf } from './replay.js';
 
 // ── Sweepable config ─────────────────────────────────────────────────────
 // Every threshold lives here, not as an inline constant — spec's own rule
@@ -374,17 +374,31 @@ function detectSetupsForCandidate(candidate, bars, { now = new Date(), riskPerTr
       sizingConstraint: sizing.constraint,
     });
   }
-  // Spec: ">20min flagged LATE and demoted" — demoted means sorted below
-  // non-late setups, not just tagged. Non-late setups sort by the
-  // documented priority first; late ones sort the same way among
-  // themselves but always after every non-late one, so a fresh signal
-  // never gets buried under a stale one just because the stale one
-  // happens to be gap-and-go and the fresh one is red-to-green.
+  _sortSetups(setups);
+  return { setups, primary: setups[0] || null };
+}
+
+// Spec: ">20min flagged LATE and demoted" — demoted means sorted below
+// non-late setups, not just tagged. Non-late setups sort by the
+// documented priority first; late ones sort the same way among
+// themselves but always after every non-late one, so a fresh signal
+// never gets buried under a stale one just because the stale one happens
+// to be gap-and-go and the fresh one is red-to-green.
+//
+// Extracted as its own function (rather than inlined in
+// detectSetupsForCandidate) after the first version of that test turned
+// out vacuous: a hand-built multi-setup bar fixture had gap-and-go and
+// hod-momentum sharing the same underlying price rise, so both ended up
+// triggering on the same bar and both came out "late" — the demotion
+// assertion never actually exercised a non-late/late pair. Testing this
+// comparator directly, against plain {id, late} objects with no bars or
+// classifiers involved, has no such coupling to get right by accident.
+function _sortSetups(setups) {
   setups.sort((a, b) => {
     if (a.late !== b.late) return a.late ? 1 : -1;
     return SETUP_PRIORITY.indexOf(a.id) - SETUP_PRIORITY.indexOf(b.id);
   });
-  return { setups, primary: setups[0] || null };
+  return setups;
 }
 
 // ── Live-scan batch entry point ─────────────────────────────────────────
@@ -424,10 +438,70 @@ async function evaluateSetupsBatch(qualifiedCandidates, session, opts = {}) {
   return { resultsBySymbol, requests };
 }
 
+// ── Replay panel: run a REAL setup against real history ─────────────────
+// Phase 5 acceptance's first bullet ("every setup validated through the
+// replay harness before shipping") is not satisfied by unit-test fixtures
+// alone — a fixture written from the same reasoning that produced the
+// classifier will tend to agree with it regardless of whether the
+// classifier is actually right, the exact failure shape this session has
+// found repeatedly elsewhere. This is what lets the Developer Tools
+// replay panel run a REAL classifier (not just Phase 4's disposable
+// example) against REAL historical bars, so a genuine live check —
+// distinct from and stronger than the fixtures in tests/setups.test.js —
+// is possible before trusting these five in production.
+//
+// gap-and-go/red-to-green need prevClose; the other three are pure
+// functions of the fetched bars alone. Centralized here (rather than in
+// index.js's UI code) because "which setups need what context" is
+// setup-specific domain knowledge this file already owns.
+const SETUP_REPLAY_CATALOG = [
+  { id: 'gap-and-go', label: 'Gap and Go', needsPrevClose: true, build: (ctx) => makeGapAndGoClassifier({ prevClose: ctx.prevClose }) },
+  { id: 'hod-momentum', label: 'HOD Momentum', needsPrevClose: false, build: () => hodMomentumClassifier },
+  { id: 'abcd', label: 'ABCD', needsPrevClose: false, build: () => abcdClassifier },
+  { id: 'vwap-momentum', label: 'VWAP Momentum', needsPrevClose: false, build: () => vwapMomentumClassifier },
+  { id: 'red-to-green', label: 'Red-to-Green', needsPrevClose: true, build: (ctx) => makeRedToGreenClassifier({ prevClose: ctx.prevClose }) },
+];
+
+// Runs BOTH naive (no re-arm) and re-armed replay for the same fetched
+// bars — no extra request cost, just a second runReplay call — so a live
+// run against real data directly shows the re-arm rule's actual effect
+// (naive count vs. real-event count), the same comparison
+// tests/replay.test.js's fixture makes, but on genuine history instead
+// of a reproduction of HVII's shape.
+async function runSetupReplayForSymbols(setupId, symbols, dateStr, opts = {}) {
+  const entry = SETUP_REPLAY_CATALOG.find(e => e.id === setupId);
+  if (!entry) throw new Error(`Unknown setup id for replay: ${setupId}`);
+
+  const { barsBySymbol, requests: barRequests } = await fetchReplayBars(symbols, dateStr, opts);
+
+  let prevCloseBySymbol = {};
+  let prevCloseRequests = 0;
+  if (entry.needsPrevClose) {
+    const result = await fetchPrevCloseAsOf(symbols, dateStr);
+    prevCloseBySymbol = result.prevCloseBySymbol;
+    prevCloseRequests = result.requests;
+  }
+
+  const rearmDistancePct = _rearmDistancePctFor(setupId);
+  const resultsBySymbol = {};
+  for (const sym of symbols) {
+    const bars = barsBySymbol[sym] || [];
+    const classifier = entry.build({ prevClose: prevCloseBySymbol[sym] });
+    resultsBySymbol[sym] = {
+      barCount: bars.length,
+      naiveTriggers: runReplay(bars, classifier),
+      rearmedTriggers: runReplay(bars, classifier, { rearmDistancePct }),
+      rearmDistancePct,
+    };
+  }
+  return { resultsBySymbol, requests: barRequests + prevCloseRequests };
+}
+
 export {
-  SETUP_CONFIG, SETUP_PRIORITY, LATE_THRESHOLD_MIN,
+  SETUP_CONFIG, SETUP_PRIORITY, LATE_THRESHOLD_MIN, SETUP_REPLAY_CATALOG,
   computePremarketHigh, computeArmedLevels,
   makeGapAndGoClassifier, hodMomentumClassifier, abcdClassifier, vwapMomentumClassifier, makeRedToGreenClassifier,
   computeEntryTargetStop, computeSuggestedShares,
-  detectSetupsForCandidate, evaluateSetupsBatch,
+  detectSetupsForCandidate, evaluateSetupsBatch, runSetupReplayForSymbols,
+  _sortSetups,
 };

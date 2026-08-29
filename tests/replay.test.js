@@ -265,6 +265,50 @@ async function testFetchReplayBarsUsesCorrectWindowChunkSizeAndOrdering() {
   assert.deepStrictEqual(barsBySymbol.AAPL.map(b => b.c), [1, 2, 3], 'must be reversed to ascending (chronological) order for replay');
 }
 
+// ── fetchPrevCloseAsOf ────────────────────────────────────────────────────
+
+async function testFetchPrevCloseAsOfPicksMostRecentCloseBeforeReplayWindow() {
+  const replay = await loadReplay();
+  global.ptWallClockToInstant = (dateStr, hour, minute) => new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00.000Z`);
+  let capturedParams = null;
+  global.alpacaGet = async (path, params) => {
+    capturedParams = params;
+    return {
+      bars: {
+        AAPL: [
+          { t: '2026-08-25T20:00:00Z', c: 150.25 }, // most recent (sort:desc -> first)
+          { t: '2026-08-24T20:00:00Z', c: 148.00 },
+        ],
+      },
+    };
+  };
+  const { prevCloseBySymbol, requests } = await replay.fetchPrevCloseAsOf(['AAPL'], '2026-08-26');
+  console.log('prevClose result:', prevCloseBySymbol, '| params:', { timeframe: capturedParams.timeframe, sort: capturedParams.sort, feed: capturedParams.feed });
+  assert.strictEqual(prevCloseBySymbol.AAPL, 150.25, 'must take the most recent (first, since sort:desc) close strictly before the replay window');
+  assert.strictEqual(capturedParams.timeframe, '1Day');
+  assert.strictEqual(capturedParams.sort, 'desc');
+  assert.strictEqual(capturedParams.feed, 'sip', 'must use feed=sip like every other Warrior bar request (CLAUDE.md rule)');
+  assert.strictEqual(requests, 1);
+}
+
+async function testFetchPrevCloseAsOfFollowsPagination() {
+  const replay = await loadReplay();
+  global.ptWallClockToInstant = (dateStr, hour, minute) => new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00.000Z`);
+  let callCount = 0;
+  global.alpacaGet = async (path, params) => {
+    callCount++;
+    if (!params.page_token) {
+      return { bars: { AAPL: [{ t: '2026-08-25T20:00:00Z', c: 150.25 }] }, next_page_token: 'page2' };
+    }
+    return { bars: { AAPL: [{ t: '2026-08-24T20:00:00Z', c: 148.00 }] } };
+  };
+  const { prevCloseBySymbol, requests } = await replay.fetchPrevCloseAsOf(['AAPL'], '2026-08-26');
+  console.log('paginated prevClose:', prevCloseBySymbol, 'calls:', callCount);
+  assert.strictEqual(callCount, 2, 'must follow next_page_token to exhaustion, not stop at the first page');
+  assert.strictEqual(requests, 2);
+  assert.strictEqual(prevCloseBySymbol.AAPL, 150.25, 'first page (sort:desc) still carries the actual most-recent close');
+}
+
 async function testReplayChunkSizeIsSinglePageForDefaultWindow() {
   const replay = await loadReplay();
   const DEFAULT_WINDOW_MIN = 720;
@@ -308,6 +352,8 @@ async function testRunReplayForSymbolsOrchestratesFetchAndReplay() {
   await run('replay: computeForwardReturns — all null when trigger is the last bar', testComputeForwardReturnsAllNullWhenTriggerIsLastBar);
   await run('replay: examplePriceMoveClassifier threshold (reuses gate.js\'s real CHANGE_MIN_PCT)', testExamplePriceMoveClassifierThreshold);
   await run('replay: fetchReplayBars — window/chunk-size/ordering', testFetchReplayBarsUsesCorrectWindowChunkSizeAndOrdering);
+  await run('replay: fetchPrevCloseAsOf picks the most recent close before the replay window', testFetchPrevCloseAsOfPicksMostRecentCloseBeforeReplayWindow);
+  await run('replay: fetchPrevCloseAsOf follows pagination to exhaustion', testFetchPrevCloseAsOfFollowsPagination);
   await run('replay: REPLAY_CHUNK_SIZE is provably single-page for the default window, and tight', testReplayChunkSizeIsSinglePageForDefaultWindow);
   await run('replay: runReplayForSymbols orchestrates fetch + per-symbol replay', testRunReplayForSymbolsOrchestratesFetchAndReplay);
 })();

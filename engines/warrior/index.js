@@ -26,7 +26,7 @@
 // rather than computing a second, parallel notion of "available").
 import { evaluateGateBatch, _selectStrategy } from './gate.js';
 import { runReplayForSymbols } from './replay.js';
-import { evaluateSetupsBatch } from './setups.js';
+import { evaluateSetupsBatch, runSetupReplayForSymbols, SETUP_REPLAY_CATALOG } from './setups.js';
 
 const WARRIOR_SCAN_INTERVAL_MS = 60 * 1000;
 let _scanIntervalId = null;
@@ -292,15 +292,30 @@ function _renderCandidateCard(gateResult) {
 // stores a reference to any of this (register() below just assigns a
 // plain global function, same connection mechanism every onclick in this
 // app already uses — not a boundary exception).
-let _lastReplayResult = null; // { dateStr, symbols, resultsBySymbol, requests } | null
+let _lastReplayResult = null; // { dateStr, symbols, classifierId, resultsBySymbol, requests } | null
 let _replayInFlight = false;
+
+// Phase 5 acceptance's own first bullet ("every setup validated through
+// the replay harness before shipping") is not satisfied by unit-test
+// fixtures alone — a fixture written from the same reasoning that
+// produced the classifier tends to agree with it regardless of whether
+// the classifier is actually right, which this session has found
+// repeatedly elsewhere. 'example' keeps Phase 4's original placeholder
+// available; the five real entries let this panel run an ACTUAL setup
+// against ACTUAL historical bars, a genuinely independent check.
+const REPLAY_CLASSIFIER_OPTIONS = [
+  { id: 'example', label: 'Example (Phase 4 placeholder)' },
+  ...SETUP_REPLAY_CATALOG.map(e => ({ id: e.id, label: e.label })),
+];
 
 async function _runReplayFromUI() {
   if (_replayInFlight) return;
   const dateEl = (typeof document !== 'undefined') ? document.getElementById('warrior-replay-date') : null;
   const symbolsEl = (typeof document !== 'undefined') ? document.getElementById('warrior-replay-symbols') : null;
+  const classifierEl = (typeof document !== 'undefined') ? document.getElementById('warrior-replay-classifier') : null;
   const dateStr = dateEl?.value;
   const symbols = (symbolsEl?.value || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  const classifierId = classifierEl?.value || 'example';
   if (!dateStr || !symbols.length) {
     if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast('[Warrior] Replay needs a date and at least one symbol.');
     return;
@@ -308,8 +323,10 @@ async function _runReplayFromUI() {
   _replayInFlight = true;
   if (typeof renderWarriorTab === 'function') renderWarriorTab();
   try {
-    const { resultsBySymbol, requests } = await runReplayForSymbols(symbols, dateStr);
-    _lastReplayResult = { dateStr, symbols, resultsBySymbol, requests };
+    const { resultsBySymbol, requests } = classifierId === 'example'
+      ? await runReplayForSymbols(symbols, dateStr)
+      : await runSetupReplayForSymbols(classifierId, symbols, dateStr);
+    _lastReplayResult = { dateStr, symbols, classifierId, resultsBySymbol, requests };
   } catch (err) {
     if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast(`[Warrior] Replay failed: ${err.message}`);
   } finally {
@@ -327,8 +344,10 @@ function _fmtHorizon(forwardReturns, key) {
 function _renderTriggerRow(trig) {
   const t = new Date(trig.triggerTime);
   const timeStr = isNaN(t.getTime()) ? trig.triggerTime : t.toISOString();
+  const levelStr = typeof trig.referenceLevel === 'number' ? ` (level $${trig.referenceLevel.toFixed(2)})` : '';
+  const marginsStr = trig.margins ? ` — ${_renderMargins(trig.margins).replace(/<[^>]+>/g, '')}` : '';
   return `<div class="settings-hint mono">
-    ${trig.setupId} @ ${timeStr} $${trig.triggerPrice.toFixed(2)} —
+    ${trig.setupId} @ ${timeStr} $${trig.triggerPrice.toFixed(2)}${levelStr}${marginsStr} —
     5m: ${_fmtHorizon(trig.forwardReturns, '5m')} |
     15m: ${_fmtHorizon(trig.forwardReturns, '15m')} |
     30m: ${_fmtHorizon(trig.forwardReturns, '30m')} |
@@ -337,6 +356,22 @@ function _renderTriggerRow(trig) {
 }
 
 function _renderReplaySymbolResult(symbol, result) {
+  // Real-setup runs carry naiveTriggers/rearmedTriggers (see
+  // runSetupReplayForSymbols); the 'example' placeholder still uses the
+  // original single-triggers shape (no re-arm comparison to show).
+  if (result.naiveTriggers) {
+    const naive = result.naiveTriggers, rearmed = result.rearmedTriggers;
+    const rearmNote = naive.length !== rearmed.length
+      ? ` — re-arm rule suppressed ${naive.length - rearmed.length} chop-driven trigger(s)`
+      : naive.length > 0 ? ' — naive and re-armed agree (no chop suppressed)' : '';
+    if (!rearmed.length) {
+      return `<div class="settings-row"><span class="mono">${symbol}</span><span class="settings-hint muted">${result.barCount} bars, no triggers (naive: ${naive.length})</span></div>`;
+    }
+    return `<div class="settings-row" style="flex-direction:column;align-items:stretch;">
+      <div class="mono">${symbol} — naive: ${naive.length} trigger(s), re-armed (${result.rearmDistancePct}%): ${rearmed.length} trigger(s), ${result.barCount} bars${rearmNote}</div>
+      ${rearmed.map(_renderTriggerRow).join('')}
+    </div>`;
+  }
   if (!result.triggers.length) {
     return `<div class="settings-row"><span class="mono">${symbol}</span><span class="settings-hint muted">${result.barCount} bars, no triggers</span></div>`;
   }
@@ -351,10 +386,16 @@ function renderReplayPanel() {
   const body = _lastReplayResult
     ? Object.entries(_lastReplayResult.resultsBySymbol).map(([sym, r]) => _renderReplaySymbolResult(sym, r)).join('')
     : '<div class="settings-row"><span class="settings-hint muted">No replay run yet.</span></div>';
+  const classifierOptions = REPLAY_CLASSIFIER_OPTIONS.map(o =>
+    `<option value="${o.id}" ${_lastReplayResult?.classifierId === o.id ? 'selected' : ''}>${o.label}</option>`
+  ).join('');
   return `<div class="settings-section mt12">
     <div class="settings-section-title">Replay Harness (dev only)</div>
     <div class="settings-row">
-      <span class="settings-hint">Phase 4 — replays a symbol's historical minute bars bar-by-bar against an example classifier (price move from window open ≥10%). Not a real Warrior setup — see docs/warrior-engine-spec-v2.md Phase 4.</span>
+      <span class="settings-hint">Fetch → replay bar-by-bar → score against real history. Pick a real setup to validate it against actual bars (Phase 5 acceptance's own requirement), not just unit-test fixtures — or keep the Phase 4 example placeholder. See docs/warrior-engine-spec-v2.md Phase 4/5.</span>
+    </div>
+    <div class="settings-row">
+      <select id="warrior-replay-classifier" class="settings-input">${classifierOptions}</select>
     </div>
     <div class="settings-row">
       <input type="date" id="warrior-replay-date" class="settings-input" style="max-width:160px;">
@@ -362,7 +403,7 @@ function renderReplayPanel() {
     </div>
     <div class="settings-row">
       <button class="btn btn-primary btn-sm" onclick="warriorRunReplay()" ${_replayInFlight ? 'disabled' : ''}>${_replayInFlight ? 'Running…' : 'Run Replay'}</button>
-      ${_lastReplayResult ? `<span class="settings-hint">${_lastReplayResult.requests} request(s) for ${_lastReplayResult.dateStr}</span>` : ''}
+      ${_lastReplayResult ? `<span class="settings-hint">${_lastReplayResult.requests} request(s) for ${_lastReplayResult.dateStr} (${REPLAY_CLASSIFIER_OPTIONS.find(o => o.id === _lastReplayResult.classifierId)?.label || _lastReplayResult.classifierId})</span>` : ''}
     </div>
     ${body}
   </div>`;
