@@ -1,5 +1,6 @@
 // engines/warrior/index.js — Warrior engine. docs/warrior-engine-spec-v2.md
-// Phase 2 (scaffold) + Phase 3 (5 Pillars gate) + Phase 4 (replay harness).
+// Phase 2 (scaffold) + Phase 3 (5 Pillars gate) + Phase 4 (replay harness)
+// + Phase 5 (setup detection).
 //
 // Real ES module (uses `export`/`import`) — loaded ONLY via dynamic
 // import() from app.js's boot sequence, never a <script> tag, never
@@ -13,16 +14,19 @@
 // Runs in the same global scope as app.js/core/*.js despite being a module
 // (only this file's own top-level declarations are module-scoped) — so it
 // references registerEngine/state/showGlobalErrorToast/getMarketStatus/
-// getUniverse/renderWarriorTab/_countRequests as ordinary globals. That's
-// expected, not a boundary leak: the rule this phase enforces is "nothing
-// outside this file reaches INTO Warrior code except through the
-// registry," not "Warrior code can't read the app's shared globals or call
-// its shared utilities" — Phase 2 already established calling
-// showGlobalErrorToast this way, and Phase 3 does the same for
-// renderWarriorTab and (below) core/universe.js's own request-counting
-// diagnostic helper, already relied on by diagnosePremarketGap there.
+// getUniverse/renderWarriorTab/_countRequests/getAvailableBudget as
+// ordinary globals. That's expected, not a boundary leak: the rule this
+// phase enforces is "nothing outside this file reaches INTO Warrior code
+// except through the registry," not "Warrior code can't read the app's
+// shared globals or call its shared utilities" — Phase 2 already
+// established calling showGlobalErrorToast this way, Phase 3 did the same
+// for renderWarriorTab and core/universe.js's request-counting
+// diagnostic, and Phase 5 does it again for app.js's getAvailableBudget
+// (position-sizing's budget cap reuses EDGE's own budget-bar formula
+// rather than computing a second, parallel notion of "available").
 import { evaluateGateBatch, _selectStrategy } from './gate.js';
 import { runReplayForSymbols } from './replay.js';
+import { evaluateSetupsBatch } from './setups.js';
 
 const WARRIOR_SCAN_INTERVAL_MS = 60 * 1000;
 let _scanIntervalId = null;
@@ -61,18 +65,44 @@ async function _scanTick() {
     const { result: gateResult, count: gateRequests } = await _countRequests(() => evaluateGateBatch(universe, session));
     const { results, rvolCheckable } = gateResult;
 
-    // PHASE-3-UNVERIFIED (2026-08-26): Phase 3 merged to main before two
-    // live checks could run during regular market hours — feed=sip in the
-    // network log, and this exact request count against the acceptance
-    // bullet's <30 target (the request count checked during the merge's
-    // own live-check pass excluded the RVOL fetches, since that check ran
-    // outside regular session — see docs/warrior-engine-spec-v2.md Phase 3
-    // acceptance). Logs every regular-session scan, not just the first, so
-    // it's hard to miss glancing at the console once. DELETE this whole
-    // block (and revert the two lines above to plain, unwrapped
-    // getUniverse/evaluateGateBatch calls) once both are confirmed live.
+    // Phase 5: setup detection runs only for QUALIFIED candidates (NEAR
+    // MISS gets no setups section — those aren't actionable candidates)
+    // and only during PRE (armed levels only — no setup can trigger
+    // before the open) or OPEN (full detection). This is a NEW fetch on
+    // top of Phase 3's gate pipeline, which is why the PHASE-3-UNVERIFIED
+    // request count below now covers all three stages together, not just
+    // universe+gate — they're one pipeline now, not two to verify
+    // separately.
+    const qualified = results.filter(r => r.tier === 'QUALIFIED');
+    const riskPerTradeDollars = (parseFloat(state.settings?.budget) || 0) * (parseFloat(state.settings?.riskPerTradePct) || 0) / 100;
+    const availableBudget = (typeof getAvailableBudget === 'function') ? getAvailableBudget() : 0;
+    const { result: setupsResult, count: setupsRequests } = await _countRequests(() =>
+      evaluateSetupsBatch(qualified, session, { now: new Date(), riskPerTradeDollars, availableBudget })
+    );
+    for (const r of qualified) {
+      const sr = setupsResult.resultsBySymbol[r.symbol];
+      r.setups = sr ? sr.setups : [];
+      r.primarySetup = sr ? sr.primary : null;
+      r.armedLevels = sr ? sr.armedLevels : [];
+    }
+
+    // PHASE-3-UNVERIFIED (2026-08-26, updated 2026-08-28 for Phase 5's
+    // added fetch): two live checks outstanding from Phase 3's merge —
+    // feed=sip in the network log, and this exact request count against
+    // the acceptance bullet's <30 target (the request count checked
+    // during the merge's own live-check pass excluded the RVOL fetches,
+    // since that check ran outside regular session — see docs/warrior-
+    // engine-spec-v2.md Phase 3 acceptance). Now covers universe+gate+
+    // setups together — Phase 5 added a real fetch to this same pipeline,
+    // so a count that only covered the first two stages would no longer
+    // answer the acceptance bullet's actual question. Logs every
+    // regular-session scan, not just the first, so it's hard to miss
+    // glancing at the console once. DELETE this whole block (and revert
+    // the three _countRequests-wrapped calls above to plain, unwrapped
+    // ones) once both are confirmed live.
     if (session === 'OPEN') {
-      console.log(`[PHASE-3-UNVERIFIED] regular-session scan — universe: ${universeRequests} req, gate: ${gateRequests} req, total: ${universeRequests + gateRequests} req (acceptance: <30 for a 50-symbol universe). Also confirm feed=sip in the network log for this scan's requests.`);
+      const total = universeRequests + gateRequests + setupsRequests;
+      console.log(`[PHASE-3-UNVERIFIED] regular-session scan — universe: ${universeRequests} req, gate: ${gateRequests} req, setups: ${setupsRequests} req, total: ${total} req (acceptance: <30 for a 50-symbol universe). Also confirm feed=sip in the network log for this scan's requests.`);
     }
 
     _lastScanResults = { session, results, scannedAt: new Date(), rvolCheckable };
@@ -182,6 +212,68 @@ function _renderPillarRow(pillar) {
   </div>`;
 }
 
+// ── Phase 5: setups, armed levels, entry/target/stop ─────────────────────
+// Only QUALIFIED gateResults ever carry .setups/.armedLevels (index.js's
+// _scanTick attaches them only for the QUALIFIED subset) — NEAR MISS
+// results simply don't have these fields, so the checks below naturally
+// render nothing for them without needing to separately track tier here.
+
+function _fmtMargin(key, value) {
+  if (typeof value !== 'number') return `${key}: —`;
+  // *Pct/*Multiple/*Ratio fields are ratios/fractions; everything else
+  // (thresholds paired alongside a *Multiple/*Ratio field) is shown as a
+  // plain number at the same precision as its paired measurement.
+  if (/Pct$/.test(key)) return `${key}: ${(value * 100).toFixed(1)}%`;
+  if (/Multiple$|Ratio$/.test(key)) return `${key}: ${value.toFixed(2)}×`;
+  return `${key}: ${value.toFixed(2)}`;
+}
+
+function _renderMargins(margins) {
+  if (!margins) return '';
+  return Object.entries(margins).map(([k, v]) => `<span class="warrior-margin">${_fmtMargin(k, v)}</span>`).join(' ');
+}
+
+function _renderEntryTargetStop(setup) {
+  const ets = setup.entryTargetStop;
+  if (!ets) return '<div class="warrior-ets-unavailable">Entry/target/stop not computable for this trigger.</div>';
+  const constraintNote = setup.sizingConstraint === 'budget' ? ' (capped by available budget)' : setup.sizingConstraint === 'risk' ? ' (risk-based)' : '';
+  return `<div class="warrior-ets">
+    <span>Entry $${ets.entry.toFixed(2)}</span>
+    <span>Stop $${ets.stop.toFixed(2)}</span>
+    <span>Target $${ets.target.toFixed(2)}</span>
+    <span>Shares ${setup.suggestedShares}${constraintNote}</span>
+  </div>`;
+}
+
+function _renderSetupRow(setup, isPrimary) {
+  const lateFlag = setup.late ? '<span class="warrior-setup-late">LATE</span>' : '';
+  const primaryFlag = isPrimary ? '<span class="warrior-setup-primary">PRIMARY</span>' : '';
+  return `<div class="warrior-setup-row ${isPrimary ? 'is-primary' : ''}">
+    <div class="warrior-setup-header">
+      <span class="warrior-setup-id">${setup.id}</span>
+      ${primaryFlag}${lateFlag}
+      <span class="warrior-setup-time">$${setup.triggerPrice.toFixed(2)} @ ${_formatPTTime(new Date(setup.triggeredAt))} PT · ${Math.round(setup.minutesSinceTrigger)}m ago</span>
+    </div>
+    <div class="warrior-setup-margins">${_renderMargins(setup.margins)}</div>
+    ${isPrimary ? _renderEntryTargetStop(setup) : ''}
+  </div>`;
+}
+
+function _renderArmedLevels(armedLevels) {
+  if (!armedLevels || !armedLevels.length) return '';
+  return `<div class="warrior-armed-levels">
+    ${armedLevels.map(l => `<span class="warrior-armed-level">${l.id === 'gap-and-go' ? 'Gap and Go' : l.id} level: $${l.level.toFixed(2)}</span>`).join('')}
+  </div>`;
+}
+
+function _renderSetupsSection(gateResult) {
+  if (gateResult.armedLevels && gateResult.armedLevels.length) return _renderArmedLevels(gateResult.armedLevels);
+  if (!gateResult.setups || !gateResult.setups.length) return '';
+  return `<div class="warrior-setups">
+    ${gateResult.setups.map(s => _renderSetupRow(s, s.id === gateResult.primarySetup?.id)).join('')}
+  </div>`;
+}
+
 function _renderCandidateCard(gateResult) {
   return `<div class="warrior-card">
     <div class="warrior-card-header">
@@ -189,6 +281,7 @@ function _renderCandidateCard(gateResult) {
     </div>
     <div class="warrior-card-halt">⚠ Halt status not checked — verify in your broker before buying.</div>
     ${gateResult.pillars.map(_renderPillarRow).join('')}
+    ${_renderSetupsSection(gateResult)}
   </div>`;
 }
 

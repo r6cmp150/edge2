@@ -101,13 +101,6 @@ function computeForwardReturns(bars, triggerIndex) {
 // controls (tests/replay.test.js) that verify this is real, not just
 // asserted.
 //
-// Edge-triggered, not level-triggered: a classifier that stays truthy for
-// many consecutive bars (e.g. price holds >10% for 50 minutes) records
-// ONE trigger at the first bar it went true, not 50 near-duplicate
-// triggers a minute apart. Resets the moment the classifier returns
-// falsy, so the same setupId can trigger again later in the session as a
-// genuinely new episode.
-//
 // The harness NEVER reads a price or time field off the classifier's
 // return value — trigger.triggerPrice/triggerTime are always derived from
 // barsSoFar's own last element (== bars[i], the position the harness
@@ -117,28 +110,77 @@ function computeForwardReturns(bars, triggerIndex) {
 // deciding to trigger early in the first place — see the spec's Phase 4
 // "Anchoring control" note. A classifier's return value therefore only
 // ever needs to carry `setupId` (plus whatever caller-defined metadata it
-// wants to keep) — never price or time.
-function runReplay(bars, classifier) {
+// wants to keep, and — only when rearmDistancePct is in use, see below —
+// referenceLevel/referenceDirection) — never price or time.
+//
+// Default mode (rearmDistancePct omitted): edge-triggered, not
+// level-triggered — a classifier that stays truthy for many consecutive
+// bars records ONE trigger at the first bar it went true, and resets the
+// MOMENT it goes falsy, so the same setupId can trigger again immediately
+// once the classifier's own condition is next satisfied. This is Phase
+// 4's original, unchanged behavior — every existing caller/test that
+// doesn't pass the new option gets byte-identical results.
+//
+// Re-arm mode (rearmDistancePct provided): docs/warrior-engine-spec-v2.md
+// Phase 5's "Re-arm rule" — found via replaying HVII 2026-08-24 through
+// Phase 4's own harness, where naive edge-triggering recorded six
+// triggers for one price oscillating across a single threshold. Instead
+// of resetting on the classifier's first falsy call, the harness enters a
+// COOLING state remembering the classifier-supplied referenceLevel/
+// referenceDirection from the triggering verdict, and only re-arms once
+// price has retraced beyond rearmDistancePct from that level in the
+// invalidating direction ('above' — the default — re-arms on a retreat
+// BELOW level*(1-rearmDistancePct/100); 'below' re-arms on a rally ABOVE
+// level*(1+rearmDistancePct/100)). referenceLevel is trusted from the
+// classifier — unlike price/time, there's no incentive to misreport it
+// (it only feeds this internal state machine, never the trigger record's
+// own price/time, and a wrong value only makes THIS setup re-arm at the
+// wrong distance, not fabricate a result elsewhere) — but it's still
+// classifier-supplied domain knowledge (the HOD level, VWAP, etc.) the
+// harness has no independent way to compute itself.
+function runReplay(bars, classifier, { rearmDistancePct } = {}) {
   const triggers = [];
   let activeSetupId = null;
+  let coolingLevel = null;
+  let coolingDirection = null;
+
+  const hasRetraced = (price) => {
+    if (coolingLevel == null) return true; // no reference level supplied — nothing to wait for, behaves like default mode
+    return coolingDirection === 'below'
+      ? price >= coolingLevel * (1 + rearmDistancePct / 100)
+      : price <= coolingLevel * (1 - rearmDistancePct / 100);
+  };
 
   for (let i = 0; i < bars.length; i++) {
     const barsSoFar = bars.slice(0, i + 1);
+    const current = barsSoFar[barsSoFar.length - 1];
+
+    if (rearmDistancePct != null && activeSetupId != null && hasRetraced(current.c)) {
+      activeSetupId = null;
+      coolingLevel = null;
+      coolingDirection = null;
+    }
+
     const verdict = classifier(barsSoFar);
 
     if (!verdict) {
-      activeSetupId = null;
-      continue;
+      if (rearmDistancePct == null) activeSetupId = null; // default mode: reset on every falsy call
+      continue; // re-arm mode: stay cooling regardless of this call's verdict — only the retracement check above clears it
     }
     if (verdict.setupId === activeSetupId) continue; // same episode, already recorded
 
     activeSetupId = verdict.setupId;
-    const current = barsSoFar[barsSoFar.length - 1];
+    if (rearmDistancePct != null) {
+      coolingLevel = typeof verdict.referenceLevel === 'number' ? verdict.referenceLevel : current.c;
+      coolingDirection = verdict.referenceDirection === 'below' ? 'below' : 'above';
+    }
     triggers.push({
       setupId: verdict.setupId,
       triggerIndex: i,
       triggerTime: current.t,
       triggerPrice: current.c,
+      referenceLevel: verdict.referenceLevel ?? null,
+      margins: verdict.margins ?? null,
       forwardReturns: computeForwardReturns(bars, i),
     });
   }

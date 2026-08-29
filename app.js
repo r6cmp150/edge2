@@ -863,7 +863,7 @@ function loadState() {
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
-    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false
+    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false, riskPerTradePct: 2
   }, state.settings);
   // API keys live in their own localStorage key, edge_apiKeys — authoritative
   // once present. If it doesn't exist yet but the legacy edge_settings blob
@@ -890,6 +890,7 @@ function loadState() {
       }
     }
   } catch(e) {}
+  loadLocalOnlySettings(); // developerTools/riskPerTradePct — see core/store.js's comment on why these two aren't Supabase-backed yet
   state.notifications = Object.assign({
     enabled: true, permission: 'default',
     lastPriceCheck: null, lastDailyCheck: null, alertHistory: {}
@@ -967,6 +968,18 @@ function updateMarketBanner() {
 
 // ── 4. BUDGET BAR ────────────────────────────────────────────────
 
+// Single source of truth for "how much is actually free to deploy" —
+// extracted so Warrior's Phase 5 position-sizing cap (docs/warrior-
+// engine-spec-v2.md: "Cap suggestedShares × entry at available budget")
+// reuses this exact formula instead of computing a second, parallel
+// notion of availability that could silently drift from what the budget
+// bar itself shows.
+function getAvailableBudget() {
+  const budget = parseFloat(state.settings.budget) || 0;
+  const deployed = state.portfolio.reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
+  return budget - deployed;
+}
+
 function updateBudgetBar() {
   const el = document.getElementById('budget-bar');
   const tab = state.activeTab;
@@ -978,8 +991,8 @@ function updateBudgetBar() {
   }
 
   const budget = parseFloat(state.settings.budget) || 0;
-  const deployed = state.portfolio.reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
-  const avail = budget - deployed;
+  const avail = getAvailableBudget();
+  const deployed = budget - avail;
   const availClass = avail >= 0 ? 'pos' : 'neg';
 
   el.classList.remove('hidden');
@@ -6176,6 +6189,17 @@ function renderSettingsTab() {
       <div class="settings-row">
         <button class="btn btn-primary btn-sm" onclick="saveBudget()">Save Budget</button>
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Risk Per Trade (Warrior)</div>
+          <div class="settings-hint">Percent of budget risked per Warrior trade — scales suggestedShares with the budget above, so it never goes stale if the budget changes.</div>
+        </div>
+        <input id="set-risk-per-trade" class="settings-number" type="number"
+          min="0" max="100" step="0.5" value="${s.riskPerTradePct ?? 2}">
+      </div>
+      <div class="settings-row">
+        <button class="btn btn-primary btn-sm" onclick="saveRiskPerTrade()">Save Risk Per Trade</button>
+      </div>
     </div>
 
     <div class="settings-section mt12">
@@ -6790,6 +6814,14 @@ async function saveBudget() {
   alert('Budget saved.');
 }
 
+// Local-only (see core/store.js's persistLocalOnlySettings) — same reason
+// as toggleDeveloperTools: no Supabase settings-table column yet.
+function saveRiskPerTrade() {
+  state.settings.riskPerTradePct = parseFloat(document.getElementById('set-risk-per-trade')?.value) || 2;
+  persistLocalOnlySettings();
+  alert('Risk per trade saved.');
+}
+
 async function savePref(key, val) {
   const prev = state.settings[key];
   state.settings[key] = val;
@@ -6821,14 +6853,12 @@ async function toggleForcePreMarketMode(checked) {
 // reveals (currently: Warrior's Phase 4 replay panel) is rendered by that
 // engine's own renderTab(), gated on this same flag — this function only
 // owns the flag and its persistence.
-async function toggleDeveloperTools(checked) {
+// Local-only (see core/store.js's persistLocalOnlySettings) — no
+// Supabase settings-table column exists for this yet, so there's nothing
+// to await or roll back on failure the way saveBudget() does.
+function toggleDeveloperTools(checked) {
   state.settings.developerTools = checked;
-  try {
-    await saveSettingsToSupabase(state.settings);
-  } catch(e) {
-    state.settings.developerTools = !checked;
-    alert('Could not save setting to Supabase: ' + e.message);
-  }
+  persistLocalOnlySettings();
   renderSettingsTab();
   if (state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') renderWarriorTab();
 }

@@ -23,6 +23,37 @@ function persistApiKeys() {
   } catch(e) {}
 }
 
+// developerTools (Phase 4) and riskPerTradePct (Phase 5) don't have
+// columns in the Supabase settings table — adding them needs a schema
+// migration this session doesn't have the access to run. Until then,
+// saveSettingsToSupabase()'s row simply omits them, meaning a write
+// silently no-ops for these two fields specifically: found live
+// 2026-08-28 when riskPerTradePct's persistence was being built and
+// developerTools (already shipped, Phase 4) turned out to have the exact
+// same gap — the toggle "saved" but reset to its default on every reload.
+// Persisted locally instead, same alongside-Supabase-not-instead-of-it
+// shape as persistApiKeys above (API keys are deliberately never sent to
+// Supabase at all; these two are meant for Supabase eventually, just
+// don't have anywhere there to live yet). Every OTHER setting stays
+// exclusively Supabase-backed per the Data Migration project's Step 4 —
+// this is a narrow, explicit exception for the two fields with nowhere
+// else to go, not a reversion of that decision.
+function persistLocalOnlySettings() {
+  try {
+    localStorage.setItem('edge_localOnlySettings', JSON.stringify({
+      developerTools: state.settings.developerTools,
+      riskPerTradePct: state.settings.riskPerTradePct,
+    }));
+  } catch(e) {}
+}
+
+function loadLocalOnlySettings() {
+  try {
+    const raw = localStorage.getItem('edge_localOnlySettings');
+    if (raw) Object.assign(state.settings, JSON.parse(raw));
+  } catch(e) {}
+}
+
 function persist(key) {
   try { localStorage.setItem('edge_' + key, JSON.stringify(state[key])); } catch(e) {}
 }

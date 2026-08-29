@@ -51,6 +51,59 @@ async function testRunReplayEdgeTriggeredOncePerEpisode() {
   assert.strictEqual(triggers[1].triggerIndex, 9);
 }
 
+// ── Re-arm rule (Phase 5) ─────────────────────────────────────────────────
+
+async function testRearmSuppressesChopButAllowsGenuineSecondBreakout() {
+  const replay = await loadReplay();
+  // Reproduces the HVII 2026-08-24 shape found via the replay harness: a
+  // breakout above 10.0, harmless chop back and forth across the level
+  // (never retracing more than ~1%), then a REAL retreat (to 8.50, well
+  // past the 1% band) before a genuinely new breakout.
+  const bars = makeBars([9.90, 10.10, 9.95, 10.05, 9.95, 10.08, 8.50, 8.60, 10.20]);
+  const classifier = (barsSoFar) => {
+    const c = barsSoFar[barsSoFar.length - 1].c;
+    return c > 10.0 ? { setupId: 'breakout', referenceLevel: 10.0, referenceDirection: 'above' } : null;
+  };
+
+  const naive = replay.runReplay(bars, classifier);
+  const rearmed = replay.runReplay(bars, classifier, { rearmDistancePct: 1 });
+  console.log('naive trigger indices:', naive.map(t => t.triggerIndex), '| re-armed:', rearmed.map(t => t.triggerIndex));
+
+  assert.strictEqual(naive.length, 4, 'naive edge-triggering over-counts chop, same shape as the HVII finding (6 triggers for 1 real event)');
+  assert.strictEqual(rearmed.length, 2, 'with rearmDistancePct, only the genuine breakout and the genuine second breakout (after a real retreat) count');
+  assert.deepStrictEqual(rearmed.map(t => t.triggerIndex), [1, 8]);
+}
+
+async function testRearmBelowDirectionForBreakdownSetups() {
+  const replay = await loadReplay();
+  // 'below' direction: a breakdown-below-level setup re-arms only once
+  // price rallies back ABOVE level*(1+rearmDistancePct/100) — the mirror
+  // image of the 'above' case, included since a future short-side setup
+  // would need it even though none of Phase 5's five setups do.
+  const bars = makeBars([10.10, 9.90, 10.05, 9.95, 11.50, 11.40, 9.80]);
+  const classifier = (barsSoFar) => {
+    const c = barsSoFar[barsSoFar.length - 1].c;
+    return c < 10.0 ? { setupId: 'breakdown', referenceLevel: 10.0, referenceDirection: 'below' } : null;
+  };
+  const rearmed = replay.runReplay(bars, classifier, { rearmDistancePct: 1 });
+  console.log('below-direction re-armed indices:', rearmed.map(t => t.triggerIndex));
+  // i=1 (9.90) triggers. i=3 (9.95) is still within 1% of 10.0, no re-arm.
+  // i=4 (11.50) is well above 10.10 -> re-arms. i=6 (9.80) is a genuine new breakdown.
+  assert.deepStrictEqual(rearmed.map(t => t.triggerIndex), [1, 6]);
+}
+
+async function testRearmTriggerRecordCarriesReferenceLevelAndMargins() {
+  const replay = await loadReplay();
+  const bars = makeBars([9.90, 10.10]);
+  const classifier = (barsSoFar) => {
+    const c = barsSoFar[barsSoFar.length - 1].c;
+    return c > 10.0 ? { setupId: 'breakout', referenceLevel: 10.0, referenceDirection: 'above', margins: { volumeMultiple: 4.2, threshold: 3.0 } } : null;
+  };
+  const [trigger] = replay.runReplay(bars, classifier, { rearmDistancePct: 1 });
+  assert.strictEqual(trigger.referenceLevel, 10.0);
+  assert.deepStrictEqual(trigger.margins, { volumeMultiple: 4.2, threshold: 3.0 });
+}
+
 // ── No-lookahead: structural control ────────────────────────────────────
 
 async function testNoLookaheadStructuralControl() {
@@ -245,6 +298,9 @@ async function testRunReplayForSymbolsOrchestratesFetchAndReplay() {
 (async () => {
   await run('replay: runReplay is deterministic', testRunReplayDeterministic);
   await run('replay: runReplay is edge-triggered, one record per episode', testRunReplayEdgeTriggeredOncePerEpisode);
+  await run('replay: re-arm rule suppresses chop, allows a genuine second breakout (reproduces the HVII finding)', testRearmSuppressesChopButAllowsGenuineSecondBreakout);
+  await run('replay: re-arm rule, below-direction for breakdown setups', testRearmBelowDirectionForBreakdownSetups);
+  await run('replay: re-arm trigger record carries referenceLevel and margins', testRearmTriggerRecordCarriesReferenceLevelAndMargins);
   await run('replay: no-lookahead structural control (real loop correct, broken stand-in exposed)', testNoLookaheadStructuralControl);
   await run('replay: no-lookahead anchoring control is a mitigation, not a guarantee', testNoLookaheadAnchoringControlIsAMitigationNotAGuarantee);
   await run('replay: computeForwardReturns — correct return/MFE/MAE values', testComputeForwardReturnsCorrectValues);

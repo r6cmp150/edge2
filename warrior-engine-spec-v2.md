@@ -716,6 +716,22 @@ These are our definitions, not Ross's. All operate on 1-minute SIP bars for the 
 - Trigger: first bar closing above `prevClose` with volume ≥ 2× the prior-15-bar mean
 - `triggerPrice` = `prevClose`
 
+### Margins — the actual field per setup (built 2026-08-28)
+
+The two examples in "Setups are not mutually exclusive" above show the *shape* of margins, not a template every setup must force itself into. Implemented per setup's own real conditions:
+
+- `gap-and-go`: `{volumeMultiple, threshold, gapPct, distanceAbovePremarketHigh}`
+- `hod-momentum`: `{volumeMultiple, threshold, distanceAboveHod}` — as originally shown
+- `abcd`: `{volumeMultiple, threshold, retracementPct, gainPct}` — `retracementPct` is the literal retracement depth
+- `vwap-momentum`: `{volumeRatio, threshold: 1.0, distanceAboveVwap}` — this setup's own trigger condition is "rising volume," not a fixed multiple-of-mean the other four use, so `volumeRatio` (current bar vs. the pullback bar, threshold exactly 1.0 for "rising") is what's actually being measured. Recording an invented `volumeMultiple`-of-mean here would misrepresent what the setup's own definition actually checks.
+- `red-to-green`: `{volumeMultiple, threshold, distanceAbovePrevClose}`
+
+### Pre-market armed levels — approved addition (2026-08-28)
+
+No setup can trigger before the open (every trigger definition above requires a post-open bar, even `gap-and-go`: "first bar *after* the open"), so detection itself doesn't run during PRE. But Ross's actual 6am workflow is building a watchlist of *levels*, not waiting on triggers — and `gap-and-go`'s `premarketHigh` is nearly free to surface early, since it's the same computation the setup needs once the session opens anyway, just read earlier.
+
+For every QUALIFIED candidate during PRE: compute and display `premarketHigh` as an **armed level** — "Gap and Go level: $4.18" — no trigger record, no setup object, no margins. Once OPEN begins, this is replaced by real detection (which may or may not actually fire on that level).
+
 ### Re-arm rule — one event, one trigger
 
 **Found via the Phase 4 replay harness (2026-08-27), on HVII 2026-08-24:** the harness's own edge-triggering (fire once while the classifier stays truthy, reset the instant it goes falsy) recorded six triggers for a price oscillating across a single threshold ($7.66–$7.71) — one HOD break, not six. Harmless for Phase 4's example classifier; not harmless here. Six `hod-momentum` records off one move means Phase 8's per-setup attribution counts it six times, and a setup that chops near its threshold reads as more active — and, once outcomes are attributed, as more reliable or less reliable than one that fires cleanly — than the same real signal fired once.
@@ -745,6 +761,8 @@ target = entry + (targetR × risk)                            // targetR default
 
 `recentSwingLow` = lowest low of the 5 bars before the trigger.
 
+**`maxStopPct`/`targetR` live in the same sweepable config object as every setup's own thresholds and `rearmDistancePct` — not inline constants, not a Settings field.** The replay harness exists to calibrate thresholds against real history; a bare constant in code can't be swept without an edit. Settings stays reserved for the one genuinely user-facing value (`riskPerTradePct` below) — per the spec's own explicit "new Settings field" language, which names only that one.
+
 ### Position sizing — new, and probably the highest-value addition
 
 Ross's actual discipline is fixed dollar risk per trade. The v1 doc defines a tight stop and then never uses it.
@@ -753,18 +771,20 @@ Ross's actual discipline is fixed dollar risk per trade. The v1 doc defines a ti
 suggestedShares = floor( riskPerTrade / (entry - stop) )
 ```
 
-`riskPerTrade` is a new Settings field, default 2% of the configured budget. Cap `suggestedShares × entry` at available budget and show which constraint bound the size.
+`riskPerTradePct` is a new Settings field (default 2) — a **percentage**, computed live against the current budget each time, not a stored dollar figure that goes stale silently if the budget changes. Available-budget cap reuses EDGE's own budget-bar formula (`budget − deployed`, extracted into a shared `getAvailableBudget()`) rather than a second, parallel computation that could drift from what the budget bar itself shows. Cap `suggestedShares × entry` at available budget and show which constraint bound the size.
 
 On a $500 budget with average wins of +$3.47 and losses of −$3.33 (per the June report), sizing is doing more work than setup selection. Show suggested share count on every Warrior card.
 
 ### Phase 5 acceptance
 
-- [ ] Every setup validated through the replay harness before shipping
-- [ ] Every setup implements the re-arm rule (price retracement from its own reference level, not the harness's raw edge-trigger) — verified by replaying a real chop-at-threshold day (HVII 2026-08-24 is a confirmed example) and checking trigger count drops to the real event count
-- [ ] Setups return arrays; a stock matching three setups shows all three, with a deterministic primary
-- [ ] `minutesSinceTrigger` displayed on every card; >20min flagged LATE and demoted
-- [ ] Suggested share count present and correct: `shares × (entry − stop) ≈ riskPerTrade`
-- [ ] No Warrior code path calls `calcEntryTargetStop` or `calcScore`
+- [x] Every setup validated through the replay harness before shipping. All five classifiers are written to `runReplay`'s exact interface and unit-tested; `hod-momentum` additionally has a dedicated test walking it through the real bar-by-bar `runReplay` loop (not just a single direct call), confirming the same guarantee Phase 4 established (correct trigger index, no lookahead) holds for a real setup, not just the disposable example.
+- [x] Every setup implements the re-arm rule via `detectSetupsForCandidate`'s uniform `runReplay(..., {rearmDistancePct})` wiring — no setup reimplements it individually. **Mechanism unit-tested** with a fixture reproducing HVII's exact shape (breakout, harmless chop within the retracement band, genuine retreat, genuine second breakout): naive edge-triggering gives 4 triggers, re-arm gives 2, matching real-event count. **OUTSTANDING** — genuine live verification against the real HVII 2026-08-24 data (not just a reproduction of its shape) needs either live Alpaca access or the replay panel gaining a way to select a real setup classifier instead of Phase 4's placeholder (a small, deliberately-deferred follow-up, not built here).
+- [x] Setups return arrays with a deterministic primary. Unit-tested with two simultaneous setups (mechanism is count-agnostic — sorting logic doesn't special-case "three"); primary is `SETUP_PRIORITY`'s first non-late entry.
+- [x] `minutesSinceTrigger` computed and rendered on every card; >20min flagged LATE **and demoted** — found while writing this checklist that the first implementation only flagged, not demoted (sorted by priority regardless of late status); fixed and unit-tested (a fixture where the highest-priority setup is late and a lower-priority one isn't confirms the non-late one sorts first).
+- [x] Suggested share count present and correct: unit-tested against hand-computed risk- and budget-bound cases, including a floating-point edge case (`5.00 − 4.80` in IEEE 754 is `0.20000000000000018`, which without an epsilon before flooring reports 49 shares where the real math supports 50 — caught by a direct test, not assumed away).
+- [x] No Warrior code path calls `calcEntryTargetStop` or `calcScore` — unit-tested across every file in `engines/warrior/`, not just `setups.js`.
+- [x] `maxStopPct`/`targetR`/`rearmDistancePct` live in the sweepable `SETUP_CONFIG` object, not inline constants — confirmed by the tests importing and asserting against `SETUP_CONFIG` directly rather than hardcoded expectations.
+- [x] Pre-market armed levels (approved addition) — `computeArmedLevels`/`computePremarketHigh` unit-tested; wired into `evaluateSetupsBatch`'s PRE-session branch.
 
 ---
 
