@@ -7071,8 +7071,8 @@ async function testPremarketGap() {
   showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
     <div class="test-result">Session: ${r.session}</div>
     <div class="test-result">${r.tradableCount} tradable -> ${r.eligibleCount} instrument-eligible -> ${r.priceFilteredCount} with prior close in \$1-\$20 -> ${r.resultCount} returned (top 50 by gap% + anything >=10%)</div>
-    <div class="section-label mt12">Requests by stage</div>
-    <div class="test-result">Asset index: ${r.requests.assetIndex} | Prior closes: ${r.requests.priorCloses} | Minute bars pass 1 (45min): ${r.requests.minuteBarsPass1} | Minute bars pass 2 (3h fallback): ${r.requests.minuteBarsPass2} | Total: ${r.requests.total}</div>
+    <div class="section-label mt12">Requests observed by stage</div>
+    <div class="test-result">Asset index: ${r.requestsObserved.assetIndex} | Prior closes: ${r.requestsObserved.priorCloses} | Minute bars (both passes): ${r.requestsObserved.minuteBars} | Total: ${r.requestsObserved.total}</div>
     <div class="test-result">Wall clock: ${(r.wallClockMs / 1000).toFixed(1)}s</div>
     <div class="test-result">${coverageNote}</div>
     <div class="section-label mt12">First-letter distribution (${r.resultCount} results)</div>

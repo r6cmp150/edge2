@@ -13,14 +13,15 @@
 // Runs in the same global scope as app.js/core/*.js despite being a module
 // (only this file's own top-level declarations are module-scoped) — so it
 // references registerEngine/state/showGlobalErrorToast/getMarketStatus/
-// getUniverse/renderWarriorTab/_countRequests as ordinary globals. That's
-// expected, not a boundary leak: the rule this phase enforces is "nothing
-// outside this file reaches INTO Warrior code except through the
-// registry," not "Warrior code can't read the app's shared globals or call
-// its shared utilities" — Phase 2 already established calling
-// showGlobalErrorToast this way, and Phase 3 does the same for
-// renderWarriorTab and (below) core/universe.js's own request-counting
-// diagnostic helper, already relied on by diagnosePremarketGap there.
+// getUniverse/renderWarriorTab/getRequestStats/diffRequestStats as ordinary
+// globals. That's expected, not a boundary leak: the rule this phase
+// enforces is "nothing outside this file reaches INTO Warrior code except
+// through the registry," not "Warrior code can't read the app's shared
+// globals or call its shared utilities" — Phase 2 already established
+// calling showGlobalErrorToast this way, and Phase 3 does the same for
+// renderWarriorTab and (below) core/api-client.js's shared request-stats
+// tally (getRequestStats/diffRequestStats, 2026-08-30 — replaces the
+// retired core/universe.js:_countRequests, which this file used to call).
 import { evaluateGateBatch, _selectStrategy } from './gate.js';
 import { runReplayForSymbols } from './replay.js';
 
@@ -50,15 +51,23 @@ async function _scanTick() {
     const session = (typeof getMarketStatus === 'function') ? getMarketStatus().status : 'CLOSED';
     const strategy = _selectStrategy(session);
 
-    // Wrapped with _countRequests (core/universe.js — already relied on by
-    // diagnosePremarketGap there) unconditionally, not just when logging
-    // below: negligible overhead (it just proxies the shared alpacaGet for
-    // the duration of one call), and keeping it unconditional means the
-    // logging line below can be deleted on its own later without also
-    // having to restore two different call shapes for getUniverse/
-    // evaluateGateBatch.
-    const { result: universe, count: universeRequests } = await _countRequests(() => getUniverse({ session, strategy }));
-    const { result: gateResult, count: gateRequests } = await _countRequests(() => evaluateGateBatch(universe, session));
+    // Snapshot-diffed via the shared request-stats tally (core/api-client.js,
+    // 2026-08-30), not counted unconditionally, not just when logging below:
+    // negligible overhead (two object-spread snapshots per call), and
+    // keeping it unconditional means the logging line below can be deleted
+    // on its own later without restoring two different call shapes for
+    // getUniverse/evaluateGateBatch. Snapshotting the GLOBAL tally, not
+    // engine-scoped ('WARRIOR') — alpacaGet still hardcodes engine='EDGE'
+    // for every request regardless of caller (a stale Phase 0.5 assumption,
+    // not yet fixed), so a 'WARRIOR'-scoped read would silently show zero
+    // here rather than actually isolating Warrior's own traffic.
+    const beforeUniverse = getRequestStats();
+    const universe = await getUniverse({ session, strategy });
+    const universeRequestsObserved = diffRequestStats(beforeUniverse, getRequestStats()).issued;
+
+    const beforeGate = getRequestStats();
+    const gateResult = await evaluateGateBatch(universe, session);
+    const gateRequestsObserved = diffRequestStats(beforeGate, getRequestStats()).issued;
     const { results, rvolCheckable } = gateResult;
 
     // PHASE-3-UNVERIFIED (2026-08-26): Phase 3 merged to main before two
@@ -72,7 +81,7 @@ async function _scanTick() {
     // block (and revert the two lines above to plain, unwrapped
     // getUniverse/evaluateGateBatch calls) once both are confirmed live.
     if (session === 'OPEN') {
-      console.log(`[PHASE-3-UNVERIFIED] regular-session scan — universe: ${universeRequests} req, gate: ${gateRequests} req, total: ${universeRequests + gateRequests} req (acceptance: <30 for a 50-symbol universe). Also confirm feed=sip in the network log for this scan's requests.`);
+      console.log(`[PHASE-3-UNVERIFIED] regular-session scan — universe: ${universeRequestsObserved} req observed, gate: ${gateRequestsObserved} req observed, total: ${universeRequestsObserved + gateRequestsObserved} req (acceptance: <30 for a 50-symbol universe). Also confirm feed=sip in the network log for this scan's requests.`);
     }
 
     _lastScanResults = { session, results, scannedAt: new Date(), rvolCheckable };

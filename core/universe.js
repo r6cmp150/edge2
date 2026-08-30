@@ -778,23 +778,6 @@ async function diagnosePrevDailyBarCoverage() {
   };
 }
 
-// Temporarily wraps the shared alpacaGet to count requests made during fn(),
-// without changing alpacaGet's signature or any production caller's
-// contract — this is a diagnostic-only need, not a reason to thread a
-// counter through _getAssetIndex/_getPriorCloses's real return shapes.
-// Restored in a finally so a thrown error never leaves the global wrapped.
-async function _countRequests(fn) {
-  const real = alpacaGet;
-  let count = 0;
-  alpacaGet = (...args) => { count++; return real(...args); };
-  try {
-    const result = await fn();
-    return { result, count };
-  } finally {
-    alpacaGet = real;
-  }
-}
-
 // Runs the real premarket-gap strategy stage by stage — NOT via
 // getUniverse(), which would hide per-stage cost behind one total and (with
 // no cache for minute bars) double the actual SIP request cost if this then
@@ -806,20 +789,35 @@ async function _countRequests(fn) {
 // time and coverage rate (symbols that got a bar, after both minute-bar
 // passes, divided by symbols requested) so the two-tier fetch's tradeoff
 // (see _fetchLatestSipMinuteBars) is measured, not assumed away.
+//
+// Per-stage counts come from core/api-client.js's getRequestStats/
+// diffRequestStats (2026-08-30 fix) — a snapshot of the shared, issue-time
+// tally before and after each stage, not the old per-function _countRequests
+// monkey-patch (retired: no concurrency protection, see the commit that
+// removed it). Labeled requestsObserved, not requests, for the same reason
+// every consumer of this mechanism is: it's a diff over a shared counter,
+// exact only if nothing else hits the queue during the window, never an
+// undercount the way the old per-function threading was.
 async function diagnosePremarketGap() {
   const session = getMarketStatus().status;
   const t0 = Date.now();
 
-  const { result: assetIndex, count: assetIndexRequests } = await _countRequests(() => _getAssetIndex());
+  const beforeAssetIndex = getRequestStats('EDGE');
+  const assetIndex = await _getAssetIndex();
+  const assetIndexRequestsObserved = diffRequestStats(beforeAssetIndex, getRequestStats('EDGE')).issued;
   const eligibleSymbols = assetIndex.filter(a => a.isEligibleInstrument).map(a => a.symbol);
 
-  const { result: priorCloses, count: priorClosesRequests } = await _countRequests(() => _getPriorCloses(eligibleSymbols));
+  const beforePriorCloses = getRequestStats('EDGE');
+  const priorCloses = await _getPriorCloses(eligibleSymbols);
+  const priorClosesRequestsObserved = diffRequestStats(beforePriorCloses, getRequestStats('EDGE')).issued;
   const priceFilteredSymbols = eligibleSymbols.filter(sym => _inPriceRange(priorCloses[sym]));
 
+  const beforeMinuteBars = getRequestStats('EDGE');
   const barsResult = priceFilteredSymbols.length
     ? await _fetchLatestSipMinuteBars(priceFilteredSymbols)
-    : { latestBySymbol: {}, missingSymbols: [], pass1Requests: 0, pass2Requests: 0 };
-  const { latestBySymbol, missingSymbols, pass1Requests, pass2Requests } = barsResult;
+    : { latestBySymbol: {}, missingSymbols: [] };
+  const minuteBarsRequestsObserved = diffRequestStats(beforeMinuteBars, getRequestStats('EDGE')).issued;
+  const { latestBySymbol, missingSymbols } = barsResult;
 
   const { withGap, top50, above10pct } = _buildGapResults(priceFilteredSymbols, latestBySymbol, priorCloses);
   const wallClockMs = Date.now() - t0;
@@ -849,12 +847,11 @@ async function diagnosePremarketGap() {
     resultCount: top50.length + above10pct.length,
     sample: [...top50, ...above10pct].slice(0, 10),
     letterDistribution,
-    requests: {
-      assetIndex: assetIndexRequests,
-      priorCloses: priorClosesRequests,
-      minuteBarsPass1: pass1Requests,
-      minuteBarsPass2: pass2Requests,
-      total: assetIndexRequests + priorClosesRequests + pass1Requests + pass2Requests,
+    requestsObserved: {
+      assetIndex: assetIndexRequestsObserved,
+      priorCloses: priorClosesRequestsObserved,
+      minuteBars: minuteBarsRequestsObserved,
+      total: assetIndexRequestsObserved + priorClosesRequestsObserved + minuteBarsRequestsObserved,
     },
     wallClockMs,
     coverageRate,

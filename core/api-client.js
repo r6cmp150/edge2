@@ -94,6 +94,86 @@ const _queue = []; // { run, resolve, reject, engine, priority }
 let _activeWorkers = 0;
 let _backoffUntil = 0;
 
+// ── Request accounting: one place to be right ────────────────────────────
+// Every diagnostic count this app has ever shown (Phase 3's PHASE-3-
+// UNVERIFIED log, Phase 4/5's replay-panel summary line, core/universe.js's
+// diagnosePremarketGap) was computed by threading a `requests` return value
+// up through each layer, incrementing it AFTER its own fetch call resolved
+// — so a failed attempt, which still consumes real quota and still hits
+// the wire, contributed 0 everywhere. Found 2026-08-30 via the Playwright
+// replay-scan harness (a separate, non-Warrior-specific tool) recording
+// real HTTP calls as an independent witness and catching a 6-observed/
+// 0-reported mismatch under a rejected API key. Nine call sites had this
+// exact bug independently; fixing each one leaves nine places a tenth can
+// reintroduce it.
+//
+// This tally lives at the one place every Alpaca request from either
+// engine actually passes through — _drainWorker, right next to the line
+// that already gets timing correct for the token bucket (_tokens -= 1,
+// unconditional, before the request is sent). issued increments there,
+// unconditionally; succeeded/failed increment once the attempt resolves
+// one way or the other. issued === succeeded + failed always holds.
+// retried is a separate, narrower count — see alpacaGet's retry branch —
+// of how many failures were followed by another attempt rather than
+// given up on.
+//
+// Callers that want a SCOPED count (e.g. "how many requests did this one
+// range-scan make") don't get a tag threaded through every intermediate
+// layer down to alpacaGet — that would touch more call sites than it
+// fixes, for instrumentation those layers have no other reason to carry.
+// Instead: getRequestStats(engine) snapshots the running total, the
+// caller runs its operation, snapshots again, and diffRequestStats reports
+// the difference. This is what replaced core/universe.js's retired
+// _countRequests (a monkey-patch of the shared alpacaGet binding with no
+// concurrency protection — see the commit that removed it for the exact
+// failure mode: two overlapping scoped counts, completing out of nesting
+// order, could permanently corrupt the alpacaGet binding itself).
+//
+// Known, accepted limitation of the diff approach: it's exact only if
+// nothing ELSE hits the queue during the window between the two
+// snapshots. A genuinely concurrent second operation would have its own
+// requests counted in the diff too — over-attributing, never under. That
+// direction matters: a number that reads high after the fact makes a
+// human cautious; a number that reads low (the original bug) makes the
+// system trust itself when it shouldn't. Report this number as
+// requestsObserved, not requests — it is a diff over a shared counter,
+// not a per-operation ledger, and the name should say that plainly.
+//
+// Per-engine breakdown: real today only in the sense that it WILL
+// separate engines once alpacaGet actually tags requests by caller. As of
+// this fix, alpacaGet still hardcodes engine = 'EDGE' unconditionally
+// (see alpacaGet's own comment — a stale Phase 0.5 assumption from before
+// Warrior existed and started calling this same function). Every request
+// from both engines currently lands in byEngine.EDGE; byEngine.WARRIOR
+// will read zero until that tagging gap is closed separately. Recording
+// this now, honestly, rather than shipping a per-engine number that looks
+// like it solves the Warrior/EDGE contamination case without actually
+// doing so.
+function _freshStats() { return { issued: 0, succeeded: 0, failed: 0, retried: 0 }; }
+const _requestStats = { global: _freshStats(), byEngine: {} };
+
+function _recordRequest(engine, outcome) {
+  _requestStats.global[outcome]++;
+  if (!_requestStats.byEngine[engine]) _requestStats.byEngine[engine] = _freshStats();
+  _requestStats.byEngine[engine][outcome]++;
+}
+
+// Snapshot only — a plain object safe to hold onto and diff later, never
+// mutated in place by further requests.
+function getRequestStats(engine) {
+  const src = engine ? (_requestStats.byEngine[engine] || _freshStats()) : _requestStats.global;
+  return { ...src };
+}
+
+function diffRequestStats(before, after) {
+  return {
+    issued: after.issued - before.issued,
+    succeeded: after.succeeded - before.succeeded,
+    failed: after.failed - before.failed,
+    retried: after.retried - before.retried,
+  };
+}
+
 let _ambientPriority = 'foreground';
 
 // Wraps `fn` so every alpacaGet call reachable inside it (directly, or via
@@ -223,10 +303,13 @@ async function _drainWorker() {
       const [item] = _queue.splice(idx, 1);
       _tokens -= 1;
       _engineTimestamps[item.engine].push(Date.now());
+      _recordRequest(item.engine, 'issued');
       try {
         const result = await item.run();
+        _recordRequest(item.engine, 'succeeded');
         item.resolve(result);
       } catch (e) {
+        _recordRequest(item.engine, 'failed');
         item.reject(e);
       }
     }
@@ -295,6 +378,7 @@ async function alpacaGet(path, params = {}, base = ALPACA_BASE) {
     } catch (e) {
       if (e.status === 429 && attempt < MAX_429_RETRIES) {
         attempt++;
+        _recordRequest(engine, 'retried'); // this failure gets another attempt, not a terminal one — see retried's own definition above
         const backoffMs = BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
         _backoffUntil = Date.now() + backoffMs;
         console.warn(`Alpaca 429 — engine ${engine} throttled, backing off ${backoffMs}ms (attempt ${attempt}/${MAX_429_RETRIES})`);
