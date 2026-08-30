@@ -588,8 +588,29 @@ function _renderRangeScanResult(result) {
     ${symbols.map(sym => _renderScanMatrixForSymbol(sym, setupIds, tradingDays, resultsByDate)).join('')}`;
 }
 
+// Test-harness hook — NOT used by any production code path. Published on
+// every renderReplayPanel() call (i.e. every render tick this panel is
+// visible), gated the same developerTools-only way as the panel itself,
+// so a Playwright harness can read the exact structured result objects
+// instead of re-deriving them by parsing rendered HTML — the DOM already
+// has to stay in sync with these for the panel to render correctly, so
+// exposing the same objects directly is strictly less fragile than
+// scraping table cells/title attributes back out of the markup.
+function _publishReplayDebugHook() {
+  if (typeof window === 'undefined') return;
+  window.__warriorReplayDebug = {
+    lastReplayResult: _lastReplayResult,
+    lastRangeScanResult: _lastRangeScanResult,
+    rangeScanInFlight: _rangeScanInFlight,
+    rangeScanProgress: _rangeScanProgress,
+    rangeScanConfirmPending: _rangeScanConfirmPending,
+    replayInFlight: _replayInFlight,
+  };
+}
+
 function renderReplayPanel() {
   if (!(typeof state !== 'undefined' && state.settings && state.settings.developerTools)) return '';
+  _publishReplayDebugHook();
 
   let body;
   if (_rangeScanInFlight) {
@@ -618,7 +639,7 @@ function renderReplayPanel() {
       ? `<span class="settings-hint">${_lastReplayResult.requests} request(s) for ${_lastReplayResult.dateStr} (${REPLAY_CLASSIFIER_OPTIONS.find(o => o.id === _lastReplayResult.classifierId)?.label || _lastReplayResult.classifierId})</span>`
       : '';
 
-  return `<div class="settings-section mt12">
+  return `<div class="settings-section mt12" id="warrior-replay-panel">
     <div class="settings-section-title">Replay Harness (dev only)</div>
     <div class="settings-row">
       <span class="settings-hint">Fetch → replay bar-by-bar → score against real history. Pick a real setup (or "All setups") to validate against actual bars, not just unit-test fixtures. Fill in an end date to scan a range instead of one day — "ABCD: 0" on one day means nothing; the same across weeks of real bars means something. See docs/warrior-engine-spec-v2.md Phase 4/5.</span>
@@ -717,6 +738,17 @@ export function register() {
     window.warriorCancelRangeScan = _cancelRangeScanFromUI;
     window.warriorUpdateReplayEstimate = _updateReplayEstimateDisplay;
     window.warriorToggleScanCell = _toggleScanCellFromUI;
+    // Test-only escape hatch: the replay panel's own <input> values are
+    // re-derived from _lastReplayResult/_lastRangeScanResult on every
+    // render, including the automatic WARRIOR_SCAN_INTERVAL_MS tick's
+    // renderWarriorTab() call (fires whenever state.activeTab === 'warrior',
+    // regardless of what the replay panel is doing) — a real, if narrow,
+    // race between a harness filling those inputs and that tick firing
+    // mid-fill, which would silently blank them back to '' before Run gets
+    // clicked. No production caller has ever needed to stop this interval;
+    // exposing the existing _stopScanInterval lets a Playwright harness
+    // eliminate the race deterministically instead of outrunning it by luck.
+    window.warriorStopScanInterval = _stopScanInterval;
   }
   _startScanInterval();
 }

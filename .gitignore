@@ -1,0 +1,9 @@
+# Playwright replay-scan harness (scripts/replay-scan.mjs)
+node_modules/
+artifacts/
+.env.local
+
+# Playwright's own caches/reports, if ever generated in-repo
+test-results/
+playwright-report/
+playwright/.cache/
