@@ -218,13 +218,22 @@ function _renderPillarRow(pillar) {
 // results simply don't have these fields, so the checks below naturally
 // render nothing for them without needing to separately track tier here.
 
+// Raw price/level fields a *Pct margin was measured against (breakoutHigh
+// for gap-and-go/hod-momentum's high-based checks, aLevel/cLevel for
+// ABCD, vwap for VWAP Momentum) — shown explicitly so every margin is
+// recomputable from numbers actually on the row, not just asserted.
+// Named individually (not matched by suffix) since 'threshold' also lands
+// in the plain-number fallback below and is never a dollar value.
+const PRICE_MARGIN_KEYS = new Set(['breakoutHigh', 'aLevel', 'cLevel', 'vwap']);
+
 function _fmtMargin(key, value) {
   if (typeof value !== 'number') return `${key}: —`;
-  // *Pct/*Multiple/*Ratio fields are ratios/fractions; everything else
-  // (thresholds paired alongside a *Multiple/*Ratio field) is shown as a
-  // plain number at the same precision as its paired measurement.
+  // *Pct/*Multiple/*Ratio fields are ratios/fractions; PRICE_MARGIN_KEYS
+  // are dollar values; everything else (thresholds paired alongside a
+  // *Multiple/*Ratio field) is a plain number at its own precision.
   if (/Pct$/.test(key)) return `${key}: ${(value * 100).toFixed(1)}%`;
   if (/Multiple$|Ratio$/.test(key)) return `${key}: ${value.toFixed(2)}×`;
+  if (PRICE_MARGIN_KEYS.has(key)) return `${key}: $${value.toFixed(2)}`;
   return `${key}: ${value.toFixed(2)}`;
 }
 
@@ -398,8 +407,8 @@ function renderReplayPanel() {
       <select id="warrior-replay-classifier" class="settings-input">${classifierOptions}</select>
     </div>
     <div class="settings-row">
-      <input type="date" id="warrior-replay-date" class="settings-input" style="max-width:160px;">
-      <input type="text" id="warrior-replay-symbols" class="settings-input" placeholder="AAPL, TSLA">
+      <input type="date" id="warrior-replay-date" class="settings-input" style="max-width:160px;" value="${_lastReplayResult?.dateStr || ''}">
+      <input type="text" id="warrior-replay-symbols" class="settings-input" placeholder="AAPL, TSLA" value="${_lastReplayResult?.symbols?.join(', ') || ''}">
     </div>
     <div class="settings-row">
       <button class="btn btn-primary btn-sm" onclick="warriorRunReplay()" ${_replayInFlight ? 'disabled' : ''}>${_replayInFlight ? 'Running…' : 'Run Replay'}</button>

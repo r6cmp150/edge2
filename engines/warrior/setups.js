@@ -115,9 +115,17 @@ function makeGapAndGoClassifier({ prevClose }, config = SETUP_CONFIG['gap-and-go
       setupId: 'gap-and-go',
       referenceLevel: premarketHigh,
       referenceDirection: 'above',
+      // breakoutHigh is included alongside the derived Pct so the margin
+      // is recomputable from numbers actually shown in the row: the
+      // trigger condition checks the BAR'S HIGH against premarketHigh
+      // (referenceLevel, already shown), not the bar's close (triggerPrice,
+      // also shown) — those are two different numbers on the same bar, and
+      // without breakoutHigh visible, breakoutHighAbovePremarketHighPct
+      // can't be checked against anything on the card.
       margins: {
-        volumeMultiple, threshold: config.volumeMultiple,
-        gapPct, distanceAbovePremarketHigh: (current.h - premarketHigh) / premarketHigh,
+        volumeMultiple, threshold: config.volumeMultiple, gapPct,
+        breakoutHigh: current.h,
+        breakoutHighAbovePremarketHighPct: (current.h - premarketHigh) / premarketHigh,
       },
     };
   };
@@ -144,7 +152,15 @@ function hodMomentumClassifier(barsSoFar, config = SETUP_CONFIG['hod-momentum'])
     setupId: 'hod-momentum',
     referenceLevel: hod,
     referenceDirection: 'above',
-    margins: { volumeMultiple, threshold: config.volumeMultiple, distanceAboveHod: (current.h - hod) / hod },
+    // Same reasoning as gap-and-go above: the trigger condition checks
+    // the bar's HIGH against hod, not its close (triggerPrice) — breakoutHigh
+    // makes breakoutHighAboveHodPct checkable against a number on the row
+    // instead of a value that only ever existed inside this function.
+    margins: {
+      volumeMultiple, threshold: config.volumeMultiple,
+      breakoutHigh: current.h,
+      breakoutHighAboveHodPct: (current.h - hod) / hod,
+    },
   };
 }
 
@@ -203,7 +219,16 @@ function abcdClassifier(barsSoFar, config = SETUP_CONFIG['abcd']) {
     setupId: 'abcd',
     referenceLevel: B,
     referenceDirection: 'above',
-    margins: { volumeMultiple, threshold: config.volumeMultiple, retracementPct, gainPct: B / A - 1 },
+    // retracementPct/gainPct are both computed from A and C, neither of
+    // which appears anywhere else on the card (only B, as referenceLevel,
+    // and the trigger's own close, as triggerPrice, are shown) — without
+    // aLevel/cLevel here, neither derived Pct is checkable against
+    // anything visible.
+    margins: {
+      volumeMultiple, threshold: config.volumeMultiple,
+      aLevel: A, cLevel: C,
+      gainPct: B / A - 1, retracementPct,
+    },
   };
 }
 
@@ -250,9 +275,14 @@ function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum'
     setupId: 'vwap-momentum',
     referenceLevel: pullbackBar.h,
     referenceDirection: 'above',
+    // distanceAboveVwapPct is measured against currentVwap, a THIRD number
+    // distinct from both referenceLevel (the pullback bar's high, used for
+    // re-arm) and triggerPrice (this bar's close) — vwap must be shown
+    // explicitly or the Pct has nothing on the card to check it against.
     margins: {
       volumeRatio: current.v / prevBar.v, threshold: 1.0,
-      distanceAboveVwap: currentVwap ? (current.c - currentVwap) / currentVwap : null,
+      vwap: currentVwap,
+      distanceAboveVwapPct: currentVwap ? (current.c - currentVwap) / currentVwap : null,
     },
   };
 }
@@ -280,9 +310,14 @@ function makeRedToGreenClassifier({ prevClose }, config = SETUP_CONFIG['red-to-g
       setupId: 'red-to-green',
       referenceLevel: referenceClose,
       referenceDirection: 'above',
+      // Already fully recomputable without an extra field: both operands
+      // (current.c and referenceClose) are shown on the row already, as
+      // triggerPrice and referenceLevel respectively — this setup's own
+      // trigger condition is close-based, unlike gap-and-go/hod-momentum's
+      // high-based checks, so there's no hidden reference here.
       margins: {
         volumeMultiple, threshold: config.volumeMultiple,
-        distanceAbovePrevClose: (current.c - referenceClose) / referenceClose,
+        distanceAbovePrevClosePct: (current.c - referenceClose) / referenceClose,
       },
     };
   };

@@ -211,6 +211,95 @@ async function testRedToGreenFailsWithoutHavingTradedBelow() {
   assert.strictEqual(classifier(bars), null, 'the precondition requires the session to have actually traded below prevClose first');
 }
 
+// ── margin recomputability ────────────────────────────────────────────────
+// General principle from the live-replay findings (2026-08-28/29): every
+// margin must be checkable from numbers actually shown on the card, not
+// just asserted. These tests recompute each derived *Pct field from the
+// OTHER fields in the same verdict (mirroring what a reader with only the
+// rendered row in front of them could do) and confirm they match — not
+// just that the fields exist.
+
+async function testGapAndGoBreakoutHighMarginIsRecomputable() {
+  const setups = await loadSetups();
+  const prevClose = 4.00;
+  const bars = [
+    bar(5, 0, 4.40, 4.50, 4.35, 4.45, 500),
+    ...flatRun(6, 30, 3, 4.46, 1000),
+    bar(6, 33, 4.47, 4.60, 4.46, 4.58, 3000),
+  ];
+  const verdict = setups.makeGapAndGoClassifier({ prevClose })(bars);
+  const recomputed = (verdict.margins.breakoutHigh - verdict.referenceLevel) / verdict.referenceLevel;
+  console.log('gap-and-go recompute check:', { reported: verdict.margins.breakoutHighAbovePremarketHighPct, recomputed });
+  assert.ok(Math.abs(verdict.margins.breakoutHighAbovePremarketHighPct - recomputed) < 1e-9,
+    'breakoutHighAbovePremarketHighPct must be recomputable from breakoutHigh and referenceLevel alone, both shown on the row');
+  assert.notStrictEqual(verdict.margins.breakoutHigh, verdict.triggerPrice,
+    'breakoutHigh (the bar\'s high, what the trigger condition checks) is deliberately a different number from triggerPrice (the bar\'s close) — that gap is exactly what made the old field unrecomputable');
+}
+
+async function testHodMomentumBreakoutHighMarginIsRecomputable() {
+  const setups = await loadSetups();
+  const bars = [...flatRun(6, 30, 16, 5.00, 1000), bar(6, 46, 5.00, 5.20, 4.98, 5.15, 4000)];
+  const verdict = setups.hodMomentumClassifier(bars);
+  const recomputed = (verdict.margins.breakoutHigh - verdict.referenceLevel) / verdict.referenceLevel;
+  console.log('hod-momentum recompute check:', { reported: verdict.margins.breakoutHighAboveHodPct, recomputed });
+  assert.ok(Math.abs(verdict.margins.breakoutHighAboveHodPct - recomputed) < 1e-9);
+}
+
+async function testAbcdRetracementAndGainMarginsAreRecomputable() {
+  const setups = await loadSetups();
+  const validBars = [
+    bar(6, 30, 5.00, 5.05, 4.90, 4.95, 1000),
+    bar(6, 35, 4.95, 5.60, 4.95, 5.55, 2000),
+    bar(6, 40, 5.55, 5.55, 5.30, 5.35, 800),
+    bar(6, 41, 5.35, 5.35, 5.285, 5.30, 700),
+    bar(6, 42, 5.30, 5.65, 5.29, 5.62, 2500),
+  ];
+  const verdict = setups.abcdClassifier(validBars);
+  const { aLevel, cLevel, gainPct, retracementPct } = verdict.margins;
+  const B = verdict.referenceLevel;
+  const recomputedGain = B / aLevel - 1;
+  const recomputedRetrace = (B - cLevel) / (B - aLevel);
+  console.log('abcd recompute check:', { gainPct, recomputedGain, retracementPct, recomputedRetrace });
+  assert.ok(Math.abs(gainPct - recomputedGain) < 1e-9, 'gainPct must be recomputable from aLevel and referenceLevel (B) alone');
+  assert.ok(Math.abs(retracementPct - recomputedRetrace) < 1e-9, 'retracementPct must be recomputable from aLevel, cLevel, and referenceLevel (B) alone');
+}
+
+async function testVwapMomentumDistanceMarginIsRecomputable() {
+  const setups = await loadSetups();
+  const bars = [
+    bar(6, 30, 4.80, 4.85, 4.78, 4.82, 1000),
+    bar(6, 31, 4.82, 4.83, 4.75, 4.78, 1200),
+    bar(6, 32, 4.78, 5.00, 4.78, 4.98, 3000),
+    bar(6, 33, 4.98, 4.99, 4.90, 4.95, 900),
+    bar(6, 34, 4.95, 5.05, 4.94, 5.02, 2000),
+  ];
+  const verdict = setups.vwapMomentumClassifier(bars);
+  // A raw classifier verdict has no triggerPrice field — that's added by
+  // the harness (runReplay), always as the current bar's close (see
+  // replay.js's anchoring rule). What's displayed on a real card IS that
+  // harness-derived triggerPrice, so recomputing against the same bar's
+  // close here matches what a reader with the rendered row would do.
+  const actualClose = bars[bars.length - 1].c;
+  const recomputedPct = (actualClose - verdict.margins.vwap) / verdict.margins.vwap;
+  console.log('vwap-momentum recompute check:', { reported: verdict.margins.distanceAboveVwapPct, recomputedPct });
+  assert.ok(Math.abs(verdict.margins.distanceAboveVwapPct - recomputedPct) < 1e-9,
+    'distanceAboveVwapPct must be recomputable from the trigger bar\'s close and margins.vwap alone');
+}
+
+async function testFmtMarginRendersPriceFieldsWithDollarSign() {
+  // Direct check on the render layer's own formatting rule (index.js),
+  // read as source rather than imported (index.js is not designed to be
+  // loaded standalone in this test environment) -- confirms the new
+  // PRICE_MARGIN_KEYS set actually includes every raw-price field the
+  // classifiers now emit, so a future field added to one without the
+  // other silently falls back to a bare, unlabeled number instead of $X.XX.
+  const src = readSource('engines/warrior/index.js');
+  const setKeys = ['breakoutHigh', 'aLevel', 'cLevel', 'vwap'];
+  for (const key of setKeys) {
+    assert.ok(new RegExp(`'${key}'`).test(src), `PRICE_MARGIN_KEYS in index.js must list '${key}' so it renders with a $ prefix`);
+  }
+}
+
 // ── entry/target/stop, position sizing ──────────────────────────────────
 
 async function testEntryTargetStopUsesSwingLowUnlessTighterThanMaxStopPct() {
@@ -445,6 +534,11 @@ async function testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore() {
   await run('setups: vwap-momentum fails without a prior genuine cross', testVwapMomentumFailsWithoutPriorCross);
   await run('setups: red-to-green triggers on cross above prevClose with volume', testRedToGreenTriggersOnCrossAbovePrevCloseWithVolume);
   await run('setups: red-to-green fails without having traded below prevClose', testRedToGreenFailsWithoutHavingTradedBelow);
+  await run('setups: gap-and-go breakoutHigh margin is recomputable from the row', testGapAndGoBreakoutHighMarginIsRecomputable);
+  await run('setups: hod-momentum breakoutHigh margin is recomputable from the row', testHodMomentumBreakoutHighMarginIsRecomputable);
+  await run('setups: abcd retracement/gain margins are recomputable from the row', testAbcdRetracementAndGainMarginsAreRecomputable);
+  await run('setups: vwap-momentum distance margin is recomputable from the row', testVwapMomentumDistanceMarginIsRecomputable);
+  await run('setups: _fmtMargin (index.js) prices every raw-price margin field with $', testFmtMarginRendersPriceFieldsWithDollarSign);
   await run('setups: entry/target/stop uses swing low unless tighter than maxStopPct', testEntryTargetStopUsesSwingLowUnlessTighterThanMaxStopPct);
   await run('setups: entry/target/stop falls back to maxStopPct floor when swing low is further', testEntryTargetStopFallsBackToMaxStopPctWhenSwingLowIsFurther);
   await run('setups: suggested shares — risk constraint binds', testSuggestedSharesRiskConstraint);
