@@ -22,6 +22,9 @@
 // harness doesn't invent one either; running several single-setup subsets
 // means running the command several times.
 //
+// NOT_EVALUATED_CONTROL_SYMBOL (below) is appended to --symbols
+// automatically on every run — not something to remember to add.
+//
 // Reads Alpaca credentials from .env.local (gitignored, never created by
 // this script — see readEnvLocal() below for the exact required format).
 // The key is never logged, echoed, or written into any artifact.
@@ -35,6 +38,18 @@ import { execFileSync } from 'node:child_process';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const REAL_SETUP_IDS = ['gap-and-go', 'hod-momentum', 'abcd', 'vwap-momentum', 'red-to-green'];
+
+// Permanent control, appended to every run whether or not it's asked for —
+// not a symbol anyone is expected to remember to add. A weekend and a known
+// market holiday both turn out to be silently filtered OUT of the trading-
+// day list before any fetch happens (core/clock.js's isTradingDay), so
+// neither one ever produces a not-evaluated cell — only a genuine fetch
+// failure or a real trading day with zero bars for a symbol does. A ticker
+// that doesn't exist guarantees the second case on every trading day in
+// range, deterministically, without hunting for a holiday or waiting for a
+// real outage — proof the not-evaluated path is alive on every single run,
+// not just the run where someone happened to hit it by accident.
+const NOT_EVALUATED_CONTROL_SYMBOL = 'ZZZZQQ';
 
 // ── CLI args ──────────────────────────────────────────────────────────────
 function parseArgs(argv) {
@@ -55,8 +70,11 @@ function validateArgs(args) {
   if (!args.start || !dateRe.test(args.start)) errs.push('--start YYYY-MM-DD is required');
   if (!args.end || !dateRe.test(args.end)) errs.push('--end YYYY-MM-DD is required');
   if (args.start && args.end && args.end < args.start) errs.push('--end must not be before --start');
-  const symbols = (args.symbols || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-  if (!symbols.length) errs.push('--symbols SYM1,SYM2 is required');
+  const requestedSymbols = (args.symbols || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  if (!requestedSymbols.length) errs.push('--symbols SYM1,SYM2 is required');
+  const symbols = requestedSymbols.includes(NOT_EVALUATED_CONTROL_SYMBOL)
+    ? requestedSymbols
+    : [...requestedSymbols, NOT_EVALUATED_CONTROL_SYMBOL];
   const setupsArg = args.setups;
   if (!setupsArg) errs.push('--setups is required (a real setup id, or "all")');
   else if (setupsArg !== 'all' && !REAL_SETUP_IDS.includes(setupsArg)) {
@@ -298,6 +316,13 @@ async function main() {
     const consoleErrors = consoleLogs.filter(c => c.type === 'error');
     const failures = checkInvariants({ pageErrors, consoleErrors, cells: flattened.cells, tradingDaysCount, setupsCount, symbols });
 
+    // Informational, not a pass/fail assertion (staying inside "capture,
+    // don't assert" even for a symbol this certain not to be real) — just a
+    // direct summary of what the permanent not-evaluated control produced,
+    // so a human doesn't have to grep the matrix file for it every time.
+    const controlCells = flattened.cells.filter(c => c.symbol === NOT_EVALUATED_CONTROL_SYMBOL);
+    const controlStateCounts = controlCells.reduce((acc, c) => { acc[c.state] = (acc[c.state] || 0) + 1; return acc; }, {});
+
     const meta = {
       git, appVersion, port,
       args: { start, end, symbols, setups: classifierId },
@@ -307,6 +332,7 @@ async function main() {
       requests: { appReported: appReportedRequests, observedOnWire_wholeSession: alpacaRequests.length },
       cellCount: flattened.cells.length,
       triggerCount: flattened.triggers.length,
+      notEvaluatedControl: { symbol: NOT_EVALUATED_CONTROL_SYMBOL, cellCount: controlCells.length, stateCounts: controlStateCounts },
       invariantFailures: failures,
     };
 
@@ -319,6 +345,7 @@ async function main() {
 
     console.log(`[replay-scan] artifacts written to ${artifactDir}`);
     console.log(`[replay-scan] cells=${meta.cellCount} triggers=${meta.triggerCount} requests(app-reported)=${appReportedRequests} requests(observed on wire, whole session)=${alpacaRequests.length}`);
+    console.log(`[replay-scan] not-evaluated control (${NOT_EVALUATED_CONTROL_SYMBOL}): ${JSON.stringify(controlStateCounts)}`);
 
     if (failures.length) {
       console.error(`[replay-scan] MECHANICAL INVARIANT FAILURE(S):\n${failures.map(f => `  - ${f}`).join('\n')}`);
