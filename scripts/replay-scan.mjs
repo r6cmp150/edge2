@@ -169,17 +169,23 @@ function flattenRangeScan(rangeScanResult) {
     for (const date of tradingDays) {
       const dayResult = resultsByDate[date]?.[symbol];
       if (!dayResult) {
-        for (const setup of setupIds) cells.push({ date, symbol, setup, naive: null, reArmed: null, state: 'missing', reason: 'no result recorded for this symbol/day' });
+        for (const setup of setupIds) cells.push({ date, symbol, setup, naive: null, reArmed: null, state: 'missing', reason: 'no result recorded for this symbol/day', barCount: null });
         continue;
       }
       if (dayResult.notEvaluated) {
-        for (const setup of setupIds) cells.push({ date, symbol, setup, naive: null, reArmed: null, state: 'not-evaluated', reason: dayResult.reason });
+        for (const setup of setupIds) cells.push({ date, symbol, setup, naive: null, reArmed: null, state: 'not-evaluated', reason: dayResult.reason, barCount: null });
         continue;
       }
+      const barCount = dayResult.barCount ?? null;
       for (const setup of setupIds) {
         const r = dayResult.bySetup?.[setup];
-        if (!r) { cells.push({ date, symbol, setup, naive: null, reArmed: null, state: 'missing', reason: 'setup absent from bySetup for an evaluated day' }); continue; }
-        cells.push({ date, symbol, setup, naive: r.naiveTriggers.length, reArmed: r.rearmedTriggers.length, state: r.rearmedTriggers.length > 0 ? 'fired' : 'zero', reason: null });
+        if (!r) { cells.push({ date, symbol, setup, naive: null, reArmed: null, state: 'missing', reason: 'setup absent from bySetup for an evaluated day', barCount }); continue; }
+        // Per-setup not-evaluated (2026-08-30 fix): bars exist and other
+        // setups on this row evaluated fine, but this one specifically
+        // needs a verified previous-trading-day close and doesn't have
+        // one — distinct from the whole-day case above, same cell state.
+        if (r.notEvaluated) { cells.push({ date, symbol, setup, naive: null, reArmed: null, state: 'not-evaluated', reason: r.reason, barCount }); continue; }
+        cells.push({ date, symbol, setup, naive: r.naiveTriggers.length, reArmed: r.rearmedTriggers.length, state: r.rearmedTriggers.length > 0 ? 'fired' : 'zero', reason: null, barCount });
         for (const t of r.rearmedTriggers) triggers.push({ date, symbol, setup, ...t });
       }
     }
