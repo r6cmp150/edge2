@@ -718,15 +718,29 @@ These are our definitions, not Ross's. All operate on 1-minute SIP bars for the 
 - Trigger: first bar closing above `prevClose` with volume ≥ 2× the prior-15-bar mean
 - `triggerPrice` = `prevClose`
 
-### Margins — the actual field per setup (built 2026-08-28)
+### Margins — the actual field per setup (built 2026-08-28, revised 2026-08-29)
 
 The two examples in "Setups are not mutually exclusive" above show the *shape* of margins, not a template every setup must force itself into. Implemented per setup's own real conditions:
 
-- `gap-and-go`: `{volumeMultiple, threshold, gapPct, distanceAbovePremarketHigh}`
-- `hod-momentum`: `{volumeMultiple, threshold, distanceAboveHod}` — as originally shown
-- `abcd`: `{volumeMultiple, threshold, retracementPct, gainPct}` — `retracementPct` is the literal retracement depth
-- `vwap-momentum`: `{volumeRatio, threshold: 1.0, distanceAboveVwap}` — this setup's own trigger condition is "rising volume," not a fixed multiple-of-mean the other four use, so `volumeRatio` (current bar vs. the pullback bar, threshold exactly 1.0 for "rising") is what's actually being measured. Recording an invented `volumeMultiple`-of-mean here would misrepresent what the setup's own definition actually checks.
-- `red-to-green`: `{volumeMultiple, threshold, distanceAbovePrevClose}`
+- `gap-and-go`: `{volumeMultiple, threshold, gapPct, breakoutHigh, breakoutHighAbovePremarketHighPct, baselineSpanMinutes, baselineBarCount}`
+- `hod-momentum`: `{volumeMultiple, threshold, breakoutHigh, breakoutHighAboveHodPct, baselineSpanMinutes, baselineBarCount}`
+- `abcd`: `{volumeMultiple, threshold, aLevel, cLevel, gainPct, retracementPct, baselineSpanMinutes, baselineBarCount}`
+- `vwap-momentum`: `{volumeMultiple, threshold, vwap, distanceAboveVwapPct, baselineSpanMinutes, baselineBarCount}` — redesigned 2026-08-29, see below; was `{volumeRatio, threshold: 1.0, distanceAboveVwap}`
+- `red-to-green`: `{volumeMultiple, threshold, distanceAbovePrevClosePct, baselineSpanMinutes, baselineBarCount}`
+
+**Every derived percentage ends in `Pct`** (renamed 2026-08-29 from e.g. `distanceAboveHod` to `breakoutHighAboveHodPct`) so the render layer's existing `Pct`-suffix formatting picks it up automatically — the original names fell through to a raw, unlabeled decimal instead of a percentage, a real bug found alongside the reference-point issue below, not the same bug.
+
+**Every margin is recomputable from numbers shown on the same row** — a principle added 2026-08-29 after live-replay validation found `distanceAboveHod` couldn't be reconciled against the displayed price. Root cause: `gap-and-go`/`hod-momentum`'s trigger conditions check the bar's *high* against a level, while the harness's own `triggerPrice` (what's displayed, what entry/target/stop is built from) is always the bar's *close* — two different numbers on the same bar. `breakoutHigh` is now included explicitly so the derived `Pct` is checkable. Same principle applied to `abcd` (`aLevel`/`cLevel`, neither shown before) and `vwap-momentum` (`vwap`, the VWAP value itself, never shown before). `red-to-green` needed no addition — its trigger condition is close-based already, matching `triggerPrice`.
+
+### Volume-multiple denominator — time-windowed, not bar-count-windowed (2026-08-29)
+
+**Live-replay finding:** the original `hod-momentum`/`red-to-green` baseline ("mean of the last 15 bars") read 46.13× on a 64-bar (sparse) name against 2.21× on a 192-bar (dense) one for a similar-looking spike. Cause: Alpaca only returns a bar for a minute that actually traded, so "last 15 bars" for a thin name can reach back however far real time it takes to find them — 71 minutes, in the reported case — averaging in volume from over an hour earlier and comparing it to right now. Same failure shape Pillar 3's `intradayCurve()` fixed for RVOL: a window that looks fixed but silently varies in real elapsed time.
+
+**Fix:** `_volumeBaselineOverMinutes(regularBars, endIndexExclusive, minutes)` bounds the lookback by real minutes, not bar count — whatever bars actually fall within that time window, however few. Applied to `hod-momentum`, `red-to-green`, and (see below) the redesigned `vwap-momentum`; `priorMinutesForMeanVolume` replaces the old `priorBarsForMeanVolume` in `SETUP_CONFIG`, same default value (15), reinterpreted as minutes instead of bars.
+
+`gap-and-go` and `abcd` are deliberately **not** switched to this window shape: `gap-and-go`'s "average of the session's bars so far" is closer to the spec's own literal wording, and its own trigger condition ("first bar after the open") structurally fires within the first few minutes, so the unbounded-growth exposure is mostly theoretical there. `abcd`'s B→C window is the pullback itself — structurally defined by the price pattern, not an independent bar-count choice. Both still report `baselineSpanMinutes`/`baselineBarCount` for the same transparency, just without the window-shape change.
+
+**`vwap-momentum`'s volume check was redesigned, not just re-thresholded.** It was a single-prior-bar `volumeRatio` with `threshold: 1.0` — "any uptick in volume vs. the immediately preceding bar," which is close to coin-flip odds on a noisy series and the worst case of the sparsity problem (a 1-bar baseline has no averaging at all). Live replay confirmed it too weak: 9 naive fires in one day on one symbol, the one shown a loser. Now uses the same `_volumeBaselineOverMinutes` baseline as its siblings, with a real `volumeMultiple` threshold of 1.5× (matching `abcd`, the next-lowest in the family).
 
 ### Pre-market armed levels — approved addition (2026-08-28)
 

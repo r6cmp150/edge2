@@ -30,11 +30,30 @@ import { runReplay, REPLAY_CHUNK_SIZE, fetchReplayBars, fetchPrevCloseAsOf } fro
 const SETUP_CONFIG = {
   rearmDistancePct: 1.0, // global default; per-setup override below
   entryTargetStop: { maxStopPct: 0.05, targetR: 2.0, swingLowBars: 5 },
+  // gap-and-go's denominator is deliberately UNCHANGED (still "mean of all
+  // regular bars so far," matching the spec's literal "average of the
+  // session's bars so far" wording) — its own trigger condition ("first
+  // bar after the open" clearing premarketHigh) structurally fires within
+  // the first few minutes, so the unbounded-growth exposure this fix
+  // addresses elsewhere is mostly theoretical here. Still gets
+  // baselineSpanMinutes reported (see the classifier below) for the same
+  // transparency, just not the time-window redesign.
   'gap-and-go': { gapPct: 0.10, volumeMultiple: 2.0 },
-  'hod-momentum': { volumeMultiple: 3.0, excludeFirstMinutes: 5, priorBarsForMeanVolume: 15 },
+  // priorMinutesForMeanVolume (not priorBarsForMeanVolume, as it was
+  // originally) — see _volumeBaselineOverMinutes above.
+  'hod-momentum': { volumeMultiple: 3.0, excludeFirstMinutes: 5, priorMinutesForMeanVolume: 15 },
+  // abcd's B->C window is structurally defined by the price pattern
+  // itself (the bars between the peak and the trough), not an
+  // independent bar-count choice — left as-is, same treatment as
+  // gap-and-go: baselineSpanMinutes reported, window shape unchanged.
   'abcd': { gainPct: 0.10, retracementMin: 0.30, retracementMax: 0.60, volumeMultiple: 1.5, firstMinutesForA: 60 },
-  'vwap-momentum': { pullbackDistancePct: 0.5 },
-  'red-to-green': { volumeMultiple: 2.0, priorBarsForMeanVolume: 15, useSessionOpen: false },
+  // Redesigned (was a single-prior-bar volumeRatio with threshold 1.0 --
+  // "any uptick at all," confirmed too weak by live replay: 9 naive fires
+  // in one day on one symbol, the one shown a loser). Now the same
+  // time-windowed multi-bar baseline as hod-momentum/red-to-green, with a
+  // real multiple in the same family range as its siblings.
+  'vwap-momentum': { pullbackDistancePct: 0.5, volumeMultiple: 1.5, priorMinutesForMeanVolume: 15 },
+  'red-to-green': { volumeMultiple: 2.0, priorMinutesForMeanVolume: 15, useSessionOpen: false },
 };
 
 function _rearmDistancePctFor(setupId) {
@@ -57,6 +76,46 @@ function _isRegularSessionBar(bar) { const m = _minuteOfDay(bar); return m >= 39
 function _minutesSinceRegularOpen(bar) { return _minuteOfDay(bar) - 390; }
 
 function _mean(nums) { return nums.length ? nums.reduce((s, n) => s + n, 0) / nums.length : NaN; }
+function _minutesBetween(barA, barB) { return (new Date(barB.t).getTime() - new Date(barA.t).getTime()) / 60000; }
+
+// ── Volume baseline, time-windowed not bar-count-windowed ───────────────
+// Live-replay finding (2026-08-28): hod-momentum/red-to-green's original
+// "last 15 BARS" baseline read 46.13x on a 64-bar (sparse) name against
+// 2.21x on a 192-bar (dense) one for a similar-looking spike, because
+// Alpaca only returns a bar for a minute that actually traded — "last 15
+// bars" for a thin name can reach back 71 real minutes to find them,
+// averaging in volume from over an hour ago and comparing it to right
+// now. Same failure shape gate.js's RVOL fixed with intradayCurve():
+// don't let elapsed real time silently vary while the window looks
+// fixed. Fix here is simpler than RVOL's curve (this is a local
+// spike-vs-recent-baseline check, not a whole-session cumulative one):
+// bound the LOOKBACK by real minutes, not bar count, so a sparse name's
+// baseline can only ever be genuinely recent, whatever that means for
+// its own trading frequency.
+//
+// Returns null if there's no prior bar within the window at all (never
+// silently falls back to something stale). meanVol is the mean of
+// whatever bars actually fall in the window (could be 1 bar for a very
+// thin name, matching that name's own real trading frequency rather
+// than forcing a fixed count). spanMinutes/barCount are always reported
+// alongside the resulting multiple (see _classifiersFor's margins below)
+// so a thin baseline is visible even after being bounded, not just fixed
+// silently — same "make it visible" principle as #1's session-remaining
+// field.
+function _volumeBaselineOverMinutes(regularBars, endIndexExclusive, minutes) {
+  const cutoffMs = new Date(regularBars[endIndexExclusive].t).getTime() - minutes * 60000;
+  const windowBars = [];
+  for (let i = endIndexExclusive - 1; i >= 0; i--) {
+    if (new Date(regularBars[i].t).getTime() < cutoffMs) break; // chronological order -> nothing earlier can be in-window either
+    windowBars.unshift(regularBars[i]);
+  }
+  if (!windowBars.length) return null;
+  return {
+    meanVol: _mean(windowBars.map(b => b.v)),
+    spanMinutes: windowBars.length > 1 ? _minutesBetween(windowBars[0], windowBars[windowBars.length - 1]) : 0,
+    barCount: windowBars.length,
+  };
+}
 
 // ── Pre-market armed levels — no trigger, no setup object ──────────────
 // docs/warrior-engine-spec-v2.md Phase 5: "what Ross actually does at 6am
@@ -110,6 +169,7 @@ function makeGapAndGoClassifier({ prevClose }, config = SETUP_CONFIG['gap-and-go
     if (!(avgVol > 0)) return null;
     const volumeMultiple = current.v / avgVol;
     if (volumeMultiple < config.volumeMultiple) return null;
+    const baselineSpanMinutes = priorRegularBars.length > 1 ? _minutesBetween(priorRegularBars[0], priorRegularBars[priorRegularBars.length - 1]) : 0;
 
     return {
       setupId: 'gap-and-go',
@@ -121,11 +181,17 @@ function makeGapAndGoClassifier({ prevClose }, config = SETUP_CONFIG['gap-and-go
       // (referenceLevel, already shown), not the bar's close (triggerPrice,
       // also shown) — those are two different numbers on the same bar, and
       // without breakoutHigh visible, breakoutHighAbovePremarketHighPct
-      // can't be checked against anything on the card.
+      // can't be checked against anything on the card. baselineSpanMinutes/
+      // baselineBarCount report how much real time and how many actual
+      // bars the "average of the session's bars so far" denominator
+      // covers — this window is deliberately NOT time-bounded (unlike
+      // hod-momentum/red-to-green/vwap-momentum below), so a thin name
+      // with few bars still shows a wide span here; visible, not fixed.
       margins: {
         volumeMultiple, threshold: config.volumeMultiple, gapPct,
         breakoutHigh: current.h,
         breakoutHighAbovePremarketHighPct: (current.h - premarketHigh) / premarketHigh,
+        baselineSpanMinutes, baselineBarCount: priorRegularBars.length,
       },
     };
   };
@@ -142,10 +208,9 @@ function hodMomentumClassifier(barsSoFar, config = SETUP_CONFIG['hod-momentum'])
   const hod = Math.max(...priorBars.map(b => b.h));
   if (current.h <= hod) return null;
 
-  const priorN = priorBars.slice(-config.priorBarsForMeanVolume);
-  const meanVol = _mean(priorN.map(b => b.v));
-  if (!(meanVol > 0)) return null;
-  const volumeMultiple = current.v / meanVol;
+  const baseline = _volumeBaselineOverMinutes(regularBars, regularBars.length - 1, config.priorMinutesForMeanVolume);
+  if (!baseline || !(baseline.meanVol > 0)) return null;
+  const volumeMultiple = current.v / baseline.meanVol;
   if (volumeMultiple < config.volumeMultiple) return null;
 
   return {
@@ -156,10 +221,17 @@ function hodMomentumClassifier(barsSoFar, config = SETUP_CONFIG['hod-momentum'])
     // the bar's HIGH against hod, not its close (triggerPrice) — breakoutHigh
     // makes breakoutHighAboveHodPct checkable against a number on the row
     // instead of a value that only ever existed inside this function.
+    // baselineSpanMinutes/baselineBarCount: this window IS now time-bounded
+    // (see _volumeBaselineOverMinutes), so span is at most
+    // priorMinutesForMeanVolume by construction — still reported, since a
+    // thin name can have a small barCount even within that bound (e.g. 2
+    // bars spanning 12 of the 15 available minutes), which is itself
+    // useful to see.
     margins: {
       volumeMultiple, threshold: config.volumeMultiple,
       breakoutHigh: current.h,
       breakoutHighAboveHodPct: (current.h - hod) / hod,
+      baselineSpanMinutes: baseline.spanMinutes, baselineBarCount: baseline.barCount,
     },
   };
 }
@@ -214,6 +286,7 @@ function abcdClassifier(barsSoFar, config = SETUP_CONFIG['abcd']) {
   if (!(bcMeanVol > 0)) return null;
   const volumeMultiple = current.v / bcMeanVol;
   if (volumeMultiple < config.volumeMultiple) return null;
+  const baselineSpanMinutes = bcBars.length > 1 ? _minutesBetween(bcBars[0], bcBars[bcBars.length - 1]) : 0;
 
   return {
     setupId: 'abcd',
@@ -223,11 +296,17 @@ function abcdClassifier(barsSoFar, config = SETUP_CONFIG['abcd']) {
     // which appears anywhere else on the card (only B, as referenceLevel,
     // and the trigger's own close, as triggerPrice, are shown) — without
     // aLevel/cLevel here, neither derived Pct is checkable against
-    // anything visible.
+    // anything visible. baselineSpanMinutes/baselineBarCount describe the
+    // B->C window volumeMultiple is measured against — deliberately NOT
+    // time-bounded like hod-momentum/red-to-green/vwap-momentum, since
+    // this window is the pullback itself (structurally defined by the
+    // price pattern, not an independent choice), but still reported so a
+    // B->C pullback that happens to span a long, thin stretch is visible.
     margins: {
       volumeMultiple, threshold: config.volumeMultiple,
       aLevel: A, cLevel: C,
       gainPct: B / A - 1, retracementPct,
+      baselineSpanMinutes, baselineBarCount: bcBars.length,
     },
   };
 }
@@ -266,9 +345,20 @@ function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum'
   if (currentIndex <= pullbackIndex) return null;
   const pullbackBar = regularBars[pullbackIndex];
   const current = regularBars[currentIndex];
-  const prevBar = regularBars[currentIndex - 1];
   if (current.c <= pullbackBar.h) return null;
-  if (!(current.v > prevBar.v)) return null; // "rising volume" — no fixed multiple in this setup's own definition, so none is invented here
+
+  // Redesigned 2026-08-29 (live-replay finding): was current.v > prevBar.v
+  // (a single-prior-bar volumeRatio, threshold 1.0 -- "any uptick at
+  // all"). Confirmed too weak live: 9 naive fires in one day on one
+  // symbol, the one shown a loser. A 1-bar baseline is also the worst
+  // case of the sparsity problem the OTHER setups had with a 15-bar
+  // window -- no averaging at all. Now the same time-windowed multi-bar
+  // baseline as hod-momentum/red-to-green, with a real multiple in the
+  // same family range as its siblings (1.5x, matching ABCD).
+  const baseline = _volumeBaselineOverMinutes(regularBars, currentIndex, config.priorMinutesForMeanVolume);
+  if (!baseline || !(baseline.meanVol > 0)) return null;
+  const volumeMultiple = current.v / baseline.meanVol;
+  if (volumeMultiple < config.volumeMultiple) return null;
 
   const currentVwap = vwapSeries[currentIndex];
   return {
@@ -280,9 +370,10 @@ function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum'
     // re-arm) and triggerPrice (this bar's close) — vwap must be shown
     // explicitly or the Pct has nothing on the card to check it against.
     margins: {
-      volumeRatio: current.v / prevBar.v, threshold: 1.0,
+      volumeMultiple, threshold: config.volumeMultiple,
       vwap: currentVwap,
       distanceAboveVwapPct: currentVwap ? (current.c - currentVwap) / currentVwap : null,
+      baselineSpanMinutes: baseline.spanMinutes, baselineBarCount: baseline.barCount,
     },
   };
 }
@@ -299,25 +390,27 @@ function makeRedToGreenClassifier({ prevClose }, config = SETUP_CONFIG['red-to-g
     const current = regularBars[regularBars.length - 1];
     if (current.c <= referenceClose) return null;
 
-    const priorBars = regularBars.slice(0, -1).slice(-config.priorBarsForMeanVolume);
-    if (!priorBars.length) return null;
-    const meanVol = _mean(priorBars.map(b => b.v));
-    if (!(meanVol > 0)) return null;
-    const volumeMultiple = current.v / meanVol;
+    const baseline = _volumeBaselineOverMinutes(regularBars, regularBars.length - 1, config.priorMinutesForMeanVolume);
+    if (!baseline || !(baseline.meanVol > 0)) return null;
+    const volumeMultiple = current.v / baseline.meanVol;
     if (volumeMultiple < config.volumeMultiple) return null;
 
     return {
       setupId: 'red-to-green',
       referenceLevel: referenceClose,
       referenceDirection: 'above',
-      // Already fully recomputable without an extra field: both operands
-      // (current.c and referenceClose) are shown on the row already, as
-      // triggerPrice and referenceLevel respectively — this setup's own
-      // trigger condition is close-based, unlike gap-and-go/hod-momentum's
-      // high-based checks, so there's no hidden reference here.
+      // distanceAbovePrevClosePct is already fully recomputable without an
+      // extra field: both operands (current.c and referenceClose) are
+      // shown on the row already, as triggerPrice and referenceLevel
+      // respectively — this setup's own trigger condition is close-based,
+      // unlike gap-and-go/hod-momentum's high-based checks, so there's no
+      // hidden reference for THAT margin. baselineSpanMinutes/
+      // baselineBarCount describe the (now time-windowed, not bar-count)
+      // volumeMultiple denominator instead.
       margins: {
         volumeMultiple, threshold: config.volumeMultiple,
         distanceAbovePrevClosePct: (current.c - referenceClose) / referenceClose,
+        baselineSpanMinutes: baseline.spanMinutes, baselineBarCount: baseline.barCount,
       },
     };
   };
@@ -538,5 +631,5 @@ export {
   makeGapAndGoClassifier, hodMomentumClassifier, abcdClassifier, vwapMomentumClassifier, makeRedToGreenClassifier,
   computeEntryTargetStop, computeSuggestedShares,
   detectSetupsForCandidate, evaluateSetupsBatch, runSetupReplayForSymbols,
-  _sortSetups,
+  _sortSetups, _volumeBaselineOverMinutes,
 };

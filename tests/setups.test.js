@@ -165,7 +165,8 @@ async function testVwapMomentumTriggersOnPullbackReclaim() {
     bar(6, 31, 4.82, 4.83, 4.75, 4.78, 1200), // still near/below
     bar(6, 32, 4.78, 5.00, 4.78, 4.98, 3000), // crosses above VWAP decisively
     bar(6, 33, 4.98, 4.99, 4.90, 4.95, 900),  // pullback bar: low comes close to VWAP without closing below it
-    bar(6, 34, 4.95, 5.05, 4.94, 5.02, 2000), // trigger: closes above pullback bar's high (4.99) on rising volume vs prior bar (900)
+    bar(6, 34, 4.95, 5.05, 4.94, 5.02, 3200), // trigger: closes above pullback bar's high (4.99); volume 3200 vs the 4 prior bars' mean (1525) = 2.1x, clears the 1.5x threshold
+
   ];
   const verdict = setups.vwapMomentumClassifier(bars);
   console.log('vwap-momentum verdict:', verdict);
@@ -209,6 +210,59 @@ async function testRedToGreenFailsWithoutHavingTradedBelow() {
   ];
   const classifier = setups.makeRedToGreenClassifier({ prevClose });
   assert.strictEqual(classifier(bars), null, 'the precondition requires the session to have actually traded below prevClose first');
+}
+
+// ── _volumeBaselineOverMinutes (denominator redesign) ────────────────────
+// Direct tests of the fix itself, not just its effect through a
+// classifier: the live-replay finding was that a bar-COUNT window ("last
+// 15 bars") silently reaches back however far real time it takes to find
+// 15 actual bars — 71 minutes for a thin name, per the AMIX report. These
+// confirm the replacement window is bounded by real minutes instead,
+// regardless of how few bars that captures.
+
+async function testVolumeBaselineExcludesBarsOutsideTheRealTimeWindow() {
+  const setups = await loadSetups();
+  // Sparse series: three old, quiet bars (6:30/6:35/6:50) then a real
+  // recent spike one minute before "current" (7:16). A bar-COUNT window
+  // asking for "the last few bars" would reach all the way back to 6:30
+  // to find them; a 15-real-minute window must not.
+  const bars = [
+    bar(6, 30, 5, 5, 5, 5, 100),
+    bar(6, 35, 5, 5, 5, 5, 100),
+    bar(6, 50, 5, 5, 5, 5, 100),
+    bar(7, 15, 5, 5, 5, 5, 5000),
+    bar(7, 16, 5, 5, 5, 5, 100), // "current" -- endIndexExclusive, never itself included
+  ];
+  const baseline = setups._volumeBaselineOverMinutes(bars, 4, 15);
+  console.log('sparse baseline (bounded):', baseline);
+  assert.strictEqual(baseline.barCount, 1, 'only the 7:15 bar is within 15 real minutes of the current bar -- the three older, quiet bars must not be pulled in just to satisfy a fixed count');
+  assert.strictEqual(baseline.meanVol, 5000);
+  assert.strictEqual(baseline.spanMinutes, 0, 'a one-bar window has no span between two bars');
+}
+
+async function testVolumeBaselineIncludesMultipleBarsWithCorrectSpan() {
+  const setups = await loadSetups();
+  const bars = [
+    bar(7, 0, 5, 5, 5, 5, 1000),
+    bar(7, 5, 5, 5, 5, 5, 2000),
+    bar(7, 10, 5, 5, 5, 5, 3000),
+    bar(7, 12, 5, 5, 5, 5, 9999), // "current"
+  ];
+  const baseline = setups._volumeBaselineOverMinutes(bars, 3, 15);
+  console.log('multi-bar baseline:', baseline);
+  assert.strictEqual(baseline.barCount, 3);
+  assert.ok(Math.abs(baseline.meanVol - 2000) < 1e-9);
+  assert.strictEqual(baseline.spanMinutes, 10, 'span is real minutes between the oldest (7:00) and newest (7:10) baseline bar, not the 15-minute window cap');
+}
+
+async function testVolumeBaselineReturnsNullWithNoPriorBarsInWindow() {
+  const setups = await loadSetups();
+  const bars = [
+    bar(6, 0, 5, 5, 5, 5, 100), // 76 minutes before "current" -- outside any reasonable window
+    bar(7, 16, 5, 5, 5, 5, 100), // "current"
+  ];
+  const baseline = setups._volumeBaselineOverMinutes(bars, 1, 15);
+  assert.strictEqual(baseline, null, 'no prior bar at all within the window must return null, never silently fall back to a stale bar from outside it');
 }
 
 // ── margin recomputability ────────────────────────────────────────────────
@@ -271,7 +325,7 @@ async function testVwapMomentumDistanceMarginIsRecomputable() {
     bar(6, 31, 4.82, 4.83, 4.75, 4.78, 1200),
     bar(6, 32, 4.78, 5.00, 4.78, 4.98, 3000),
     bar(6, 33, 4.98, 4.99, 4.90, 4.95, 900),
-    bar(6, 34, 4.95, 5.05, 4.94, 5.02, 2000),
+    bar(6, 34, 4.95, 5.05, 4.94, 5.02, 3200), // volume 3200 vs 4 prior bars' mean (1525) = 2.1x, clears the 1.5x threshold
   ];
   const verdict = setups.vwapMomentumClassifier(bars);
   // A raw classifier verdict has no triggerPrice field — that's added by
@@ -523,6 +577,9 @@ async function testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore() {
 }
 
 (async () => {
+  await run('setups: _volumeBaselineOverMinutes excludes bars outside the real-time window', testVolumeBaselineExcludesBarsOutsideTheRealTimeWindow);
+  await run('setups: _volumeBaselineOverMinutes includes multiple bars with correct span', testVolumeBaselineIncludesMultipleBarsWithCorrectSpan);
+  await run('setups: _volumeBaselineOverMinutes returns null with no prior bars in window', testVolumeBaselineReturnsNullWithNoPriorBarsInWindow);
   await run('setups: gap-and-go triggers on premarket-high break with volume confirmation', testGapAndGoTriggersOnPremarketHighBreakWithVolume);
   await run('setups: gap-and-go fails precondition below 10% gap', testGapAndGoFailsPreconditionBelow10PctGap);
   await run('setups: gap-and-go fails without volume confirmation', testGapAndGoFailsWithoutVolumeConfirmation);

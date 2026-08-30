@@ -229,9 +229,15 @@ const PRICE_MARGIN_KEYS = new Set(['breakoutHigh', 'aLevel', 'cLevel', 'vwap']);
 function _fmtMargin(key, value) {
   if (typeof value !== 'number') return `${key}: —`;
   // *Pct/*Multiple/*Ratio fields are ratios/fractions; PRICE_MARGIN_KEYS
-  // are dollar values; everything else (thresholds paired alongside a
-  // *Multiple/*Ratio field) is a plain number at its own precision.
+  // are dollar values; *SpanMinutes/*Minutes report real elapsed time
+  // (how much wall-clock time actually backs a volume baseline — the
+  // live-replay finding that a bar-count window can silently reach back
+  // much further for a thin name than a dense one); *BarCount is a plain
+  // integer; everything else (thresholds paired alongside a *Multiple/
+  // *Ratio field) is a plain number at its own precision.
   if (/Pct$/.test(key)) return `${key}: ${(value * 100).toFixed(1)}%`;
+  if (/Minutes$/.test(key)) return `${key}: ${value.toFixed(0)}m`;
+  if (/Count$/.test(key)) return `${key}: ${value.toFixed(0)}`;
   if (/Multiple$|Ratio$/.test(key)) return `${key}: ${value.toFixed(2)}×`;
   if (PRICE_MARGIN_KEYS.has(key)) return `${key}: $${value.toFixed(2)}`;
   return `${key}: ${value.toFixed(2)}`;
