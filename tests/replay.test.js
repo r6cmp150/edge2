@@ -337,7 +337,8 @@ async function testFetchPrevCloseAsOfPicksMostRecentCloseBeforeReplayWindow() {
   };
   const { prevCloseBySymbol, requests } = await replay.fetchPrevCloseAsOf(['AAPL'], '2026-08-26');
   console.log('prevClose result:', prevCloseBySymbol, '| params:', { timeframe: capturedParams.timeframe, sort: capturedParams.sort, feed: capturedParams.feed });
-  assert.strictEqual(prevCloseBySymbol.AAPL, 150.25, 'must take the most recent (first, since sort:desc) close strictly before the replay window');
+  assert.strictEqual(prevCloseBySymbol.AAPL.close, 150.25, 'must take the most recent (first, since sort:desc) close strictly before the replay window');
+  assert.strictEqual(prevCloseBySymbol.AAPL.date, '2026-08-25', 'must report the PT calendar date the close is actually FROM, not assume it matches the caller\'s expectation');
   assert.strictEqual(capturedParams.timeframe, '1Day');
   assert.strictEqual(capturedParams.sort, 'desc');
   assert.strictEqual(capturedParams.feed, 'sip', 'must use feed=sip like every other Warrior bar request (CLAUDE.md rule)');
@@ -359,7 +360,8 @@ async function testFetchPrevCloseAsOfFollowsPagination() {
   console.log('paginated prevClose:', prevCloseBySymbol, 'calls:', callCount);
   assert.strictEqual(callCount, 2, 'must follow next_page_token to exhaustion, not stop at the first page');
   assert.strictEqual(requests, 2);
-  assert.strictEqual(prevCloseBySymbol.AAPL, 150.25, 'first page (sort:desc) still carries the actual most-recent close');
+  assert.strictEqual(prevCloseBySymbol.AAPL.close, 150.25, 'first page (sort:desc) still carries the actual most-recent close');
+  assert.strictEqual(prevCloseBySymbol.AAPL.date, '2026-08-25', 'date must come from the actual most-recent bar even when pagination was needed to find it');
 }
 
 async function testReplayChunkSizeIsSinglePageForDefaultWindow() {

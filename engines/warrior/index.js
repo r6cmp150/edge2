@@ -26,7 +26,7 @@
 // rather than computing a second, parallel notion of "available").
 import { evaluateGateBatch, _selectStrategy } from './gate.js';
 import { runReplayForSymbols } from './replay.js';
-import { evaluateSetupsBatch, runSetupReplayForSymbols, SETUP_REPLAY_CATALOG, ALL_SETUPS_ID, scanDateRangeForSetups, estimateRangeScanRequests, _tradingDaysBetween } from './setups.js';
+import { evaluateSetupsBatch, SETUP_REPLAY_CATALOG, ALL_SETUPS_ID, scanDateRangeForSetups, estimateRangeScanRequests, _tradingDaysBetween } from './setups.js';
 
 const WARRIOR_SCAN_INTERVAL_MS = 60 * 1000;
 let _scanIntervalId = null;
@@ -391,29 +391,34 @@ async function _runReplayFromUI() {
     if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast('[Warrior] Replay needs a date and at least one symbol.');
     return;
   }
-  // An end date present and different from the start date means range
-  // mode — single-day is the degenerate case of a range (same reasoning
-  // as the engine registry: one code path, not two that can drift), but
-  // dispatches separately here since the confirm-gating and progress UI
-  // only apply to a real range.
-  if (endDateStr && endDateStr !== dateStr) {
-    return _runRangeScanFromUI(dateStr, endDateStr, symbols, classifierId);
-  }
-
-  _replayInFlight = true;
-  if (typeof renderWarriorTab === 'function') renderWarriorTab();
-  try {
-    const { resultsBySymbol, requests } = classifierId === 'example'
-      ? await runReplayForSymbols(symbols, dateStr)
-      : await runSetupReplayForSymbols(classifierId, symbols, dateStr);
-    _lastReplayResult = { dateStr, symbols, classifierId, resultsBySymbol, requests };
-    _lastRangeScanResult = null;
-  } catch (err) {
-    if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast(`[Warrior] Replay failed: ${err.message}`);
-  } finally {
-    _replayInFlight = false;
+  // 'example' is Phase 4's disposable demo classifier (runReplayForSymbols,
+  // replay.js) — not a real setup, can't go through scanDateRangeForSetups
+  // (SETUP_REPLAY_CATALOG doesn't know it), stays its own small path.
+  if (classifierId === 'example') {
+    _replayInFlight = true;
     if (typeof renderWarriorTab === 'function') renderWarriorTab();
+    try {
+      const { resultsBySymbol, requests } = await runReplayForSymbols(symbols, dateStr);
+      _lastReplayResult = { dateStr, symbols, classifierId, resultsBySymbol, requests };
+      _lastRangeScanResult = null;
+    } catch (err) {
+      if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast(`[Warrior] Replay failed: ${err.message}`);
+    } finally {
+      _replayInFlight = false;
+      if (typeof renderWarriorTab === 'function') renderWarriorTab();
+    }
+    return;
   }
+  // Every real setup goes through the range scan, single day included —
+  // start === end when no end date was given. One code path for both
+  // (2026-08-30 unification), not two that can drift: the Phase-4-era
+  // single-day function this replaced had no not-evaluated concept at
+  // all, so a symbol with zero bars on that path silently rendered as
+  // "0 triggers" — indistinguishable from a real evaluated-and-didn't-
+  // fire day. scanDateRangeForSetups already gets this right; collapsing
+  // onto it removes the second implementation instead of teaching it the
+  // same lesson separately.
+  return _runRangeScanFromUI(dateStr, endDateStr || dateStr, symbols, classifierId);
 }
 
 async function _runRangeScanFromUI(startDate, endDate, symbols, classifierId) {
@@ -498,28 +503,10 @@ function _renderTriggerRow(trig) {
   </div>`;
 }
 
-function _renderBySetupResult(symbol, barCount, bySetup) {
-  const entries = Object.entries(bySetup);
-  return entries.map(([setupId, r]) => {
-    const naive = r.naiveTriggers, rearmed = r.rearmedTriggers;
-    const rearmNote = naive.length !== rearmed.length
-      ? ` — re-arm rule suppressed ${naive.length - rearmed.length} chop-driven trigger(s)`
-      : naive.length > 0 ? ' — naive and re-armed agree (no chop suppressed)' : '';
-    if (!rearmed.length) {
-      return `<div class="settings-row"><span class="mono">${symbol} · ${setupId}</span><span class="settings-hint muted">${barCount} bars, no triggers (naive: ${naive.length})</span></div>`;
-    }
-    return `<div class="settings-row" style="flex-direction:column;align-items:stretch;">
-      <div class="mono">${symbol} · ${setupId} — naive: ${naive.length} trigger(s), re-armed (${r.rearmDistancePct}%): ${rearmed.length} trigger(s), ${barCount} bars${rearmNote}</div>
-      ${rearmed.map(_renderTriggerRow).join('')}
-    </div>`;
-  }).join('');
-}
-
+// 'example' placeholder shape only (runReplayForSymbols, replay.js) — every
+// real setup goes through the range-scan matrix now, single day included
+// (see _runReplayFromUI), never this function.
 function _renderReplaySymbolResult(symbol, result) {
-  // Real-setup runs carry bySetup (see runSetupReplayForSymbols); the
-  // 'example' placeholder still uses the original single-triggers shape
-  // (no re-arm comparison, no per-setup breakdown to show).
-  if (result.bySetup) return _renderBySetupResult(symbol, result.barCount, result.bySetup);
   if (!result.triggers.length) {
     return `<div class="settings-row"><span class="mono">${symbol}</span><span class="settings-hint muted">${result.barCount} bars, no triggers</span></div>`;
   }
@@ -549,6 +536,13 @@ function _renderScanCell(dateStr, symbol, setupId, dayResult) {
   }
   const r = dayResult.bySetup[setupId];
   if (!r) return `<td class="warrior-scan-cell not-evaluated">—</td>`;
+  // Per-setup not-evaluated (2026-08-30, Q3 fix): bars exist and the OTHER
+  // setups on this row evaluated fine, but this one specifically needs a
+  // verified previous-trading-day close and doesn't have one — distinct
+  // from the whole-day not-evaluated case above, same visual treatment.
+  if (r.notEvaluated) {
+    return `<td class="warrior-scan-cell not-evaluated" title="${r.reason}">n/a</td>`;
+  }
   const label = `${r.naiveTriggers.length}→${r.rearmedTriggers.length}`;
   if (!r.rearmedTriggers.length) return `<td class="warrior-scan-cell zero">${label}</td>`;
   const expanded = _expandedScanCells.has(key);
@@ -564,10 +558,16 @@ function _renderScanMatrixForSymbol(symbol, setupIds, tradingDays, resultsByDate
     if (!dayResult.notEvaluated) {
       setupIds.forEach(id => {
         const r = dayResult.bySetup[id];
-        if (r) { totals[id].naive += r.naiveTriggers.length; totals[id].rearmed += r.rearmedTriggers.length; }
+        if (r && !r.notEvaluated) { totals[id].naive += r.naiveTriggers.length; totals[id].rearmed += r.rearmedTriggers.length; }
       });
     }
-    return `<tr><td class="warrior-scan-date">${dateStr}</td>${setupIds.map(id => _renderScanCell(dateStr, symbol, id, dayResult)).join('')}</tr>`;
+    // barCount visible on every evaluated row — the only thing that
+    // distinguishes "evaluated, didn't fire" from "never evaluated" when
+    // reading a matrix by eye (2026-08-30 live-validation note: this is
+    // what kept a genuine live check from being fooled by an empty-bars
+    // day rendering the same as a real zero).
+    const barCountLabel = dayResult.notEvaluated ? '' : ` <span class="warrior-scan-barcount">(${dayResult.barCount} bars)</span>`;
+    return `<tr><td class="warrior-scan-date">${dateStr}${barCountLabel}</td>${setupIds.map(id => _renderScanCell(dateStr, symbol, id, dayResult)).join('')}</tr>`;
   }).join('');
   const totalsRow = `<tr class="warrior-scan-totals"><td>TOTAL</td>${setupIds.map(id => `<td class="warrior-scan-cell">${totals[id].naive}→${totals[id].rearmed}</td>`).join('')}</tr>`;
   return `<div class="settings-row" style="flex-direction:column;align-items:stretch;">

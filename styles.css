@@ -996,6 +996,7 @@ a { color: var(--blue); }
 .warrior-scan-totals td { color: var(--yellow); }
 .warrior-scan-totals td.warrior-scan-date { color: var(--muted); font-weight: 400; }
 .warrior-scan-cell-detail { text-align: left; white-space: normal; margin-top: 4px; }
+.warrior-scan-barcount { color: var(--muted); font-weight: 400; font-size: 10px; }
 
 .pf-meta { font-size: 11px; color: var(--muted); margin: 4px 0; }
 

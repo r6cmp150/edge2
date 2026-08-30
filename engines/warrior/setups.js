@@ -611,12 +611,26 @@ function _anyNeedsPrevClose(setupIds) {
 // against real data directly shows the re-arm rule's actual effect
 // (naive count vs. real-event count) for as many setups as requested at
 // once.
-function _evaluateSetupsAgainstBars(setupIds, bars, prevClose) {
+//
+// prevCloseUsable is a single already-verified number, or null/undefined —
+// resolved by the caller (scanDateRangeForSetups), not this function. This
+// function doesn't know or care WHY a close is or isn't usable (missing,
+// stale, fetch failed); it only knows "usable" vs "not." A setup that
+// needsPrevClose gets a per-setup notEvaluated entry instead of running
+// with a fabricated or stale prevClose — Ross's actual gap-and-go/red-to-
+// green math is meaningless without a genuine previous close, and running
+// them anyway with null/0 would silently produce a wrong gapPct/reference
+// instead of an honest "couldn't check."
+function _evaluateSetupsAgainstBars(setupIds, bars, prevCloseUsable) {
   const bySetup = {};
   for (const setupId of setupIds) {
     const entry = SETUP_REPLAY_CATALOG.find(e => e.id === setupId);
     if (!entry) continue;
-    const classifier = entry.build({ prevClose });
+    if (entry.needsPrevClose && prevCloseUsable == null) {
+      bySetup[setupId] = { notEvaluated: true, reason: 'no verified previous-trading-day close available' };
+      continue;
+    }
+    const classifier = entry.build({ prevClose: prevCloseUsable });
     const rearmDistancePct = _rearmDistancePctFor(setupId);
     bySetup[setupId] = {
       naiveTriggers: runReplay(bars, classifier),
@@ -625,39 +639,6 @@ function _evaluateSetupsAgainstBars(setupIds, bars, prevClose) {
     };
   }
   return bySetup;
-}
-
-// setupId may be one of the five real ids or ALL_SETUPS_ID. Shape is
-// always {resultsBySymbol: {sym: {barCount, bySetup: {id: {naive/rearmed
-// Triggers}}}}, requests} regardless of how many setups were requested —
-// a single real id just means bySetup has one key — so the UI and
-// scanDateRangeForSetups below don't need two different result shapes to
-// handle.
-async function runSetupReplayForSymbols(setupId, symbols, dateStr, opts = {}) {
-  const setupIds = _setupIdsFor(setupId);
-  if (!setupIds.every(id => SETUP_REPLAY_CATALOG.some(e => e.id === id))) {
-    throw new Error(`Unknown setup id for replay: ${setupId}`);
-  }
-
-  const { barsBySymbol, requests: barRequests } = await fetchReplayBars(symbols, dateStr, opts);
-
-  let prevCloseBySymbol = {};
-  let prevCloseRequests = 0;
-  if (_anyNeedsPrevClose(setupIds)) {
-    const result = await fetchPrevCloseAsOf(symbols, dateStr);
-    prevCloseBySymbol = result.prevCloseBySymbol;
-    prevCloseRequests = result.requests;
-  }
-
-  const resultsBySymbol = {};
-  for (const sym of symbols) {
-    const bars = barsBySymbol[sym] || [];
-    resultsBySymbol[sym] = {
-      barCount: bars.length,
-      bySetup: _evaluateSetupsAgainstBars(setupIds, bars, prevCloseBySymbol[sym]),
-    };
-  }
-  return { resultsBySymbol, requests: barRequests + prevCloseRequests };
 }
 
 // ── Range scan: validate on real history across many days ───────────────
@@ -681,6 +662,32 @@ function _nextDateStr(dateStr) {
   const dt = new Date(Date.UTC(y, m - 1, d));
   dt.setUTCDate(dt.getUTCDate() + 1);
   return dt.toISOString().split('T')[0];
+}
+
+// Mirror of _nextDateStr, same UTC-calendar-string arithmetic, walking
+// backward — used only by _previousTradingDayStr below.
+function _prevDateStr(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return dt.toISOString().split('T')[0];
+}
+
+// The trading day immediately before dateStr — a Friday close is the
+// correct "previous close" for the following Monday, not "the most recent
+// value I happen to be holding." Bounded at 10 calendar days back purely
+// as a termination guarantee (a real calendar never has more than a
+// handful of consecutive non-trading days); exhausting it returns
+// whatever date the loop stopped at rather than looping forever — the
+// caller's adjacency check on that date will simply never match a held
+// value, which is the same safe "unusable" outcome as any other mismatch.
+function _previousTradingDayStr(dateStr) {
+  let cur = _prevDateStr(dateStr);
+  for (let i = 0; i < 10; i++) {
+    if (isTradingDay(getPT(ptWallClockToInstant(cur, 12, 0)))) return cur;
+    cur = _prevDateStr(cur);
+  }
+  return cur;
 }
 
 function _tradingDaysBetween(startDateStr, endDateStr) {
@@ -711,19 +718,30 @@ function estimateRangeScanRequests(setupIds, symbolCount, tradingDaysCount) {
 // opts.onProgress({index, total, dateStr}) and opts.isCancelled() are
 // both optional, called (or checked) once per trading day.
 //
-// prevClose carry-forward: gap-and-go/red-to-green need prevClose, which
-// core/universe.js's _getPriorCloses can't supply (hardcoded to "today")
-// and which fetchPrevCloseAsOf CAN, but at the cost of one extra request
-// per day if called naively. In a contiguous range, day N's own
-// last-fetched bar close IS day N+1's prevClose — no second fetch
-// needed. Only the range's first day (or any day whose chain broke, e.g.
-// a symbol didn't trade the prior day, or a fetch failed) pays for a
-// real fetchPrevCloseAsOf call.
+// prevClose carry-forward, DATE-VERIFIED (2026-08-30 fix — this was
+// originally specified as "day N's own last bar close is day N+1's
+// prevClose" without specifying that N+1 must actually BE the trading day
+// immediately after N. It wasn't: prevCloseBySymbol used to hold a bare
+// number, checked only for existence (`== null`), so a value carried
+// forward from day 2 would silently keep answering for day 4 if day 3's
+// fetch came back empty — two-day-stale, reported as an ordinary
+// prevClose with nothing to distinguish it from a fresh one. Holding
+// {close, date} and checking date === the ACTUAL previous trading day
+// (_previousTradingDayStr, isTradingDay-aware — a Friday close is correct
+// for the following Monday) catches both the carry-forward case and a
+// fresh fetch that itself lands on a non-adjacent day (a thin symbol that
+// didn't trade the expected prior day either).
 //
-// A day's fetch failure never aborts the scan: that day's symbols are
-// marked notEvaluated with the real error message, the loop continues,
-// and any broken carry-forward chain self-heals on the next day that
-// needs it (the "missing" filter below just re-fetches).
+// A day's outright fetch failure never aborts the scan: that day's
+// symbols are marked notEvaluated with the real error message, the loop
+// continues, and any broken carry-forward chain self-heals on the next
+// day that needs it (the "missing" filter below just re-fetches). A
+// prevClose that exists but isn't usable (missing, stale, or the fetch
+// itself failed) does NOT block the day's other setups — hod-momentum/
+// abcd/vwap-momentum don't need it and still run against real bars;
+// gap-and-go/red-to-green specifically get a per-setup notEvaluated
+// instead of running against a fabricated or stale reference (see
+// _evaluateSetupsAgainstBars).
 async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr, opts = {}) {
   const setupIds = _setupIdsFor(setupId);
   if (!setupIds.every(id => SETUP_REPLAY_CATALOG.some(e => e.id === id))) {
@@ -735,7 +753,7 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
   const resultsByDate = {};
   let requests = 0;
   let cancelled = false;
-  const prevCloseBySymbol = {};
+  const prevCloseBySymbol = {}; // sym -> { close, date } | undefined
 
   for (let i = 0; i < tradingDays.length; i++) {
     if (opts.isCancelled && opts.isCancelled()) { cancelled = true; break; }
@@ -753,17 +771,22 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
       continue; // don't touch prevCloseBySymbol -- next day re-fetches whatever's missing
     }
 
+    const expectedPrevDate = needsPrevClose ? _previousTradingDayStr(dateStr) : null;
     if (needsPrevClose) {
-      const missing = symbols.filter(sym => prevCloseBySymbol[sym] == null);
+      const missing = symbols.filter(sym => {
+        const held = prevCloseBySymbol[sym];
+        return !held || held.date !== expectedPrevDate;
+      });
       if (missing.length) {
         try {
           const { prevCloseBySymbol: fetched, requests: pcRequests } = await fetchPrevCloseAsOf(missing, dateStr);
           requests += pcRequests;
-          Object.assign(prevCloseBySymbol, fetched);
+          Object.assign(prevCloseBySymbol, fetched); // fetched[sym] = {close, date} — date may or may not equal expectedPrevDate; checked below, not assumed
         } catch (err) {
           // prevClose fetch failing shouldn't blank out symbols whose
-          // bars DID come back — mark only the setups needing it, per
-          // symbol, below, and let bars-only setups still evaluate.
+          // bars DID come back — leave prevCloseBySymbol as-is (still
+          // unusable per the adjacency check below) and let bars-only
+          // setups still evaluate.
         }
       }
     }
@@ -775,8 +798,13 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
         resultsByDate[dateStr][sym] = { notEvaluated: true, reason: 'no bars (market closed for this symbol, or no data)' };
         continue;
       }
-      resultsByDate[dateStr][sym] = { bySetup: _evaluateSetupsAgainstBars(setupIds, bars, prevCloseBySymbol[sym]) };
-      prevCloseBySymbol[sym] = bars[bars.length - 1].c; // carry forward regardless of whether THIS scan's setups needed it
+      const held = prevCloseBySymbol[sym];
+      const prevCloseUsable = (needsPrevClose && held && held.date === expectedPrevDate) ? held.close : null;
+      // barCount visible on every row — the only thing that distinguishes
+      // "evaluated, didn't fire" from "never evaluated" when reading a
+      // matrix by eye (2026-08-30 live-validation note).
+      resultsByDate[dateStr][sym] = { barCount: bars.length, bySetup: _evaluateSetupsAgainstBars(setupIds, bars, prevCloseUsable) };
+      prevCloseBySymbol[sym] = { close: bars[bars.length - 1].c, date: dateStr }; // carry forward regardless of whether THIS scan's setups needed it
     }
   }
 
@@ -788,7 +816,7 @@ export {
   computePremarketHigh, computeArmedLevels,
   makeGapAndGoClassifier, hodMomentumClassifier, abcdClassifier, vwapMomentumClassifier, makeRedToGreenClassifier,
   computeEntryTargetStop, computeSuggestedShares,
-  detectSetupsForCandidate, evaluateSetupsBatch, runSetupReplayForSymbols,
+  detectSetupsForCandidate, evaluateSetupsBatch,
   scanDateRangeForSetups, estimateRangeScanRequests,
-  _sortSetups, _volumeBaselineOverMinutes, _tradingDaysBetween,
+  _sortSetups, _volumeBaselineOverMinutes, _tradingDaysBetween, _previousTradingDayStr,
 };
