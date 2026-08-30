@@ -5,8 +5,8 @@
 // Warrior-file-importing-its-own-sibling shape as gate.js (see that
 // file's header for why that doesn't cross CLAUDE.md's shell/core/EDGE
 // boundary). References core/universe.js's _fetchRawMinuteBars and
-// core/clock.js's ptWallClockToInstant as ordinary globals, same pattern
-// gate.js already established for _fetchCumulativeMinuteVolume etc.
+// core/clock.js's ptWallClockToInstant/getPT as ordinary globals, same
+// pattern gate.js already established for _fetchCumulativeMinuteVolume etc.
 //
 // Phase 5 doesn't exist yet, so there is no real setup classifier to
 // replay against. examplePriceMoveClassifier below is a deliberately
@@ -87,7 +87,27 @@ async function fetchPrevCloseAsOf(symbols, dateStr) {
 // not subject to the no-lookahead constraint, which applies only to the
 // classifier's own decision at replay time (see runReplay below). Looking
 // forward from a trigger to score it is the whole point.
+//
+// The 'close' horizon is NOT comparable across triggers at different
+// times of day, and was reported as if it were (live-replay finding,
+// 2026-08-28): it scores against bars[bars.length-1] — whatever the
+// fetched window's last bar happens to be — so a trigger 6 minutes
+// before the window ends and one 5 hours before it get scored on the
+// same axis despite having wildly different room to move. Kept
+// (computing it is free, and "did this survive to end of day" is a real
+// question for a specific trade) rather than deleted, but runReplay
+// below always pairs every trigger's forwardReturns with
+// minutesOfSessionRemainingAtTrigger precisely so this can't be silently
+// misread as comparable the way it was before — same "make the
+// incompleteness visible instead of hiding it" principle as gate.js's
+// not-checked pillars and the QUALIFIED-header RVOL caveat.
 const FORWARD_HORIZONS_MIN = [5, 15, 30]; // 'close' handled separately, no fixed minute offset
+const REGULAR_SESSION_CLOSE_TMIN = 780; // 1:00pm PT — core/clock.js's own getMarketStatus() boundary
+
+function _minutesUntilRegularSessionClose(bar) {
+  const pt = getPT(new Date(bar.t));
+  return REGULAR_SESSION_CLOSE_TMIN - (pt.getHours() * 60 + pt.getMinutes());
+}
 
 function _barIndexAtOrAfter(bars, fromIndexExclusive, targetTimeMs) {
   for (let i = fromIndexExclusive + 1; i < bars.length; i++) {
@@ -217,6 +237,7 @@ function runReplay(bars, classifier, { rearmDistancePct } = {}) {
       triggerPrice: current.c,
       referenceLevel: verdict.referenceLevel ?? null,
       margins: verdict.margins ?? null,
+      minutesOfSessionRemainingAtTrigger: _minutesUntilRegularSessionClose(current),
       forwardReturns: computeForwardReturns(bars, i),
     });
   }

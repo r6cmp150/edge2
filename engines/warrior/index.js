@@ -355,8 +355,16 @@ function _renderTriggerRow(trig) {
   const timeStr = isNaN(t.getTime()) ? trig.triggerTime : t.toISOString();
   const levelStr = typeof trig.referenceLevel === 'number' ? ` (level $${trig.referenceLevel.toFixed(2)})` : '';
   const marginsStr = trig.margins ? ` — ${_renderMargins(trig.margins).replace(/<[^>]+>/g, '')}` : '';
+  // close is scored against whatever the fetched window's last bar
+  // happens to be, not a fixed elapsed time — always paired with how much
+  // session was actually left at the trigger, so a 6-minutes-to-close
+  // number can't read as equivalent to a 5-hours-to-close one the way it
+  // did before this was visible (live-replay finding, 2026-08-28).
+  const remaining = typeof trig.minutesOfSessionRemainingAtTrigger === 'number'
+    ? `${Math.round(trig.minutesOfSessionRemainingAtTrigger)}m left in session`
+    : '—';
   return `<div class="settings-hint mono">
-    ${trig.setupId} @ ${timeStr} $${trig.triggerPrice.toFixed(2)}${levelStr}${marginsStr} —
+    ${trig.setupId} @ ${timeStr} $${trig.triggerPrice.toFixed(2)}${levelStr}${marginsStr} — ${remaining} —
     5m: ${_fmtHorizon(trig.forwardReturns, '5m')} |
     15m: ${_fmtHorizon(trig.forwardReturns, '15m')} |
     30m: ${_fmtHorizon(trig.forwardReturns, '30m')} |

@@ -4,10 +4,19 @@
 // its pure functions directly.
 'use strict';
 const assert = require('assert');
-const { run } = require('./_lib');
+const { run, readSource, evalModule } = require('./_lib');
 
 function bar(t, o, h, l, c, v = 1000) {
   return { t, o, h, l, c, v };
+}
+
+// runReplay computes minutesOfSessionRemainingAtTrigger via the REAL
+// getPT (core/clock.js), same reasoning as tests/setups.test.js's
+// loadClockGlobals — mocking getPT would test nothing about whether
+// that computation actually reads PT wall-clock fields correctly.
+function loadClockGlobals() {
+  global.state = { settings: {} };
+  evalModule(readSource('core/clock.js'), { expose: ['getPT', 'ptDateStr', 'ptWallClockToInstant'] });
 }
 
 // One bar per minute starting at this PT-equivalent instant, for however
@@ -22,6 +31,7 @@ function makeBars(closes, startISO = '2026-08-26T13:30:00.000Z') {
 }
 
 async function loadReplay() {
+  loadClockGlobals(); // real getPT/ptDateStr/ptWallClockToInstant; individual tests override ptWallClockToInstant with a deterministic stand-in where needed
   global._fetchRawMinuteBars = undefined; // each test sets its own mock before calling fetch-dependent functions
   return import('../engines/warrior/replay.js');
 }
@@ -230,6 +240,49 @@ async function testComputeForwardReturnsAllNullWhenTriggerIsLastBar() {
   }
 }
 
+// ── minutesOfSessionRemainingAtTrigger (close-horizon comparability) ─────
+// Live-replay finding (2026-08-28): AMIX triggers 6 minutes before the
+// window's close scored +9.7%/+15.9% "to close"; HVII triggers hours
+// earlier scored -3.3%/-7.3% — not because one setup was better, but
+// because "close" measures completely different amounts of real time
+// depending on when the trigger happened. Kept as a metric (free,
+// sometimes genuinely useful) rather than deleted, but every trigger now
+// carries this field precisely so that incomparability is visible on the
+// row instead of silently misleading a reader who takes "close" at face
+// value the way the live run's first pass did.
+
+async function testMinutesOfSessionRemainingAtTriggerComputedFromPTClose() {
+  const replay = await loadReplay();
+  // makeBars' default start (2026-08-26T13:30:00.000Z) is exactly 6:30am
+  // PT (PDT, UTC-7) -- bar index N is N minutes after the regular-session
+  // open, so "minutes until 1:00pm PT close" for bar N is 390 - N.
+  const bars = makeBars([1, 1, 1, 1, 1, 2]); // trigger at index 5
+  const classifier = (barsSoFar) => barsSoFar[barsSoFar.length - 1].c >= 2 ? { setupId: 'x' } : null;
+  const [trigger] = replay.runReplay(bars, classifier);
+  console.log('minutesOfSessionRemainingAtTrigger:', trigger.minutesOfSessionRemainingAtTrigger);
+  assert.strictEqual(trigger.minutesOfSessionRemainingAtTrigger, 390 - 5);
+}
+
+async function testMinutesOfSessionRemainingAtTriggerMakesCloseHorizonInterpretable() {
+  const replay = await loadReplay();
+  const classifier = (barsSoFar) => barsSoFar[barsSoFar.length - 1].c >= 2 ? { setupId: 'x' } : null;
+
+  // Early trigger: hours of real time left before the window's close.
+  const earlyBars = makeBars([1, 2, ...Array(60).fill(1.5)]); // trigger at index 1 (6:31am PT), 60 more bars follow
+  const [earlyTrigger] = replay.runReplay(earlyBars, classifier);
+
+  // Late trigger: minutes before the window's close (mirrors AMIX firing
+  // 6 minutes before end of window).
+  const lateBars = [...makeBars(Array(383).fill(1)), ...makeBars([2, 1, 1, 1, 1, 1], '2026-08-26T19:53:00.000Z')];
+  const [lateTrigger] = replay.runReplay(lateBars, classifier);
+
+  console.log('early remaining:', earlyTrigger.minutesOfSessionRemainingAtTrigger, '| late remaining:', lateTrigger.minutesOfSessionRemainingAtTrigger);
+  assert.ok(earlyTrigger.minutesOfSessionRemainingAtTrigger > 300, 'an early trigger should show hours of session remaining');
+  assert.ok(lateTrigger.minutesOfSessionRemainingAtTrigger <= 10, 'a late trigger should show only minutes of session remaining');
+  assert.ok(earlyTrigger.minutesOfSessionRemainingAtTrigger - lateTrigger.minutesOfSessionRemainingAtTrigger > 250,
+    'the whole point: two triggers whose "close" return might look superficially comparable have wildly different real time behind that number, and this field is what makes that visible');
+}
+
 // ── examplePriceMoveClassifier ───────────────────────────────────────────
 
 async function testExamplePriceMoveClassifierThreshold() {
@@ -350,6 +403,8 @@ async function testRunReplayForSymbolsOrchestratesFetchAndReplay() {
   await run('replay: computeForwardReturns — correct return/MFE/MAE values', testComputeForwardReturnsCorrectValues);
   await run('replay: computeForwardReturns — null (not fabricated) when a horizon is unreachable', testComputeForwardReturnsNullWhenHorizonUnavailable);
   await run('replay: computeForwardReturns — all null when trigger is the last bar', testComputeForwardReturnsAllNullWhenTriggerIsLastBar);
+  await run('replay: minutesOfSessionRemainingAtTrigger computed from PT session close', testMinutesOfSessionRemainingAtTriggerComputedFromPTClose);
+  await run('replay: minutesOfSessionRemainingAtTrigger makes the close horizon interpretable (reproduces the AMIX/HVII finding)', testMinutesOfSessionRemainingAtTriggerMakesCloseHorizonInterpretable);
   await run('replay: examplePriceMoveClassifier threshold (reuses gate.js\'s real CHANGE_MIN_PCT)', testExamplePriceMoveClassifierThreshold);
   await run('replay: fetchReplayBars — window/chunk-size/ordering', testFetchReplayBarsUsesCorrectWindowChunkSizeAndOrdering);
   await run('replay: fetchPrevCloseAsOf picks the most recent close before the replay window', testFetchPrevCloseAsOfPicksMostRecentCloseBeforeReplayWindow);
