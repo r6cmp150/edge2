@@ -486,6 +486,144 @@ async function testLateSetupsAreDemotedBelowNonLateRegardlessOfPriority() {
     'both non-late setups (sorted by priority: abcd before red-to-green) must come before both late ones (also sorted by priority: gap-and-go before hod-momentum), regardless of gap-and-go being the single highest-priority setup overall');
 }
 
+// ── _tradingDaysBetween ──────────────────────────────────────────────────
+
+async function testTradingDaysBetweenExcludesWeekendsAndHolidays() {
+  const setups = await loadSetups();
+  // 2026-08-31 is a Monday, 2026-09-07 is Labor Day (a real HOLIDAYS
+  // entry in core/clock.js).
+  const days = setups._tradingDaysBetween('2026-08-28', '2026-09-08');
+  console.log('trading days:', days);
+  assert.deepStrictEqual(days, ['2026-08-28', '2026-08-31', '2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04', '2026-09-08'],
+    'must exclude the weekend (8/29-8/30) and Labor Day (9/7) while including every other weekday');
+}
+
+async function testTradingDaysBetweenCrossesDSTWithoutSkippingOrDuplicating() {
+  const setups = await loadSetups();
+  // 2026-03-08 is a Sunday and the US spring-forward date -- pure
+  // date-string arithmetic must not skip or double-count any day across
+  // it. Range: Thu 3/5 through Wed 3/11.
+  const days = setups._tradingDaysBetween('2026-03-05', '2026-03-11');
+  console.log('DST-crossing trading days:', days);
+  assert.deepStrictEqual(days, ['2026-03-05', '2026-03-06', '2026-03-09', '2026-03-10', '2026-03-11'],
+    'must correctly skip the weekend spanning the DST transition (3/7-3/8) without skipping or duplicating 3/9 the way real-instant "+24h" arithmetic would risk');
+}
+
+// ── estimateRangeScanRequests ────────────────────────────────────────────
+
+async function testEstimateRangeScanRequests() {
+  const setups = await loadSetups();
+  // hod-momentum: no prevClose needed. 10 days, 5 symbols (1 chunk) -> 10 requests.
+  assert.strictEqual(setups.estimateRangeScanRequests(['hod-momentum'], 5, 10), 10);
+  // gap-and-go: needs prevClose. Same 10 days, 5 symbols -> 10 + 1 (one prevClose batch).
+  assert.strictEqual(setups.estimateRangeScanRequests(['gap-and-go'], 5, 10), 11);
+  // Symbol count exceeding REPLAY_CHUNK_SIZE (13) needs 2 chunks per day.
+  assert.strictEqual(setups.estimateRangeScanRequests(['hod-momentum'], 20, 10), 20);
+}
+
+// ── scanDateRangeForSetups ────────────────────────────────────────────────
+
+function makeDayBars(dateStr, closes) {
+  // Bars for a single trading day, one per minute from 6:30am PT, using
+  // the SAME real ptWallClockToInstant already loaded — dateStr varies
+  // (unlike TRADING_DATE-fixed `bar()`), so built directly here.
+  return closes.map((c, i) => {
+    const totalMin = 390 + i;
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    const t = global.ptWallClockToInstant(dateStr, h, m).toISOString();
+    return { t, o: c, h: c, l: c, c, v: 1000 };
+  });
+}
+
+async function testScanDateRangeCarriesForwardPrevCloseAcrossDays() {
+  const setups = await loadSetups();
+  let prevCloseFetchCount = 0;
+  global.alpacaGet = async () => { prevCloseFetchCount++; return { bars: { TEST: [{ t: '2026-08-23T20:00:00Z', c: 4.00 }] } }; };
+  global._fetchRawMinuteBars = async (symbols, start, end, chunkSize, label) => {
+    // label includes the date string fetchReplayBars was called with (see replay.js)
+    const dateStr = label.split(' ').pop();
+    const bars = makeDayBars(dateStr, Array(20).fill(4.10));
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); });
+    return { barsBySymbolAll, requests: 1 };
+  };
+  const { resultsByDate, requests } = await setups.scanDateRangeForSetups('gap-and-go', ['TEST'], '2026-08-24', '2026-08-26');
+  console.log('carry-forward scan requests:', requests, '| prevClose fetches:', prevCloseFetchCount, '| dates:', Object.keys(resultsByDate));
+  assert.strictEqual(prevCloseFetchCount, 1, 'prevClose must be fetched once for the whole 3-day range, not once per day');
+  assert.strictEqual(requests, 4, '3 days of bars + 1 prevClose fetch = 4, not 6 (2 per day)');
+}
+
+async function testScanDateRangeMarksFetchFailureWithoutAbortingTheScan() {
+  const setups = await loadSetups();
+  let callCount = 0;
+  global._fetchRawMinuteBars = async (symbols, start, end, chunkSize, label) => {
+    callCount++;
+    if (callCount === 2) throw new Error('simulated network failure');
+    const dateStr = label.split(' ').pop();
+    const bars = makeDayBars(dateStr, Array(5).fill(4.10));
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); });
+    return { barsBySymbolAll, requests: 1 };
+  };
+  const { resultsByDate } = await setups.scanDateRangeForSetups('hod-momentum', ['TEST'], '2026-08-24', '2026-08-26');
+  const dates = Object.keys(resultsByDate);
+  console.log('failure-handling result:', dates.map(d => `${d}: ${JSON.stringify(resultsByDate[d].TEST)}`));
+  assert.strictEqual(dates.length, 3, 'a failed day must not stop the scan -- all 3 days must have a result');
+  assert.ok(resultsByDate[dates[1]].TEST.notEvaluated, 'the failed day must be marked notEvaluated');
+  assert.ok(/fetch failed/.test(resultsByDate[dates[1]].TEST.reason));
+  assert.ok(!resultsByDate[dates[0]].TEST.notEvaluated, 'the day before the failure must still have real results');
+  assert.ok(!resultsByDate[dates[2]].TEST.notEvaluated, 'the day after the failure must still have real results (self-healed)');
+}
+
+async function testScanDateRangeMarksNoDataWithoutFabricatingAResult() {
+  const setups = await loadSetups();
+  global._fetchRawMinuteBars = async () => ({ barsBySymbolAll: {}, requests: 1 }); // no symbol ever appears -- thin/delisted
+  const { resultsByDate } = await setups.scanDateRangeForSetups('hod-momentum', ['THIN'], '2026-08-24', '2026-08-24');
+  const result = resultsByDate['2026-08-24'].THIN;
+  console.log('no-data result:', result);
+  assert.strictEqual(result.notEvaluated, true);
+  assert.ok(/no bars/.test(result.reason));
+}
+
+async function testScanDateRangeRespectsCancellation() {
+  const setups = await loadSetups();
+  let dayCount = 0;
+  global._fetchRawMinuteBars = async (symbols, start, end, chunkSize, label) => {
+    dayCount++;
+    const dateStr = label.split(' ').pop();
+    const bars = makeDayBars(dateStr, Array(5).fill(4.10));
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); });
+    return { barsBySymbolAll, requests: 1 };
+  };
+  const { resultsByDate, tradingDays, cancelled } = await setups.scanDateRangeForSetups(
+    'hod-momentum', ['TEST'], '2026-08-24', '2026-08-28',
+    { isCancelled: () => dayCount >= 2 }
+  );
+  console.log('cancellation result:', { totalTradingDays: tradingDays.length, evaluatedDays: Object.keys(resultsByDate).length, cancelled });
+  assert.strictEqual(cancelled, true);
+  assert.ok(Object.keys(resultsByDate).length < tradingDays.length, 'must stop before evaluating every trading day in the range');
+}
+
+async function testScanDateRangeReportsProgressPerDay() {
+  const setups = await loadSetups();
+  global._fetchRawMinuteBars = async (symbols, start, end, chunkSize, label) => {
+    const dateStr = label.split(' ').pop();
+    const bars = makeDayBars(dateStr, Array(5).fill(4.10));
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); });
+    return { barsBySymbolAll, requests: 1 };
+  };
+  const progressCalls = [];
+  await setups.scanDateRangeForSetups('hod-momentum', ['TEST'], '2026-08-24', '2026-08-26', {
+    onProgress: (p) => progressCalls.push(p),
+  });
+  console.log('progress calls:', progressCalls);
+  assert.strictEqual(progressCalls.length, 3, 'onProgress must fire once per trading day');
+  assert.deepStrictEqual(progressCalls.map(p => p.index), [0, 1, 2]);
+  assert.deepStrictEqual(progressCalls.map(p => p.total), [3, 3, 3]);
+}
+
 // ── runSetupReplayForSymbols (Developer Tools replay panel wiring) ──────
 // This is the function the classifier-picker dropdown actually calls —
 // distinct from detectSetupsForCandidate's live-scan path, since the
@@ -502,11 +640,13 @@ async function testRunSetupReplayForSymbolsWithoutPrevClose() {
     return { barsBySymbolAll, requests: 1 };
   };
   const { resultsBySymbol, requests } = await setups.runSetupReplayForSymbols('hod-momentum', ['TEST'], TRADING_DATE);
-  console.log('hod-momentum panel run:', { naive: resultsBySymbol.TEST.naiveTriggers.length, rearmed: resultsBySymbol.TEST.rearmedTriggers.length, requests });
+  const r = resultsBySymbol.TEST.bySetup['hod-momentum'];
+  console.log('hod-momentum panel run:', { naive: r.naiveTriggers.length, rearmed: r.rearmedTriggers.length, requests });
   assert.strictEqual(requests, 1, 'hod-momentum needs no prevClose fetch — only the bar fetch');
-  assert.strictEqual(resultsBySymbol.TEST.naiveTriggers.length, 1);
-  assert.strictEqual(resultsBySymbol.TEST.rearmedTriggers.length, 1);
-  assert.strictEqual(resultsBySymbol.TEST.rearmDistancePct, setups.SETUP_CONFIG.rearmDistancePct);
+  assert.strictEqual(r.naiveTriggers.length, 1);
+  assert.strictEqual(r.rearmedTriggers.length, 1);
+  assert.strictEqual(r.rearmDistancePct, setups.SETUP_CONFIG.rearmDistancePct);
+  assert.deepStrictEqual(Object.keys(resultsBySymbol.TEST.bySetup), ['hod-momentum'], 'a single real setup id must produce exactly one bySetup entry');
 }
 
 async function testRunSetupReplayForSymbolsFetchesAndUsesPrevClose() {
@@ -523,10 +663,33 @@ async function testRunSetupReplayForSymbolsFetchesAndUsesPrevClose() {
     return { bars: { TEST: [{ t: '2026-08-23T20:00:00Z', c: 4.00 }] } }; // prevClose=4.00 -> gap-and-go's precondition (>=10%) is met by the fixture's premarket price 4.45
   };
   const { resultsBySymbol, requests } = await setups.runSetupReplayForSymbols('gap-and-go', ['TEST'], TRADING_DATE);
-  console.log('gap-and-go panel run:', { triggers: resultsBySymbol.TEST.rearmedTriggers.length, requests, capturedPrevCloseFetchSymbols });
+  const r = resultsBySymbol.TEST.bySetup['gap-and-go'];
+  console.log('gap-and-go panel run:', { triggers: r.rearmedTriggers.length, requests, capturedPrevCloseFetchSymbols });
   assert.strictEqual(capturedPrevCloseFetchSymbols, 'TEST', 'must fetch prevClose for the requested symbol');
   assert.strictEqual(requests, 2, 'gap-and-go needs both the bar fetch and the prevClose fetch');
-  assert.strictEqual(resultsBySymbol.TEST.rearmedTriggers.length, 1, 'the fetched prevClose (4.00) must actually be used — the trigger only fires because the gap precondition is satisfied against it');
+  assert.strictEqual(r.rearmedTriggers.length, 1, 'the fetched prevClose (4.00) must actually be used — the trigger only fires because the gap precondition is satisfied against it');
+}
+
+async function testRunSetupReplayForSymbolsAllSetupsRunsAllFiveOnOneFetch() {
+  const setups = await loadSetups();
+  let fetchCallCount = 0;
+  global._fetchRawMinuteBars = async (symbols) => {
+    fetchCallCount++;
+    const bars = [...flatRun(6, 30, 16, 5.00, 1000), bar(6, 46, 5.00, 5.20, 4.98, 5.15, 4000)];
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); });
+    return { barsBySymbolAll, requests: 1 };
+  };
+  let prevCloseCallCount = 0;
+  global.alpacaGet = async () => { prevCloseCallCount++; return { bars: { TEST: [{ t: '2026-08-23T20:00:00Z', c: 4.00 }] } }; };
+
+  const { resultsBySymbol, requests } = await setups.runSetupReplayForSymbols(setups.ALL_SETUPS_ID, ['TEST'], TRADING_DATE);
+  const bySetup = resultsBySymbol.TEST.bySetup;
+  console.log('all-setups panel run keys:', Object.keys(bySetup), '| fetch calls:', fetchCallCount, '| prevClose calls:', prevCloseCallCount);
+  assert.deepStrictEqual(Object.keys(bySetup).sort(), setups.SETUP_REPLAY_CATALOG.map(e => e.id).sort(), 'ALL_SETUPS_ID must evaluate all five setups');
+  assert.strictEqual(fetchCallCount, 1, 'bars must be fetched exactly once, shared across all five classifiers, not once per setup');
+  assert.strictEqual(prevCloseCallCount, 1, 'prevClose (needed by 2 of 5 setups) must be fetched exactly once for the whole batch, not once per setup that needs it');
+  assert.ok(bySetup['hod-momentum'].naiveTriggers.length >= 1, 'hod-momentum\'s own fixture-matching trigger must still fire inside the all-setups run');
 }
 
 async function testRunSetupReplayForSymbolsUnknownIdThrows() {
@@ -606,8 +769,17 @@ async function testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore() {
   await run('setups: detectSetupsForCandidate does not flag LATE within the window', testDetectSetupsNotLateWithinWindow);
   await run('setups: hod-momentum validated through the actual replay harness walk', testHodMomentumValidatedThroughReplayHarness);
   await run('setups: LATE setups are demoted below non-late ones regardless of priority', testLateSetupsAreDemotedBelowNonLateRegardlessOfPriority);
+  await run('setups: _tradingDaysBetween excludes weekends and holidays', testTradingDaysBetweenExcludesWeekendsAndHolidays);
+  await run('setups: _tradingDaysBetween crosses DST without skipping or duplicating', testTradingDaysBetweenCrossesDSTWithoutSkippingOrDuplicating);
+  await run('setups: estimateRangeScanRequests', testEstimateRangeScanRequests);
+  await run('setups: scanDateRangeForSetups carries prevClose forward across days', testScanDateRangeCarriesForwardPrevCloseAcrossDays);
+  await run('setups: scanDateRangeForSetups marks a fetch failure without aborting', testScanDateRangeMarksFetchFailureWithoutAbortingTheScan);
+  await run('setups: scanDateRangeForSetups marks no-data without fabricating a result', testScanDateRangeMarksNoDataWithoutFabricatingAResult);
+  await run('setups: scanDateRangeForSetups respects cancellation', testScanDateRangeRespectsCancellation);
+  await run('setups: scanDateRangeForSetups reports progress per day', testScanDateRangeReportsProgressPerDay);
   await run('setups: runSetupReplayForSymbols (no prevClose needed) — naive/re-armed both computed', testRunSetupReplayForSymbolsWithoutPrevClose);
   await run('setups: runSetupReplayForSymbols fetches and actually uses prevClose for gap-and-go', testRunSetupReplayForSymbolsFetchesAndUsesPrevClose);
+  await run('setups: runSetupReplayForSymbols(ALL_SETUPS_ID) runs all five on one fetch', testRunSetupReplayForSymbolsAllSetupsRunsAllFiveOnOneFetch);
   await run('setups: runSetupReplayForSymbols rejects an unknown setup id', testRunSetupReplayForSymbolsUnknownIdThrows);
   await run('setups: no path references EDGE\'s calcEntryTargetStop/calcScore', testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore);
 })();

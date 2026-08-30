@@ -979,6 +979,24 @@ a { color: var(--blue); }
 .warrior-ets { display: flex; flex-wrap: wrap; gap: 10px; font-family: var(--mono); font-size: 11px; margin-top: 6px; }
 .warrior-ets-unavailable { font-size: 11px; color: var(--muted); font-style: italic; margin-top: 6px; }
 
+/* Range-scan matrix (dev-only replay panel) — rows are trading days,
+   columns are setups, three visually distinct cell states matching the
+   pillar not-checked/pass/fail discipline: fired (green, clickable to
+   expand per-trigger detail), zero (muted, still evaluated), and
+   not-evaluated (dashed border, hover shows the reason via title attr). */
+.warrior-scan-matrix { border-collapse: collapse; font-family: var(--mono); font-size: 11px; width: 100%; }
+.warrior-scan-matrix th, .warrior-scan-matrix td { padding: 4px 8px; text-align: right; white-space: nowrap; }
+.warrior-scan-matrix th { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.4px; font-weight: 400; border-bottom: 1px solid var(--border); }
+.warrior-scan-matrix td.warrior-scan-date { text-align: left; color: var(--muted); }
+.warrior-scan-cell.zero { color: var(--muted); }
+.warrior-scan-cell.fired { color: var(--green); cursor: pointer; }
+.warrior-scan-cell.fired:hover { text-decoration: underline; }
+.warrior-scan-cell.not-evaluated { color: var(--muted); font-style: italic; border: 1px dashed rgba(255,255,255,0.12); }
+.warrior-scan-totals { border-top: 1px solid var(--border); font-weight: 700; }
+.warrior-scan-totals td { color: var(--yellow); }
+.warrior-scan-totals td.warrior-scan-date { color: var(--muted); font-weight: 400; }
+.warrior-scan-cell-detail { text-align: left; white-space: normal; margin-top: 4px; }
+
 .pf-meta { font-size: 11px; color: var(--muted); margin: 4px 0; }
 
 .pf-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }

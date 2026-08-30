@@ -26,7 +26,7 @@
 // rather than computing a second, parallel notion of "available").
 import { evaluateGateBatch, _selectStrategy } from './gate.js';
 import { runReplayForSymbols } from './replay.js';
-import { evaluateSetupsBatch, runSetupReplayForSymbols, SETUP_REPLAY_CATALOG } from './setups.js';
+import { evaluateSetupsBatch, runSetupReplayForSymbols, SETUP_REPLAY_CATALOG, ALL_SETUPS_ID, scanDateRangeForSetups, estimateRangeScanRequests, _tradingDaysBetween } from './setups.js';
 
 const WARRIOR_SCAN_INTERVAL_MS = 60 * 1000;
 let _scanIntervalId = null;
@@ -307,8 +307,25 @@ function _renderCandidateCard(gateResult) {
 // stores a reference to any of this (register() below just assigns a
 // plain global function, same connection mechanism every onclick in this
 // app already uses — not a boundary exception).
-let _lastReplayResult = null; // { dateStr, symbols, classifierId, resultsBySymbol, requests } | null
+let _lastReplayResult = null; // { dateStr, symbols, classifierId, resultsBySymbol, requests } | null (single-day mode)
+let _lastRangeScanResult = null; // { setupIds, symbols, startDate, endDate, resultsByDate, tradingDays, requests, cancelled } | null
 let _replayInFlight = false;
+let _rangeScanInFlight = false;
+let _rangeScanProgress = null; // { index, total, dateStr } | null, updated live during a scan
+let _rangeScanCancelRequested = false;
+let _rangeScanConfirmPending = false; // true after a first click that exceeded the confirm threshold, awaiting a second click
+const _expandedScanCells = new Set(); // "date|symbol|setupId" keys currently expanded to show per-trigger detail
+
+// Above this many trading days OR this many estimated requests (whichever
+// hits first), Run requires a second explicit click — the estimate is
+// already on screen by then, so the confirm is reading a number you can
+// see, not guessing. Hard ceiling is a pure typo backstop (e.g. 2016
+// instead of 2026), not a usable-range limit — capping below what's
+// actually useful (a thin small-cap may only produce a handful of
+// legitimate fires in a whole quarter) would make the tool decorative.
+const RANGE_SCAN_CONFIRM_DAYS_THRESHOLD = 30;
+const RANGE_SCAN_CONFIRM_REQUESTS_THRESHOLD = 100;
+const RANGE_SCAN_HARD_CEILING_DAYS = 250;
 
 // Phase 5 acceptance's own first bullet ("every setup validated through
 // the replay harness before shipping") is not satisfied by unit-test
@@ -316,25 +333,73 @@ let _replayInFlight = false;
 // produced the classifier tends to agree with it regardless of whether
 // the classifier is actually right, which this session has found
 // repeatedly elsewhere. 'example' keeps Phase 4's original placeholder
-// available; the five real entries let this panel run an ACTUAL setup
-// against ACTUAL historical bars, a genuinely independent check.
+// available; the five real entries (plus ALL_SETUPS_ID, added so
+// comparing all five costs one fetch instead of five) let this panel run
+// ACTUAL setups against ACTUAL historical bars, a genuinely independent
+// check.
 const REPLAY_CLASSIFIER_OPTIONS = [
   { id: 'example', label: 'Example (Phase 4 placeholder)' },
+  { id: ALL_SETUPS_ID, label: 'All setups' },
   ...SETUP_REPLAY_CATALOG.map(e => ({ id: e.id, label: e.label })),
 ];
 
+function _setupIdsForClassifierId(classifierId) {
+  return classifierId === ALL_SETUPS_ID ? SETUP_REPLAY_CATALOG.map(e => e.id) : [classifierId];
+}
+
+function _readReplayFormInputs() {
+  const g = (id) => (typeof document !== 'undefined') ? document.getElementById(id) : null;
+  return {
+    dateStr: g('warrior-replay-date')?.value,
+    endDateStr: g('warrior-replay-end-date')?.value,
+    symbols: (g('warrior-replay-symbols')?.value || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean),
+    classifierId: g('warrior-replay-classifier')?.value || 'example',
+  };
+}
+
+// Direct DOM update, NOT a full renderWarriorTab() re-render — the panel
+// has several text/date inputs, and a full innerHTML rebuild on every
+// keystroke would drop focus/cursor position out from under whoever's
+// typing. Wired via oninput/onchange on the date/symbol/classifier
+// fields (see renderReplayPanel below).
+function _updateReplayEstimateDisplay() {
+  if (typeof document === 'undefined') return;
+  const el = document.getElementById('warrior-replay-estimate');
+  if (!el) return;
+  const { dateStr, endDateStr, symbols, classifierId } = _readReplayFormInputs();
+  if (!dateStr || !endDateStr || !symbols.length || classifierId === 'example') {
+    el.textContent = '';
+    return;
+  }
+  const setupIds = _setupIdsForClassifierId(classifierId);
+  const tradingDays = _tradingDaysBetween(dateStr, endDateStr);
+  if (tradingDays.length > RANGE_SCAN_HARD_CEILING_DAYS) {
+    el.textContent = `${tradingDays.length} trading days exceeds the ${RANGE_SCAN_HARD_CEILING_DAYS}-day ceiling — narrow the range.`;
+    el.className = 'settings-hint warrior-estimate-blocked';
+    return;
+  }
+  const requests = estimateRangeScanRequests(setupIds, symbols.length, tradingDays.length);
+  const needsConfirm = tradingDays.length > RANGE_SCAN_CONFIRM_DAYS_THRESHOLD || requests > RANGE_SCAN_CONFIRM_REQUESTS_THRESHOLD;
+  el.textContent = `≈${requests} request(s) across ${tradingDays.length} trading day(s)${needsConfirm ? ' — will require confirmation' : ''}`;
+  el.className = 'settings-hint';
+}
+
 async function _runReplayFromUI() {
-  if (_replayInFlight) return;
-  const dateEl = (typeof document !== 'undefined') ? document.getElementById('warrior-replay-date') : null;
-  const symbolsEl = (typeof document !== 'undefined') ? document.getElementById('warrior-replay-symbols') : null;
-  const classifierEl = (typeof document !== 'undefined') ? document.getElementById('warrior-replay-classifier') : null;
-  const dateStr = dateEl?.value;
-  const symbols = (symbolsEl?.value || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-  const classifierId = classifierEl?.value || 'example';
+  if (_replayInFlight || _rangeScanInFlight) return;
+  const { dateStr, endDateStr, symbols, classifierId } = _readReplayFormInputs();
   if (!dateStr || !symbols.length) {
     if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast('[Warrior] Replay needs a date and at least one symbol.');
     return;
   }
+  // An end date present and different from the start date means range
+  // mode — single-day is the degenerate case of a range (same reasoning
+  // as the engine registry: one code path, not two that can drift), but
+  // dispatches separately here since the confirm-gating and progress UI
+  // only apply to a real range.
+  if (endDateStr && endDateStr !== dateStr) {
+    return _runRangeScanFromUI(dateStr, endDateStr, symbols, classifierId);
+  }
+
   _replayInFlight = true;
   if (typeof renderWarriorTab === 'function') renderWarriorTab();
   try {
@@ -342,12 +407,67 @@ async function _runReplayFromUI() {
       ? await runReplayForSymbols(symbols, dateStr)
       : await runSetupReplayForSymbols(classifierId, symbols, dateStr);
     _lastReplayResult = { dateStr, symbols, classifierId, resultsBySymbol, requests };
+    _lastRangeScanResult = null;
   } catch (err) {
     if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast(`[Warrior] Replay failed: ${err.message}`);
   } finally {
     _replayInFlight = false;
     if (typeof renderWarriorTab === 'function') renderWarriorTab();
   }
+}
+
+async function _runRangeScanFromUI(startDate, endDate, symbols, classifierId) {
+  if (classifierId === 'example') {
+    if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast('[Warrior] Range scan needs a real setup (or "All setups"), not the Phase 4 placeholder.');
+    return;
+  }
+  const setupIds = _setupIdsForClassifierId(classifierId);
+  const tradingDays = _tradingDaysBetween(startDate, endDate);
+  if (tradingDays.length > RANGE_SCAN_HARD_CEILING_DAYS) {
+    if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast(`[Warrior] ${tradingDays.length} trading days exceeds the ${RANGE_SCAN_HARD_CEILING_DAYS}-day ceiling — narrow the range.`);
+    return;
+  }
+  const requests = estimateRangeScanRequests(setupIds, symbols.length, tradingDays.length);
+  const needsConfirm = tradingDays.length > RANGE_SCAN_CONFIRM_DAYS_THRESHOLD || requests > RANGE_SCAN_CONFIRM_REQUESTS_THRESHOLD;
+  if (needsConfirm && !_rangeScanConfirmPending) {
+    _rangeScanConfirmPending = true;
+    if (typeof renderWarriorTab === 'function') renderWarriorTab();
+    return; // first click just arms confirmation; the button's own label shows the estimate on the second click
+  }
+  _rangeScanConfirmPending = false;
+
+  _rangeScanInFlight = true;
+  _rangeScanCancelRequested = false;
+  _rangeScanProgress = null;
+  _expandedScanCells.clear();
+  if (typeof renderWarriorTab === 'function') renderWarriorTab();
+  try {
+    const result = await scanDateRangeForSetups(classifierId, symbols, startDate, endDate, {
+      onProgress: (p) => {
+        _rangeScanProgress = p;
+        if (typeof renderWarriorTab === 'function') renderWarriorTab();
+      },
+      isCancelled: () => _rangeScanCancelRequested,
+    });
+    _lastRangeScanResult = { setupIds, symbols, startDate, endDate, ...result };
+    _lastReplayResult = null;
+  } catch (err) {
+    if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast(`[Warrior] Range scan failed: ${err.message}`);
+  } finally {
+    _rangeScanInFlight = false;
+    _rangeScanProgress = null;
+    if (typeof renderWarriorTab === 'function') renderWarriorTab();
+  }
+}
+
+function _cancelRangeScanFromUI() {
+  _rangeScanCancelRequested = true;
+}
+
+function _toggleScanCellFromUI(key) {
+  if (_expandedScanCells.has(key)) _expandedScanCells.delete(key);
+  else _expandedScanCells.add(key);
+  if (typeof renderWarriorTab === 'function') renderWarriorTab();
 }
 
 function _fmtHorizon(forwardReturns, key) {
@@ -378,23 +498,28 @@ function _renderTriggerRow(trig) {
   </div>`;
 }
 
-function _renderReplaySymbolResult(symbol, result) {
-  // Real-setup runs carry naiveTriggers/rearmedTriggers (see
-  // runSetupReplayForSymbols); the 'example' placeholder still uses the
-  // original single-triggers shape (no re-arm comparison to show).
-  if (result.naiveTriggers) {
-    const naive = result.naiveTriggers, rearmed = result.rearmedTriggers;
+function _renderBySetupResult(symbol, barCount, bySetup) {
+  const entries = Object.entries(bySetup);
+  return entries.map(([setupId, r]) => {
+    const naive = r.naiveTriggers, rearmed = r.rearmedTriggers;
     const rearmNote = naive.length !== rearmed.length
       ? ` — re-arm rule suppressed ${naive.length - rearmed.length} chop-driven trigger(s)`
       : naive.length > 0 ? ' — naive and re-armed agree (no chop suppressed)' : '';
     if (!rearmed.length) {
-      return `<div class="settings-row"><span class="mono">${symbol}</span><span class="settings-hint muted">${result.barCount} bars, no triggers (naive: ${naive.length})</span></div>`;
+      return `<div class="settings-row"><span class="mono">${symbol} · ${setupId}</span><span class="settings-hint muted">${barCount} bars, no triggers (naive: ${naive.length})</span></div>`;
     }
     return `<div class="settings-row" style="flex-direction:column;align-items:stretch;">
-      <div class="mono">${symbol} — naive: ${naive.length} trigger(s), re-armed (${result.rearmDistancePct}%): ${rearmed.length} trigger(s), ${result.barCount} bars${rearmNote}</div>
+      <div class="mono">${symbol} · ${setupId} — naive: ${naive.length} trigger(s), re-armed (${r.rearmDistancePct}%): ${rearmed.length} trigger(s), ${barCount} bars${rearmNote}</div>
       ${rearmed.map(_renderTriggerRow).join('')}
     </div>`;
-  }
+  }).join('');
+}
+
+function _renderReplaySymbolResult(symbol, result) {
+  // Real-setup runs carry bySetup (see runSetupReplayForSymbols); the
+  // 'example' placeholder still uses the original single-triggers shape
+  // (no re-arm comparison, no per-setup breakdown to show).
+  if (result.bySetup) return _renderBySetupResult(symbol, result.barCount, result.bySetup);
   if (!result.triggers.length) {
     return `<div class="settings-row"><span class="mono">${symbol}</span><span class="settings-hint muted">${result.barCount} bars, no triggers</span></div>`;
   }
@@ -404,30 +529,113 @@ function _renderReplaySymbolResult(symbol, result) {
   </div>`;
 }
 
+// ── Range-scan matrix ─────────────────────────────────────────────────────
+// Rows = dates, columns = setups, cell = naive->re-armed counts. THREE
+// states per cell, not two (spec's own "same rule as the pillars"):
+// evaluated-with-triggers, evaluated-zero-triggers, and could-not-evaluate
+// (with why) — collapsing the last two into "0" would make a market
+// holiday or a fetch failure read as "the classifier correctly rejected
+// this day," which is a different, unearned claim. One matrix per symbol
+// (a scan can cover several) rather than trying to cram multiple
+// symbols' numbers into one cell. Bottom totals row across the whole
+// range is the actual point of this feature — "does ABCD ever fire on
+// real bars" is a totals-row question, not a per-day one.
+function _scanCellKey(dateStr, symbol, setupId) { return `${dateStr}|${symbol}|${setupId}`; }
+
+function _renderScanCell(dateStr, symbol, setupId, dayResult) {
+  const key = _scanCellKey(dateStr, symbol, setupId);
+  if (dayResult.notEvaluated) {
+    return `<td class="warrior-scan-cell not-evaluated" title="${dayResult.reason}">n/a</td>`;
+  }
+  const r = dayResult.bySetup[setupId];
+  if (!r) return `<td class="warrior-scan-cell not-evaluated">—</td>`;
+  const label = `${r.naiveTriggers.length}→${r.rearmedTriggers.length}`;
+  if (!r.rearmedTriggers.length) return `<td class="warrior-scan-cell zero">${label}</td>`;
+  const expanded = _expandedScanCells.has(key);
+  const detail = expanded ? `<div class="warrior-scan-cell-detail">${r.rearmedTriggers.map(_renderTriggerRow).join('')}</div>` : '';
+  return `<td class="warrior-scan-cell fired" onclick="warriorToggleScanCell('${key.replace(/'/g, "\\'")}')">${label}${detail}</td>`;
+}
+
+function _renderScanMatrixForSymbol(symbol, setupIds, tradingDays, resultsByDate) {
+  const totals = {};
+  setupIds.forEach(id => { totals[id] = { naive: 0, rearmed: 0 }; });
+  const rows = tradingDays.map(dateStr => {
+    const dayResult = resultsByDate[dateStr]?.[symbol] || { notEvaluated: true, reason: 'not run' };
+    if (!dayResult.notEvaluated) {
+      setupIds.forEach(id => {
+        const r = dayResult.bySetup[id];
+        if (r) { totals[id].naive += r.naiveTriggers.length; totals[id].rearmed += r.rearmedTriggers.length; }
+      });
+    }
+    return `<tr><td class="warrior-scan-date">${dateStr}</td>${setupIds.map(id => _renderScanCell(dateStr, symbol, id, dayResult)).join('')}</tr>`;
+  }).join('');
+  const totalsRow = `<tr class="warrior-scan-totals"><td>TOTAL</td>${setupIds.map(id => `<td class="warrior-scan-cell">${totals[id].naive}→${totals[id].rearmed}</td>`).join('')}</tr>`;
+  return `<div class="settings-row" style="flex-direction:column;align-items:stretch;">
+    <div class="mono">${symbol}</div>
+    <div style="overflow-x:auto;">
+      <table class="warrior-scan-matrix">
+        <thead><tr><th></th>${setupIds.map(id => `<th>${id}</th>`).join('')}</tr></thead>
+        <tbody>${rows}${totalsRow}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function _renderRangeScanResult(result) {
+  const { setupIds, symbols, tradingDays, resultsByDate, requests, cancelled, startDate, endDate } = result;
+  const cancelNote = cancelled ? ` — cancelled, showing ${Object.keys(resultsByDate).length} of ${tradingDays.length} days evaluated` : '';
+  return `<div class="settings-row"><span class="settings-hint">${requests} request(s), ${startDate} → ${endDate} (${tradingDays.length} trading days)${cancelNote}</span></div>
+    ${symbols.map(sym => _renderScanMatrixForSymbol(sym, setupIds, tradingDays, resultsByDate)).join('')}`;
+}
+
 function renderReplayPanel() {
   if (!(typeof state !== 'undefined' && state.settings && state.settings.developerTools)) return '';
-  const body = _lastReplayResult
-    ? Object.entries(_lastReplayResult.resultsBySymbol).map(([sym, r]) => _renderReplaySymbolResult(sym, r)).join('')
-    : '<div class="settings-row"><span class="settings-hint muted">No replay run yet.</span></div>';
+
+  let body;
+  if (_rangeScanInFlight) {
+    const p = _rangeScanProgress;
+    body = `<div class="settings-row" style="flex-direction:column;align-items:stretch;">
+      <span class="settings-hint">${p ? `Day ${p.index + 1} of ${p.total} — ${p.dateStr}` : 'Starting…'}</span>
+      <button class="btn btn-ghost btn-sm mt4" onclick="warriorCancelRangeScan()">Cancel</button>
+    </div>`;
+  } else if (_lastRangeScanResult) {
+    body = _renderRangeScanResult(_lastRangeScanResult);
+  } else if (_lastReplayResult) {
+    body = Object.entries(_lastReplayResult.resultsBySymbol).map(([sym, r]) => _renderReplaySymbolResult(sym, r)).join('');
+  } else {
+    body = '<div class="settings-row"><span class="settings-hint muted">No replay run yet.</span></div>';
+  }
+
   const classifierOptions = REPLAY_CLASSIFIER_OPTIONS.map(o =>
-    `<option value="${o.id}" ${_lastReplayResult?.classifierId === o.id ? 'selected' : ''}>${o.label}</option>`
+    `<option value="${o.id}" ${(_lastReplayResult?.classifierId === o.id) ? 'selected' : ''}>${o.label}</option>`
   ).join('');
+
+  const runDisabled = _replayInFlight || _rangeScanInFlight;
+  const runLabel = _replayInFlight ? 'Running…' : _rangeScanInFlight ? 'Scanning…' : _rangeScanConfirmPending ? 'Confirm: Run Anyway' : 'Run Replay';
+  const summaryLine = _lastRangeScanResult
+    ? `<span class="settings-hint">${_lastRangeScanResult.requests} request(s) for ${_lastRangeScanResult.startDate} → ${_lastRangeScanResult.endDate}</span>`
+    : _lastReplayResult
+      ? `<span class="settings-hint">${_lastReplayResult.requests} request(s) for ${_lastReplayResult.dateStr} (${REPLAY_CLASSIFIER_OPTIONS.find(o => o.id === _lastReplayResult.classifierId)?.label || _lastReplayResult.classifierId})</span>`
+      : '';
+
   return `<div class="settings-section mt12">
     <div class="settings-section-title">Replay Harness (dev only)</div>
     <div class="settings-row">
-      <span class="settings-hint">Fetch → replay bar-by-bar → score against real history. Pick a real setup to validate it against actual bars (Phase 5 acceptance's own requirement), not just unit-test fixtures — or keep the Phase 4 example placeholder. See docs/warrior-engine-spec-v2.md Phase 4/5.</span>
+      <span class="settings-hint">Fetch → replay bar-by-bar → score against real history. Pick a real setup (or "All setups") to validate against actual bars, not just unit-test fixtures. Fill in an end date to scan a range instead of one day — "ABCD: 0" on one day means nothing; the same across weeks of real bars means something. See docs/warrior-engine-spec-v2.md Phase 4/5.</span>
     </div>
     <div class="settings-row">
-      <select id="warrior-replay-classifier" class="settings-input">${classifierOptions}</select>
+      <select id="warrior-replay-classifier" class="settings-input" onchange="warriorUpdateReplayEstimate()">${classifierOptions}</select>
     </div>
     <div class="settings-row">
-      <input type="date" id="warrior-replay-date" class="settings-input" style="max-width:160px;" value="${_lastReplayResult?.dateStr || ''}">
-      <input type="text" id="warrior-replay-symbols" class="settings-input" placeholder="AAPL, TSLA" value="${_lastReplayResult?.symbols?.join(', ') || ''}">
+      <input type="date" id="warrior-replay-date" class="settings-input" style="max-width:160px;" value="${_lastReplayResult?.dateStr || _lastRangeScanResult?.startDate || ''}" onchange="warriorUpdateReplayEstimate()">
+      <input type="date" id="warrior-replay-end-date" class="settings-input" style="max-width:160px;" value="${_lastRangeScanResult?.endDate || ''}" onchange="warriorUpdateReplayEstimate()">
+      <input type="text" id="warrior-replay-symbols" class="settings-input" placeholder="AAPL, TSLA" value="${(_lastReplayResult?.symbols || _lastRangeScanResult?.symbols)?.join(', ') || ''}" oninput="warriorUpdateReplayEstimate()">
     </div>
     <div class="settings-row">
-      <button class="btn btn-primary btn-sm" onclick="warriorRunReplay()" ${_replayInFlight ? 'disabled' : ''}>${_replayInFlight ? 'Running…' : 'Run Replay'}</button>
-      ${_lastReplayResult ? `<span class="settings-hint">${_lastReplayResult.requests} request(s) for ${_lastReplayResult.dateStr} (${REPLAY_CLASSIFIER_OPTIONS.find(o => o.id === _lastReplayResult.classifierId)?.label || _lastReplayResult.classifierId})</span>` : ''}
+      <button class="btn btn-primary btn-sm" onclick="warriorRunReplay()" ${runDisabled ? 'disabled' : ''}>${runLabel}</button>
+      <span id="warrior-replay-estimate" class="settings-hint"></span>
     </div>
+    <div class="settings-row">${summaryLine}</div>
     ${body}
   </div>`;
 }
@@ -504,7 +712,12 @@ export function register() {
   // the exact same connection mechanism every onclick in this app already
   // uses, not a registry exception. Shell/app.js never references this
   // name; only the HTML this file itself renders does.
-  if (typeof window !== 'undefined') window.warriorRunReplay = _runReplayFromUI;
+  if (typeof window !== 'undefined') {
+    window.warriorRunReplay = _runReplayFromUI;
+    window.warriorCancelRangeScan = _cancelRangeScanFromUI;
+    window.warriorUpdateReplayEstimate = _updateReplayEstimateDisplay;
+    window.warriorToggleScanCell = _toggleScanCellFromUI;
+  }
   _startScanInterval();
 }
 

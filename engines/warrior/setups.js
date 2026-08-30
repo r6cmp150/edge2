@@ -590,46 +590,205 @@ const SETUP_REPLAY_CATALOG = [
   { id: 'red-to-green', label: 'Red-to-Green', needsPrevClose: true, build: (ctx) => makeRedToGreenClassifier({ prevClose: ctx.prevClose }) },
 ];
 
+// Sentinel for "run every setup," not one of the five real ids — added
+// 2026-08-29 after live-replay validation of all five, one at a time,
+// turned out to be 10 separate runs (and 10 separate fetches) for what
+// should have been 2: comparing setups against the same day's bars is
+// the common case, not five independent investigations.
+const ALL_SETUPS_ID = 'all-setups';
+
+function _setupIdsFor(requestedId) {
+  return requestedId === ALL_SETUPS_ID ? SETUP_REPLAY_CATALOG.map(e => e.id) : [requestedId];
+}
+
+function _anyNeedsPrevClose(setupIds) {
+  return setupIds.some(id => SETUP_REPLAY_CATALOG.find(e => e.id === id)?.needsPrevClose);
+}
+
 // Runs BOTH naive (no re-arm) and re-armed replay for the same fetched
-// bars — no extra request cost, just a second runReplay call — so a live
-// run against real data directly shows the re-arm rule's actual effect
-// (naive count vs. real-event count), the same comparison
-// tests/replay.test.js's fixture makes, but on genuine history instead
-// of a reproduction of HVII's shape.
-async function runSetupReplayForSymbols(setupId, symbols, dateStr, opts = {}) {
-  const entry = SETUP_REPLAY_CATALOG.find(e => e.id === setupId);
-  if (!entry) throw new Error(`Unknown setup id for replay: ${setupId}`);
-
-  const { barsBySymbol, requests: barRequests } = await fetchReplayBars(symbols, dateStr, opts);
-
-  let prevCloseBySymbol = {};
-  let prevCloseRequests = 0;
-  if (entry.needsPrevClose) {
-    const result = await fetchPrevCloseAsOf(symbols, dateStr);
-    prevCloseBySymbol = result.prevCloseBySymbol;
-    prevCloseRequests = result.requests;
-  }
-
-  const rearmDistancePct = _rearmDistancePctFor(setupId);
-  const resultsBySymbol = {};
-  for (const sym of symbols) {
-    const bars = barsBySymbol[sym] || [];
-    const classifier = entry.build({ prevClose: prevCloseBySymbol[sym] });
-    resultsBySymbol[sym] = {
-      barCount: bars.length,
+// bars, for every requested setup — no extra fetch cost per setup, just
+// more runReplay calls against bars already in memory — so a live run
+// against real data directly shows the re-arm rule's actual effect
+// (naive count vs. real-event count) for as many setups as requested at
+// once.
+function _evaluateSetupsAgainstBars(setupIds, bars, prevClose) {
+  const bySetup = {};
+  for (const setupId of setupIds) {
+    const entry = SETUP_REPLAY_CATALOG.find(e => e.id === setupId);
+    if (!entry) continue;
+    const classifier = entry.build({ prevClose });
+    const rearmDistancePct = _rearmDistancePctFor(setupId);
+    bySetup[setupId] = {
       naiveTriggers: runReplay(bars, classifier),
       rearmedTriggers: runReplay(bars, classifier, { rearmDistancePct }),
       rearmDistancePct,
     };
   }
+  return bySetup;
+}
+
+// setupId may be one of the five real ids or ALL_SETUPS_ID. Shape is
+// always {resultsBySymbol: {sym: {barCount, bySetup: {id: {naive/rearmed
+// Triggers}}}}, requests} regardless of how many setups were requested —
+// a single real id just means bySetup has one key — so the UI and
+// scanDateRangeForSetups below don't need two different result shapes to
+// handle.
+async function runSetupReplayForSymbols(setupId, symbols, dateStr, opts = {}) {
+  const setupIds = _setupIdsFor(setupId);
+  if (!setupIds.every(id => SETUP_REPLAY_CATALOG.some(e => e.id === id))) {
+    throw new Error(`Unknown setup id for replay: ${setupId}`);
+  }
+
+  const { barsBySymbol, requests: barRequests } = await fetchReplayBars(symbols, dateStr, opts);
+
+  let prevCloseBySymbol = {};
+  let prevCloseRequests = 0;
+  if (_anyNeedsPrevClose(setupIds)) {
+    const result = await fetchPrevCloseAsOf(symbols, dateStr);
+    prevCloseBySymbol = result.prevCloseBySymbol;
+    prevCloseRequests = result.requests;
+  }
+
+  const resultsBySymbol = {};
+  for (const sym of symbols) {
+    const bars = barsBySymbol[sym] || [];
+    resultsBySymbol[sym] = {
+      barCount: bars.length,
+      bySetup: _evaluateSetupsAgainstBars(setupIds, bars, prevCloseBySymbol[sym]),
+    };
+  }
   return { resultsBySymbol, requests: barRequests + prevCloseRequests };
 }
 
+// ── Range scan: validate on real history across many days ───────────────
+// docs/warrior-engine-spec-v2.md Phase 5's disagreement point (2026-08-29):
+// unit-test fixtures prove internal consistency, not reachability — a
+// fixture written from the same reasoning that wrote a classifier
+// encodes the same wrong notion, if there is one, and both pass. "ABCD:
+// 0 triggers" on one day of two symbols means nothing on its own; the
+// same question across 60 real trading days does.
+
+// Pure calendar-date arithmetic (UTC-based day increment on a Y-M-D
+// triple), never real-instant arithmetic — a range spanning weeks to a
+// year will very plausibly cross a DST transition, and "+24h in real ms"
+// does NOT land on the next date's noon PT across one (this session's
+// own timezone sweep exists because of exactly this class of mistake).
+// Each candidate date's PT trading-day-ness is still checked via the
+// proven-correct ptWallClockToInstant, just anchored by date-string
+// increment instead of instant increment.
+function _nextDateStr(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().split('T')[0];
+}
+
+function _tradingDaysBetween(startDateStr, endDateStr) {
+  const days = [];
+  let cur = startDateStr;
+  while (cur <= endDateStr) { // YYYY-MM-DD strings compare correctly lexicographically
+    if (isTradingDay(getPT(ptWallClockToInstant(cur, 12, 0)))) days.push(cur);
+    cur = _nextDateStr(cur);
+  }
+  return days;
+}
+
+// Guardrail shown BEFORE running anything (index.js's pre-flight
+// estimate) — not a guarantee, a typical-case number: assumes the
+// carry-forward optimization below succeeds (one prevClose fetch for the
+// whole range, not one per day). A symbol with real trading gaps can
+// need more; this is a planning number, not a promise.
+function estimateRangeScanRequests(setupIds, symbolCount, tradingDaysCount) {
+  const chunksPerBatch = Math.ceil(Math.max(symbolCount, 1) / REPLAY_CHUNK_SIZE);
+  const barRequests = tradingDaysCount * chunksPerBatch;
+  const prevCloseRequests = _anyNeedsPrevClose(setupIds) ? chunksPerBatch : 0;
+  return barRequests + prevCloseRequests;
+}
+
+// Walks the range in calendar order (required, not just convenient: the
+// prevClose carry-forward below depends on days being processed in
+// order) and reports progress/checks for cancellation between each day —
+// opts.onProgress({index, total, dateStr}) and opts.isCancelled() are
+// both optional, called (or checked) once per trading day.
+//
+// prevClose carry-forward: gap-and-go/red-to-green need prevClose, which
+// core/universe.js's _getPriorCloses can't supply (hardcoded to "today")
+// and which fetchPrevCloseAsOf CAN, but at the cost of one extra request
+// per day if called naively. In a contiguous range, day N's own
+// last-fetched bar close IS day N+1's prevClose — no second fetch
+// needed. Only the range's first day (or any day whose chain broke, e.g.
+// a symbol didn't trade the prior day, or a fetch failed) pays for a
+// real fetchPrevCloseAsOf call.
+//
+// A day's fetch failure never aborts the scan: that day's symbols are
+// marked notEvaluated with the real error message, the loop continues,
+// and any broken carry-forward chain self-heals on the next day that
+// needs it (the "missing" filter below just re-fetches).
+async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr, opts = {}) {
+  const setupIds = _setupIdsFor(setupId);
+  if (!setupIds.every(id => SETUP_REPLAY_CATALOG.some(e => e.id === id))) {
+    throw new Error(`Unknown setup id for replay: ${setupId}`);
+  }
+  const tradingDays = _tradingDaysBetween(startDateStr, endDateStr);
+  const needsPrevClose = _anyNeedsPrevClose(setupIds);
+
+  const resultsByDate = {};
+  let requests = 0;
+  let cancelled = false;
+  const prevCloseBySymbol = {};
+
+  for (let i = 0; i < tradingDays.length; i++) {
+    if (opts.isCancelled && opts.isCancelled()) { cancelled = true; break; }
+    const dateStr = tradingDays[i];
+    if (opts.onProgress) opts.onProgress({ index: i, total: tradingDays.length, dateStr });
+
+    let barsBySymbol;
+    try {
+      const fetched = await fetchReplayBars(symbols, dateStr, opts.fetchOpts);
+      barsBySymbol = fetched.barsBySymbol;
+      requests += fetched.requests;
+    } catch (err) {
+      resultsByDate[dateStr] = {};
+      for (const sym of symbols) resultsByDate[dateStr][sym] = { notEvaluated: true, reason: `fetch failed: ${err.message}` };
+      continue; // don't touch prevCloseBySymbol -- next day re-fetches whatever's missing
+    }
+
+    if (needsPrevClose) {
+      const missing = symbols.filter(sym => prevCloseBySymbol[sym] == null);
+      if (missing.length) {
+        try {
+          const { prevCloseBySymbol: fetched, requests: pcRequests } = await fetchPrevCloseAsOf(missing, dateStr);
+          requests += pcRequests;
+          Object.assign(prevCloseBySymbol, fetched);
+        } catch (err) {
+          // prevClose fetch failing shouldn't blank out symbols whose
+          // bars DID come back — mark only the setups needing it, per
+          // symbol, below, and let bars-only setups still evaluate.
+        }
+      }
+    }
+
+    resultsByDate[dateStr] = {};
+    for (const sym of symbols) {
+      const bars = barsBySymbol[sym] || [];
+      if (!bars.length) {
+        resultsByDate[dateStr][sym] = { notEvaluated: true, reason: 'no bars (market closed for this symbol, or no data)' };
+        continue;
+      }
+      resultsByDate[dateStr][sym] = { bySetup: _evaluateSetupsAgainstBars(setupIds, bars, prevCloseBySymbol[sym]) };
+      prevCloseBySymbol[sym] = bars[bars.length - 1].c; // carry forward regardless of whether THIS scan's setups needed it
+    }
+  }
+
+  return { resultsByDate, tradingDays, requests, cancelled };
+}
+
 export {
-  SETUP_CONFIG, SETUP_PRIORITY, LATE_THRESHOLD_MIN, SETUP_REPLAY_CATALOG,
+  SETUP_CONFIG, SETUP_PRIORITY, LATE_THRESHOLD_MIN, SETUP_REPLAY_CATALOG, ALL_SETUPS_ID,
   computePremarketHigh, computeArmedLevels,
   makeGapAndGoClassifier, hodMomentumClassifier, abcdClassifier, vwapMomentumClassifier, makeRedToGreenClassifier,
   computeEntryTargetStop, computeSuggestedShares,
   detectSetupsForCandidate, evaluateSetupsBatch, runSetupReplayForSymbols,
-  _sortSetups, _volumeBaselineOverMinutes,
+  scanDateRangeForSetups, estimateRangeScanRequests,
+  _sortSetups, _volumeBaselineOverMinutes, _tradingDaysBetween,
 };
