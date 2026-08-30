@@ -55,6 +55,15 @@ async function fetchReplayBars(symbols, dateStr, { startHour = 1, startMinute = 
 // date-parameterized daily-bar fetch, not a reimplementation of
 // _getPriorCloses's caching (replay runs are manual/occasional, a fresh
 // fetch every run is fine).
+// Returns { prevCloseBySymbol: { sym: {close, date} }, requests } — date
+// (not just close) so a caller can VERIFY which trading day this close is
+// actually from, rather than assuming it's the expected previous trading
+// day. It usually is, but a thin symbol that didn't trade on the expected
+// prior day either would return the next most recent one before that —
+// still a real close, just not an adjacent one, and setups.js's caller
+// needs the date to catch that (2026-08-30 fix — see setups.js's
+// scanDateRangeForSetups header comment for the carry-forward bug this
+// closes).
 async function fetchPrevCloseAsOf(symbols, dateStr) {
   const end = ptWallClockToInstant(dateStr, 1, 0); // replay window's own start — prevClose must be strictly before this
   const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 calendar days back, generous over any weekend/holiday gap
@@ -77,7 +86,7 @@ async function fetchPrevCloseAsOf(symbols, dateStr) {
   // sort:'desc' -> each symbol's first bar is its most recent close before the replay window.
   for (const sym of Object.keys(barsBySymbol)) {
     const bars = barsBySymbol[sym];
-    if (bars && bars.length) prevCloseBySymbol[sym] = bars[0].c;
+    if (bars && bars.length) prevCloseBySymbol[sym] = { close: bars[0].c, date: ptDateStr(getPT(new Date(bars[0].t))) };
   }
   return { prevCloseBySymbol, requests };
 }
