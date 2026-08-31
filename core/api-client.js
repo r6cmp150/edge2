@@ -81,6 +81,24 @@ const PER_ENGINE_BUDGET_FRACTION = 0.6;  // neither engine may exceed 60% of the
 const PER_ENGINE_CAP = Math.floor(RATE_LIMIT_PER_MIN * PER_ENGINE_BUDGET_FRACTION); // 120/min
 const WINDOW_MS = 60 * 1000;
 
+// Default OFF (2026-08-30) — deliberately, not as an oversight. Fixing the
+// engine-tagging defect above (alpacaGet used to hardcode 'EDGE'
+// unconditionally) is what finally lets _activeEngineCount() reach 2 and
+// capApplies become true — this cap has never once fired in this app's
+// life, because the condition for it firing was never reachable before
+// this fix. Flipping the tagging fix and the cap's activation on
+// simultaneously would mean the first time this cap has EVER run is
+// silently, in production, the moment Warrior's own traffic gets tagged
+// correctly — surfacing as a scan that pauses for no visible reason,
+// which is the exact "waited five minutes, nothing happened" symptom this
+// project has already cost real time diagnosing once. Flip this only
+// after deliberately measuring a scan with it on (see the harness's
+// before/after negative-control run) — not as a side effect of the
+// truthfulness fix landing. Whether the cap is worth keeping at all, once
+// it's measurable, is a separate, open question — the account has run on
+// global-bucket pacing alone for its entire life without missing this.
+const ENABLE_PER_ENGINE_CAP = false;
+
 const MAX_429_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
 
@@ -241,7 +259,7 @@ function _nextEligibleIndex() {
   if (Date.now() < _backoffUntil) return -1;
   if (_tokens < 1) return -1;
 
-  const capApplies = _activeEngineCount() >= 2;
+  const capApplies = ENABLE_PER_ENGINE_CAP && _activeEngineCount() >= 2;
 
   let bestIdx = -1;
   for (let i = 0; i < _queue.length; i++) {
@@ -337,7 +355,11 @@ function _drain() {
 // Phase 0.5. `request` is a zero-arg function returning a promise (the
 // actual fetch). Resolves/rejects with request()'s own outcome once the
 // queue has cleared it against the token bucket and per-engine budget.
-function enqueue(request, { engine = 'EDGE', priority = 'foreground' } = {}) {
+// Default 'CORE', not 'EDGE' (2026-08-30) — an unattributed request is
+// honestly unattributed, not silently assumed to be EDGE's. Every real
+// caller today (_alpacaGetImpl below) always passes engine explicitly;
+// this default only matters for some future direct caller that doesn't.
+function enqueue(request, { engine = 'CORE', priority = 'foreground' } = {}) {
   return new Promise((resolve, reject) => {
     _queue.push({ run: request, resolve, reject, engine, priority });
     _drain();
@@ -349,17 +371,27 @@ function enqueue(request, { engine = 'EDGE', priority = 'foreground' } = {}) {
 // not '/v2' (see core/news.js), so callers on a different base pass it
 // explicitly rather than this function guessing per-path.
 //
-// Routes through enqueue() — see the Phase 0.5 section above. Signature is
-// unchanged from before the queue existed: callers don't know or care that
-// it's there. On a 429, retries up to MAX_429_RETRIES times with
-// exponential backoff (pausing the whole queue meanwhile, since a 429
-// usually signals the account-wide limit was hit, not just this engine's
-// share of it) before finally throwing — existing callers' error handling
-// is unaffected, they already handle a thrown Error from a non-2xx.
-async function alpacaGet(path, params = {}, base = ALPACA_BASE) {
+// Routes through enqueue() — see the Phase 0.5 section above. On a 429,
+// retries up to MAX_429_RETRIES times with exponential backoff (pausing
+// the whole queue meanwhile, since a 429 usually signals the account-wide
+// limit was hit, not just this engine's share of it) before finally
+// throwing — existing callers' error handling is unaffected, they already
+// handle a thrown Error from a non-2xx.
+//
+// engine is a real parameter now (2026-08-30), not a hardcoded 'EDGE' —
+// see createApiClient below for how a caller gets one bound to itself.
+// This was the actual defect the whole per-engine-budget/throttle-
+// messaging family audit traced back to: every consumer of item.engine
+// (the per-engine cap, the rolling timestamp log, the 429 backoff
+// message, this session's own byEngine request tally) was reading a
+// literal, unconditional 'EDGE' regardless of which engine's code called
+// alpacaGet — so capApplies (_activeEngineCount() >= 2) could never
+// become true, the per-engine cap has never once fired since Warrior
+// started calling this function, and every 429 warning has claimed
+// "engine EDGE throttled" even when Warrior's own traffic triggered it.
+async function _alpacaGetImpl(engine, path, params = {}, base = ALPACA_BASE) {
   const url = new URL(base + path);
   Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
-  const engine = 'EDGE'; // only engine that exists today — see queue section header comment
   const priority = _ambientPriority;
 
   let attempt = 0;
@@ -388,6 +420,57 @@ async function alpacaGet(path, params = {}, base = ALPACA_BASE) {
       throw e;
     }
   }
+}
+
+// Bare global — unchanged call shape from before this fix (callers don't
+// know or care that the queue, or now the engine tag, exists), but tagged
+// 'CORE' rather than the old hardcoded 'EDGE'. Every classic-script file
+// that calls this directly (core/market-data.js's own fetchers, core/
+// news.js, core/universe.js's shared helpers) is either genuinely shared
+// between engines (universe.js's getUniverse, news.js's
+// fetchNewsForTickers — both real dual-engine callers, confirmed by
+// grepping actual call sites) or hasn't been given its own tagged client
+// yet — either way, 'CORE' is the honest label: "not attributed to a
+// specific engine," not "assumed to be EDGE."
+async function alpacaGet(path, params = {}, base = ALPACA_BASE) {
+  return _alpacaGetImpl('CORE', path, params, base);
+}
+
+// createApiClient(engine) — a client whose engine tag is a static property
+// of who constructed it, not runtime state. This is what replaces both
+// rejected approaches: not a parameter threaded through every intermediate
+// fetch function (Q1's own rejected shape, worse here since it's every
+// caller, not just instrumented ones), and not an ambient module-level
+// value set around an await (proven unsafe by this same fix — see
+// withBackgroundPriority above, which has the identical hazard class:
+// _ambientPriority is a shared mutable value saved/restored around an
+// await, so any request that happens to fire while it's set can be
+// mistagged, and two overlapping wrapped calls completing out of nesting
+// order can leave it permanently stuck). A client object is immutable
+// once created; nothing about calling it concurrently can corrupt another
+// caller's tag, because there IS no shared mutable tag — each client
+// closes over its own engine value for its own lifetime.
+//
+// Coverage, stated plainly rather than implied: this correctly tags any
+// call written directly against a client returned here. It does NOT
+// retroactively tag calls made on a caller's behalf by a DIFFERENT file's
+// shared helper (e.g. core/universe.js's _fetchRawMinuteBars calling the
+// bare alpacaGet internally) — classic-script scoping means one file's
+// client instance has no way to reach into another file's own top-level
+// reference to the global alpacaGet. Warrior code that calls alpacaGet
+// directly (engines/warrior/*.js, real ES modules) can shadow it cheaply:
+// `const alpacaGet = createApiClient('WARRIOR').alpacaGet;` at the file's
+// own top, module-scoped, zero collision risk. Classic scripts sharing
+// the page's one global scope (app.js, core/*.js) can't do that same
+// shadow — attempting to redeclare the shared `alpacaGet` name a second
+// time at another script's top level is a parse-time collision, not a
+// safe local shadow (same class of hazard core/store.js's own header
+// comment already documents for `supabaseClient` vs `const supabase`).
+// Those files instead hold their own named client (see app.js's
+// edgeApiClient) and call `.alpacaGet(...)` at the specific sites that
+// want a real tag.
+function createApiClient(engine) {
+  return { alpacaGet: (path, params, base) => _alpacaGetImpl(engine, path, params, base) };
 }
 
 async function testAlpacaConnection() {

@@ -226,6 +226,16 @@ async function newPinSubmit() {
 
 const VERSION = 'v2.9.7';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
+// Own tagged client (2026-08-30, engine-tagging fix) — app.js's one direct
+// alpacaGet call site (fetchSellTimingBars) uses this instead of the bare
+// global, which now defaults to 'CORE' (unattributed) rather than the old
+// hardcoded-everywhere 'EDGE'. A plain `const alpacaGet = ...` shadow
+// isn't safe here the way it is in Warrior's real ES modules — app.js is
+// a classic script sharing one global lexical scope with every other
+// core/*.js file, so redeclaring the shared `alpacaGet` name a second
+// time is a parse-time collision, not a local shadow. A distinctly-named
+// client avoids that entirely.
+const edgeApiClient = createApiClient('EDGE');
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 // SUPABASE_URL/SUPABASE_ANON_KEY/supabaseClient moved to core/store.js (Phase 0 extraction).
@@ -1039,7 +1049,7 @@ async function fetchSellTimingBars(ticker, buyDate, sellDate) {
   const spanDays = Math.ceil((new Date(windowEnd + 'T00:00:00Z') - new Date(buyDate + 'T00:00:00Z')) / 86400000);
   const limit = Math.max(spanDays + 5, 15);
   try {
-    const data = await alpacaGet(`/stocks/${ticker}/bars`, {
+    const data = await edgeApiClient.alpacaGet(`/stocks/${ticker}/bars`, {
       timeframe: '1Day', start: buyDate, limit, sort: 'asc', feed: 'iex'
     });
     return data.bars || [];
