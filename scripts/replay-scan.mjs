@@ -13,14 +13,18 @@
 // and does it on every run, not just the one where someone happens to look.
 //
 // Usage:
-//   npm run replay-scan -- --start 2026-08-21 --end 2026-08-25 --symbols HVII,AMIX --setups all
+//   npm run replay-scan -- --start 2026-08-21 --end 2026-08-25 --symbols HVII,AMIX
 //
 // --setups accepts a single real id (gap-and-go | hod-momentum | abcd |
 // vwap-momentum | red-to-green) or "all" (the panel's own "All setups"
-// option, ALL_SETUPS_ID). The panel's <select> is single-choice — there is
-// no UI path to request an arbitrary subset of setups in one run, so this
-// harness doesn't invent one either; running several single-setup subsets
-// means running the command several times.
+// option, ALL_SETUPS_ID) — and DEFAULTS to "all" when omitted (2026-08-31),
+// not required: "All setups" exists specifically so nobody validates one
+// classifier at a time by accident, and this command had already needed
+// the flag pointed out twice. The panel's <select> is single-choice —
+// there is no UI path to request an arbitrary subset of setups in one
+// run, so this harness doesn't invent one either; running several
+// single-setup subsets means running the command several times with an
+// explicit --setups.
 //
 // NOT_EVALUATED_CONTROL_SYMBOL (below) is appended to --symbols
 // automatically on every run — not something to remember to add.
@@ -75,10 +79,13 @@ function validateArgs(args) {
   const symbols = requestedSymbols.includes(NOT_EVALUATED_CONTROL_SYMBOL)
     ? requestedSymbols
     : [...requestedSymbols, NOT_EVALUATED_CONTROL_SYMBOL];
-  const setupsArg = args.setups;
-  if (!setupsArg) errs.push('--setups is required (a real setup id, or "all")');
-  else if (setupsArg !== 'all' && !REAL_SETUP_IDS.includes(setupsArg)) {
-    errs.push(`--setups must be "all" or one of: ${REAL_SETUP_IDS.join(', ')} (got "${setupsArg}")`);
+  // Defaults to 'all' (2026-08-31) rather than being required — the harness
+  // had already had to note its own absence twice, and "All setups" exists
+  // specifically so nobody validates one classifier at a time by accident.
+  // An explicitly-passed value is still validated below.
+  const setupsArg = args.setups || 'all';
+  if (args.setups && args.setups !== 'all' && !REAL_SETUP_IDS.includes(args.setups)) {
+    errs.push(`--setups must be "all" or one of: ${REAL_SETUP_IDS.join(', ')} (got "${args.setups}")`);
   }
   if (errs.length) {
     console.error('Invalid arguments:\n' + errs.map(e => `  - ${e}`).join('\n'));
@@ -253,12 +260,32 @@ async function main() {
   const pageErrors = [];
   const failedRequests = [];
   const alpacaRequests = [];
+  // Permanent, not a one-off diagnostic (2026-08-31) — a harness that
+  // reports "timed out" with nothing further has the same defect this
+  // whole project has been fixing everywhere else: a result with no
+  // record of what it's a result OF. Every in-flight request is tracked
+  // from 'request' until 'requestfinished'/'requestfailed' removes it;
+  // whatever's still in here when something fails IS the hang, by
+  // definition — its exact URL, method, and age, not a guess.
+  const pendingRequests = new Map(); // Request -> {url, method, t}
   page.on('console', (msg) => consoleLogs.push({ type: msg.type(), text: msg.text(), t: Date.now() }));
   page.on('pageerror', (err) => pageErrors.push({ message: err.message, stack: err.stack, t: Date.now() }));
-  page.on('requestfailed', (req) => failedRequests.push({ url: req.url(), failure: req.failure()?.errorText, t: Date.now() }));
+  page.on('requestfailed', (req) => {
+    pendingRequests.delete(req);
+    failedRequests.push({ url: req.url(), failure: req.failure()?.errorText, t: Date.now() });
+  });
+  page.on('requestfinished', (req) => pendingRequests.delete(req));
   page.on('request', (req) => {
+    pendingRequests.set(req, { url: req.url(), method: req.method(), t: Date.now() });
     if (req.url().includes('data.alpaca.markets')) alpacaRequests.push({ url: req.url(), method: req.method(), t: Date.now() });
   });
+
+  function dumpPendingRequests() {
+    const now = Date.now();
+    return [...pendingRequests.values()]
+      .map((r) => ({ ...r, ageMs: now - r.t }))
+      .sort((a, b) => b.ageMs - a.ageMs);
+  }
 
   await page.addInitScript(({ alpacaKey, alpacaSecret }) => {
     try {
@@ -354,6 +381,11 @@ async function main() {
     console.log(`[replay-scan] not-evaluated control (${NOT_EVALUATED_CONTROL_SYMBOL}): ${JSON.stringify(controlStateCounts)}`);
 
     if (failures.length) {
+      const stillPending = dumpPendingRequests();
+      if (stillPending.length) {
+        writeFileSync(outPath('pending'), JSON.stringify(stillPending, null, 2));
+        console.error(`[replay-scan] ${stillPending.length} request(s) still in flight at failure time — see pending_${tag}.json`);
+      }
       console.error(`[replay-scan] MECHANICAL INVARIANT FAILURE(S):\n${failures.map(f => `  - ${f}`).join('\n')}`);
       exitCode = 1;
     } else {
@@ -362,8 +394,17 @@ async function main() {
   } catch (err) {
     console.error(`[replay-scan] harness failed: ${err.message}`);
     try {
+      const stillPending = dumpPendingRequests();
       writeFileSync(outPath('console'), JSON.stringify(consoleLogs, null, 2));
       writeFileSync(outPath('errors'), JSON.stringify({ pageErrors, failedRequests, harnessError: err.message }, null, 2));
+      writeFileSync(outPath('pending'), JSON.stringify(stillPending, null, 2));
+      if (stillPending.length) {
+        console.error(`[replay-scan] ${stillPending.length} request(s) still in flight at failure time (oldest first):`);
+        for (const r of stillPending.slice(0, 5)) console.error(`  ${(r.ageMs / 1000).toFixed(1)}s  ${r.method}  ${r.url}`);
+        console.error(`  full list: pending_${tag}.json`);
+      } else {
+        console.error('[replay-scan] zero requests in flight at failure time — the hang, if any, is not waiting on the network.');
+      }
       await page.screenshot({ path: path.join(artifactDir, `failure_${tag}.png`), fullPage: true }).catch(() => {});
     } catch (e) { /* best-effort — the harness's own crash already has priority */ }
     exitCode = 1;
