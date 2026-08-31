@@ -263,11 +263,20 @@ async function main() {
   // Permanent, not a one-off diagnostic (2026-08-31) — a harness that
   // reports "timed out" with nothing further has the same defect this
   // whole project has been fixing everywhere else: a result with no
-  // record of what it's a result OF. Every in-flight request is tracked
-  // from 'request' until 'requestfinished'/'requestfailed' removes it;
-  // whatever's still in here when something fails IS the hang, by
-  // definition — its exact URL, method, and age, not a guess.
+  // record of what it's a result OF.
+  //
+  // TWO separate records, not one, after 2026-08-31's own false lead: a
+  // PENDING map (added/removed on 'request'/'requestfinished'|'failed')
+  // only proves what's in flight AT THE MOMENT OF THE DUMP — an empty
+  // pending map at timeout is equally consistent with "nothing was ever
+  // issued" and "everything issued was issued and completed, and the
+  // hang is somewhere after." Absence of a pending record is not
+  // evidence of absence of the event. issuedRequests is the other half:
+  // appended on every 'request', NEVER removed — a monotonic count that
+  // answers "how many requests actually left the browser," full stop,
+  // independent of whether any of them ever resolved.
   const pendingRequests = new Map(); // Request -> {url, method, t}
+  const issuedRequests = []; // every 'request' event, ever — never pruned
   page.on('console', (msg) => consoleLogs.push({ type: msg.type(), text: msg.text(), t: Date.now() }));
   page.on('pageerror', (err) => pageErrors.push({ message: err.message, stack: err.stack, t: Date.now() }));
   page.on('requestfailed', (req) => {
@@ -276,7 +285,9 @@ async function main() {
   });
   page.on('requestfinished', (req) => pendingRequests.delete(req));
   page.on('request', (req) => {
-    pendingRequests.set(req, { url: req.url(), method: req.method(), t: Date.now() });
+    const entry = { url: req.url(), method: req.method(), t: Date.now() };
+    pendingRequests.set(req, entry);
+    issuedRequests.push(entry);
     if (req.url().includes('data.alpaca.markets')) alpacaRequests.push({ url: req.url(), method: req.method(), t: Date.now() });
   });
 
@@ -398,12 +409,23 @@ async function main() {
       writeFileSync(outPath('console'), JSON.stringify(consoleLogs, null, 2));
       writeFileSync(outPath('errors'), JSON.stringify({ pageErrors, failedRequests, harnessError: err.message }, null, 2));
       writeFileSync(outPath('pending'), JSON.stringify(stillPending, null, 2));
+      writeFileSync(outPath('issued'), JSON.stringify(issuedRequests, null, 2));
+      // issuedRequests.length, not stillPending.length, is what actually
+      // distinguishes "nothing was ever issued" from "everything issued
+      // completed and the hang is somewhere after" — an empty PENDING map
+      // is consistent with both; a zero ISSUED count is only consistent
+      // with the first. Reported unconditionally, not just when nonzero.
+      console.error(`[replay-scan] ${issuedRequests.length} request(s) issued in total this run (never-pruned count, independent of pending):`);
+      for (const r of issuedRequests.slice(0, 10)) console.error(`  ${r.method}  ${r.url}`);
+      if (issuedRequests.length > 10) console.error(`  ... ${issuedRequests.length - 10} more — full list: issued_${tag}.json`);
       if (stillPending.length) {
-        console.error(`[replay-scan] ${stillPending.length} request(s) still in flight at failure time (oldest first):`);
+        console.error(`[replay-scan] ${stillPending.length} of those still in flight at failure time (oldest first):`);
         for (const r of stillPending.slice(0, 5)) console.error(`  ${(r.ageMs / 1000).toFixed(1)}s  ${r.method}  ${r.url}`);
         console.error(`  full list: pending_${tag}.json`);
+      } else if (issuedRequests.length) {
+        console.error('[replay-scan] all issued requests completed (none pending) — the hang is AFTER the network, not waiting on it.');
       } else {
-        console.error('[replay-scan] zero requests in flight at failure time — the hang, if any, is not waiting on the network.');
+        console.error('[replay-scan] zero requests issued at all — the hang is BEFORE any network call, not a stalled fetch.');
       }
       await page.screenshot({ path: path.join(artifactDir, `failure_${tag}.png`), fullPage: true }).catch(() => {});
     } catch (e) { /* best-effort — the harness's own crash already has priority */ }
