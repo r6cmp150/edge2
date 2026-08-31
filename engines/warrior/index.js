@@ -454,7 +454,13 @@ async function _runRangeScanFromUI(startDate, endDate, symbols, classifierId) {
       },
       isCancelled: () => _rangeScanCancelRequested,
     });
-    _lastRangeScanResult = { setupIds, symbols, startDate, endDate, ...result };
+    // classifierId stored explicitly (2026-08-31) — setupIds alone (the
+    // EXPANDED array: all 5 for 'all-setups', one for a specific id)
+    // can't tell the dropdown which option was actually selected, which
+    // left it always falling back to the first option ('example') after
+    // any range scan. Not cosmetic: it already caused a real
+    // misreading of a run's own results in this project.
+    _lastRangeScanResult = { classifierId, setupIds, symbols, startDate, endDate, ...result };
     _lastReplayResult = null;
   } catch (err) {
     if (typeof showGlobalErrorToast === 'function') showGlobalErrorToast(`[Warrior] Range scan failed: ${err.message}`);
@@ -627,8 +633,16 @@ function renderReplayPanel() {
     body = '<div class="settings-row"><span class="settings-hint muted">No replay run yet.</span></div>';
   }
 
+  // Reads BOTH result types (2026-08-31 fix) — checking only
+  // _lastReplayResult meant the dropdown always fell back to showing
+  // "Example (Phase 4 placeholder)" selected after any completed range
+  // scan, regardless of which real setup(s) actually ran. Not cosmetic:
+  // a control that shows the wrong classifier is a UI that lies about
+  // what it did, and it already caused a real misreading of a run's
+  // results in this project.
+  const lastUsedClassifierId = _lastRangeScanResult?.classifierId ?? _lastReplayResult?.classifierId;
   const classifierOptions = REPLAY_CLASSIFIER_OPTIONS.map(o =>
-    `<option value="${o.id}" ${(_lastReplayResult?.classifierId === o.id) ? 'selected' : ''}>${o.label}</option>`
+    `<option value="${o.id}" ${(lastUsedClassifierId === o.id) ? 'selected' : ''}>${o.label}</option>`
   ).join('');
 
   const runDisabled = _replayInFlight || _rangeScanInFlight;
