@@ -10,17 +10,21 @@
 // 2, so capApplies could never become true: the per-engine cap has never
 // once fired in this app's life, not rarely, never.
 //
-// Fix shape: createApiClient(engine) returns a client closing over a
-// static engine value, not runtime/ambient state — rejected two other
-// shapes first (see core/api-client.js's own comments): threading an
-// engine parameter through every fetch function (worse than Q1's already-
-// rejected per-call threading, since it's every caller, not just
-// instrumented ones), and an ambient module-level tag mirroring
-// _ambientPriority/withBackgroundPriority — proven unsafe by this same
-// investigation (see testWithBackgroundPriorityMistagsConcurrentWork
-// below): a shared mutable value saved/restored around an await has the
-// same hazard class as the already-retired _countRequests, just a value
-// instead of a function binding.
+// Fix shape: createApiClient(engine, priority) returns a client closing
+// over STATIC engine/priority values, not runtime/ambient state —
+// rejected two other shapes first (see core/api-client.js's own
+// comments): threading a parameter through every fetch function (worse
+// than Q1's already-rejected per-call threading, since it's every caller,
+// not just instrumented ones), and an ambient module-level tag mirroring
+// the now-retired _ambientPriority/withBackgroundPriority — proven unsafe
+// in this session's prior turn (a shared mutable value saved/restored
+// around an await has the same hazard class as the already-retired
+// _countRequests, just a value instead of a function binding; any request
+// that happened to fire while a background op was in flight inherited
+// 'background' regardless of what actually issued it). Retired outright
+// once the client shape covered the same need safely —
+// testPriorityIsAStaticClientPropertyNotAmbientState below proves the
+// replacement doesn't have the hazard the old mechanism did.
 'use strict';
 const assert = require('assert');
 const { readSource, run } = require('./_lib');
@@ -43,8 +47,6 @@ function loadFreshApiClient({ enableCap = false } = {}) {
     global.__queue = _queue;
     global.__engineTimestamps = _engineTimestamps;
     global.__PER_ENGINE_CAP = PER_ENGINE_CAP;
-    global.__withBackgroundPriority = withBackgroundPriority;
-    global.__readAmbientPriority = () => _ambientPriority;
   `;
   // eslint-disable-next-line no-eval
   eval(src + '\n' + exposeCode);
@@ -53,7 +55,6 @@ function loadFreshApiClient({ enableCap = false } = {}) {
     getRequestStats: global.__getRequestStats, diffRequestStats: global.__diffRequestStats,
     nextEligibleIndex: global.__nextEligibleIndex, queue: global.__queue, engineTimestamps: global.__engineTimestamps,
     PER_ENGINE_CAP: global.__PER_ENGINE_CAP,
-    withBackgroundPriority: global.__withBackgroundPriority, readAmbientPriority: global.__readAmbientPriority,
   };
 }
 
@@ -142,26 +143,51 @@ async function testPerEngineCapFiltersWhenExplicitlyEnabled() {
   assert.strictEqual(idx, -1, 'with the flag explicitly enabled and 2+ engines active, an over-cap engine\'s item must be filtered out -- proves the gate is reachable and correct once turned on, not just inert');
 }
 
-// ── _ambientPriority safety — same hazard class as the retired
-//    _countRequests, confirmed directly rather than assumed. A shared
-//    mutable value saved/restored around an await: work that happens to
-//    run WHILE it's set to 'background' inherits that tag even if it has
-//    nothing to do with the background operation.
-async function testWithBackgroundPriorityMistagsConcurrentWork() {
-  const { withBackgroundPriority, readAmbientPriority } = loadFreshApiClient();
-  assert.strictEqual(readAmbientPriority(), 'foreground', 'must start foreground');
+// ── Priority as a static client property, not ambient state — proves the
+//    replacement doesn't have the hazard the retired _ambientPriority/
+//    withBackgroundPriority did. A foreground client and a background
+//    client used CONCURRENTLY (the exact shape that mistagged unrelated
+//    work under the old ambient flag) must each keep their own priority,
+//    with nothing shared to leak between them.
+async function testPriorityIsAStaticClientPropertyNotAmbientState() {
+  const { createApiClient, getRequestStats, diffRequestStats } = loadFreshApiClient();
+  const seenPriorities = [];
+  global.fetch = async () => {
+    await new Promise((r) => setTimeout(r, 10)); // real overlap window -- both calls genuinely in flight together
+    return { ok: true, status: 200, json: async () => ({ bars: {} }) };
+  };
+  const foregroundClient = createApiClient('EDGE', 'foreground');
+  const backgroundClient = createApiClient('EDGE', 'background');
 
-  let observedDuringOverlap = null;
-  const backgroundOp = withBackgroundPriority(async () => {
-    await new Promise((r) => setTimeout(r, 20)); // in flight -- ambient is 'background' for this whole window
-  });
-  await new Promise((r) => setTimeout(r, 5)); // let the background op's ambient-set actually take effect
-  observedDuringOverlap = readAmbientPriority(); // an UNRELATED foreground caller reading the ambient flag right now
-  await backgroundOp;
+  // Both issued while the other is still in flight -- this is precisely
+  // the overlap that made the ambient flag mistag unrelated work.
+  await Promise.all([
+    foregroundClient.alpacaGet('/stocks/bars', { symbols: 'FG' }),
+    backgroundClient.alpacaGet('/stocks/bars', { symbols: 'BG' }),
+  ]);
 
-  console.log('ambient priority observed by unrelated code during an in-flight background op:', observedDuringOverlap);
-  assert.strictEqual(observedDuringOverlap, 'background', 'an ordinary foreground caller that happens to check priority while ANY background-wrapped operation is in flight sees background -- mistagging, not a hypothetical: any alpacaGet call issued during this window is deprioritized regardless of what actually issued it');
-  assert.strictEqual(readAmbientPriority(), 'foreground', 'must be restored once the background op completes (this part is fine when only one wrapped call is ever in flight at a time, which is checkPriceAlerts\' actual usage today -- see the file header for the narrower, still-real hazard when two overlap out of nesting order)');
+  // Both clients still tag correctly afterward — nothing leaked or stuck.
+  const before = getRequestStats('EDGE');
+  await foregroundClient.alpacaGet('/stocks/bars', { symbols: 'FG2' });
+  const diff = diffRequestStats(before, getRequestStats('EDGE'));
+  console.log('post-overlap foreground request still tagged correctly:', diff);
+  assert.strictEqual(diff.issued, 1, 'a client\'s priority/engine must be unaffected by a DIFFERENT client\'s concurrent, overlapping call — no shared mutable tag to leak or get stuck');
+}
+
+// ── CORE is excluded from the cap's activation count AND its per-item
+//    filter (2026-08-30 decision) — CORE is shared plumbing, not a peer
+//    engine, so CORE+EDGE traffic with Warrior idle must never activate
+//    "neither engine may starve the other," and CORE-tagged work itself
+//    must never be throttled by a cap that exists for engine fairness.
+async function testCoreTrafficNeverActivatesOrIsFilteredByTheCap() {
+  const { nextEligibleIndex, queue, engineTimestamps, PER_ENGINE_CAP } = loadFreshApiClient({ enableCap: true });
+  const now = Date.now();
+  for (let i = 0; i < PER_ENGINE_CAP + 5; i++) engineTimestamps.CORE.push(now); // CORE alone, well over what would be its "cap"
+  engineTimestamps.EDGE.push(now); // only ONE real engine active
+  queue.push({ run: async () => {}, resolve() {}, reject() {}, engine: 'CORE', priority: 'foreground' });
+  const idx = nextEligibleIndex();
+  console.log('cap-on eligibility index for an over-cap CORE item with only EDGE (1 real engine) also active:', idx);
+  assert.strictEqual(idx, 0, 'CORE must not count toward activeEngineCount, and CORE-tagged work must never be filtered by the per-engine cap even if the cap is on');
 }
 
 (async () => {
@@ -170,5 +196,6 @@ async function testWithBackgroundPriorityMistagsConcurrentWork() {
   await run('engine-tagging: the 429 throttle message names the real calling engine', testThrottleMessageNamesTheRealEngine);
   await run('engine-tagging: per-engine cap defaults off and never filters', testPerEngineCapDefaultsOffAndNeverFilters);
   await run('engine-tagging: per-engine cap filters correctly when explicitly enabled', testPerEngineCapFiltersWhenExplicitlyEnabled);
-  await run('engine-tagging: withBackgroundPriority mistags unrelated concurrent work (confirmed hazard)', testWithBackgroundPriorityMistagsConcurrentWork);
+  await run('engine-tagging: priority is a static client property, immune to concurrent-call leakage', testPriorityIsAStaticClientPropertyNotAmbientState);
+  await run('engine-tagging: CORE never activates or is filtered by the per-engine cap', testCoreTrafficNeverActivatesOrIsFilteredByTheCap);
 })();

@@ -57,23 +57,29 @@ function sanitizeTickerBatch(tickers) {
 //    Always enforced, regardless of how many engines are active.
 //
 // 2. Per-engine budget — PER_ENGINE_CAP (60% of 200 = 120/min), tracked as
-//    a rolling 60s send-timestamp log per engine. Enforced ONLY while two
-//    or more engines have actually sent a request within the current
-//    window (see spec: a strict cap would throttle EDGE on Phase 1's wide
-//    scans for a competitor — Warrior — that isn't running yet). The
-//    global bucket above still protects Alpaca either way; this second
-//    ceiling exists purely so neither engine can starve the other once
-//    both are genuinely active.
+//    a rolling 60s send-timestamp log per REAL engine (EDGE, WARRIOR —
+//    see REAL_ENGINES below; CORE is shared plumbing, not a peer engine,
+//    and is excluded from both the activation check and the cap itself).
+//    Enforced ONLY while two or more real engines have actually sent a
+//    request within the current window (see spec: a strict cap would
+//    throttle EDGE on Phase 1's wide scans for a competitor — Warrior —
+//    that isn't running yet). The global bucket above still protects
+//    Alpaca either way; this second ceiling exists purely so neither
+//    engine can starve the other once both are genuinely active.
+//    Currently shipped OFF (ENABLE_PER_ENGINE_CAP = false, 2026-08-30) —
+//    see that constant's own comment for why.
 //
 // Within those ceilings the queue is priority-ordered, not FIFO: the
 // oldest eligible 'foreground' entry is always chosen over a 'background'
 // one. "Eligible" means both ceilings currently allow it.
 //
-// engine/priority aren't parameters of alpacaGet (the spec requires its
-// signature stay unchanged). engine defaults to 'EDGE' — the only engine
-// that exists; nothing else calls alpacaGet yet. priority comes from an
-// ambient flag (see withBackgroundPriority) rather than being threaded
-// through every intermediate function's signature.
+// engine/priority are NOT parameters of the bare alpacaGet global (kept
+// unchanged for the many callers that don't need a specific tag — it
+// defaults to 'CORE'/'foreground'). A caller that wants a real tag gets
+// its own client from createApiClient(engine, priority) instead — a
+// static pair fixed at construction, not runtime state (2026-08-30,
+// replacing both the hardcoded 'EDGE' engine and the ambient priority
+// flag this section used to describe here).
 
 const RATE_LIMIT_PER_MIN = 200;          // Alpaca Basic's actual hard limit
 const RATE_LIMIT_TARGET_PER_MIN = 170;   // sustained refill target, headroom under the hard cap
@@ -192,38 +198,18 @@ function diffRequestStats(before, after) {
   };
 }
 
-let _ambientPriority = 'foreground';
-
-// Wraps `fn` so every alpacaGet call reachable inside it (directly, or via
-// other core/ functions such as fetchSnapshots) is tagged 'background'
-// instead of the default 'foreground' — without changing any intermediate
-// function's signature. Used by app.js's checkPriceAlerts, the one
-// identified background poller this phase exists to isolate from whatever
-// the user is actively looking at.
-//
-// The flag is restored in a `finally`, not just after the awaited call —
-// restoring it only on the success path would leave 'background' set for
-// the rest of the page's life if `fn` ever throws, permanently
-// deprioritizing every future request (including the user's own Refresh)
-// behind nothing. A thrown exception must not leak ambient state.
-//
-// Known, accepted limitation: this is ambient module-level state, not true
-// per-call-chain context (browsers have no AsyncLocalStorage equivalent).
-// If a genuinely foreground call fires while a background-wrapped call is
-// still in flight, it can be briefly mistagged 'background' until the
-// wrapped call finishes and its `finally` runs. checkPriceAlerts' own
-// requests are brief, so the collision window is narrow, and the
-// consequence is a few seconds of suboptimal priority, not a correctness
-// break — nothing is dropped or mis-fetched.
-async function withBackgroundPriority(fn) {
-  const prev = _ambientPriority;
-  _ambientPriority = 'background';
-  try {
-    return await fn();
-  } finally {
-    _ambientPriority = prev;
-  }
-}
+// _ambientPriority/withBackgroundPriority retired (2026-08-30) — same
+// hazard class as the already-retired _countRequests, confirmed rather
+// than assumed (tests/engine-tagging.test.js's
+// testWithBackgroundPriorityMistagsConcurrentWork reproduces it directly):
+// a shared mutable value saved/restored around an await means any request
+// that happens to fire while a background op is in flight inherits
+// 'background' regardless of what actually issued it. Priority is now a
+// property of the client that issues the request (see createApiClient
+// below), the same shape as the engine fix — one design decision for both,
+// not two different mechanisms for two instances of the same underlying
+// problem (a property that should travel WITH the request, not be
+// inferred from ambient/global state at the moment it happens to run).
 
 function _refillTokens() {
   const now = Date.now();
@@ -238,11 +224,23 @@ function _pruneEngineWindow(engine) {
   while (arr.length && arr[0] < cutoff) arr.shift();
 }
 
-// Number of engines with at least one send in the current rolling window —
-// the per-engine cap only applies once this is >= 2 (see header comment).
+// Decided 2026-08-30, before the cap is ever switched on: CORE is not an
+// engine for this purpose. "Neither engine may starve the other" is a
+// claim about EDGE and WARRIOR specifically — CORE is shared plumbing
+// serving whichever engine actually called it, not a third peer competing
+// for its own share. Counting it would let the cap activate on CORE+EDGE
+// traffic with Warrior entirely idle, which is not the situation it was
+// designed for. Excluded from both the activation count below AND the
+// per-item filter in _nextEligibleIndex — CORE-tagged work is never
+// throttled by this cap, whether or not it's active.
+const REAL_ENGINES = ['EDGE', 'WARRIOR'];
+
+// Number of real engines with at least one send in the current rolling
+// window — the per-engine cap only applies once this is >= 2 (see header
+// comment).
 function _activeEngineCount() {
   let count = 0;
-  for (const engine of Object.keys(_engineTimestamps)) {
+  for (const engine of REAL_ENGINES) {
     _pruneEngineWindow(engine);
     if (_engineTimestamps[engine].length > 0) count++;
   }
@@ -265,7 +263,7 @@ function _nextEligibleIndex() {
   for (let i = 0; i < _queue.length; i++) {
     const item = _queue[i];
     _pruneEngineWindow(item.engine);
-    if (capApplies && _engineTimestamps[item.engine].length >= PER_ENGINE_CAP) continue;
+    if (capApplies && item.engine !== 'CORE' && _engineTimestamps[item.engine].length >= PER_ENGINE_CAP) continue;
     if (bestIdx === -1) { bestIdx = i; continue; }
     if (item.priority === 'foreground' && _queue[bestIdx].priority === 'background') bestIdx = i;
   }
@@ -389,10 +387,9 @@ function enqueue(request, { engine = 'CORE', priority = 'foreground' } = {}) {
 // become true, the per-engine cap has never once fired since Warrior
 // started calling this function, and every 429 warning has claimed
 // "engine EDGE throttled" even when Warrior's own traffic triggered it.
-async function _alpacaGetImpl(engine, path, params = {}, base = ALPACA_BASE) {
+async function _alpacaGetImpl(engine, priority, path, params = {}, base = ALPACA_BASE) {
   const url = new URL(base + path);
   Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
-  const priority = _ambientPriority;
 
   let attempt = 0;
   for (;;) {
@@ -433,45 +430,55 @@ async function _alpacaGetImpl(engine, path, params = {}, base = ALPACA_BASE) {
 // yet — either way, 'CORE' is the honest label: "not attributed to a
 // specific engine," not "assumed to be EDGE."
 async function alpacaGet(path, params = {}, base = ALPACA_BASE) {
-  return _alpacaGetImpl('CORE', path, params, base);
+  return _alpacaGetImpl('CORE', 'foreground', path, params, base);
 }
 
-// createApiClient(engine) — a client whose engine tag is a static property
-// of who constructed it, not runtime state. This is what replaces both
-// rejected approaches: not a parameter threaded through every intermediate
-// fetch function (Q1's own rejected shape, worse here since it's every
-// caller, not just instrumented ones), and not an ambient module-level
-// value set around an await (proven unsafe by this same fix — see
-// withBackgroundPriority above, which has the identical hazard class:
-// _ambientPriority is a shared mutable value saved/restored around an
-// await, so any request that happens to fire while it's set can be
-// mistagged, and two overlapping wrapped calls completing out of nesting
-// order can leave it permanently stuck). A client object is immutable
-// once created; nothing about calling it concurrently can corrupt another
-// caller's tag, because there IS no shared mutable tag — each client
-// closes over its own engine value for its own lifetime.
+// createApiClient(engine, priority) — a client whose engine AND priority
+// are static properties of who constructed it, not runtime state. This is
+// what replaces three rejected approaches: a parameter threaded through
+// every intermediate fetch function (Q1's own rejected shape, worse here
+// since it's every caller, not just instrumented ones); an ambient
+// module-level value set around an await (proven unsafe by this fix —
+// _ambientPriority/withBackgroundPriority, retired above, had the
+// identical hazard class as the already-retired _countRequests: a shared
+// mutable value saved/restored around an await means work that happens to
+// run while it's set inherits the wrong tag, and two overlapping wrapped
+// calls completing out of nesting order can leave it permanently stuck).
+// A client object is immutable once created; nothing about calling it
+// concurrently can corrupt another caller's tag, because there is no
+// shared mutable tag — each client closes over its own values for its own
+// lifetime. One shape fixes both the engine defect and the priority
+// defect, because they were the same underlying mistake twice.
 //
 // Coverage, stated plainly rather than implied: this correctly tags any
 // call written directly against a client returned here. It does NOT
 // retroactively tag calls made on a caller's behalf by a DIFFERENT file's
-// shared helper (e.g. core/universe.js's _fetchRawMinuteBars calling the
-// bare alpacaGet internally) — classic-script scoping means one file's
-// client instance has no way to reach into another file's own top-level
-// reference to the global alpacaGet. Warrior code that calls alpacaGet
-// directly (engines/warrior/*.js, real ES modules) can shadow it cheaply:
-// `const alpacaGet = createApiClient('WARRIOR').alpacaGet;` at the file's
-// own top, module-scoped, zero collision risk. Classic scripts sharing
-// the page's one global scope (app.js, core/*.js) can't do that same
-// shadow — attempting to redeclare the shared `alpacaGet` name a second
-// time at another script's top level is a parse-time collision, not a
-// safe local shadow (same class of hazard core/store.js's own header
-// comment already documents for `supabaseClient` vs `const supabase`).
-// Those files instead hold their own named client (see app.js's
-// edgeApiClient) and call `.alpacaGet(...)` at the specific sites that
-// want a real tag.
-function createApiClient(engine) {
-  return { alpacaGet: (path, params, base) => _alpacaGetImpl(engine, path, params, base) };
+// shared helper unless that helper itself accepts and forwards a client —
+// see core/universe.js's own client parameter (2026-08-30) for the
+// pattern that closes this specific gap for the shared fetch helpers
+// found not to have direct alpacaGet calls of their own. Classic-script
+// scoping still means one file's client instance has no way to reach into
+// a DIFFERENT file's own top-level reference to the bare global — Warrior
+// code that calls alpacaGet directly (engines/warrior/*.js, real ES
+// modules) can shadow it cheaply (`const alpacaGet = createApiClient(...)
+// .alpacaGet;`, module-scoped, zero collision risk); classic scripts
+// sharing the page's one global scope (app.js, core/*.js) can't use that
+// same shadow (a parse-time redeclaration collision, not a local shadow —
+// same class of hazard core/store.js's own header comment documents for
+// `supabaseClient` vs `const supabase`) and instead hold their own named
+// client (see app.js's edgeApiClient) or accept one as a parameter.
+function createApiClient(engine, priority = 'foreground') {
+  return { alpacaGet: (path, params, base) => _alpacaGetImpl(engine, priority, path, params, base) };
 }
+
+// Shared default for functions in OTHER classic scripts that now accept a
+// client parameter (core/universe.js, core/market-data.js's fetchSnapshots)
+// — defined once, here, because classic scripts share one global lexical
+// scope: a second `const _coreClient = createApiClient('CORE')` declared
+// in another script tag would be a parse-time redeclaration collision,
+// the same hazard createApiClient's own comment documents for `alpacaGet`
+// itself. One instance, referenced by name everywhere else.
+const _coreClient = createApiClient('CORE');
 
 async function testAlpacaConnection() {
   try {

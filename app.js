@@ -236,6 +236,13 @@ const VERSION = 'v2.9.7';
 // time is a parse-time collision, not a local shadow. A distinctly-named
 // client avoids that entirely.
 const edgeApiClient = createApiClient('EDGE');
+// Separate client for checkPriceAlerts' background poll (2026-08-30) —
+// priority is fixed at construction, the same static-property shape as
+// engine, so it replaces withBackgroundPriority's ambient flag (retired,
+// core/api-client.js) without threading a priority parameter through
+// fetchSnapshots' other callers, all of which stay foreground via
+// edgeApiClient/the default CORE client.
+const backgroundEdgeClient = createApiClient('EDGE', 'background');
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 // SUPABASE_URL/SUPABASE_ANON_KEY/supabaseClient moved to core/store.js (Phase 0 extraction).
@@ -7230,8 +7237,12 @@ async function checkPriceAlerts() {
     const tickers = [...new Set(state.portfolio.map(p => p.ticker))];
     // Phase 0.5: this is the background poller the rate-limit queue's
     // priority ordering exists to isolate from whatever the user is
-    // actively looking at — see withBackgroundPriority in core/api-client.js.
-    const snaps = await withBackgroundPriority(() => fetchSnapshots(tickers));
+    // actively looking at. Own client (2026-08-30, replacing
+    // withBackgroundPriority — retired, see core/api-client.js for why the
+    // ambient flag it used was unsafe): priority is a static property of
+    // this client, not runtime state, so it can't leak onto an unrelated
+    // foreground request the way the ambient flag could.
+    const snaps = await fetchSnapshots(tickers, undefined, backgroundEdgeClient);
 
     for (const pos of state.portfolio) {
       const snap = snaps[pos.ticker];

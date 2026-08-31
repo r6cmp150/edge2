@@ -36,12 +36,18 @@ function getLivePrice(snap) {
 // core/universe.js's SNAPSHOT_CHUNK_SIZE comment) — not a limit that could
 // silently truncate a batch, since Alpaca either serves the whole batch or
 // errors on the request, it doesn't return a partial page.
-async function fetchSnapshots(tickers, onProgress) {
+// client (2026-08-30): defaults to the shared CORE client (core/api-
+// client.js) — same pattern as core/universe.js's own helpers. This is
+// the function checkPriceAlerts (app.js) uses to get background priority
+// without the ambient-flag hazard (see core/api-client.js's
+// withBackgroundPriority removal): pass a client built with
+// createApiClient(engine, 'background') instead of wrapping the call.
+async function fetchSnapshots(tickers, onProgress, client = _coreClient) {
   const clean = sanitizeTickerBatch(tickers);
   const results = {};
   let done = 0;
   for (const batch of chunk(clean, 100)) {
-    const data = await alpacaGet('/stocks/snapshots', { symbols: batch.join(','), feed:'iex' });
+    const data = await client.alpacaGet('/stocks/snapshots', { symbols: batch.join(','), feed:'iex' });
     Object.assign(results, data);
     done += batch.length;
     if (onProgress) onProgress(done, clean.length);

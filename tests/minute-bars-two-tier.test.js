@@ -37,6 +37,13 @@ function loadUniverse(alpacaGetMock) {
     issued: after.issued - before.issued, succeeded: after.succeeded - before.succeeded,
     failed: after.failed - before.failed, retried: after.retried - before.retried,
   });
+  // Minimal stand-in for core/api-client.js's real createApiClient/
+  // _coreClient (2026-08-30) — this file tests universe.js's own fetch/
+  // filter logic in isolation, not engine tagging itself (see
+  // tests/engine-tagging.test.js for that), so every client just routes
+  // through the same counted mock regardless of engine.
+  global.createApiClient = () => ({ alpacaGet: global.alpacaGet });
+  global._coreClient = global.createApiClient('CORE');
   const src = readSource('core/universe.js').replace(/^const ALPACA_TRADING_BASE.*$/m, "const ALPACA_TRADING_BASE = 'https://paper-api.alpaca.markets';");
   const exposeCode = 'global.__getPremarketGapUniverse = _getPremarketGapUniverse; global.__diagnosePremarketGap = diagnosePremarketGap;';
   // eslint-disable-next-line no-eval
