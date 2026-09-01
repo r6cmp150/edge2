@@ -67,13 +67,55 @@ function _rearmDistancePctFor(setupId) {
 // replay/live fetch window's own start (1:00am PT / 4:00am ET) through
 // 6:30am PT (tMin 60-390) — same boundary core/clock.js's
 // isPreMarketHours() uses.
+//
+// __minuteOfDay/__isPremarketBar/__isRegularSessionBar (2026-08-31): cache
+// fields, populated once per bars array by _precomputeBarSessionFields
+// below. getPT() is date.toLocaleString(..., {timeZone}) — an Intl-backed
+// conversion, not arithmetic, and every classifier's own filter call was
+// invoking it fresh for every bar in barsSoFar, on every one of up to n
+// outer replay iterations, across up to 10 replay passes per symbol/day
+// (5 classifiers x naive + re-armed). For a dense day (AMIX 2026-08-25,
+// 721 raw bars) that's on the order of 2.6 million Intl conversions where
+// n alone would do. These three functions fall back to computing fresh
+// when the cache field is absent (undefined, not just falsy — 0 is a
+// valid minute-of-day) — every existing caller that hands them a plain,
+// non-precomputed bar (every hand-built test fixture in
+// tests/setups.test.js) keeps working exactly as before, just without
+// the speed benefit, which doesn't matter at fixture scale.
 function _minuteOfDay(bar) {
+  if (bar.__minuteOfDay !== undefined) return bar.__minuteOfDay;
   const pt = getPT(new Date(bar.t));
   return pt.getHours() * 60 + pt.getMinutes();
 }
-function _isPremarketBar(bar) { const m = _minuteOfDay(bar); return m >= 60 && m < 390; }
-function _isRegularSessionBar(bar) { const m = _minuteOfDay(bar); return m >= 390 && m < 780; }
+function _isPremarketBar(bar) {
+  if (bar.__isPremarketBar !== undefined) return bar.__isPremarketBar;
+  const m = _minuteOfDay(bar);
+  return m >= 60 && m < 390;
+}
+function _isRegularSessionBar(bar) {
+  if (bar.__isRegularSessionBar !== undefined) return bar.__isRegularSessionBar;
+  const m = _minuteOfDay(bar);
+  return m >= 390 && m < 780;
+}
 function _minutesSinceRegularOpen(bar) { return _minuteOfDay(bar) - 390; }
+
+// Walks bars ONCE, attaching each bar's derived session fields directly to
+// the bar object — visible through every subsequent bars.slice() (slice
+// copies references, not the objects themselves), so one call here covers
+// every one of the up to 10 runReplay passes _evaluateSetupsAgainstBars/
+// detectSetupsForCandidate make against the SAME bars array. Idempotent:
+// checks the first bar and returns immediately if already done, so it's
+// safe to call at more than one entry point without doubling the work.
+function _precomputeBarSessionFields(bars) {
+  if (!bars.length || bars[0].__minuteOfDay !== undefined) return;
+  for (const bar of bars) {
+    const pt = getPT(new Date(bar.t));
+    const m = pt.getHours() * 60 + pt.getMinutes();
+    bar.__minuteOfDay = m;
+    bar.__isPremarketBar = m >= 60 && m < 390;
+    bar.__isRegularSessionBar = m >= 390 && m < 780;
+  }
+}
 
 function _mean(nums) { return nums.length ? nums.reduce((s, n) => s + n, 0) / nums.length : NaN; }
 function _minutesBetween(barA, barB) { return (new Date(barB.t).getTime() - new Date(barA.t).getTime()) / 60000; }
@@ -480,6 +522,7 @@ function _classifiersFor(candidate) {
 // own timestamp, never fabricated from "now" alone.
 function detectSetupsForCandidate(candidate, bars, { now = new Date(), riskPerTradeDollars = 0, availableBudget = 0 } = {}) {
   if (!bars || !bars.length) return { setups: [], primary: null };
+  _precomputeBarSessionFields(bars);
 
   const setups = [];
   for (const { id, fn } of _classifiersFor(candidate)) {
@@ -622,6 +665,7 @@ function _anyNeedsPrevClose(setupIds) {
 // them anyway with null/0 would silently produce a wrong gapPct/reference
 // instead of an honest "couldn't check."
 function _evaluateSetupsAgainstBars(setupIds, bars, prevCloseUsable) {
+  _precomputeBarSessionFields(bars);
   const bySetup = {};
   for (const setupId of setupIds) {
     const entry = SETUP_REPLAY_CATALOG.find(e => e.id === setupId);
