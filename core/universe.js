@@ -139,12 +139,22 @@ function _isEligibleInstrument(asset) {
 // and returns no `next_page_token` — confirmed live, the full 14,203-row
 // active us_equity list came back in this one call (see file header). Not a
 // truncatable list endpoint the way /stocks/bars is.
-async function _getAssetIndex() {
+// client (2026-08-30): defaults to the shared CORE client (core/api-
+// client.js) when the caller doesn't have (or doesn't care about) its own
+// — every public entry point below accepts and forwards one, so this
+// file's own internal alpacaGet calls end up tagged with whichever engine
+// actually initiated the request, without core/ ever needing to know
+// engine names itself (the client already carries that). See
+// core/api-client.js's createApiClient for why this replaced per-file
+// shadowing: a majority of both engines' real traffic flows through these
+// shared helpers, not direct alpacaGet calls, so a shadow in the calling
+// file has nothing to reach.
+async function _getAssetIndex(client = _coreClient) {
   const cache = state.universeAssetCache;
   if (cache && cache.fetchedAt && (Date.now() - new Date(cache.fetchedAt).getTime()) < ASSET_CACHE_MAX_AGE_MS) {
     return cache.assets;
   }
-  const raw = await alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);
+  const raw = await client.alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);
   const assets = (raw || [])
     .filter(a => a.tradable && ALLOWED_EXCHANGES.has(a.exchange))
     .map(a => ({ symbol: a.symbol, exchange: a.exchange, name: a.name, isEligibleInstrument: _isEligibleInstrument(a) }));
@@ -173,15 +183,15 @@ function _assetIndexBySymbol(assets) {
 // endpoint (not ours to raise); logged explicitly below so a thin result
 // reads as "the cap may be cutting off real candidates," not silently as
 // "the market is quiet."
-async function _getMoversUniverse(session) {
+async function _getMoversUniverse(session, client = _coreClient) {
   if (session && session !== 'OPEN' && session !== 'AH') {
     console.warn(`getUniverse('movers'): called during session=${session} — movers returns stale prior-day data before market open; consider 'premarket-gap' instead.`);
   }
 
   const [moversData, activesData, assetIndex] = await Promise.all([
-    alpacaGet('/screener/stocks/movers', { top: 50 }, ALPACA_SCREENER_BASE),
-    alpacaGet('/screener/stocks/most-actives', { top: 50 }, ALPACA_SCREENER_BASE),
-    _getAssetIndex(),
+    client.alpacaGet('/screener/stocks/movers', { top: 50 }, ALPACA_SCREENER_BASE),
+    client.alpacaGet('/screener/stocks/most-actives', { top: 50 }, ALPACA_SCREENER_BASE),
+    _getAssetIndex(client),
   ]);
   const assetsBySymbol = _assetIndexBySymbol(assetIndex);
 
@@ -198,7 +208,7 @@ async function _getMoversUniverse(session) {
 
   const activeRows = activesData.most_actives || [];
   const activeSymbols = activeRows.map(a => a.symbol);
-  const activeSnaps = activeSymbols.length ? await fetchSnapshots(activeSymbols) : {};
+  const activeSnaps = activeSymbols.length ? await fetchSnapshots(activeSymbols, undefined, client) : {};
   const actives = activeRows.map(a => {
     const snap = activeSnaps[a.symbol];
     const price = getLivePrice(snap) || null;
@@ -270,7 +280,7 @@ const SNAPSHOT_CHUNK_SIZE = 100;
 // getUniverse's premarket-gap comment for why that one-time cost is still
 // the right tradeoff for a workflow that scans repeatedly through the
 // pre-market window.
-async function _getPriorCloses(symbols) {
+async function _getPriorCloses(symbols, client = _coreClient) {
   const today = ptDateStr(getPT());
   let cache = state.universePriorCloseCache;
   if (!cache || cache.date !== today) cache = { date: today, closes: {} };
@@ -285,7 +295,7 @@ async function _getPriorCloses(symbols) {
         do {
           const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: batch.length * 3, sort: 'desc', feed: 'iex' };
           if (pageToken) params.page_token = pageToken;
-          const data = await alpacaGet('/stocks/bars', params);
+          const data = await client.alpacaGet('/stocks/bars', params);
           if (data.bars) {
             for (const sym of Object.keys(data.bars)) {
               (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
@@ -348,7 +358,7 @@ const PREMARKET_BAR_WINDOW_WIDE_MIN = 3 * 60;
 // of being. Safe to parallelize freely — chunk() partitions symbols into
 // disjoint sets, so each iteration writes to different result keys, and
 // each chunk's error handling is already independent.
-async function _fetchRawMinuteBars(symbols, start, end, chunkSize, windowLabel) {
+async function _fetchRawMinuteBars(symbols, start, end, chunkSize, windowLabel, client = _coreClient) {
   const barsBySymbolAll = {};
   let requests = 0;
   await Promise.all(chunk(symbols, chunkSize).map(async batch => {
@@ -362,7 +372,7 @@ async function _fetchRawMinuteBars(symbols, start, end, chunkSize, windowLabel) 
           limit: 10000, sort: 'desc', feed: 'sip',
         };
         if (pageToken) params.page_token = pageToken;
-        const data = await alpacaGet('/stocks/bars', params);
+        const data = await client.alpacaGet('/stocks/bars', params);
         requests++;
         if (data.bars) {
           for (const sym of Object.keys(data.bars)) {
@@ -382,9 +392,9 @@ async function _fetchRawMinuteBars(symbols, start, end, chunkSize, windowLabel) 
 // Single-window fetch, latest bar per symbol. Unchanged contract (existing
 // callers/tests depend on {latestBySymbol, requests}) — now a thin
 // reduction over _fetchRawMinuteBars rather than its own fetch loop.
-async function _fetchMinuteBarsWindow(symbols, end, windowMin) {
+async function _fetchMinuteBarsWindow(symbols, end, windowMin, client = _coreClient) {
   const start = new Date(end.getTime() - windowMin * 60 * 1000);
-  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, SNAPSHOT_CHUNK_SIZE, `${windowMin}min window`);
+  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, SNAPSHOT_CHUNK_SIZE, `${windowMin}min window`, client);
   const latestBySymbol = {};
   // sort:'desc' -> each symbol's first bar is its most recent within [start, end].
   for (const sym of Object.keys(barsBySymbolAll)) {
@@ -404,8 +414,8 @@ async function _fetchMinuteBarsWindow(symbols, end, windowMin) {
 // PREMARKET_BAR_WINDOW_MIN's chunk size, just for a wider window.
 const RVOL_VOLUME_CHUNK_SIZE = 25;
 
-async function _fetchCumulativeMinuteVolume(symbols, start, end) {
-  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, RVOL_VOLUME_CHUNK_SIZE, 'cumulative-volume window');
+async function _fetchCumulativeMinuteVolume(symbols, start, end, client = _coreClient) {
+  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, RVOL_VOLUME_CHUNK_SIZE, 'cumulative-volume window', client);
   const volumeBySymbol = {};
   for (const sym of Object.keys(barsBySymbolAll)) {
     volumeBySymbol[sym] = barsBySymbolAll[sym].reduce((sum, b) => sum + (b.v || 0), 0);
@@ -425,7 +435,7 @@ async function _fetchCumulativeMinuteVolume(symbols, start, end) {
 const RVOL_DAILY_AVG_LOOKBACK_DAYS = 30;
 const RVOL_DAILY_AVG_CHUNK_SIZE = 30;
 
-async function _getSip30DayAvgVolume(symbols) {
+async function _getSip30DayAvgVolume(symbols, client = _coreClient) {
   const today = ptDateStr(getPT());
   let cache = state.warrior30DayVolumeCache;
   if (!cache || cache.date !== today) cache = { date: today, avgVolumes: {} };
@@ -441,7 +451,7 @@ async function _getSip30DayAvgVolume(symbols) {
         do {
           const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: 10000, sort: 'asc', feed: 'sip' };
           if (pageToken) params.page_token = pageToken;
-          const data = await alpacaGet('/stocks/bars', params);
+          const data = await client.alpacaGet('/stocks/bars', params);
           requests++;
           if (data.bars) {
             for (const sym of Object.keys(data.bars)) {
@@ -476,15 +486,15 @@ async function _getSip30DayAvgVolume(symbols) {
 // never silently drop it" pattern as fetchMultiBars' Bug 3 droppedSymbols —
 // this is not a substitute for narrowing the window, it's what makes
 // narrowing the window safe to do at all.
-async function _fetchLatestSipMinuteBars(symbols) {
+async function _fetchLatestSipMinuteBars(symbols, client = _coreClient) {
   const end = new Date(Date.now() - PREMARKET_BAR_DELAY_MIN * 60 * 1000);
 
-  const pass1 = await _fetchMinuteBarsWindow(symbols, end, PREMARKET_BAR_WINDOW_MIN);
+  const pass1 = await _fetchMinuteBarsWindow(symbols, end, PREMARKET_BAR_WINDOW_MIN, client);
   const missingAfterPass1 = symbols.filter(sym => !(sym in pass1.latestBySymbol));
 
   let pass2 = { latestBySymbol: {}, requests: 0 };
   if (missingAfterPass1.length) {
-    pass2 = await _fetchMinuteBarsWindow(missingAfterPass1, end, PREMARKET_BAR_WINDOW_WIDE_MIN);
+    pass2 = await _fetchMinuteBarsWindow(missingAfterPass1, end, PREMARKET_BAR_WINDOW_WIDE_MIN, client);
   }
 
   const latestBySymbol = { ...pass1.latestBySymbol, ...pass2.latestBySymbol };
@@ -521,8 +531,8 @@ function _buildGapResults(priceFilteredSymbols, latestBySymbol, priorCloses) {
   return { withGap, top50, above10pct };
 }
 
-async function _getPremarketGapUniverse() {
-  const assetIndex = await _getAssetIndex();
+async function _getPremarketGapUniverse(client = _coreClient) {
+  const assetIndex = await _getAssetIndex(client);
   // Bug (found live, 2026-08-24): this used to be assetIndex.map(a =>
   // a.symbol) — every tradable/exchange-filtered symbol, ignoring
   // isEligibleInstrument entirely. _getMoversUniverse always applied that
@@ -531,13 +541,13 @@ async function _getPremarketGapUniverse() {
   // names from the ETF exclusion sample) reached the ranked output.
   const eligibleSymbols = assetIndex.filter(a => a.isEligibleInstrument).map(a => a.symbol);
 
-  const priorCloses = await _getPriorCloses(eligibleSymbols);
+  const priorCloses = await _getPriorCloses(eligibleSymbols, client);
   const priceFilteredSymbols = eligibleSymbols.filter(sym => _inPriceRange(priorCloses[sym]));
 
   console.log(`getUniverse('premarket-gap'): ${assetIndex.length} tradable -> ${eligibleSymbols.length} instrument-eligible -> ${priceFilteredSymbols.length} with prior close in $1-$20`);
   if (!priceFilteredSymbols.length) return [];
 
-  const { latestBySymbol, missingSymbols } = await _fetchLatestSipMinuteBars(priceFilteredSymbols);
+  const { latestBySymbol, missingSymbols } = await _fetchLatestSipMinuteBars(priceFilteredSymbols, client);
   if (missingSymbols.length) {
     console.warn(`getUniverse('premarket-gap'): ${missingSymbols.length} of ${priceFilteredSymbols.length} symbols had no SIP minute bar in either window pass — excluded from gap ranking, not silently absent.`);
   }
@@ -549,15 +559,24 @@ async function _getPremarketGapUniverse() {
   return [...top50, ...above10pct];
 }
 
-// getUniverse({session, strategy}) — docs/warrior-engine-spec-v2.md Phase 1.
-// strategy: 'movers' | 'premarket-gap' | 'full-filtered'
+// getUniverse({session, strategy}, client) — docs/warrior-engine-spec-v2.md
+// Phase 1. strategy: 'movers' | 'premarket-gap' | 'full-filtered'
 // → [{ symbol, price, prevClose, changePct, volume, source }]
+//
+// client (2026-08-30): the caller's own tagged client (createApiClient,
+// core/api-client.js) — Warrior passes its WARRIOR client, EDGE its own,
+// either or neither. Defaults to the shared CORE client when omitted, so
+// an unattributed call degrades to honestly-unattributed rather than
+// misattributed to whichever engine happened to be hardcoded before. This
+// is the boundary where an engine hands core/ its identity for the
+// duration of one call — core/ itself never learns engine names, stays
+// "owned by neither engine" per this file's own header.
 //
 // 'full-filtered' is not yet built — calling it throws rather than
 // silently returning an empty/wrong universe.
-async function getUniverse({ session, strategy }) {
-  if (strategy === 'movers') return _getMoversUniverse(session);
-  if (strategy === 'premarket-gap') return _getPremarketGapUniverse();
+async function getUniverse({ session, strategy }, client = _coreClient) {
+  if (strategy === 'movers') return _getMoversUniverse(session, client);
+  if (strategy === 'premarket-gap') return _getPremarketGapUniverse(client);
   throw new Error(`getUniverse: strategy '${strategy}' is not implemented yet.`);
 }
 
@@ -778,23 +797,6 @@ async function diagnosePrevDailyBarCoverage() {
   };
 }
 
-// Temporarily wraps the shared alpacaGet to count requests made during fn(),
-// without changing alpacaGet's signature or any production caller's
-// contract — this is a diagnostic-only need, not a reason to thread a
-// counter through _getAssetIndex/_getPriorCloses's real return shapes.
-// Restored in a finally so a thrown error never leaves the global wrapped.
-async function _countRequests(fn) {
-  const real = alpacaGet;
-  let count = 0;
-  alpacaGet = (...args) => { count++; return real(...args); };
-  try {
-    const result = await fn();
-    return { result, count };
-  } finally {
-    alpacaGet = real;
-  }
-}
-
 // Runs the real premarket-gap strategy stage by stage — NOT via
 // getUniverse(), which would hide per-stage cost behind one total and (with
 // no cache for minute bars) double the actual SIP request cost if this then
@@ -806,20 +808,44 @@ async function _countRequests(fn) {
 // time and coverage rate (symbols that got a bar, after both minute-bar
 // passes, divided by symbols requested) so the two-tier fetch's tradeoff
 // (see _fetchLatestSipMinuteBars) is measured, not assumed away.
+//
+// Per-stage counts come from core/api-client.js's getRequestStats/
+// diffRequestStats (2026-08-30 fix) — a snapshot of the shared, issue-time
+// tally before and after each stage, not the old per-function _countRequests
+// monkey-patch (retired: no concurrency protection, see the commit that
+// removed it). Labeled requestsObserved, not requests, for the same reason
+// every consumer of this mechanism is: it's a diff over a shared counter,
+// exact only if nothing else hits the queue during the window, never an
+// undercount the way the old per-function threading was.
 async function diagnosePremarketGap() {
   const session = getMarketStatus().status;
   const t0 = Date.now();
+  // Own EDGE client (2026-08-30) — this diagnostic is triggered from
+  // app.js's own Settings/dev-tools screen, genuinely EDGE's own call, not
+  // shared. Passing it through to every stage below is what makes the
+  // getRequestStats('EDGE') snapshots below actually measure something:
+  // before this fix these calls went through the CORE-default client, so
+  // the EDGE-scoped diffs were silently reading zero regardless of real
+  // activity — a latent gap in this session's own earlier Q1 fix, closed
+  // here as a direct consequence of giving this function a real client.
+  const client = createApiClient('EDGE');
 
-  const { result: assetIndex, count: assetIndexRequests } = await _countRequests(() => _getAssetIndex());
+  const beforeAssetIndex = getRequestStats('EDGE');
+  const assetIndex = await _getAssetIndex(client);
+  const assetIndexRequestsObserved = diffRequestStats(beforeAssetIndex, getRequestStats('EDGE')).issued;
   const eligibleSymbols = assetIndex.filter(a => a.isEligibleInstrument).map(a => a.symbol);
 
-  const { result: priorCloses, count: priorClosesRequests } = await _countRequests(() => _getPriorCloses(eligibleSymbols));
+  const beforePriorCloses = getRequestStats('EDGE');
+  const priorCloses = await _getPriorCloses(eligibleSymbols, client);
+  const priorClosesRequestsObserved = diffRequestStats(beforePriorCloses, getRequestStats('EDGE')).issued;
   const priceFilteredSymbols = eligibleSymbols.filter(sym => _inPriceRange(priorCloses[sym]));
 
+  const beforeMinuteBars = getRequestStats('EDGE');
   const barsResult = priceFilteredSymbols.length
-    ? await _fetchLatestSipMinuteBars(priceFilteredSymbols)
-    : { latestBySymbol: {}, missingSymbols: [], pass1Requests: 0, pass2Requests: 0 };
-  const { latestBySymbol, missingSymbols, pass1Requests, pass2Requests } = barsResult;
+    ? await _fetchLatestSipMinuteBars(priceFilteredSymbols, client)
+    : { latestBySymbol: {}, missingSymbols: [] };
+  const minuteBarsRequestsObserved = diffRequestStats(beforeMinuteBars, getRequestStats('EDGE')).issued;
+  const { latestBySymbol, missingSymbols } = barsResult;
 
   const { withGap, top50, above10pct } = _buildGapResults(priceFilteredSymbols, latestBySymbol, priorCloses);
   const wallClockMs = Date.now() - t0;
@@ -849,12 +875,11 @@ async function diagnosePremarketGap() {
     resultCount: top50.length + above10pct.length,
     sample: [...top50, ...above10pct].slice(0, 10),
     letterDistribution,
-    requests: {
-      assetIndex: assetIndexRequests,
-      priorCloses: priorClosesRequests,
-      minuteBarsPass1: pass1Requests,
-      minuteBarsPass2: pass2Requests,
-      total: assetIndexRequests + priorClosesRequests + pass1Requests + pass2Requests,
+    requestsObserved: {
+      assetIndex: assetIndexRequestsObserved,
+      priorCloses: priorClosesRequestsObserved,
+      minuteBars: minuteBarsRequestsObserved,
+      total: assetIndexRequestsObserved + priorClosesRequestsObserved + minuteBarsRequestsObserved,
     },
     wallClockMs,
     coverageRate,

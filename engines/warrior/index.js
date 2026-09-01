@@ -1,4 +1,4 @@
-// engines/warrior/index.js — Warrior engine. docs/warrior-engine-spec-v2.md
+﻿// engines/warrior/index.js — Warrior engine. docs/warrior-engine-spec-v2.md
 // Phase 2 (scaffold) + Phase 3 (5 Pillars gate) + Phase 4 (replay harness)
 // + Phase 5 (setup detection).
 //
@@ -14,16 +14,19 @@
 // Runs in the same global scope as app.js/core/*.js despite being a module
 // (only this file's own top-level declarations are module-scoped) — so it
 // references registerEngine/state/showGlobalErrorToast/getMarketStatus/
-// getUniverse/renderWarriorTab/_countRequests/getAvailableBudget as
-// ordinary globals. That's expected, not a boundary leak: the rule this
-// phase enforces is "nothing outside this file reaches INTO Warrior code
-// except through the registry," not "Warrior code can't read the app's
-// shared globals or call its shared utilities" — Phase 2 already
-// established calling showGlobalErrorToast this way, Phase 3 did the same
-// for renderWarriorTab and core/universe.js's request-counting
-// diagnostic, and Phase 5 does it again for app.js's getAvailableBudget
-// (position-sizing's budget cap reuses EDGE's own budget-bar formula
-// rather than computing a second, parallel notion of "available").
+// getUniverse/renderWarriorTab/getRequestStats/diffRequestStats/
+// getAvailableBudget as ordinary globals. That's expected, not a boundary
+// leak: the rule this phase enforces is "nothing outside this file reaches
+// INTO Warrior code except through the registry," not "Warrior code can't
+// read the app's shared globals or call its shared utilities" — Phase 2
+// already established calling showGlobalErrorToast this way, Phase 3 did
+// the same for renderWarriorTab and (below) core/api-client.js's shared
+// request-stats tally (getRequestStats/diffRequestStats, 2026-08-30 —
+// replaces the retired core/universe.js:_countRequests, which all three
+// of this function's fetch stages used to call), and Phase 5 does it
+// again for app.js's getAvailableBudget (position-sizing's budget cap
+// reuses EDGE's own budget-bar formula rather than computing a second,
+// parallel notion of "available").
 import { evaluateGateBatch, _selectStrategy } from './gate.js';
 import { runReplayForSymbols } from './replay.js';
 import { evaluateSetupsBatch, SETUP_REPLAY_CATALOG, ALL_SETUPS_ID, scanDateRangeForSetups, estimateRangeScanRequests, _tradingDaysBetween } from './setups.js';
@@ -54,15 +57,23 @@ async function _scanTick() {
     const session = (typeof getMarketStatus === 'function') ? getMarketStatus().status : 'CLOSED';
     const strategy = _selectStrategy(session);
 
-    // Wrapped with _countRequests (core/universe.js — already relied on by
-    // diagnosePremarketGap there) unconditionally, not just when logging
-    // below: negligible overhead (it just proxies the shared alpacaGet for
-    // the duration of one call), and keeping it unconditional means the
-    // logging line below can be deleted on its own later without also
-    // having to restore two different call shapes for getUniverse/
-    // evaluateGateBatch.
-    const { result: universe, count: universeRequests } = await _countRequests(() => getUniverse({ session, strategy }));
-    const { result: gateResult, count: gateRequests } = await _countRequests(() => evaluateGateBatch(universe, session));
+    // Snapshot-diffed via the shared request-stats tally (core/api-client.js,
+    // 2026-08-30), not counted unconditionally, not just when logging below:
+    // negligible overhead (two object-spread snapshots per call), and
+    // keeping it unconditional means the logging line below can be deleted
+    // on its own later without restoring two different call shapes for
+    // getUniverse/evaluateGateBatch. Snapshotting the GLOBAL tally, not
+    // engine-scoped ('WARRIOR') — alpacaGet still hardcodes engine='EDGE'
+    // for every request regardless of caller (a stale Phase 0.5 assumption,
+    // not yet fixed), so a 'WARRIOR'-scoped read would silently show zero
+    // here rather than actually isolating Warrior's own traffic.
+    const beforeUniverse = getRequestStats();
+    const universe = await getUniverse({ session, strategy });
+    const universeRequestsObserved = diffRequestStats(beforeUniverse, getRequestStats()).issued;
+
+    const beforeGate = getRequestStats();
+    const gateResult = await evaluateGateBatch(universe, session);
+    const gateRequestsObserved = diffRequestStats(beforeGate, getRequestStats()).issued;
     const { results, rvolCheckable } = gateResult;
 
     // Phase 5: setup detection runs only for QUALIFIED candidates (NEAR
@@ -76,9 +87,9 @@ async function _scanTick() {
     const qualified = results.filter(r => r.tier === 'QUALIFIED');
     const riskPerTradeDollars = (parseFloat(state.settings?.budget) || 0) * (parseFloat(state.settings?.riskPerTradePct) || 0) / 100;
     const availableBudget = (typeof getAvailableBudget === 'function') ? getAvailableBudget() : 0;
-    const { result: setupsResult, count: setupsRequests } = await _countRequests(() =>
-      evaluateSetupsBatch(qualified, session, { now: new Date(), riskPerTradeDollars, availableBudget })
-    );
+    const beforeSetups = getRequestStats();
+    const setupsResult = await evaluateSetupsBatch(qualified, session, { now: new Date(), riskPerTradeDollars, availableBudget });
+    const setupsRequestsObserved = diffRequestStats(beforeSetups, getRequestStats()).issued;
     for (const r of qualified) {
       const sr = setupsResult.resultsBySymbol[r.symbol];
       r.setups = sr ? sr.setups : [];
@@ -98,11 +109,11 @@ async function _scanTick() {
     // answer the acceptance bullet's actual question. Logs every
     // regular-session scan, not just the first, so it's hard to miss
     // glancing at the console once. DELETE this whole block (and revert
-    // the three _countRequests-wrapped calls above to plain, unwrapped
-    // ones) once both are confirmed live.
+    // the three snapshot-diffed calls above to plain, unwrapped ones)
+    // once both are confirmed live.
     if (session === 'OPEN') {
-      const total = universeRequests + gateRequests + setupsRequests;
-      console.log(`[PHASE-3-UNVERIFIED] regular-session scan — universe: ${universeRequests} req, gate: ${gateRequests} req, setups: ${setupsRequests} req, total: ${total} req (acceptance: <30 for a 50-symbol universe). Also confirm feed=sip in the network log for this scan's requests.`);
+      const total = universeRequestsObserved + gateRequestsObserved + setupsRequestsObserved;
+      console.log(`[PHASE-3-UNVERIFIED] regular-session scan — universe: ${universeRequestsObserved} req observed, gate: ${gateRequestsObserved} req observed, setups: ${setupsRequestsObserved} req observed, total: ${total} req (acceptance: <30 for a 50-symbol universe). Also confirm feed=sip in the network log for this scan's requests.`);
     }
 
     _lastScanResults = { session, results, scannedAt: new Date(), rvolCheckable };

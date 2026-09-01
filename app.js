@@ -226,6 +226,23 @@ async function newPinSubmit() {
 
 const VERSION = 'v2.9.7';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
+// Own tagged client (2026-08-30, engine-tagging fix) — app.js's one direct
+// alpacaGet call site (fetchSellTimingBars) uses this instead of the bare
+// global, which now defaults to 'CORE' (unattributed) rather than the old
+// hardcoded-everywhere 'EDGE'. A plain `const alpacaGet = ...` shadow
+// isn't safe here the way it is in Warrior's real ES modules — app.js is
+// a classic script sharing one global lexical scope with every other
+// core/*.js file, so redeclaring the shared `alpacaGet` name a second
+// time is a parse-time collision, not a local shadow. A distinctly-named
+// client avoids that entirely.
+const edgeApiClient = createApiClient('EDGE');
+// Separate client for checkPriceAlerts' background poll (2026-08-30) —
+// priority is fixed at construction, the same static-property shape as
+// engine, so it replaces withBackgroundPriority's ambient flag (retired,
+// core/api-client.js) without threading a priority parameter through
+// fetchSnapshots' other callers, all of which stay foreground via
+// edgeApiClient/the default CORE client.
+const backgroundEdgeClient = createApiClient('EDGE', 'background');
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 // SUPABASE_URL/SUPABASE_ANON_KEY/supabaseClient moved to core/store.js (Phase 0 extraction).
@@ -1052,7 +1069,7 @@ async function fetchSellTimingBars(ticker, buyDate, sellDate) {
   const spanDays = Math.ceil((new Date(windowEnd + 'T00:00:00Z') - new Date(buyDate + 'T00:00:00Z')) / 86400000);
   const limit = Math.max(spanDays + 5, 15);
   try {
-    const data = await alpacaGet(`/stocks/${ticker}/bars`, {
+    const data = await edgeApiClient.alpacaGet(`/stocks/${ticker}/bars`, {
       timeframe: '1Day', start: buyDate, limit, sort: 'asc', feed: 'iex'
     });
     return data.bars || [];
@@ -7101,8 +7118,8 @@ async function testPremarketGap() {
   showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
     <div class="test-result">Session: ${r.session}</div>
     <div class="test-result">${r.tradableCount} tradable -> ${r.eligibleCount} instrument-eligible -> ${r.priceFilteredCount} with prior close in \$1-\$20 -> ${r.resultCount} returned (top 50 by gap% + anything >=10%)</div>
-    <div class="section-label mt12">Requests by stage</div>
-    <div class="test-result">Asset index: ${r.requests.assetIndex} | Prior closes: ${r.requests.priorCloses} | Minute bars pass 1 (45min): ${r.requests.minuteBarsPass1} | Minute bars pass 2 (3h fallback): ${r.requests.minuteBarsPass2} | Total: ${r.requests.total}</div>
+    <div class="section-label mt12">Requests observed by stage</div>
+    <div class="test-result">Asset index: ${r.requestsObserved.assetIndex} | Prior closes: ${r.requestsObserved.priorCloses} | Minute bars (both passes): ${r.requestsObserved.minuteBars} | Total: ${r.requestsObserved.total}</div>
     <div class="test-result">Wall clock: ${(r.wallClockMs / 1000).toFixed(1)}s</div>
     <div class="test-result">${coverageNote}</div>
     <div class="section-label mt12">First-letter distribution (${r.resultCount} results)</div>
@@ -7250,8 +7267,12 @@ async function checkPriceAlerts() {
     const tickers = [...new Set(state.portfolio.map(p => p.ticker))];
     // Phase 0.5: this is the background poller the rate-limit queue's
     // priority ordering exists to isolate from whatever the user is
-    // actively looking at — see withBackgroundPriority in core/api-client.js.
-    const snaps = await withBackgroundPriority(() => fetchSnapshots(tickers));
+    // actively looking at. Own client (2026-08-30, replacing
+    // withBackgroundPriority — retired, see core/api-client.js for why the
+    // ambient flag it used was unsafe): priority is a static property of
+    // this client, not runtime state, so it can't leak onto an unrelated
+    // foreground request the way the ambient flag could.
+    const snaps = await fetchSnapshots(tickers, undefined, backgroundEdgeClient);
 
     for (const pos of state.portfolio) {
       const snap = snaps[pos.ticker];

@@ -17,6 +17,12 @@ function loadUniverse(alpacaGetMock, stateOverrides) {
   global.ptDateStr = () => '2026-08-25';
   global.chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
   global.alpacaGet = alpacaGetMock;
+  // Minimal stand-in for core/api-client.js's real createApiClient/
+  // _coreClient (2026-08-30) — this file tests these two fetchers'
+  // summation/caching logic, not engine tagging (see
+  // tests/engine-tagging.test.js for that).
+  global.createApiClient = () => ({ alpacaGet: global.alpacaGet });
+  global._coreClient = global.createApiClient('CORE');
   const src = readSource('core/universe.js');
   const exposeCode = `
     global.__fetchCumulativeMinuteVolume = _fetchCumulativeMinuteVolume;
