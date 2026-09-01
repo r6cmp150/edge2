@@ -200,6 +200,30 @@ function flattenRangeScan(rangeScanResult) {
   return { cells, triggers };
 }
 
+// Per symbol-day-setup distribution summary rows (2026-08-31) — the app
+// computes these already (scanDateRangeForSetups, setups.js) as a
+// `distribution` key alongside `bySetup`; this just flattens them into
+// the same {date, symbol, setup, ...} shape as the matrix, for a
+// standalone artifact. Range scans only for now — single-day replay
+// (flattenSingleDay below) doesn't go through scanDateRangeForSetups and
+// doesn't carry this field.
+function flattenDistribution(rangeScanResult) {
+  const { setupIds, symbols, tradingDays, resultsByDate } = rangeScanResult;
+  const rows = [];
+  for (const symbol of symbols) {
+    for (const date of tradingDays) {
+      const dayResult = resultsByDate[date]?.[symbol];
+      if (!dayResult || dayResult.notEvaluated || !dayResult.distribution) continue;
+      for (const setup of setupIds) {
+        const d = dayResult.distribution[setup];
+        if (!d) continue;
+        rows.push({ date, symbol, setup, ...d });
+      }
+    }
+  }
+  return rows;
+}
+
 function flattenSingleDay(replayResult) {
   const cells = [];
   const triggers = [];
@@ -378,6 +402,7 @@ async function main() {
 
     const isRange = !!debugData.lastRangeScanResult;
     const flattened = isRange ? flattenRangeScan(debugData.lastRangeScanResult) : flattenSingleDay(debugData.lastReplayResult);
+    const distribution = isRange ? flattenDistribution(debugData.lastRangeScanResult) : [];
     const appReportedRequests = isRange ? debugData.lastRangeScanResult.requests : debugData.lastReplayResult.requests;
     const setupsCount = isRange ? debugData.lastRangeScanResult.setupIds.length : Object.keys(Object.values(debugData.lastReplayResult.resultsBySymbol)[0]?.bySetup || {}).length;
     const tradingDaysCount = isRange ? debugData.lastRangeScanResult.tradingDays.length : 1;
@@ -408,6 +433,7 @@ async function main() {
     writeFileSync(outPath('meta'), JSON.stringify(meta, null, 2));
     writeFileSync(outPath('matrix'), JSON.stringify(flattened.cells, null, 2));
     writeFileSync(outPath('triggers'), JSON.stringify(flattened.triggers, null, 2));
+    writeFileSync(outPath('distribution'), JSON.stringify(distribution, null, 2));
     writeFileSync(outPath('console'), JSON.stringify(consoleLogs, null, 2));
     writeFileSync(outPath('errors'), JSON.stringify({ pageErrors, failedRequests }, null, 2));
     writeFileSync(outPath('requests'), JSON.stringify(alpacaRequests, null, 2));
