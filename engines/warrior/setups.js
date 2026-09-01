@@ -769,10 +769,23 @@ function _tradingDaysBetween(startDateStr, endDateStr) {
 // carry-forward optimization below succeeds (one prevClose fetch for the
 // whole range, not one per day). A symbol with real trading gaps can
 // need more; this is a planning number, not a promise.
+// prevCloseRequests assumes the PESSIMISTIC case, not the best case: the
+// carry-forward chain in scanDateRangeForSetups is per-BATCH, not
+// per-symbol — fetchPrevCloseAsOf issues one request per day for
+// whichever symbols are still "missing" a same-adjacency prevClose, and
+// a single symbol that never returns bars (typo, delisted ticker, wrong
+// exchange — not hypothetical, confirmed live via the replay harness's
+// permanent ZZZZQQ control symbol) can never write its own
+// prevCloseBySymbol entry, so it stays "missing" forever and forces that
+// whole batch's request to re-fire every day for the rest of the range.
+// Assuming the optimistic one-fetch-for-the-whole-range case understates
+// cost for exactly the input (a bad symbol in the list) a guardrail
+// exists to catch. Worst case is chunksPerBatch requests EVERY day, so
+// that's what's estimated: a guardrail must not under-promise.
 function estimateRangeScanRequests(setupIds, symbolCount, tradingDaysCount) {
   const chunksPerBatch = Math.ceil(Math.max(symbolCount, 1) / REPLAY_CHUNK_SIZE);
   const barRequests = tradingDaysCount * chunksPerBatch;
-  const prevCloseRequests = _anyNeedsPrevClose(setupIds) ? chunksPerBatch : 0;
+  const prevCloseRequests = _anyNeedsPrevClose(setupIds) ? tradingDaysCount * chunksPerBatch : 0;
   return barRequests + prevCloseRequests;
 }
 
