@@ -212,7 +212,14 @@ function computeArmedLevels(bars) {
 // (barsSoFar) -> verdict interface exactly.
 
 function makeGapAndGoClassifier({ prevClose }, config = SETUP_CONFIG['gap-and-go']) {
-  return function gapAndGoClassifier(barsSoFar) {
+  // Third param (unused) keeps this closure's call shape identical to
+  // hodMomentumClassifier/abcdClassifier/vwapMomentumClassifier's
+  // (barsSoFar, config, observe) — config is already bound above via this
+  // factory's own default parameter, not re-passed per call, but a
+  // uniform 3-arg shape across all five classifiers means callers (see
+  // captureEvaluationDistribution) don't need to special-case which
+  // family a setup id belongs to.
+  return function gapAndGoClassifier(barsSoFar, _unusedConfig, observe) {
     if (typeof prevClose !== 'number' || prevClose <= 0) return null;
     const premarketBars = barsSoFar.filter(_isPremarketBar);
     if (!premarketBars.length) return null;
@@ -230,8 +237,16 @@ function makeGapAndGoClassifier({ prevClose }, config = SETUP_CONFIG['gap-and-go
     const avgVol = _mean(priorRegularBars.map(b => b.v));
     if (!(avgVol > 0)) return null;
     const volumeMultiple = current.v / avgVol;
-    if (volumeMultiple < config.volumeMultiple) return null;
     const baselineSpanMinutes = priorRegularBars.length > 1 ? _minutesBetween(priorRegularBars[0], priorRegularBars[priorRegularBars.length - 1]) : 0;
+    // Distribution capture (2026-08-31): fires for EVERY bar that reaches
+    // this point, regardless of whether volumeMultiple clears
+    // config.volumeMultiple below — trigger rows alone are censored at
+    // the threshold, and thresholds can't be calibrated from a
+    // population that never shows what fell just short of them. observe
+    // is optional (undefined for every real detection call, live or
+    // replay) and reuses this exact computation, not a duplicate of it.
+    if (observe) observe({ volumeMultiple, baselineSpanMinutes, baselineBarCount: priorRegularBars.length });
+    if (volumeMultiple < config.volumeMultiple) return null;
 
     return {
       setupId: 'gap-and-go',
@@ -270,7 +285,7 @@ function makeGapAndGoClassifier({ prevClose }, config = SETUP_CONFIG['gap-and-go
   };
 }
 
-function hodMomentumClassifier(barsSoFar, config = SETUP_CONFIG['hod-momentum']) {
+function hodMomentumClassifier(barsSoFar, config = SETUP_CONFIG['hod-momentum'], observe) {
   const regularBars = barsSoFar.filter(_isRegularSessionBar);
   if (!regularBars.length) return null;
   const current = regularBars[regularBars.length - 1];
@@ -284,6 +299,10 @@ function hodMomentumClassifier(barsSoFar, config = SETUP_CONFIG['hod-momentum'])
   const baseline = _volumeBaselineOverMinutes(regularBars, regularBars.length - 1, config.priorMinutesForMeanVolume);
   if (!baseline || !(baseline.meanVol > 0)) return null;
   const volumeMultiple = current.v / baseline.meanVol;
+  // Distribution capture (2026-08-31): see gap-and-go's identical comment
+  // above — fires for every bar reaching this point regardless of the
+  // threshold check below.
+  if (observe) observe({ volumeMultiple, baselineSpanMinutes: baseline.spanMinutes, baselineBarCount: baseline.barCount });
   if (volumeMultiple < config.volumeMultiple) return null;
 
   return {
@@ -318,7 +337,7 @@ function hodMomentumClassifier(barsSoFar, config = SETUP_CONFIG['hod-momentum'])
 // later bars arrive, which is the correct behavior for a live, evolving
 // read of the pattern, not a bug; the re-arm mechanism (runReplay) still
 // prevents rapid re-triggering right after a completed breakout.
-function abcdClassifier(barsSoFar, config = SETUP_CONFIG['abcd']) {
+function abcdClassifier(barsSoFar, config = SETUP_CONFIG['abcd'], observe) {
   const regularBars = barsSoFar.filter(_isRegularSessionBar);
   if (regularBars.length < 5) return null; // A, B, C among prior bars, plus a current/trigger bar
 
@@ -361,8 +380,12 @@ function abcdClassifier(barsSoFar, config = SETUP_CONFIG['abcd']) {
   if (current.h <= B) return null;
   if (!(bcMeanVol > 0)) return null;
   const volumeMultiple = current.v / bcMeanVol;
-  if (volumeMultiple < config.volumeMultiple) return null;
   const baselineSpanMinutes = bcBars.length > 1 ? _minutesBetween(bcBars[0], bcBars[bcBars.length - 1]) : 0;
+  // Distribution capture (2026-08-31): see gap-and-go's identical comment
+  // above — fires for every bar reaching this point regardless of the
+  // threshold check below.
+  if (observe) observe({ volumeMultiple, baselineSpanMinutes, baselineBarCount: bcBars.length });
+  if (volumeMultiple < config.volumeMultiple) return null;
 
   return {
     setupId: 'abcd',
@@ -403,7 +426,7 @@ function abcdClassifier(barsSoFar, config = SETUP_CONFIG['abcd']) {
 // inside a 0.5% tolerance).
 const VWAP_ENTRY_EPSILON = 0.0001;
 
-function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum']) {
+function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum'], observe) {
   const regularBars = barsSoFar.filter(_isRegularSessionBar);
   if (regularBars.length < 3) return null;
 
@@ -476,6 +499,11 @@ function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum'
   const baseline = _volumeBaselineOverMinutes(regularBars, currentIndex, config.priorMinutesForMeanVolume);
   if (!baseline || !(baseline.meanVol > 0)) return null;
   const volumeMultiple = current.v / baseline.meanVol;
+  // Distribution capture (2026-08-31): see gap-and-go's identical comment
+  // above — fires for every bar reaching this point (i.e. every bar that
+  // already cleared the pullback/cross/VWAP-entry gates) regardless of
+  // the threshold check below.
+  if (observe) observe({ volumeMultiple, baselineSpanMinutes: baseline.spanMinutes, baselineBarCount: baseline.barCount });
   if (volumeMultiple < config.volumeMultiple) return null;
 
   return {
@@ -496,7 +524,8 @@ function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum'
 }
 
 function makeRedToGreenClassifier({ prevClose }, config = SETUP_CONFIG['red-to-green']) {
-  return function redToGreenClassifier(barsSoFar) {
+  // Third param (unused) — see gapAndGoClassifier's identical comment above.
+  return function redToGreenClassifier(barsSoFar, _unusedConfig, observe) {
     const regularBars = barsSoFar.filter(_isRegularSessionBar);
     if (regularBars.length < 2) return null;
     const referenceClose = config.useSessionOpen ? regularBars[0].o : prevClose;
@@ -510,6 +539,10 @@ function makeRedToGreenClassifier({ prevClose }, config = SETUP_CONFIG['red-to-g
     const baseline = _volumeBaselineOverMinutes(regularBars, regularBars.length - 1, config.priorMinutesForMeanVolume);
     if (!baseline || !(baseline.meanVol > 0)) return null;
     const volumeMultiple = current.v / baseline.meanVol;
+    // Distribution capture (2026-08-31): see gap-and-go's identical
+    // comment above — fires for every bar reaching this point regardless
+    // of the threshold check below.
+    if (observe) observe({ volumeMultiple, baselineSpanMinutes: baseline.spanMinutes, baselineBarCount: baseline.barCount });
     if (volumeMultiple < config.volumeMultiple) return null;
 
     return {
@@ -760,6 +793,83 @@ function _evaluateSetupsAgainstBars(setupIds, bars, prevCloseUsable) {
   return bySetup;
 }
 
+// ── Distribution capture (2026-08-31) ────────────────────────────────────
+// Required before thresholds can be calibrated rather than guessed:
+// trigger rows are censored at the current volumeMultiple threshold by
+// construction (a bar that fell short never becomes a trigger row), so
+// they can never show what the near-misses looked like or how close the
+// threshold is to the bulk of the distribution. Walks bars once per
+// setup with the SAME incremental barsSoFar-grows-one-bar-at-a-time
+// pattern runReplay uses (no lookahead — a bar's observation only ever
+// reflects bars up to and including itself), and records every
+// observation each classifier's own `observe` callback reports. This
+// reuses the exact volumeMultiple/baseline computation each classifier
+// already does for real detection — not a parallel reimplementation that
+// could drift out of sync with it.
+function captureEvaluationDistribution(setupIds, bars, prevCloseUsable) {
+  _precomputeBarSessionFields(bars);
+  const observationsBySetup = {};
+  for (const setupId of setupIds) {
+    const entry = SETUP_REPLAY_CATALOG.find(e => e.id === setupId);
+    if (!entry) continue;
+    if (entry.needsPrevClose && prevCloseUsable == null) {
+      observationsBySetup[setupId] = []; // same precondition _evaluateSetupsAgainstBars enforces — no prevClose, no observations, not a fabricated zero-cost run
+      continue;
+    }
+    const classifier = entry.build({ prevClose: prevCloseUsable });
+    const observations = [];
+    for (let i = 0; i < bars.length; i++) {
+      const barsSoFar = bars.slice(0, i + 1);
+      classifier(barsSoFar, undefined, (obs) => observations.push({ index: i, ...obs }));
+    }
+    observationsBySetup[setupId] = observations;
+  }
+  return observationsBySetup;
+}
+
+// Nearest-rank percentile — no interpolation, so every reported value is
+// an actual observation from the sample, never a synthesized number
+// between two real ones (matters for eyeballing "is p99 close to an
+// actual outlier bar or an artifact of interpolation").
+function _percentile(sortedAscending, p) {
+  if (!sortedAscending.length) return null;
+  const idx = Math.min(sortedAscending.length - 1, Math.floor((p / 100) * sortedAscending.length));
+  return sortedAscending[idx];
+}
+
+function _distributionSummary(values) {
+  const finite = values.filter((v) => typeof v === 'number' && Number.isFinite(v));
+  if (!finite.length) return { count: 0, median: null, p75: null, p90: null, p99: null, max: null };
+  const sorted = [...finite].sort((a, b) => a - b);
+  return {
+    count: sorted.length,
+    median: _percentile(sorted, 50),
+    p75: _percentile(sorted, 75),
+    p90: _percentile(sorted, 90),
+    p99: _percentile(sorted, 99),
+    max: sorted[sorted.length - 1],
+  };
+}
+
+// Per symbol-day: caller supplies bars for ONE symbol on ONE day
+// (matching scanDateRangeForSetups's own per-day-per-symbol loop, where
+// this is called from) — summary stats over volumeMultiple,
+// baselineSpanMinutes, and baselineBarCount for every bar each setup's
+// classifier actually evaluated that day, not just the ones that fired.
+function summarizeEvaluationDistribution(setupIds, bars, prevCloseUsable) {
+  const observationsBySetup = captureEvaluationDistribution(setupIds, bars, prevCloseUsable);
+  const summary = {};
+  for (const setupId of Object.keys(observationsBySetup)) {
+    const obs = observationsBySetup[setupId];
+    summary[setupId] = {
+      volumeMultiple: _distributionSummary(obs.map((o) => o.volumeMultiple)),
+      baselineSpanMinutes: _distributionSummary(obs.map((o) => o.baselineSpanMinutes)),
+      baselineBarCount: _distributionSummary(obs.map((o) => o.baselineBarCount)),
+    };
+  }
+  return summary;
+}
+
 // ── Range scan: validate on real history across many days ───────────────
 // docs/warrior-engine-spec-v2.md Phase 5's disagreement point (2026-08-29):
 // unit-test fixtures prove internal consistency, not reachability — a
@@ -935,7 +1045,15 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
       // barCount visible on every row — the only thing that distinguishes
       // "evaluated, didn't fire" from "never evaluated" when reading a
       // matrix by eye (2026-08-30 live-validation note).
-      resultsByDate[dateStr][sym] = { barCount: bars.length, bySetup: _evaluateSetupsAgainstBars(setupIds, bars, prevCloseUsable) };
+      // distribution: per symbol-day summary stats over EVERY evaluated
+      // bar (not just triggers) — see summarizeEvaluationDistribution's
+      // header comment. CPU-only (reuses the same fetched bars, zero
+      // extra requests — doesn't touch the request estimate/accounting).
+      resultsByDate[dateStr][sym] = {
+        barCount: bars.length,
+        bySetup: _evaluateSetupsAgainstBars(setupIds, bars, prevCloseUsable),
+        distribution: summarizeEvaluationDistribution(setupIds, bars, prevCloseUsable),
+      };
       prevCloseBySymbol[sym] = { close: bars[bars.length - 1].c, date: dateStr }; // carry forward regardless of whether THIS scan's setups needed it
     }
   }
@@ -950,5 +1068,6 @@ export {
   computeEntryTargetStop, computeSuggestedShares,
   detectSetupsForCandidate, evaluateSetupsBatch,
   scanDateRangeForSetups, estimateRangeScanRequests,
+  captureEvaluationDistribution, summarizeEvaluationDistribution,
   _sortSetups, _volumeBaselineOverMinutes, _tradingDaysBetween, _previousTradingDayStr,
 };
