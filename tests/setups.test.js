@@ -515,8 +515,10 @@ async function testEstimateRangeScanRequests() {
   const setups = await loadSetups();
   // hod-momentum: no prevClose needed. 10 days, 5 symbols (1 chunk) -> 10 requests.
   assert.strictEqual(setups.estimateRangeScanRequests(['hod-momentum'], 5, 10), 10);
-  // gap-and-go: needs prevClose. Same 10 days, 5 symbols -> 10 + 1 (one prevClose batch).
-  assert.strictEqual(setups.estimateRangeScanRequests(['gap-and-go'], 5, 10), 11);
+  // gap-and-go: needs prevClose. Worst-case assumption: carry-forward may
+  // never succeed (e.g. one bad symbol in the list), so one prevClose
+  // batch PER DAY, not one for the whole range -> 10 bar + 10 prevClose.
+  assert.strictEqual(setups.estimateRangeScanRequests(['gap-and-go'], 5, 10), 20);
   // Symbol count exceeding REPLAY_CHUNK_SIZE (13) needs 2 chunks per day.
   assert.strictEqual(setups.estimateRangeScanRequests(['hod-momentum'], 20, 10), 20);
 }
