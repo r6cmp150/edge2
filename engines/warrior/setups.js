@@ -82,18 +82,38 @@ function _rearmDistancePctFor(setupId) {
 // non-precomputed bar (every hand-built test fixture in
 // tests/setups.test.js) keeps working exactly as before, just without
 // the speed benefit, which doesn't matter at fixture scale.
+// Correct-but-slow degradation is still silent degradation: the fallback
+// below means a future call path that forgets _precomputeBarSessionFields
+// doesn't error, doesn't produce a wrong answer — it just quietly
+// reintroduces the exact 180-second stall, with nothing to say so. One
+// console.warn, the first time ANY of the three fallbacks fires in a
+// session (not per-call — a genuinely missed precompute would otherwise
+// flood the console once per bar), naming which function hit it and the
+// real call stack, so "mysteriously slow again" becomes "precompute
+// didn't run on this path" instead of a re-investigation from zero.
+let _sessionFieldsFallbackWarned = false;
+function _warnSessionFieldsFallback(fnName) {
+  if (_sessionFieldsFallbackWarned) return;
+  _sessionFieldsFallbackWarned = true;
+  const stack = (new Error().stack || '').split('\n').slice(1, 5).join('\n');
+  console.warn(`[Warrior] ${fnName} computed a bar's session fields fresh instead of using the precomputed cache — _precomputeBarSessionFields was skipped on this path. Correct, but this is the exact O(n^2) Intl.DateTimeFormat cost that stalled the 2026-08-25 scan for 180+ seconds; it will reintroduce that stall at real bar counts. Call stack:\n${stack}`);
+}
+
 function _minuteOfDay(bar) {
   if (bar.__minuteOfDay !== undefined) return bar.__minuteOfDay;
+  _warnSessionFieldsFallback('_minuteOfDay');
   const pt = getPT(new Date(bar.t));
   return pt.getHours() * 60 + pt.getMinutes();
 }
 function _isPremarketBar(bar) {
   if (bar.__isPremarketBar !== undefined) return bar.__isPremarketBar;
+  _warnSessionFieldsFallback('_isPremarketBar');
   const m = _minuteOfDay(bar);
   return m >= 60 && m < 390;
 }
 function _isRegularSessionBar(bar) {
   if (bar.__isRegularSessionBar !== undefined) return bar.__isRegularSessionBar;
+  _warnSessionFieldsFallback('_isRegularSessionBar');
   const m = _minuteOfDay(bar);
   return m >= 390 && m < 780;
 }
