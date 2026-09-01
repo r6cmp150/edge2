@@ -129,8 +129,18 @@ function _barIndexAtOrAfter(bars, fromIndexExclusive, targetTimeMs) {
 // session doesn't extend that far (never a partial/misleading window
 // mislabeled as e.g. "5m" when only 2 minutes of bars actually existed —
 // same "not fabricated" discipline as gate.js's not-checked pillars).
-function computeForwardReturns(bars, triggerIndex) {
+//
+// entryPrice (2026-08-31, Bug B): optional, defaults to trigger.c —
+// every existing caller/test that doesn't pass it gets byte-identical
+// results. runReplay passes its own computed triggerPrice explicitly
+// (see below), which for a HIGH-gated classifier (gap-and-go/
+// hod-momentum/abcd) is the broken level, not the bar's close — so
+// returns/MFE/MAE are measured from the same price the trade is actually
+// recorded as entering at, not silently re-anchored to the close behind
+// that entry's back.
+function computeForwardReturns(bars, triggerIndex, entryPrice) {
   const trigger = bars[triggerIndex];
+  const entry = typeof entryPrice === 'number' ? entryPrice : trigger.c;
   const result = {};
 
   const scoreWindow = (horizonIndex) => {
@@ -138,13 +148,13 @@ function computeForwardReturns(bars, triggerIndex) {
     const window = bars.slice(triggerIndex + 1, horizonIndex + 1);
     if (!window.length) return { return: null, mfe: null, mae: null };
     const horizonBar = bars[horizonIndex];
-    const pctReturn = ((horizonBar.c - trigger.c) / trigger.c) * 100;
+    const pctReturn = ((horizonBar.c - entry) / entry) * 100;
     const maxHigh = Math.max(...window.map(b => b.h));
     const minLow = Math.min(...window.map(b => b.l));
     return {
       return: pctReturn,
-      mfe: ((maxHigh - trigger.c) / trigger.c) * 100,
-      mae: ((minLow - trigger.c) / trigger.c) * 100,
+      mfe: ((maxHigh - entry) / entry) * 100,
+      mae: ((minLow - entry) / entry) * 100,
     };
   };
 
@@ -167,12 +177,31 @@ function computeForwardReturns(bars, triggerIndex) {
 // asserted.
 //
 // The harness NEVER reads a price or time field off the classifier's
-// return value — trigger.triggerPrice/triggerTime are always derived from
-// barsSoFar's own last element (== bars[i], the position the harness
-// itself controls). This is a mitigation against a classifier that closes
-// over data outside its argument and tries to self-report a fabricated
-// price, not a claim that such a classifier can be prevented from
-// deciding to trigger early in the first place — see the spec's Phase 4
+// return value — trigger.triggerTime is always derived from barsSoFar's
+// own last element (== bars[i], the position the harness itself
+// controls), and triggerPrice defaults to that same bar's close.
+//
+// priceAtBreakLevel (2026-08-31, Bug B) is the one narrow exception, and
+// it doesn't weaken this principle: a classifier can ask the harness to
+// price entry at verdict.referenceLevel instead of current.c, but
+// referenceLevel was never a self-reported PRICE ACHIEVED — it's a level
+// computed from PRIOR bars only (same trust class already relied on for
+// re-arm's cooling threshold below), and the harness independently
+// verifies it against THIS bar's own high before using it
+// (referenceLevel <= current.h) rather than taking the classifier's word
+// for it. gap-and-go/hod-momentum/abcd all gate on the bar's HIGH
+// (current.h vs. a broken level) while pricing at the CLOSE — a bar
+// whose high broke out and whose close round-tripped back below that
+// level was being priced at the lower close, which is favorable to the
+// setup in every one of these cases (see docs/warrior-engine-spec-v2.md
+// Phase 5's "Bug B" note). Pricing at the level instead is a best-case,
+// zero-slippage fill assumption, not a claim of realism — forward
+// returns computed from it are an upper bound, not a prediction.
+//
+// This is a mitigation against a classifier that closes over data
+// outside its argument and tries to self-report a fabricated price, not
+// a claim that such a classifier can be prevented from deciding to
+// trigger early in the first place — see the spec's Phase 4
 // "Anchoring control" note. A classifier's return value therefore only
 // ever needs to carry `setupId` (plus whatever caller-defined metadata it
 // wants to keep, and — only when rearmDistancePct is in use, see below —
@@ -239,15 +268,36 @@ function runReplay(bars, classifier, { rearmDistancePct } = {}) {
       coolingLevel = typeof verdict.referenceLevel === 'number' ? verdict.referenceLevel : current.c;
       coolingDirection = verdict.referenceDirection === 'below' ? 'below' : 'above';
     }
+
+    // priceAtBreakLevel (Bug B, see header comment above): only trusted
+    // when referenceLevel is a number AND this bar's own high actually
+    // cleared it — verified here, not assumed from the classifier's say-
+    // so. Falls back to the ordinary close-based price otherwise, same
+    // as every other setup.
+    let triggerPrice = current.c;
+    let closedBelowBrokenLevel = false;
+    if (verdict.priceAtBreakLevel && typeof verdict.referenceLevel === 'number' && verdict.referenceLevel <= current.h) {
+      triggerPrice = verdict.referenceLevel;
+      closedBelowBrokenLevel = current.c < verdict.referenceLevel;
+    }
+
     triggers.push({
       setupId: verdict.setupId,
       triggerIndex: i,
       triggerTime: current.t,
-      triggerPrice: current.c,
+      triggerPrice,
+      // barClose (2026-08-31, Bug B): the bar's actual close, retained
+      // unconditionally (not just when priceAtBreakLevel fires) so
+      // closedBelowBrokenLevel is auditable against a real number instead
+      // of standing as an unverifiable assertion — and so triggerPrice
+      // vs. barClose is directly comparable for every setup, not just the
+      // three affected ones.
+      barClose: current.c,
+      closedBelowBrokenLevel,
       referenceLevel: verdict.referenceLevel ?? null,
       margins: verdict.margins ?? null,
       minutesOfSessionRemainingAtTrigger: _minutesUntilRegularSessionClose(current),
-      forwardReturns: computeForwardReturns(bars, i),
+      forwardReturns: computeForwardReturns(bars, i, triggerPrice),
     });
   }
 

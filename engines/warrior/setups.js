@@ -237,6 +237,17 @@ function makeGapAndGoClassifier({ prevClose }, config = SETUP_CONFIG['gap-and-go
       setupId: 'gap-and-go',
       referenceLevel: premarketHigh,
       referenceDirection: 'above',
+      // priceAtBreakLevel (2026-08-31, Bug B): this classifier's gate is
+      // HIGH-based (current.h <= premarketHigh, above) while the harness
+      // was pricing every trigger at the bar's CLOSE regardless — meaning
+      // a bar whose high broke out but whose close round-tripped back
+      // below the level got priced at that lower close, making every
+      // forward return look better than a real fill (near premarketHigh)
+      // would have. Tells runReplay to price entry at referenceLevel
+      // (verifiable — derived from prior bars, and independently checked
+      // there against this bar's own high) instead of current.c. A
+      // best-case, zero-slippage fill, not a claim of realism.
+      priceAtBreakLevel: true,
       // breakoutHigh is included alongside the derived Pct so the margin
       // is recomputable from numbers actually shown in the row: the
       // trigger condition checks the BAR'S HIGH against premarketHigh
@@ -279,6 +290,9 @@ function hodMomentumClassifier(barsSoFar, config = SETUP_CONFIG['hod-momentum'])
     setupId: 'hod-momentum',
     referenceLevel: hod,
     referenceDirection: 'above',
+    // priceAtBreakLevel (2026-08-31, Bug B) — same reasoning as gap-and-go
+    // above: HIGH-based gate, harness was pricing at close regardless.
+    priceAtBreakLevel: true,
     // Same reasoning as gap-and-go above: the trigger condition checks
     // the bar's HIGH against hod, not its close (triggerPrice) — breakoutHigh
     // makes breakoutHighAboveHodPct checkable against a number on the row
@@ -354,6 +368,11 @@ function abcdClassifier(barsSoFar, config = SETUP_CONFIG['abcd']) {
     setupId: 'abcd',
     referenceLevel: B,
     referenceDirection: 'above',
+    // priceAtBreakLevel (2026-08-31, Bug B) — same reasoning as
+    // gap-and-go/hod-momentum: this gate is also HIGH-based
+    // (current.h <= B, above), the same mismatch, just less visible here
+    // since abcd fired only once in the sample that found it.
+    priceAtBreakLevel: true,
     // retracementPct/gainPct are both computed from A and C, neither of
     // which appears anywhere else on the card (only B, as referenceLevel,
     // and the trigger's own close, as triggerPrice, are shown) — without
@@ -373,6 +392,17 @@ function abcdClassifier(barsSoFar, config = SETUP_CONFIG['abcd']) {
   };
 }
 
+// Epsilon for the entry-bar VWAP gate below — absorbs float rounding in
+// the cumulative division only. Real tick size on these symbols is
+// $0.01, ~100x larger, so this can never admit a genuine gap. Distinct
+// on purpose from config.pullbackDistancePct (0.5%): that number answers
+// "is this bar close enough to VWAP to count as a pullback," this one
+// answers "is price above VWAP at entry" — different questions, and
+// borrowing the 0.5% here would readmit the exact case this gate exists
+// to reject (HVII 2026-08-24 idx 141, distanceAboveVwapPct -0.07%, well
+// inside a 0.5% tolerance).
+const VWAP_ENTRY_EPSILON = 0.0001;
+
 function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum']) {
   const regularBars = barsSoFar.filter(_isRegularSessionBar);
   if (regularBars.length < 3) return null;
@@ -387,15 +417,23 @@ function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum'
     return cumVol > 0 ? cumPV / cumVol : null;
   });
 
-  let crossedIndex = -1;
-  for (let i = 1; i < regularBars.length; i++) {
-    if (vwapSeries[i - 1] == null || vwapSeries[i] == null) continue;
-    if (regularBars[i - 1].c < vwapSeries[i - 1] && regularBars[i].c >= vwapSeries[i]) { crossedIndex = i; break; }
-  }
-  if (crossedIndex === -1) return null;
+  const currentIndex = regularBars.length - 1;
+  const current = regularBars[currentIndex];
+  const currentVwap = vwapSeries[currentIndex];
 
+  // MOST-RECENT-qualifying pullback, scanning BACKWARD from the bar
+  // immediately before the trigger bar — not the session's first
+  // qualifying pullback. 2026-08-31 fix: the old forward-from-start
+  // search pinned crossedIndex/pullbackIndex to the FIRST cross and
+  // FIRST pullback of the day and never let them advance (a `break` on
+  // first match against an array that only ever grows means the same
+  // earliest match every call) — one morning pullback armed the setup to
+  // fire on every later bar clearing that one stale level, all day, with
+  // VWAP free to drift anywhere in between. That's the actual mechanism
+  // behind HVII 2026-08-25's 28 naive triggers and both below-VWAP
+  // triggers found in the prior run.
   let pullbackIndex = -1;
-  for (let i = crossedIndex; i < regularBars.length; i++) {
+  for (let i = currentIndex - 1; i >= 1; i--) {
     const vwap = vwapSeries[i];
     if (vwap == null) continue;
     const distPct = Math.abs(regularBars[i].l - vwap) / vwap * 100;
@@ -403,11 +441,29 @@ function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum'
   }
   if (pullbackIndex === -1) return null;
 
-  const currentIndex = regularBars.length - 1;
-  if (currentIndex <= pullbackIndex) return null;
+  // The cross that armed THIS pullback — also most-recent, but searched
+  // backward from the pullback itself, with NO staleness bound of its
+  // own: a cross that happened at the open and held all session before
+  // pulling back late is a legitimate sustained-trend pullback, not a
+  // stale one. Staleness only ever applies to the pullback, never to the
+  // cross that preceded it.
+  let crossedIndex = -1;
+  for (let i = pullbackIndex; i >= 1; i--) {
+    if (vwapSeries[i - 1] == null || vwapSeries[i] == null) continue;
+    if (regularBars[i - 1].c < vwapSeries[i - 1] && regularBars[i].c >= vwapSeries[i]) { crossedIndex = i; break; }
+  }
+  if (crossedIndex === -1) return null;
+
   const pullbackBar = regularBars[pullbackIndex];
-  const current = regularBars[currentIndex];
   if (current.c <= pullbackBar.h) return null;
+
+  // VWAP condition on the ENTRY bar itself (Part 3) — a setup named
+  // "VWAP momentum" enforced the VWAP relationship only historically (at
+  // the cross/pullback), never at entry, which is how two 2026-08-31 gate
+  // runs fired below current VWAP: referenceLevel (the pullback bar's
+  // high) and currentVwap are independent numbers that can diverge by
+  // the time a later bar clears the former.
+  if (currentVwap == null || current.c < currentVwap - VWAP_ENTRY_EPSILON) return null;
 
   // Redesigned 2026-08-29 (live-replay finding): was current.v > prevBar.v
   // (a single-prior-bar volumeRatio, threshold 1.0 -- "any uptick at
@@ -422,7 +478,6 @@ function vwapMomentumClassifier(barsSoFar, config = SETUP_CONFIG['vwap-momentum'
   const volumeMultiple = current.v / baseline.meanVol;
   if (volumeMultiple < config.volumeMultiple) return null;
 
-  const currentVwap = vwapSeries[currentIndex];
   return {
     setupId: 'vwap-momentum',
     referenceLevel: pullbackBar.h,
