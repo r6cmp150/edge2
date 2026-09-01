@@ -214,12 +214,24 @@ function flattenSingleDay(replayResult) {
   return { cells, triggers, classifierId };
 }
 
+// The pre-flight estimate exists to make a scan's cost visible BEFORE
+// committing to it — the guardrail it feeds (RANGE_SCAN_CONFIRM_REQUESTS_
+// THRESHOLD) is only as trustworthy as this number. So the invariant that
+// matters isn't "close in either direction," it's specifically "never
+// under-promises": observed > estimate means a scan that looked cheap
+// enough to skip confirmation could actually cost more than the guardrail
+// claimed. A generous OVER-estimate is safe (if noisy) and not flagged
+// here; ESTIMATE_TOLERANCE only allows observed to run a little UNDER the
+// estimate before that's flagged too, since a wildly loose estimate stops
+// being informative even though it's technically safe.
+const ESTIMATE_TOLERANCE = 2;
+
 // ── Mechanical invariants only — never a claim about whether a setup
 //    SHOULD have fired. That line is deliberate: an assertion encoding
 //    "ABCD should trigger on HVII on 2026-08-24" would carry the same
 //    assumption a wrong classifier already carries, and would pass right
 //    alongside it. These check only that the harness ran cleanly.
-function checkInvariants({ pageErrors, consoleErrors, cells, tradingDaysCount, setupsCount, symbols }) {
+function checkInvariants({ pageErrors, consoleErrors, cells, tradingDaysCount, setupsCount, symbols, estimatedRequests, observedRequests }) {
   const failures = [];
   if (pageErrors.length) failures.push(`${pageErrors.length} uncaught page exception(s)`);
   if (consoleErrors.length) failures.push(`${consoleErrors.length} console.error message(s)`);
@@ -229,6 +241,13 @@ function checkInvariants({ pageErrors, consoleErrors, cells, tradingDaysCount, s
     const count = cells.filter(c => c.symbol === symbol).length;
     const expected = tradingDaysCount * setupsCount;
     if (count !== expected) failures.push(`${symbol}: ${count} cell(s), expected ${tradingDaysCount} trading day(s) × ${setupsCount} setup(s) = ${expected}`);
+  }
+  if (typeof estimatedRequests === 'number') {
+    if (observedRequests > estimatedRequests) {
+      failures.push(`pre-flight estimate under-promised: estimated ${estimatedRequests} request(s), actually issued ${observedRequests} — the confirm-threshold guardrail is unsafe`);
+    } else if (estimatedRequests - observedRequests > ESTIMATE_TOLERANCE) {
+      failures.push(`pre-flight estimate too loose: estimated ${estimatedRequests} request(s), only ${observedRequests} issued (tolerance ${ESTIMATE_TOLERANCE})`);
+    }
   }
   return failures;
 }
@@ -327,6 +346,12 @@ async function main() {
     await page.fill('#warrior-replay-end-date', end);
     await page.fill('#warrior-replay-symbols', symbols.join(', '));
     await page.evaluate(() => window.warriorUpdateReplayEstimate());
+    // Captured HERE, before Run is clicked — the same moment a real user
+    // reads it off the panel — not re-read after the scan finishes, since
+    // nothing between here and the run re-computes it, but reading it at
+    // the point it's actually shown is what makes this a real pre-flight
+    // check rather than a post-hoc one.
+    const preFlightEstimate = await page.evaluate(() => window.__warriorReplayDebug?.lastEstimatedRequests ?? null);
 
     const beforeSnapshot = await page.evaluate(() => JSON.stringify(window.__warriorReplayDebug || null));
 
@@ -358,7 +383,7 @@ async function main() {
     const tradingDaysCount = isRange ? debugData.lastRangeScanResult.tradingDays.length : 1;
 
     const consoleErrors = consoleLogs.filter(c => c.type === 'error');
-    const failures = checkInvariants({ pageErrors, consoleErrors, cells: flattened.cells, tradingDaysCount, setupsCount, symbols });
+    const failures = checkInvariants({ pageErrors, consoleErrors, cells: flattened.cells, tradingDaysCount, setupsCount, symbols, estimatedRequests: preFlightEstimate, observedRequests: alpacaRequests.length });
 
     // Informational, not a pass/fail assertion (staying inside "capture,
     // don't assert" even for a symbol this certain not to be real) — just a
@@ -373,7 +398,7 @@ async function main() {
       isRange, cancelled: isRange ? !!debugData.lastRangeScanResult.cancelled : false,
       tradingDays: isRange ? debugData.lastRangeScanResult.tradingDays : [start],
       setupIds: isRange ? debugData.lastRangeScanResult.setupIds : Object.keys(Object.values(debugData.lastReplayResult.resultsBySymbol)[0]?.bySetup || {}),
-      requests: { appReported: appReportedRequests, observedOnWire_wholeSession: alpacaRequests.length },
+      requests: { appReported: appReportedRequests, observedOnWire_wholeSession: alpacaRequests.length, preFlightEstimate },
       cellCount: flattened.cells.length,
       triggerCount: flattened.triggers.length,
       notEvaluatedControl: { symbol: NOT_EVALUATED_CONTROL_SYMBOL, cellCount: controlCells.length, stateCounts: controlStateCounts },
@@ -388,7 +413,7 @@ async function main() {
     writeFileSync(outPath('requests'), JSON.stringify(alpacaRequests, null, 2));
 
     console.log(`[replay-scan] artifacts written to ${artifactDir}`);
-    console.log(`[replay-scan] cells=${meta.cellCount} triggers=${meta.triggerCount} requests(app-reported)=${appReportedRequests} requests(observed on wire, whole session)=${alpacaRequests.length}`);
+    console.log(`[replay-scan] cells=${meta.cellCount} triggers=${meta.triggerCount} requests(app-reported)=${appReportedRequests} requests(observed on wire, whole session)=${alpacaRequests.length} requests(pre-flight estimate)=${preFlightEstimate}`);
     console.log(`[replay-scan] not-evaluated control (${NOT_EVALUATED_CONTROL_SYMBOL}): ${JSON.stringify(controlStateCounts)}`);
 
     if (failures.length) {

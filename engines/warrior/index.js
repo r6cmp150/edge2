@@ -368,6 +368,15 @@ function _readReplayFormInputs() {
   };
 }
 
+// Last pre-flight estimate this display computed, module-scoped alongside
+// _lastRangeScanResult/_lastReplayResult (below) so _publishReplayDebugHook
+// can expose the NUMBER a harness/test can assert against, instead of
+// parsing it back out of the '≈N request(s)...' text the element renders
+// for a human. Cleared (null) whenever the display itself goes blank/
+// blocked, so a stale number from a previous, different form state can
+// never be read as if it applied to the current one.
+let _lastEstimatedRequests = null;
+
 // Direct DOM update, NOT a full renderWarriorTab() re-render — the panel
 // has several text/date inputs, and a full innerHTML rebuild on every
 // keystroke would drop focus/cursor position out from under whoever's
@@ -380,6 +389,7 @@ function _updateReplayEstimateDisplay() {
   const { dateStr, endDateStr, symbols, classifierId } = _readReplayFormInputs();
   if (!dateStr || !endDateStr || !symbols.length || classifierId === 'example') {
     el.textContent = '';
+    _lastEstimatedRequests = null;
     return;
   }
   const setupIds = _setupIdsForClassifierId(classifierId);
@@ -387,12 +397,21 @@ function _updateReplayEstimateDisplay() {
   if (tradingDays.length > RANGE_SCAN_HARD_CEILING_DAYS) {
     el.textContent = `${tradingDays.length} trading days exceeds the ${RANGE_SCAN_HARD_CEILING_DAYS}-day ceiling — narrow the range.`;
     el.className = 'settings-hint warrior-estimate-blocked';
+    _lastEstimatedRequests = null;
     return;
   }
   const requests = estimateRangeScanRequests(setupIds, symbols.length, tradingDays.length);
   const needsConfirm = tradingDays.length > RANGE_SCAN_CONFIRM_DAYS_THRESHOLD || requests > RANGE_SCAN_CONFIRM_REQUESTS_THRESHOLD;
   el.textContent = `≈${requests} request(s) across ${tradingDays.length} trading day(s)${needsConfirm ? ' — will require confirmation' : ''}`;
   el.className = 'settings-hint';
+  _lastEstimatedRequests = requests;
+  // This is a direct DOM update, not a renderWarriorTab() re-render (see
+  // above), so it's the only place that touches _lastEstimatedRequests
+  // that would otherwise re-publish window.__warriorReplayDebug — without
+  // this call the debug hook would keep showing whatever estimate (or
+  // null) was live the last time a full render happened, not the one this
+  // function just computed.
+  _publishReplayDebugHook();
 }
 
 async function _runReplayFromUI() {
@@ -622,6 +641,7 @@ function _publishReplayDebugHook() {
     rangeScanProgress: _rangeScanProgress,
     rangeScanConfirmPending: _rangeScanConfirmPending,
     replayInFlight: _replayInFlight,
+    lastEstimatedRequests: _lastEstimatedRequests,
   };
 }
 
