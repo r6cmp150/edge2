@@ -283,6 +283,32 @@ async function testMinutesOfSessionRemainingAtTriggerMakesCloseHorizonInterpreta
     'the whole point: two triggers whose "close" return might look superficially comparable have wildly different real time behind that number, and this field is what makes that visible');
 }
 
+// ── _sessionPhase (flag, never a filter — 2026-08-31) ────────────────────
+
+async function testSessionPhaseBoundaries() {
+  const replay = await loadReplay();
+  const start = new Date('2026-08-26T13:30:00.000Z').getTime(); // 6:30am PT, session open
+  const atMinute = (m) => bar(new Date(start + m * 60000).toISOString(), 1, 1, 1, 1);
+
+  const cases = [
+    [0, 'opening'],
+    [4, 'opening'],
+    [5, 'momentum-window'],
+    [59, 'momentum-window'],
+    [60, 'mid'],
+    [299, 'mid'],
+    [300, 'late'],   // 90 min remaining -- not closing yet
+    [384, 'late'],   // 6 min remaining -- still not closing
+    [385, 'closing'], // exactly 5 min remaining
+    [389, 'closing'], // 1 min remaining, last bar of the session
+  ];
+  for (const [minutesSinceOpen, expected] of cases) {
+    const got = replay._sessionPhase(atMinute(minutesSinceOpen));
+    console.log(`sessionPhase at +${minutesSinceOpen}min:`, got);
+    assert.strictEqual(got, expected, `minute ${minutesSinceOpen} since open should be '${expected}', got '${got}'`);
+  }
+}
+
 // ── examplePriceMoveClassifier ───────────────────────────────────────────
 
 async function testExamplePriceMoveClassifierThreshold() {
@@ -407,6 +433,7 @@ async function testRunReplayForSymbolsOrchestratesFetchAndReplay() {
   await run('replay: computeForwardReturns — all null when trigger is the last bar', testComputeForwardReturnsAllNullWhenTriggerIsLastBar);
   await run('replay: minutesOfSessionRemainingAtTrigger computed from PT session close', testMinutesOfSessionRemainingAtTriggerComputedFromPTClose);
   await run('replay: minutesOfSessionRemainingAtTrigger makes the close horizon interpretable (reproduces the AMIX/HVII finding)', testMinutesOfSessionRemainingAtTriggerMakesCloseHorizonInterpretable);
+  await run('replay: _sessionPhase boundaries (opening/momentum-window/mid/late/closing)', testSessionPhaseBoundaries);
   await run('replay: examplePriceMoveClassifier threshold (reuses gate.js\'s real CHANGE_MIN_PCT)', testExamplePriceMoveClassifierThreshold);
   await run('replay: fetchReplayBars — window/chunk-size/ordering', testFetchReplayBarsUsesCorrectWindowChunkSizeAndOrdering);
   await run('replay: fetchPrevCloseAsOf picks the most recent close before the replay window', testFetchPrevCloseAsOfPicksMostRecentCloseBeforeReplayWindow);

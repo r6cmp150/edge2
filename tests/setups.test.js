@@ -509,6 +509,49 @@ async function testTradingDaysBetweenCrossesDSTWithoutSkippingOrDuplicating() {
     'must correctly skip the weekend spanning the DST transition (3/7-3/8) without skipping or duplicating 3/9 the way real-instant "+24h" arithmetic would risk');
 }
 
+// ── captureEvaluationDistribution / summarizeEvaluationDistribution ──────
+
+async function testCaptureEvaluationDistributionIsUncensoredAtThreshold() {
+  const setups = await loadSetups();
+  const bars = [
+    ...flatRun(6, 30, 16, 5.00, 1000), // 16 flat bars: past excludeFirstMinutes, gives a 15-min baseline, but no bar here ever sets a NEW high (all equal) so none of these should reach the volume check
+    bar(6, 46, 5.00, 5.10, 4.98, 5.05, 1200), // new HOD (5.10 > 5.00) -- volume ~1.2x, BELOW the 3x threshold -- would never appear as a trigger
+    bar(6, 47, 5.05, 5.20, 5.00, 5.15, 4000), // new HOD (5.20 > 5.10) -- volume ~3.3x, clears the threshold -- would trigger
+  ];
+  const observations = setups.captureEvaluationDistribution(['hod-momentum'], bars, null);
+  console.log('hod-momentum observations:', observations['hod-momentum']);
+  assert.strictEqual(observations['hod-momentum'].length, 2, 'only the two bars that set a genuine new HOD should reach the volume check; the 16 flat bars never do');
+  const multiples = observations['hod-momentum'].map(o => o.volumeMultiple).sort((a, b) => a - b);
+  assert.ok(multiples[0] < 3.0, 'the below-threshold bar must still be captured -- this is the whole point, trigger rows alone would never show it');
+  assert.ok(multiples[1] >= 3.0, 'the above-threshold bar is captured too, same as any other evaluated bar');
+}
+
+async function testSummarizeEvaluationDistributionComputesCorrectStats() {
+  const setups = await loadSetups();
+  // Same shape as above but with a THIRD new-high bar added so there are
+  // 3 observations -- an odd count makes the median unambiguous to
+  // hand-verify (nearest-rank, no interpolation).
+  const bars = [
+    ...flatRun(6, 30, 16, 5.00, 1000),
+    bar(6, 46, 5.00, 5.10, 4.98, 5.02, 1000), // baseline = last 15 flat bars (all 1000) -> volumeMultiple 1000/1000 = 1.0x
+    bar(6, 47, 5.02, 5.20, 5.00, 5.10, 2000), // baseline = 14 flat(1000) + the 6:46 bar(1000), still mean 1000 -> volumeMultiple 2000/1000 = 2.0x
+    bar(6, 48, 5.10, 5.30, 5.05, 5.25, 5000), // baseline = 13 flat(1000) + 6:46(1000) + 6:47(2000), mean 16000/15 = 1066.67 (diluted, NOT just the prior bar's volume) -> volumeMultiple 5000/1066.67 = 4.6875x
+  ];
+  const summary = setups.summarizeEvaluationDistribution(['hod-momentum'], bars, null);
+  console.log('hod-momentum distribution summary:', summary['hod-momentum']);
+  const vm = summary['hod-momentum'].volumeMultiple;
+  assert.strictEqual(vm.count, 3);
+  assert.ok(Math.abs(vm.median - 2.0) < 0.01, `expected median ~2.0, got ${vm.median}`);
+  assert.ok(Math.abs(vm.max - 4.6875) < 0.01, `expected max ~4.6875 (the real 15-minute-windowed baseline, not a naive guess), got ${vm.max}`);
+}
+
+async function testCaptureEvaluationDistributionRequiresPrevCloseForSetupsThatNeedIt() {
+  const setups = await loadSetups();
+  const bars = [...flatRun(6, 30, 20, 5.00, 1000)];
+  const observations = setups.captureEvaluationDistribution(['gap-and-go'], bars, null);
+  assert.deepStrictEqual(observations['gap-and-go'], [], 'without a verified prevClose, gap-and-go must report zero observations, not a fabricated run against a missing reference');
+}
+
 // ── estimateRangeScanRequests ────────────────────────────────────────────
 
 async function testEstimateRangeScanRequests() {
@@ -826,6 +869,9 @@ async function testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore() {
   await run('setups: LATE setups are demoted below non-late ones regardless of priority', testLateSetupsAreDemotedBelowNonLateRegardlessOfPriority);
   await run('setups: _tradingDaysBetween excludes weekends and holidays', testTradingDaysBetweenExcludesWeekendsAndHolidays);
   await run('setups: _tradingDaysBetween crosses DST without skipping or duplicating', testTradingDaysBetweenCrossesDSTWithoutSkippingOrDuplicating);
+  await run('setups: captureEvaluationDistribution is uncensored at the threshold', testCaptureEvaluationDistributionIsUncensoredAtThreshold);
+  await run('setups: summarizeEvaluationDistribution computes correct stats', testSummarizeEvaluationDistributionComputesCorrectStats);
+  await run('setups: captureEvaluationDistribution requires prevClose for setups that need it', testCaptureEvaluationDistributionRequiresPrevCloseForSetupsThatNeedIt);
   await run('setups: estimateRangeScanRequests', testEstimateRangeScanRequests);
   await run('setups: scanDateRangeForSetups carries prevClose forward across days', testScanDateRangeCarriesForwardPrevCloseAcrossDays);
   await run('setups: scanDateRangeForSetups rejects a stale carried-forward prevClose', testScanDateRangeRejectsStaleCarriedForwardPrevClose);

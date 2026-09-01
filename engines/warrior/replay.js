@@ -111,11 +111,47 @@ async function fetchPrevCloseAsOf(symbols, dateStr) {
 // incompleteness visible instead of hiding it" principle as gate.js's
 // not-checked pillars and the QUALIFIED-header RVOL caveat.
 const FORWARD_HORIZONS_MIN = [5, 15, 30]; // 'close' handled separately, no fixed minute offset
+const REGULAR_SESSION_OPEN_TMIN = 390; // 6:30am PT — core/clock.js's own getMarketStatus() boundary
 const REGULAR_SESSION_CLOSE_TMIN = 780; // 1:00pm PT — core/clock.js's own getMarketStatus() boundary
 
 function _minutesUntilRegularSessionClose(bar) {
   const pt = getPT(new Date(bar.t));
   return REGULAR_SESSION_CLOSE_TMIN - (pt.getHours() * 60 + pt.getMinutes());
+}
+
+// sessionPhase (2026-08-31) — a FLAG, never a filter: nothing here
+// suppresses a trigger or changes whether/when a classifier fires. Exists
+// so the closing-minutes artifact (AMIX 2026-08-24: the two biggest
+// winners in the sample fired with 2 and 4 minutes of the session left,
+// where a single wide range-to-close move produces an outsized % return
+// off a tiny base) can be excluded in ANALYSIS without changing what the
+// engine actually detects — a real, later-stage question (should CLOSING
+// or LATE be down-weighted, excluded, or sized differently) needs this
+// visible on every trigger first; it doesn't answer that question itself.
+// Boundaries are minutes-since-open on a 390-minute regular session
+// (6:30am-1:00pm PT), not minutes-remaining, except CLOSING which is
+// naturally a remaining-time concept (the last few minutes before the
+// bell, regardless of how the open behaved):
+//   OPENING          0-5 min since open   (matches hod-momentum's own excludeFirstMinutes)
+//   MOMENTUM_WINDOW  5-60 min since open  (Ross Cameron's method is built around the first hour)
+//   MID              60-300 min since open
+//   LATE             300 min since open through 5 min remaining
+//   CLOSING          last 5 min of the session
+const SESSION_PHASE_OPENING_END_MIN = 5;
+const SESSION_PHASE_MOMENTUM_WINDOW_END_MIN = 60;
+const SESSION_PHASE_LATE_START_MIN = 300;
+const SESSION_PHASE_CLOSING_REMAINING_MIN = 5;
+
+function _sessionPhase(bar) {
+  const pt = getPT(new Date(bar.t));
+  const tMin = pt.getHours() * 60 + pt.getMinutes();
+  const minutesSinceOpen = tMin - REGULAR_SESSION_OPEN_TMIN;
+  const minutesRemaining = REGULAR_SESSION_CLOSE_TMIN - tMin;
+  if (minutesRemaining <= SESSION_PHASE_CLOSING_REMAINING_MIN) return 'closing';
+  if (minutesSinceOpen < SESSION_PHASE_OPENING_END_MIN) return 'opening';
+  if (minutesSinceOpen < SESSION_PHASE_MOMENTUM_WINDOW_END_MIN) return 'momentum-window';
+  if (minutesSinceOpen < SESSION_PHASE_LATE_START_MIN) return 'mid';
+  return 'late';
 }
 
 function _barIndexAtOrAfter(bars, fromIndexExclusive, targetTimeMs) {
@@ -297,6 +333,7 @@ function runReplay(bars, classifier, { rearmDistancePct } = {}) {
       referenceLevel: verdict.referenceLevel ?? null,
       margins: verdict.margins ?? null,
       minutesOfSessionRemainingAtTrigger: _minutesUntilRegularSessionClose(current),
+      sessionPhase: _sessionPhase(current),
       forwardReturns: computeForwardReturns(bars, i, triggerPrice),
     });
   }
@@ -337,4 +374,5 @@ export {
   runReplay,
   examplePriceMoveClassifier,
   runReplayForSymbols,
+  _sessionPhase,
 };
