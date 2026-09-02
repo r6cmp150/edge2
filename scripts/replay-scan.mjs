@@ -389,12 +389,43 @@ async function main() {
     if (/Confirm/i.test(label)) await runButton.click();
 
     console.log('[replay-scan] scan running…');
-    await page.waitForFunction((before) => {
-      const d = window.__warriorReplayDebug;
-      if (!d || d.rangeScanInFlight || d.replayInFlight) return false;
-      const after = JSON.stringify(d.lastRangeScanResult || d.lastReplayResult || null);
-      return after !== before;
-    }, beforeSnapshot, { timeout: 180000 });
+    // Polling loop, not a single waitForFunction (2026-09-01): the old
+    // single 180s timeout was proven too small at real scale (~600
+    // symbol-days runs in the tens of minutes) — a bound this run has
+    // outgrown needs raising, and a run this long needs visible progress
+    // in the meantime, not silence until either success or a timeout. Logs
+    // symbol-days completed (not just trading days — see setups.js's
+    // totalSymbolDays comment: day count alone is a misleading progress
+    // unit once symbol count per day varies or is simply large), only when
+    // it actually advances, so a long run's log stays legible rather than
+    // one line per 10-second poll.
+    const SCAN_TIMEOUT_MS = 45 * 60 * 1000; // was 180000 (3 min); ~600 symbol-days measures in the tens of minutes
+    const POLL_INTERVAL_MS = 10000;
+    const scanStartTime = Date.now();
+    let lastLoggedSymbolDays = -1;
+    for (;;) {
+      const state = await page.evaluate(() => {
+        const d = window.__warriorReplayDebug;
+        if (!d) return null;
+        return {
+          inFlight: !!(d.rangeScanInFlight || d.replayInFlight),
+          progress: d.rangeScanProgress,
+          snapshot: JSON.stringify(d.lastRangeScanResult || d.lastReplayResult || null),
+        };
+      });
+      if (state && !state.inFlight && state.snapshot !== beforeSnapshot) break; // done
+      if (state?.progress && state.progress.symbolDaysCompleted !== undefined && state.progress.symbolDaysCompleted !== lastLoggedSymbolDays) {
+        lastLoggedSymbolDays = state.progress.symbolDaysCompleted;
+        const elapsedSec = Math.round((Date.now() - scanStartTime) / 1000);
+        const p = state.progress;
+        console.log(`[replay-scan] progress: ${p.symbolDaysCompleted}/${p.totalSymbolDays} symbol-days (day ${p.index + 1}/${p.total}, ${p.dateStr}${p.symbol ? ' ' + p.symbol : ''}) — ${elapsedSec}s elapsed`);
+      }
+      const elapsedMs = Date.now() - scanStartTime;
+      if (elapsedMs > SCAN_TIMEOUT_MS) {
+        throw new Error(`scan exceeded ${Math.round(SCAN_TIMEOUT_MS / 1000)}s without completing — last progress: ${JSON.stringify(state?.progress)}`);
+      }
+      await page.waitForTimeout(POLL_INTERVAL_MS);
+    }
 
     const debugData = await page.evaluate(() => window.__warriorReplayDebug);
     await page.locator('#warrior-replay-panel').screenshot({ path: path.join(artifactDir, `panel_${tag}.png`) });
