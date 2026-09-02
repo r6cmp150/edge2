@@ -696,6 +696,54 @@ async function testScanDateRangeRespectsCancellation() {
   assert.ok(Object.keys(resultsByDate).length < tradingDays.length, 'must stop before evaluating every trading day in the range');
 }
 
+async function testScanDateRangeSymbolsByDateOverridesPerDaySymbolList() {
+  const setups = await loadSetups();
+  const fetchedSymbolsByDate = {};
+  global._fetchRawMinuteBars = async (symbols, start, end, chunkSize, label) => {
+    const dateStr = label.split(' ').pop();
+    fetchedSymbolsByDate[dateStr] = [...symbols].sort();
+    const bars = makeDayBars(dateStr, Array(5).fill(4.10));
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); });
+    return { barsBySymbolAll, requests: 1 };
+  };
+  // AAA appears both days (a real reconstructed-movers symbol that's a
+  // mover twice); BBB only on day 1, CCC only on day 2 -- the shape a
+  // genuinely different symbol set per day actually has.
+  const symbolsByDate = { '2026-08-24': ['AAA', 'BBB'], '2026-08-25': ['AAA', 'CCC'] };
+  const { resultsByDate, tradingDays } = await setups.scanDateRangeForSetups(
+    'hod-momentum', [], '2026-08-24', '2026-08-25', { symbolsByDate }
+  );
+  console.log('fetched per day:', fetchedSymbolsByDate, '| resultsByDate keys:', Object.keys(resultsByDate).map(d => Object.keys(resultsByDate[d])));
+  assert.deepStrictEqual(tradingDays, ['2026-08-24', '2026-08-25']);
+  assert.deepStrictEqual(fetchedSymbolsByDate['2026-08-24'], ['AAA', 'BBB'], 'day 1 must fetch exactly its own symbol list, not the (nonexistent, empty) flat symbols param');
+  assert.deepStrictEqual(fetchedSymbolsByDate['2026-08-25'], ['AAA', 'CCC'], 'day 2 must fetch its own DIFFERENT symbol list');
+  assert.deepStrictEqual(Object.keys(resultsByDate['2026-08-24']).sort(), ['AAA', 'BBB']);
+  assert.deepStrictEqual(Object.keys(resultsByDate['2026-08-25']).sort(), ['AAA', 'CCC']);
+  assert.strictEqual(resultsByDate['2026-08-25'].BBB, undefined, 'BBB (day-1-only) must not appear on day 2 -- symbolsByDate must not silently union across days');
+}
+
+async function testScanDateRangeSymbolsByDateReportsRealPerDayTotalSymbolDays() {
+  const setups = await loadSetups();
+  global._fetchRawMinuteBars = async (symbols, start, end, chunkSize, label) => {
+    const dateStr = label.split(' ').pop();
+    const bars = makeDayBars(dateStr, Array(5).fill(4.10));
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); });
+    return { barsBySymbolAll, requests: 1 };
+  };
+  // 2 symbols day 1, 3 symbols day 2 -- a flat multiply (tradingDays *
+  // symbols.length) would get this wrong in either direction depending
+  // on what the ignored flat `symbols` param happened to be.
+  const symbolsByDate = { '2026-08-24': ['AAA', 'BBB'], '2026-08-25': ['AAA', 'BBB', 'CCC'] };
+  const progressCalls = [];
+  await setups.scanDateRangeForSetups('hod-momentum', [], '2026-08-24', '2026-08-25', {
+    symbolsByDate, onProgress: (p) => progressCalls.push(p),
+  });
+  assert.strictEqual(progressCalls[0].totalSymbolDays, 5, '2 + 3 = 5 real symbol-days, not a flat tradingDays * symbols.length guess');
+  assert.strictEqual(progressCalls[progressCalls.length - 1].symbolDaysCompleted, 5);
+}
+
 async function testScanDateRangeReportsProgressPerSymbolDayNotJustPerDay() {
   const setups = await loadSetups();
   global._fetchRawMinuteBars = async (symbols, start, end, chunkSize, label) => {
@@ -885,6 +933,8 @@ async function testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore() {
   await run('setups: scanDateRangeForSetups marks no-data without fabricating a result', testScanDateRangeMarksNoDataWithoutFabricatingAResult);
   await run('setups: scanDateRangeForSetups respects cancellation', testScanDateRangeRespectsCancellation);
   await run('setups: scanDateRangeForSetups reports progress per symbol-day, not just per day', testScanDateRangeReportsProgressPerSymbolDayNotJustPerDay);
+  await run('setups: scanDateRangeForSetups symbolsByDate overrides the per-day symbol list', testScanDateRangeSymbolsByDateOverridesPerDaySymbolList);
+  await run('setups: scanDateRangeForSetups symbolsByDate reports real per-day totalSymbolDays', testScanDateRangeSymbolsByDateReportsRealPerDayTotalSymbolDays);
   await run('setups: single-day scan (no prevClose needed) — naive/re-armed both computed, barCount visible', testSingleDayScanWithoutPrevClose);
   await run('setups: single-day scan fetches and uses a date-verified prevClose for gap-and-go', testSingleDayScanFetchesAndUsesPrevClose);
   await run('setups: single-day scan(ALL_SETUPS_ID) runs all five on one fetch', testSingleDayScanAllSetupsRunsAllFiveOnOneFetch);

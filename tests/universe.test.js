@@ -53,6 +53,49 @@ async function testRankTopMoversComputesDayOverDayAndRelVol() {
   assert.deepStrictEqual(bbb.source, ['relVol'], 'BBB should surface only via the relVol ranking');
 }
 
+// ── dataQualityFlag ────────────────────────────────────────────────────
+
+async function testDataQualityFlagsExtremeMoveWithoutVolumeSupport() {
+  const { _rankTopMovers } = loadUniverse();
+  const barsBySymbol = {
+    // +900% day-over-day (0.50 -> 5.00) on perfectly ordinary volume
+    // (1000, same as every prior day -- relVol 1x) -- exactly the
+    // split-artifact shape, no real activity behind the move.
+    SPLIT: [bar('2026-05-30', 0.50, 1000), bar('2026-06-01', 5.00, 1000)],
+  };
+  const symbolDays = _rankTopMovers(barsBySymbol, '2026-06-01', '2026-06-01', 10);
+  const row = symbolDays.find(r => r.symbol === 'SPLIT');
+  console.log('flagged row:', row);
+  assert.ok(row.dataQualityFlag, 'an extreme move on unremarkable volume must be flagged');
+  assert.strictEqual(row.dataQualityFlag.reason, 'extreme-move-without-volume-support');
+  assert.ok(Math.abs(row.dataQualityFlag.dayOverDayPct - 9.0) < 0.01, 'the flag must carry the underlying numbers, not just a boolean');
+  assert.strictEqual(row.dataQualityFlag.relVol, 1);
+}
+
+async function testDataQualityDoesNotFlagExtremeMoveWithVolumeSupport() {
+  const { _rankTopMovers } = loadUniverse();
+  const barsBySymbol = {
+    // Same +900% move, but on 10x relative volume -- real activity, not
+    // an artifact. Must NOT be flagged, let alone discarded: this is
+    // exactly the explosive-day shape Warrior exists to trade.
+    REAL: [bar('2026-05-30', 0.50, 1000), bar('2026-06-01', 5.00, 10000)],
+  };
+  const symbolDays = _rankTopMovers(barsBySymbol, '2026-06-01', '2026-06-01', 10);
+  const row = symbolDays.find(r => r.symbol === 'REAL');
+  console.log('unflagged row:', row);
+  assert.strictEqual(row.dataQualityFlag, null, 'an extreme move WITH volume support must not be flagged — the flag is not a threshold on move size alone');
+}
+
+async function testDataQualityDoesNotFlagOrdinaryMoves() {
+  const { _rankTopMovers } = loadUniverse();
+  const barsBySymbol = {
+    ORDINARY: [bar('2026-05-30', 5.00, 1000), bar('2026-06-01', 5.50, 1000)], // +10%, unremarkable
+  };
+  const symbolDays = _rankTopMovers(barsBySymbol, '2026-06-01', '2026-06-01', 10);
+  const row = symbolDays.find(r => r.symbol === 'ORDINARY');
+  assert.strictEqual(row.dataQualityFlag, null, 'an ordinary move must never be flagged, regardless of volume');
+}
+
 async function testRankTopMoversFiltersToOneToTwentyDollarsBeforeRanking() {
   const { _rankTopMovers } = loadUniverse();
   const barsBySymbol = {
@@ -98,6 +141,9 @@ async function testRankTopMoversExcludesDaysOutsideTheRankedRangeEvenWhenBarsExi
 (async () => {
   await run('universe: _shiftDateStr is pure calendar arithmetic (year/month boundaries)', testShiftDateStrPureCalendarArithmetic);
   await run('universe: _rankTopMovers computes dayOverDayPct and relVol correctly', testRankTopMoversComputesDayOverDayAndRelVol);
+  await run('universe: dataQualityFlag flags an extreme move without volume support', testDataQualityFlagsExtremeMoveWithoutVolumeSupport);
+  await run('universe: dataQualityFlag does not flag an extreme move WITH volume support', testDataQualityDoesNotFlagExtremeMoveWithVolumeSupport);
+  await run('universe: dataQualityFlag does not flag an ordinary move', testDataQualityDoesNotFlagOrdinaryMoves);
   await run('universe: _rankTopMovers filters to $1-$20 before ranking, not after', testRankTopMoversFiltersToOneToTwentyDollarsBeforeRanking);
   await run('universe: _rankTopMovers unions top-N by each metric, not a single combined score', testRankTopMoversUnionsTopNByEachMetricNotJustOne);
   await run('universe: _rankTopMovers excludes lookback-only days from the ranked output', testRankTopMoversExcludesDaysOutsideTheRankedRangeEvenWhenBarsExist);
