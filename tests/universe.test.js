@@ -138,7 +138,47 @@ async function testRankTopMoversExcludesDaysOutsideTheRankedRangeEvenWhenBarsExi
   assert.strictEqual(symbolDays[0].date, '2026-06-01', 'the lookback-only 2026-05-01 bar must not itself become a ranked row');
 }
 
+// ── lagSelectionByOneDay (2026-09-01, lookahead fix) ─────────────────────
+
+async function testLagSelectionRanksDayDByDayDMinus1sMoveNotItsOwn() {
+  const { _rankTopMovers } = loadUniverse();
+  // AAA: huge move ON day D (2026-06-02), flat the day before -- selected
+  // under default (same-day) ranking, must NOT be selected once ranking
+  // is lagged to D-1, since D-1 (2026-06-01) was flat.
+  // BBB: huge move ON day D-1 (2026-06-01), flat on day D itself -- the
+  // mirror image: must NOT be selected by default ranking (D's own move
+  // is flat) but MUST be selected once ranking is lagged to D-1.
+  // Volume also distinguishes D-1 on purpose (not just price): AAA's D-1
+  // is flat on BOTH metrics, BBB's D-1 is elevated on BOTH -- otherwise a
+  // relVol tie (both at 1x) would let AAA back in through the relVol
+  // half of the union via stable-sort tie-break order, which isn't what
+  // this test is checking.
+  const barsBySymbol = {
+    AAA: [bar('2026-05-30', 5.00, 1000), bar('2026-06-01', 5.02, 1000), bar('2026-06-02', 8.00, 1000)], // D-1: +0.4% on 1x volume; D: +59%
+    BBB: [bar('2026-05-30', 5.00, 1000), bar('2026-06-01', 8.00, 9000), bar('2026-06-02', 8.02, 1000)], // D-1: +60% on 9x volume; D: +0.25%
+  };
+  const defaultRanking = _rankTopMovers(barsBySymbol, '2026-06-02', '2026-06-02', 1); // top-1 by move
+  const laggedRanking = _rankTopMovers(barsBySymbol, '2026-06-02', '2026-06-02', 1, { lagSelectionByOneDay: true });
+  console.log('default (same-day) ranking selects:', defaultRanking.map(r => r.symbol), '| lagged (D-1) ranking selects:', laggedRanking.map(r => r.symbol));
+  assert.deepStrictEqual(defaultRanking.map(r => r.symbol).sort(), ['AAA'], 'default mode must select AAA -- it moved ON day D');
+  assert.deepStrictEqual(laggedRanking.map(r => r.symbol).sort(), ['BBB'], 'lagged mode must select BBB -- it moved on D-1, known before D opens; AAA\'s D-1 was flat');
+}
+
+async function testLagSelectionStillReportsDayDsOwnCloseAndVolumeNotDayDMinus1s() {
+  const { _rankTopMovers } = loadUniverse();
+  const barsBySymbol = {
+    BBB: [bar('2026-05-30', 5.00, 1000), bar('2026-06-01', 8.00, 5000), bar('2026-06-02', 9.50, 2000)],
+  };
+  const [row] = _rankTopMovers(barsBySymbol, '2026-06-02', '2026-06-02', 10, { lagSelectionByOneDay: true });
+  console.log('lagged-mode row (must carry day D\'s own close/volume, not D-1\'s):', row);
+  assert.strictEqual(row.date, '2026-06-02', 'the row IS day D -- that\'s the day being replayed');
+  assert.strictEqual(row.close, 9.50, 'close must be day D\'s own close (used for the $1-$20 filter and downstream replay), never D-1\'s, regardless of selection mode');
+  assert.strictEqual(row.volume, 2000, 'volume must be day D\'s own volume, not the D-1 volume used only for selection');
+}
+
 (async () => {
+  await run('universe: lagSelectionByOneDay ranks day D by day D-1\'s move, not its own', testLagSelectionRanksDayDByDayDMinus1sMoveNotItsOwn);
+  await run('universe: lagSelectionByOneDay still reports day D\'s own close/volume', testLagSelectionStillReportsDayDsOwnCloseAndVolumeNotDayDMinus1s);
   await run('universe: _shiftDateStr is pure calendar arithmetic (year/month boundaries)', testShiftDateStrPureCalendarArithmetic);
   await run('universe: _rankTopMovers computes dayOverDayPct and relVol correctly', testRankTopMoversComputesDayOverDayAndRelVol);
   await run('universe: dataQualityFlag flags an extreme move without volume support', testDataQualityFlagsExtremeMoveWithoutVolumeSupport);

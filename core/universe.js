@@ -729,20 +729,42 @@ function _dataQualityFlag(dayOverDayPct, relVol) {
   return { reason: 'extreme-move-without-volume-support', dayOverDayPct, relVol };
 }
 
-function _rankTopMovers(barsBySymbol, startDateStr, endDateStr, topN = 10) {
+// lagSelectionByOneDay (2026-09-01, found live): the default (false) mode
+// ranks day D using day D's OWN close/volume -- meaning a symbol is
+// selected into the sample BECAUSE it moved on day D, and the replay
+// then measures whether price rose after a same-day trigger, with day
+// D's close already known to the selection step by construction. That's
+// selection lookahead, and it's also a universe that cannot exist live
+// (nobody knows at 09:30 which names will top the day's movers by
+// 16:00). When true, day D's selection metrics (dayOverDayPct/relVol)
+// are computed from day D-1 instead -- fully known before D opens.
+// Everything else stays anchored to day D's own bar regardless of mode:
+// the $1-$20 filter, the row's reported close/volume, and (by construction,
+// since this function only affects which symbol-days get selected, not
+// what gets replayed) every downstream classifier/replay call. This is a
+// controlled, single-variable change specifically so a before/after diff
+// isolates the lookahead effect and nothing else.
+function _rankTopMovers(barsBySymbol, startDateStr, endDateStr, topN = 10, { lagSelectionByOneDay = false } = {}) {
   const rowsByDate = {};
   for (const sym of Object.keys(barsBySymbol)) {
     const bars = [...barsBySymbol[sym]].sort((a, b) => new Date(a.t) - new Date(b.t));
-    for (let i = 1; i < bars.length; i++) { // i=0 has no prior close, never rankable
-      const bar = bars[i];
+    const minIndex = lagSelectionByOneDay ? 2 : 1; // lagged mode needs i-2 too, for day D-1's own prior close
+    for (let i = minIndex; i < bars.length; i++) {
+      const bar = bars[i]; // day D -- always this row's own identity (date/close/volume) and the $1-$20 filter's subject, in EITHER mode
       const dateStr = bar.t.slice(0, 10);
       if (dateStr < startDateStr || dateStr > endDateStr) continue; // fetched wider than ranked, for lookback
       if (!_inPriceRange(bar.c)) continue;
-      const priorClose = bars[i - 1].c;
-      const dayOverDayPct = priorClose > 0 ? (bar.c - priorClose) / priorClose : null;
-      const lookback = bars.slice(Math.max(0, i - HISTORICAL_UNIVERSE_LOOKBACK_TRADING_DAYS), i);
+
+      // Selection metrics: day D's own bar (index i, the lookahead this
+      // mode exists to remove) or day D-1's (index i-1, fully known
+      // before D opens) -- the ONLY thing lagSelectionByOneDay changes.
+      const selectionIndex = lagSelectionByOneDay ? i - 1 : i;
+      const selectionBar = bars[selectionIndex];
+      const selectionPriorClose = bars[selectionIndex - 1].c;
+      const dayOverDayPct = selectionPriorClose > 0 ? (selectionBar.c - selectionPriorClose) / selectionPriorClose : null;
+      const lookback = bars.slice(Math.max(0, selectionIndex - HISTORICAL_UNIVERSE_LOOKBACK_TRADING_DAYS), selectionIndex);
       const avgVol = lookback.length ? lookback.reduce((s, b) => s + b.v, 0) / lookback.length : null;
-      const relVol = avgVol > 0 ? bar.v / avgVol : null;
+      const relVol = avgVol > 0 ? selectionBar.v / avgVol : null;
       (rowsByDate[dateStr] = rowsByDate[dateStr] || []).push({
         date: dateStr, symbol: sym, close: bar.c, volume: bar.v,
         dayOverDayPct, relVol, lookbackTradingDays: lookback.length,
@@ -773,20 +795,23 @@ function _rankTopMovers(barsBySymbol, startDateStr, endDateStr, topN = 10) {
 // expected to report the list size before spending anything on the much
 // larger replay-half cost, same "measure before committing" discipline
 // this whole file's premarket-gap cost comments already follow.
-async function reconstructTopMoversUniverse({ startDateStr, endDateStr, topN = 10, client = _coreClient }) {
+async function reconstructTopMoversUniverse({ startDateStr, endDateStr, topN = 10, client = _coreClient, lagSelectionByOneDay = false }) {
   const fetchStartDateStr = _shiftDateStr(startDateStr, -HISTORICAL_UNIVERSE_LOOKBACK_PAD_CALENDAR_DAYS);
   const assetIndex = await _getAssetIndex(client);
   const eligibleSymbols = assetIndex.filter(a => a.isEligibleInstrument).map(a => a.symbol);
 
   const { barsBySymbol, requests } = await _fetchHistoricalDailyBars(eligibleSymbols, fetchStartDateStr, endDateStr, client);
-  const symbolDays = _rankTopMovers(barsBySymbol, startDateStr, endDateStr, topN);
+  const symbolDays = _rankTopMovers(barsBySymbol, startDateStr, endDateStr, topN, { lagSelectionByOneDay });
 
   return {
     symbolDays,
     requests,
     eligibleSymbolCount: eligibleSymbols.length,
     symbolsWithBars: Object.keys(barsBySymbol).length,
-    label: 'top daily movers, reconstructed', // never "what the engine would have seen" — see header comment
+    // never "what the engine would have seen" — see header comment above.
+    // Labeled distinctly per mode so an artifact never has to be traced
+    // back to a run command to know which selection rule produced it.
+    label: lagSelectionByOneDay ? 'top daily movers, reconstructed (lagged selection, no lookahead)' : 'top daily movers, reconstructed',
   };
 }
 
