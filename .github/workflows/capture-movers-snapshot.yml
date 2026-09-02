@@ -5,14 +5,23 @@ name: Capture movers/most-actives snapshot
 # live-snapshot-only, no historical query -- this is the only way that
 # data ever becomes backtestable, and only from the point capture starts.
 #
-# 15:00 UTC ~= 10-11am ET depending on DST -- inside Warrior's
-# momentum-window/mid session phases (see engines/warrior/replay.js's
-# _sessionPhase), not the opening scramble or the quiet mid-day. Weekdays
-# only; a weekend/holiday firing just logs a market-closed marker (see
-# the script) rather than being skipped -- a gap in the log should never
-# be ambiguous between "didn't run" and "market was shut."
+# Three captures per weekday, not one (2026-09-01 correction): the
+# original single 15:00 UTC run (~10-11am ET depending on DST) landed
+# AFTER the momentum window Warrior actually trades -- one snapshot is
+# better than none, but this data is unrecoverable once a day passes
+# uncaptured, so getting the timing right now matters more than it would
+# for something re-runnable. 13:45/14:30/15:00 UTC ~= 9:45/10:30/11:00 ET
+# (EDT) or 8:45/9:30/10:00 ET (EST, i.e. one hour before open -- that run
+# just logs a closed-market marker in winter, harmless) -- spans the
+# actual opening momentum window through mid-morning rather than a single
+# point past it. Weekdays only; a weekend/holiday firing just logs a
+# market-closed marker (see the script) rather than being skipped -- a
+# gap in the log should never be ambiguous between "didn't run" and
+# "market was shut."
 on:
   schedule:
+    - cron: '45 13 * * 1-5'
+    - cron: '30 14 * * 1-5'
     - cron: '0 15 * * 1-5'
   workflow_dispatch: {}
 
