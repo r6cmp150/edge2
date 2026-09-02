@@ -44,6 +44,10 @@ const argv = process.argv.slice(2);
 const argVal = (flag, fallback) => { const i = argv.indexOf(flag); return i !== -1 ? argv[i + 1] : fallback; };
 const START_DATE = argVal('--start', '2026-06-01');
 const END_DATE = argVal('--end', '2026-08-28');
+// --lagged: rank day D's universe by day D-1's move/relVol instead of
+// day D's own (core/universe.js's lagSelectionByOneDay) -- the decisive
+// test for selection lookahead in the default mode (see chat 2026-09-01).
+const LAGGED = argv.includes('--lagged');
 
 function readEnvLocal() {
   const raw = readFileSync(path.join(REPO_ROOT, '.env.local'), 'utf8');
@@ -86,10 +90,10 @@ async function main() {
   const setupsMod = await import(pathToFileURL(path.join(REPO_ROOT, 'engines', 'warrior', 'setups.js')));
 
   // ── Step 1: universe reconstruction (already verified live — see chat) ──
-  console.log('[run-symbol-day-scan] reconstructing universe…');
+  console.log(`[run-symbol-day-scan] reconstructing universe… (lagSelectionByOneDay=${LAGGED})`);
   const t0 = Date.now();
-  const universeResult = await global.reconstructTopMoversUniverse({ startDateStr: START_DATE, endDateStr: END_DATE, topN: 10, client: global._coreClient });
-  console.log(`[run-symbol-day-scan] universe: ${universeResult.symbolDays.length} symbol-days, ${universeResult.requests} requests, ${Math.round((Date.now() - t0) / 1000)}s`);
+  const universeResult = await global.reconstructTopMoversUniverse({ startDateStr: START_DATE, endDateStr: END_DATE, topN: 10, client: global._coreClient, lagSelectionByOneDay: LAGGED });
+  console.log(`[run-symbol-day-scan] universe: ${universeResult.symbolDays.length} symbol-days, ${universeResult.requests} requests, ${Math.round((Date.now() - t0) / 1000)}s, label="${universeResult.label}"`);
 
   const symbolsByDate = {};
   for (const row of universeResult.symbolDays) (symbolsByDate[row.date] = symbolsByDate[row.date] || []).push(row.symbol);
@@ -208,7 +212,7 @@ async function main() {
   }
   const flattened = { cells, triggers };
 
-  const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}_symbol-day-scan`;
+  const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}_symbol-day-scan${LAGGED ? '-lagged' : ''}`;
   const artifactDir = path.join(REPO_ROOT, 'artifacts', runId);
   mkdirSync(artifactDir, { recursive: true });
   writeFileSync(path.join(artifactDir, 'universe.json'), JSON.stringify(universeResult, null, 2));
@@ -217,7 +221,7 @@ async function main() {
   writeFileSync(path.join(artifactDir, 'distribution.json'), JSON.stringify(distribution, null, 2));
   writeFileSync(path.join(artifactDir, 'pooled_distribution.json'), JSON.stringify(pooledDistributionSummary, null, 2));
   writeFileSync(path.join(artifactDir, 'meta.json'), JSON.stringify({
-    startDate: START_DATE, endDate: END_DATE,
+    startDate: START_DATE, endDate: END_DATE, lagSelectionByOneDay: LAGGED,
     symbolDayCount: universeResult.symbolDays.length,
     universeRequests: universeResult.requests,
     replayRequests: result.requests,
