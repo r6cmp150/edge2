@@ -630,6 +630,20 @@ async function _fetchHistoricalDailyBars(symbols, fetchStartDateStr, endDateStr,
         end: `${endDateStr}T23:59:59Z`,
         limit: 10000,
         feed: 'sip',
+        // adjustment:'all' (2026-09-01, found live): Alpaca's daily-bar
+        // endpoint defaults to 'raw' (unadjusted) when this is omitted —
+        // exactly what this file's other 1Day call sites also do (see the
+        // 2026-09-01 audit note on _getSip30DayAvgVolume below: this is a
+        // FAMILY defect, not unique to this function). A reverse split
+        // produces a spurious ~(split ratio)x price jump between the last
+        // pre-split bar and the first post-split one with NOTHING in the
+        // data to distinguish it from a genuine move — confirmed live:
+        // the first real run of this function ranked a $0.14->$4.54
+        // (+3,140%) "mover" that was almost certainly exactly this.
+        // 'all' (not just 'split') also normalizes dividend adjustments,
+        // which this file had no reason to leave out for a historical
+        // ranking use case.
+        adjustment: 'all',
       });
       return { bars: data.bars || {}, nextPageToken: data.next_page_token || null };
     } catch (e) {
@@ -671,6 +685,31 @@ async function _fetchHistoricalDailyBars(symbols, fetchStartDateStr, endDateStr,
 //     the same mega-caps).
 // $1-$20 filtered on the day's own close BEFORE ranking, same order
 // _getPremarketGapUniverse's own filter-then-rank applies.
+// dataQualityFlag (2026-09-01): FLAG, never discard — Warrior exists to
+// trade explosive days, so a flat cutoff on |dayOverDayPct| would throw
+// out exactly the strategy's best cases and bias the sample against it.
+// adjustment:'all' on the fetch (see _fetchHistoricalDailyBars) already
+// removes the split/dividend artifacts that produced the one extreme row
+// found live (a $0.14->$4.54, +3,140% "move"); this is a second-line
+// check for whatever slips through anyway (bad prints, symbols this
+// account's feed doesn't have clean adjustment data for, etc.), not a
+// substitute for fixing adjustment. The distinguishing signal isn't the
+// size of the move, it's whether VOLUME supports it: an extreme price
+// move on ordinary volume has nothing behind it and is more likely a
+// data artifact than a trade; an extreme move on genuinely elevated
+// volume is real activity, not noise, and is exactly the shape a
+// momentum strategy is built to find. Only flags when BOTH conditions
+// hold — the underlying numbers ride along on every row (flagged or
+// not) so this is checkable/excludable in analysis, not an opaque bit.
+const DATA_QUALITY_EXTREME_MOVE_PCT = 0.75; // 75%+ single-day move
+const DATA_QUALITY_MIN_RELVOL_FOR_EXTREME_MOVE = 3; // 3x+ relative volume "explains" an extreme move; below that, unsupported
+
+function _dataQualityFlag(dayOverDayPct, relVol) {
+  if (dayOverDayPct == null || Math.abs(dayOverDayPct) < DATA_QUALITY_EXTREME_MOVE_PCT) return null;
+  if (relVol != null && relVol >= DATA_QUALITY_MIN_RELVOL_FOR_EXTREME_MOVE) return null; // extreme move WITH volume support -- not flagged
+  return { reason: 'extreme-move-without-volume-support', dayOverDayPct, relVol };
+}
+
 function _rankTopMovers(barsBySymbol, startDateStr, endDateStr, topN = 10) {
   const rowsByDate = {};
   for (const sym of Object.keys(barsBySymbol)) {
@@ -688,6 +727,7 @@ function _rankTopMovers(barsBySymbol, startDateStr, endDateStr, topN = 10) {
       (rowsByDate[dateStr] = rowsByDate[dateStr] || []).push({
         date: dateStr, symbol: sym, close: bar.c, volume: bar.v,
         dayOverDayPct, relVol, lookbackTradingDays: lookback.length,
+        dataQualityFlag: _dataQualityFlag(dayOverDayPct, relVol),
       });
     }
   }
