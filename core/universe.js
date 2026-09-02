@@ -561,6 +561,176 @@ async function getUniverse({ session, strategy }) {
   throw new Error(`getUniverse: strategy '${strategy}' is not implemented yet.`);
 }
 
+// ── Historical universe reconstruction ("top daily movers, reconstructed") ─
+// 2026-09-01: Alpaca's live movers/most-actives screener endpoints are
+// snapshot-only -- verified directly against the real endpoints that
+// neither accepts a date parameter, and 'movers' itself resets to
+// *today's* data at market open with nothing recoverable for a past
+// date. So the live universe-selection pipeline (getUniverse above)
+// itself can never be backtested. This function does NOT reconstruct
+// what that pipeline would have shown -- it computes a DIFFERENT, must-
+// stay-labeled-as-different proxy from data that IS historically
+// queryable (settled daily bars):
+//   - ranks on SETTLED daily moves (close vs. the symbol's own prior
+//     close) and volume relative to the symbol's own trailing average,
+//     not premarket gap or live intraday activity -- a name that moved
+//     hard between 10am and 2pm looks identical here to one that gapped
+//     at the open and went nowhere all day.
+//   - inherits this file's existing survivorship gap: "eligible" means
+//     eligible TODAY (_getAssetIndex/_isEligibleInstrument have no
+//     point-in-time query), not on the historical date being ranked.
+// Never call this "what the engine would have seen" -- it isn't. Call it
+// "top daily movers, reconstructed."
+//
+// HISTORICAL_UNIVERSE_LOOKBACK_PAD_CALENDAR_DAYS: the relative-volume
+// metric needs HISTORICAL_UNIVERSE_LOOKBACK_TRADING_DAYS of bars BEFORE
+// the earliest ranked day, so the raw fetch window starts this many
+// calendar days before startDateStr -- verified live (2026-09-01) that
+// 60 calendar days of padding gives 40 real trading days before
+// 2026-06-01 for a real symbol (comfortable margin over the 30 needed).
+//
+// HISTORICAL_UNIVERSE_CHUNK_SIZE pagination proof (CLAUDE.md rule --
+// proof, not an estimate): verified live (2026-09-01) against
+// 2026-04-02..2026-08-28 (the padded window for this scan's actual
+// range) that the single symbol with the most history in a 100-symbol
+// sample carried 103 daily bars. Worst case for any 100-symbol chunk
+// would be 100*103=10,300 -- OVER Alpaca's 10,000-row ceiling, so
+// chunk=100 is NOT provably single-page for this window (the live test
+// happened to return 9,848 total and stay under it, which is exactly
+// the "looks fine, isn't proven" gap this rule exists to catch — a
+// different 100-symbol chunk with fuller history across the board could
+// exceed it). 90*103=9,270 is provably under 10,000; used instead.
+const HISTORICAL_UNIVERSE_LOOKBACK_TRADING_DAYS = 30;
+const HISTORICAL_UNIVERSE_LOOKBACK_PAD_CALENDAR_DAYS = 60;
+const HISTORICAL_UNIVERSE_CHUNK_SIZE = 90;
+
+function _shiftDateStr(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+// Chunked daily-bar range fetch across the WHOLE window in one pass per
+// chunk (not once per day — this is the ~80x-cheaper batching this
+// function exists to use). feed:'sip' per CLAUDE.md's Warrior bar
+// invariant. Concurrent (Promise.all), same reasoning as
+// _fetchRawMinuteBars: chunk() partitions symbols into disjoint sets, so
+// parallelizing is safe.
+async function _fetchHistoricalDailyBars(symbols, fetchStartDateStr, endDateStr, client = _coreClient) {
+  let requests = 0;
+  const barsBySymbol = {};
+  const chunks = chunk(symbols, HISTORICAL_UNIVERSE_CHUNK_SIZE);
+  const results = await Promise.all(chunks.map(async (batch) => {
+    try {
+      const data = await client.alpacaGet('/stocks/bars', {
+        symbols: batch.join(','),
+        timeframe: '1Day',
+        start: `${fetchStartDateStr}T00:00:00Z`,
+        end: `${endDateStr}T23:59:59Z`,
+        limit: 10000,
+        feed: 'sip',
+      });
+      return { bars: data.bars || {}, nextPageToken: data.next_page_token || null };
+    } catch (e) {
+      console.warn(`_fetchHistoricalDailyBars: batch error for ${batch.length} symbols: ${e.message}`);
+      return { bars: {}, nextPageToken: null };
+    }
+  }));
+  for (const r of results) {
+    requests++;
+    if (r.nextPageToken) {
+      // Should be unreachable per the chunk-size proof above. Loud, not
+      // a silently truncated partial result masquerading as complete —
+      // if this ever fires, the proof no longer holds for this
+      // window/chunk size and must be re-verified, not patched around.
+      console.error('_fetchHistoricalDailyBars: unexpected next_page_token — a chunk was truncated to one page. The chunk-size proof above no longer holds; re-verify before trusting this run\'s ranking.');
+    }
+    Object.assign(barsBySymbol, r.bars);
+  }
+  return { barsBySymbol, requests };
+}
+
+// Pure ranking over already-fetched bars — separated from the fetch step
+// the same way _buildGapResults is separated from _getPremarketGapUniverse
+// above ("so the ranking logic can't drift between the real path and the
+// diagnostic measuring it"), and independently unit-testable against
+// hand-built fixture bars without a network call.
+//
+// Two metrics, unioned per day (mirrors the live pipeline's own actual
+// shape: getUniverse('movers') unions gainers from /screener/movers with
+// /screener/most-actives, two separately-ranked lists deduped by
+// symbol — this is the closest available analog, not an arbitrary
+// choice):
+//   - dayOverDayPct: (close - priorClose) / priorClose — the settled-move
+//     proxy for 'movers'.
+//   - relVol: volume / (mean volume over the trailing
+//     HISTORICAL_UNIVERSE_LOOKBACK_TRADING_DAYS) — the proxy for
+//     'most-actives', but relative to the symbol's OWN history (unusual
+//     activity) rather than raw volume (which would just always surface
+//     the same mega-caps).
+// $1-$20 filtered on the day's own close BEFORE ranking, same order
+// _getPremarketGapUniverse's own filter-then-rank applies.
+function _rankTopMovers(barsBySymbol, startDateStr, endDateStr, topN = 10) {
+  const rowsByDate = {};
+  for (const sym of Object.keys(barsBySymbol)) {
+    const bars = [...barsBySymbol[sym]].sort((a, b) => new Date(a.t) - new Date(b.t));
+    for (let i = 1; i < bars.length; i++) { // i=0 has no prior close, never rankable
+      const bar = bars[i];
+      const dateStr = bar.t.slice(0, 10);
+      if (dateStr < startDateStr || dateStr > endDateStr) continue; // fetched wider than ranked, for lookback
+      if (!_inPriceRange(bar.c)) continue;
+      const priorClose = bars[i - 1].c;
+      const dayOverDayPct = priorClose > 0 ? (bar.c - priorClose) / priorClose : null;
+      const lookback = bars.slice(Math.max(0, i - HISTORICAL_UNIVERSE_LOOKBACK_TRADING_DAYS), i);
+      const avgVol = lookback.length ? lookback.reduce((s, b) => s + b.v, 0) / lookback.length : null;
+      const relVol = avgVol > 0 ? bar.v / avgVol : null;
+      (rowsByDate[dateStr] = rowsByDate[dateStr] || []).push({
+        date: dateStr, symbol: sym, close: bar.c, volume: bar.v,
+        dayOverDayPct, relVol, lookbackTradingDays: lookback.length,
+      });
+    }
+  }
+
+  const symbolDays = [];
+  for (const date of Object.keys(rowsByDate).sort()) {
+    const rows = rowsByDate[date];
+    const byMove = [...rows].filter(r => r.dayOverDayPct != null).sort((a, b) => b.dayOverDayPct - a.dayOverDayPct).slice(0, topN);
+    const byRelVol = [...rows].filter(r => r.relVol != null).sort((a, b) => b.relVol - a.relVol).slice(0, topN);
+    const byMoveSymbols = new Set(byMove.map(r => r.symbol));
+    const byRelVolSymbols = new Set(byRelVol.map(r => r.symbol));
+    const union = new Map();
+    for (const r of [...byMove, ...byRelVol]) union.set(r.symbol, r);
+    for (const r of union.values()) {
+      const source = [byMoveSymbols.has(r.symbol) ? 'move' : null, byRelVolSymbols.has(r.symbol) ? 'relVol' : null].filter(Boolean);
+      symbolDays.push({ ...r, source });
+    }
+  }
+  return symbolDays;
+}
+
+// Orchestrates fetch + rank. Returns the resulting symbol-day list PLUS
+// the request count — the caller (a replay scan, not this file) is
+// expected to report the list size before spending anything on the much
+// larger replay-half cost, same "measure before committing" discipline
+// this whole file's premarket-gap cost comments already follow.
+async function reconstructTopMoversUniverse({ startDateStr, endDateStr, topN = 10, client = _coreClient }) {
+  const fetchStartDateStr = _shiftDateStr(startDateStr, -HISTORICAL_UNIVERSE_LOOKBACK_PAD_CALENDAR_DAYS);
+  const assetIndex = await _getAssetIndex(client);
+  const eligibleSymbols = assetIndex.filter(a => a.isEligibleInstrument).map(a => a.symbol);
+
+  const { barsBySymbol, requests } = await _fetchHistoricalDailyBars(eligibleSymbols, fetchStartDateStr, endDateStr, client);
+  const symbolDays = _rankTopMovers(barsBySymbol, startDateStr, endDateStr, topN);
+
+  return {
+    symbolDays,
+    requests,
+    eligibleSymbolCount: eligibleSymbols.length,
+    symbolsWithBars: Object.keys(barsBySymbol).length,
+    label: 'top daily movers, reconstructed', // never "what the engine would have seen" — see header comment
+  };
+}
+
 async function _checkAssetsHost() {
   try {
     const data = await alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);

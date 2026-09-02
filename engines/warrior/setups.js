@@ -15,7 +15,7 @@
 // reuse; it's how "every setup validated through the replay harness before
 // shipping" (Phase 5 acceptance) is satisfied literally rather than by
 // separate, divergent implementations.
-import { runReplay, REPLAY_CHUNK_SIZE, fetchReplayBars, fetchPrevCloseAsOf } from './replay.js';
+import { runReplay, runReplayNaiveAndRearmed, REPLAY_CHUNK_SIZE, fetchReplayBars, fetchPrevCloseAsOf } from './replay.js';
 
 // ── Sweepable config ─────────────────────────────────────────────────────
 // Every threshold lives here, not as an inline constant — spec's own rule
@@ -784,11 +784,12 @@ function _evaluateSetupsAgainstBars(setupIds, bars, prevCloseUsable) {
     }
     const classifier = entry.build({ prevClose: prevCloseUsable });
     const rearmDistancePct = _rearmDistancePctFor(setupId);
-    bySetup[setupId] = {
-      naiveTriggers: runReplay(bars, classifier),
-      rearmedTriggers: runReplay(bars, classifier, { rearmDistancePct }),
-      rearmDistancePct,
-    };
+    // runReplayNaiveAndRearmed (2026-09-01, "the free 2x"): one classifier
+    // pass instead of two separate runReplay calls -- see its header
+    // comment in replay.js. Same naiveTriggers/rearmedTriggers shape as
+    // before, byte-identical output, half the classifier calls.
+    const { naiveTriggers, rearmedTriggers } = runReplayNaiveAndRearmed(bars, classifier, rearmDistancePct);
+    bySetup[setupId] = { naiveTriggers, rearmedTriggers, rearmDistancePct };
   }
   return bySetup;
 }
@@ -991,6 +992,15 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
   }
   const tradingDays = _tradingDaysBetween(startDateStr, endDateStr);
   const needsPrevClose = _anyNeedsPrevClose(setupIds);
+  // totalSymbolDays (2026-09-01): a "day N of M" progress line is
+  // meaningless at real scale -- most of the wall-clock cost is the
+  // per-symbol CPU work WITHIN a day (classifier evaluation across
+  // however many bars that symbol has), not the day count itself. A
+  // 60-day/10-symbol-per-day scan and a 60-day/1-symbol-per-day scan
+  // report the same "day 30 of 60" at the halfway point despite being
+  // 10x apart in actual work done.
+  const totalSymbolDays = tradingDays.length * symbols.length;
+  let symbolDaysCompleted = 0;
 
   const resultsByDate = {};
   let requests = 0;
@@ -1000,7 +1010,7 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
   for (let i = 0; i < tradingDays.length; i++) {
     if (opts.isCancelled && opts.isCancelled()) { cancelled = true; break; }
     const dateStr = tradingDays[i];
-    if (opts.onProgress) opts.onProgress({ index: i, total: tradingDays.length, dateStr });
+    if (opts.onProgress) opts.onProgress({ index: i, total: tradingDays.length, dateStr, symbolDaysCompleted, totalSymbolDays });
 
     let barsBySymbol;
     try {
@@ -1010,6 +1020,8 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
     } catch (err) {
       resultsByDate[dateStr] = {};
       for (const sym of symbols) resultsByDate[dateStr][sym] = { notEvaluated: true, reason: `fetch failed: ${err.message}` };
+      symbolDaysCompleted += symbols.length;
+      if (opts.onProgress) opts.onProgress({ index: i, total: tradingDays.length, dateStr, symbolDaysCompleted, totalSymbolDays });
       continue; // don't touch prevCloseBySymbol -- next day re-fetches whatever's missing
     }
 
@@ -1038,6 +1050,8 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
       const bars = barsBySymbol[sym] || [];
       if (!bars.length) {
         resultsByDate[dateStr][sym] = { notEvaluated: true, reason: 'no bars (market closed for this symbol, or no data)' };
+        symbolDaysCompleted++;
+        if (opts.onProgress) opts.onProgress({ index: i, total: tradingDays.length, dateStr, symbolDaysCompleted, totalSymbolDays, symbol: sym });
         continue;
       }
       const held = prevCloseBySymbol[sym];
@@ -1054,6 +1068,8 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
         bySetup: _evaluateSetupsAgainstBars(setupIds, bars, prevCloseUsable),
         distribution: summarizeEvaluationDistribution(setupIds, bars, prevCloseUsable),
       };
+      symbolDaysCompleted++;
+      if (opts.onProgress) opts.onProgress({ index: i, total: tradingDays.length, dateStr, symbolDaysCompleted, totalSymbolDays, symbol: sym });
       prevCloseBySymbol[sym] = { close: bars[bars.length - 1].c, date: dateStr }; // carry forward regardless of whether THIS scan's setups needed it
     }
   }

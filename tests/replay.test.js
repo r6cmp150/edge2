@@ -84,6 +84,28 @@ async function testRearmSuppressesChopButAllowsGenuineSecondBreakout() {
   assert.deepStrictEqual(rearmed.map(t => t.triggerIndex), [1, 8]);
 }
 
+async function testRunReplayNaiveAndRearmedMatchesTwoSeparateCalls() {
+  const replay = await loadReplay();
+  // Same oscillating fixture as testRearmSuppressesChopButAllowsGenuine-
+  // SecondBreakout above -- naive fires 4 times, re-armed 2, from the
+  // same classifier calls. If the combined single-pass function ever
+  // diverges from two separate runReplay calls, this is exactly the
+  // shape (chop + a genuine second episode) that would expose it.
+  const bars = makeBars([9.90, 10.10, 9.95, 10.05, 9.95, 10.08, 8.50, 8.60, 10.20]);
+  const classifier = (barsSoFar) => {
+    const c = barsSoFar[barsSoFar.length - 1].c;
+    return c > 10.0 ? { setupId: 'breakout', referenceLevel: 10.0, referenceDirection: 'above' } : null;
+  };
+
+  const separateNaive = replay.runReplay(bars, classifier);
+  const separateRearmed = replay.runReplay(bars, classifier, { rearmDistancePct: 1 });
+  const combined = replay.runReplayNaiveAndRearmed(bars, classifier, 1);
+
+  console.log('combined naive indices:', combined.naiveTriggers.map(t => t.triggerIndex), '| combined re-armed indices:', combined.rearmedTriggers.map(t => t.triggerIndex));
+  assert.deepStrictEqual(combined.naiveTriggers, separateNaive, 'combined naive output must be byte-identical to a separate runReplay(bars, classifier) call');
+  assert.deepStrictEqual(combined.rearmedTriggers, separateRearmed, 'combined re-armed output must be byte-identical to a separate runReplay(bars, classifier, {rearmDistancePct}) call');
+}
+
 async function testRearmBelowDirectionForBreakdownSetups() {
   const replay = await loadReplay();
   // 'below' direction: a breakdown-below-level setup re-arms only once
@@ -424,6 +446,7 @@ async function testRunReplayForSymbolsOrchestratesFetchAndReplay() {
   await run('replay: runReplay is deterministic', testRunReplayDeterministic);
   await run('replay: runReplay is edge-triggered, one record per episode', testRunReplayEdgeTriggeredOncePerEpisode);
   await run('replay: re-arm rule suppresses chop, allows a genuine second breakout (reproduces the HVII finding)', testRearmSuppressesChopButAllowsGenuineSecondBreakout);
+  await run('replay: runReplayNaiveAndRearmed matches two separate runReplay calls exactly', testRunReplayNaiveAndRearmedMatchesTwoSeparateCalls);
   await run('replay: re-arm rule, below-direction for breakdown setups', testRearmBelowDirectionForBreakdownSetups);
   await run('replay: re-arm trigger record carries referenceLevel and margins', testRearmTriggerRecordCarriesReferenceLevelAndMargins);
   await run('replay: no-lookahead structural control (real loop correct, broken stand-in exposed)', testNoLookaheadStructuralControl);

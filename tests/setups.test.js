@@ -696,7 +696,7 @@ async function testScanDateRangeRespectsCancellation() {
   assert.ok(Object.keys(resultsByDate).length < tradingDays.length, 'must stop before evaluating every trading day in the range');
 }
 
-async function testScanDateRangeReportsProgressPerDay() {
+async function testScanDateRangeReportsProgressPerSymbolDayNotJustPerDay() {
   const setups = await loadSetups();
   global._fetchRawMinuteBars = async (symbols, start, end, chunkSize, label) => {
     const dateStr = label.split(' ').pop();
@@ -706,13 +706,19 @@ async function testScanDateRangeReportsProgressPerDay() {
     return { barsBySymbolAll, requests: 1 };
   };
   const progressCalls = [];
-  await setups.scanDateRangeForSetups('hod-momentum', ['TEST'], '2026-08-24', '2026-08-26', {
+  // 2 symbols x 3 days -- a "day N of M" line alone would be misleading
+  // at scale (see totalSymbolDays' own comment); this asserts the
+  // finer-grained reporting actually exists, not just the day-level one.
+  await setups.scanDateRangeForSetups('hod-momentum', ['AAA', 'BBB'], '2026-08-24', '2026-08-26', {
     onProgress: (p) => progressCalls.push(p),
   });
   console.log('progress calls:', progressCalls);
-  assert.strictEqual(progressCalls.length, 3, 'onProgress must fire once per trading day');
-  assert.deepStrictEqual(progressCalls.map(p => p.index), [0, 1, 2]);
-  assert.deepStrictEqual(progressCalls.map(p => p.total), [3, 3, 3]);
+  // 1 day-start call + 2 per-symbol-completed calls, per day, x 3 days.
+  assert.strictEqual(progressCalls.length, 9, 'onProgress must fire once per day AND once per symbol-day completed within it');
+  assert.strictEqual(progressCalls[0].totalSymbolDays, 6, '2 symbols x 3 days = 6 total symbol-days, known upfront');
+  const symbolDaysCompletedSeq = progressCalls.map(p => p.symbolDaysCompleted);
+  assert.deepStrictEqual(symbolDaysCompletedSeq, [0, 1, 2, 2, 3, 4, 4, 5, 6], 'symbolDaysCompleted must advance monotonically as each symbol finishes, not jump only at day boundaries');
+  assert.strictEqual(progressCalls[progressCalls.length - 1].symbolDaysCompleted, 6, 'must reach the full total by the end of the scan');
 }
 
 // ── Single-day replay panel wiring (Developer Tools) ─────────────────────
@@ -878,7 +884,7 @@ async function testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore() {
   await run('setups: scanDateRangeForSetups marks a fetch failure without aborting', testScanDateRangeMarksFetchFailureWithoutAbortingTheScan);
   await run('setups: scanDateRangeForSetups marks no-data without fabricating a result', testScanDateRangeMarksNoDataWithoutFabricatingAResult);
   await run('setups: scanDateRangeForSetups respects cancellation', testScanDateRangeRespectsCancellation);
-  await run('setups: scanDateRangeForSetups reports progress per day', testScanDateRangeReportsProgressPerDay);
+  await run('setups: scanDateRangeForSetups reports progress per symbol-day, not just per day', testScanDateRangeReportsProgressPerSymbolDayNotJustPerDay);
   await run('setups: single-day scan (no prevClose needed) — naive/re-armed both computed, barCount visible', testSingleDayScanWithoutPrevClose);
   await run('setups: single-day scan fetches and uses a date-verified prevClose for gap-and-go', testSingleDayScanFetchesAndUsesPrevClose);
   await run('setups: single-day scan(ALL_SETUPS_ID) runs all five on one fetch', testSingleDayScanAllSetupsRunsAllFiveOnOneFetch);
