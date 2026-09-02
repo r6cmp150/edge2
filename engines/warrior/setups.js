@@ -857,8 +857,13 @@ function _distributionSummary(values) {
 // this is called from) — summary stats over volumeMultiple,
 // baselineSpanMinutes, and baselineBarCount for every bar each setup's
 // classifier actually evaluated that day, not just the ones that fired.
-function summarizeEvaluationDistribution(setupIds, bars, prevCloseUsable) {
-  const observationsBySetup = captureEvaluationDistribution(setupIds, bars, prevCloseUsable);
+// Split from summarizeEvaluationDistribution (2026-09-01) so a caller
+// that already has observationsBySetup (scanDateRangeForSetups, wanting
+// to ALSO pool raw observations across the whole scan for a true
+// population percentile — a per-symbol-day median-of-medians is not a
+// valid stand-in for one) can derive the summary without a second,
+// duplicate captureEvaluationDistribution pass over the same bars.
+function _summarizeObservations(observationsBySetup) {
   const summary = {};
   for (const setupId of Object.keys(observationsBySetup)) {
     const obs = observationsBySetup[setupId];
@@ -869,6 +874,11 @@ function summarizeEvaluationDistribution(setupIds, bars, prevCloseUsable) {
     };
   }
   return summary;
+}
+
+function summarizeEvaluationDistribution(setupIds, bars, prevCloseUsable) {
+  const observationsBySetup = captureEvaluationDistribution(setupIds, bars, prevCloseUsable);
+  return _summarizeObservations(observationsBySetup);
 }
 
 // ── Range scan: validate on real history across many days ───────────────
@@ -1081,10 +1091,19 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
       // bar (not just triggers) — see summarizeEvaluationDistribution's
       // header comment. CPU-only (reuses the same fetched bars, zero
       // extra requests — doesn't touch the request estimate/accounting).
+      // captureEvaluationDistribution called ONCE here (not once inside
+      // summarizeEvaluationDistribution AND again for opts.onRawDistribution
+      // below) — opts.onRawDistribution lets a caller pool raw
+      // observations across the whole scan for a true population
+      // percentile (a per-symbol-day median-of-medians is not a valid
+      // stand-in for one) without a second, duplicate pass over these
+      // same bars.
+      const observationsBySetup = captureEvaluationDistribution(setupIds, bars, prevCloseUsable);
+      if (opts.onRawDistribution) opts.onRawDistribution(dateStr, sym, observationsBySetup);
       resultsByDate[dateStr][sym] = {
         barCount: bars.length,
         bySetup: _evaluateSetupsAgainstBars(setupIds, bars, prevCloseUsable),
-        distribution: summarizeEvaluationDistribution(setupIds, bars, prevCloseUsable),
+        distribution: _summarizeObservations(observationsBySetup),
       };
       symbolDaysCompleted++;
       if (opts.onProgress) opts.onProgress({ index: i, total: tradingDays.length, dateStr, symbolDaysCompleted, totalSymbolDays, symbol: sym });

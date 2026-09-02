@@ -580,6 +580,26 @@ function makeDayBars(dateStr, closes) {
   });
 }
 
+async function testScanDateRangeOnRawDistributionFiresOncePerSymbolDayWithRawObservations() {
+  const setups = await loadSetups();
+  global._fetchRawMinuteBars = async (symbols, start, end, chunkSize, label) => {
+    const dateStr = label.split(' ').pop();
+    const bars = makeDayBars(dateStr, Array(20).fill(4.10));
+    const barsBySymbolAll = {};
+    symbols.forEach(s => { barsBySymbolAll[s] = [...bars].reverse(); });
+    return { barsBySymbolAll, requests: 1 };
+  };
+  const rawCalls = [];
+  await setups.scanDateRangeForSetups('hod-momentum', ['TEST'], '2026-08-24', '2026-08-25', {
+    onRawDistribution: (dateStr, sym, observationsBySetup) => rawCalls.push({ dateStr, sym, observationsBySetup }),
+  });
+  console.log('onRawDistribution calls:', rawCalls.length, 'first call shape:', rawCalls[0] && Object.keys(rawCalls[0].observationsBySetup));
+  assert.strictEqual(rawCalls.length, 2, 'must fire exactly once per symbol-day (1 symbol x 2 days), not once per setup or not at all');
+  assert.deepStrictEqual(rawCalls.map(c => c.dateStr), ['2026-08-24', '2026-08-25']);
+  assert.ok(rawCalls.every(c => c.sym === 'TEST'));
+  assert.ok(Array.isArray(rawCalls[0].observationsBySetup['hod-momentum']), 'must carry the RAW per-bar observations, not just a summary — this is the whole point (a true population percentile needs raw values, not a per-symbol-day median-of-medians)');
+}
+
 async function testScanDateRangeCarriesForwardPrevCloseAcrossDays() {
   const setups = await loadSetups();
   let prevCloseFetchCount = 0;
@@ -927,6 +947,7 @@ async function testNoSetupPathReferencesCalcEntryTargetStopOrCalcScore() {
   await run('setups: summarizeEvaluationDistribution computes correct stats', testSummarizeEvaluationDistributionComputesCorrectStats);
   await run('setups: captureEvaluationDistribution requires prevClose for setups that need it', testCaptureEvaluationDistributionRequiresPrevCloseForSetupsThatNeedIt);
   await run('setups: estimateRangeScanRequests', testEstimateRangeScanRequests);
+  await run('setups: scanDateRangeForSetups onRawDistribution fires once per symbol-day with raw observations', testScanDateRangeOnRawDistributionFiresOncePerSymbolDayWithRawObservations);
   await run('setups: scanDateRangeForSetups carries prevClose forward across days', testScanDateRangeCarriesForwardPrevCloseAcrossDays);
   await run('setups: scanDateRangeForSetups rejects a stale carried-forward prevClose', testScanDateRangeRejectsStaleCarriedForwardPrevClose);
   await run('setups: scanDateRangeForSetups marks a fetch failure without aborting', testScanDateRangeMarksFetchFailureWithoutAbortingTheScan);
