@@ -985,6 +985,20 @@ function estimateRangeScanRequests(setupIds, symbolCount, tradingDaysCount) {
 // gap-and-go/red-to-green specifically get a per-setup notEvaluated
 // instead of running against a fabricated or stale reference (see
 // _evaluateSetupsAgainstBars).
+// opts.symbolsByDate (2026-09-01): { [dateStr]: string[] } — when
+// present, OVERRIDES the flat `symbols` list on a per-day basis (a
+// reconstructed-movers scan needs a genuinely different symbol set each
+// day; the flat `symbols` param can't express that). `symbols` itself is
+// ignored for fetching/evaluation in this mode — pass [] or the union,
+// it doesn't matter which. Every other code path (carry-forward,
+// notEvaluated handling, distribution capture, progress reporting) is
+// completely unchanged; only WHICH symbols a given day fetches/evaluates
+// differs. This is the same function the browser-driven replay panel
+// uses for its fixed-symbol-list mode — a bulk reconstructed-movers
+// scan calls this directly (see scripts/run-symbol-day-scan.mjs) rather
+// than a parallel reimplementation, specifically so the two paths cannot
+// drift apart the way _renderReplaySymbolResult's bySetup mismatch and
+// the single-day path's missing notEvaluated concept once did.
 async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr, opts = {}) {
   const setupIds = _setupIdsFor(setupId);
   if (!setupIds.every(id => SETUP_REPLAY_CATALOG.some(e => e.id === id))) {
@@ -992,14 +1006,17 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
   }
   const tradingDays = _tradingDaysBetween(startDateStr, endDateStr);
   const needsPrevClose = _anyNeedsPrevClose(setupIds);
+  const daySymbolsFor = (dateStr) => (opts.symbolsByDate ? (opts.symbolsByDate[dateStr] || []) : symbols);
   // totalSymbolDays (2026-09-01): a "day N of M" progress line is
   // meaningless at real scale -- most of the wall-clock cost is the
   // per-symbol CPU work WITHIN a day (classifier evaluation across
   // however many bars that symbol has), not the day count itself. A
   // 60-day/10-symbol-per-day scan and a 60-day/1-symbol-per-day scan
   // report the same "day 30 of 60" at the halfway point despite being
-  // 10x apart in actual work done.
-  const totalSymbolDays = tradingDays.length * symbols.length;
+  // 10x apart in actual work done. In symbolsByDate mode, per-day counts
+  // genuinely vary (a reconstructed-movers day might surface 14 or 19
+  // names), so this sums the REAL per-day counts, not a flat multiply.
+  const totalSymbolDays = tradingDays.reduce((sum, d) => sum + daySymbolsFor(d).length, 0);
   let symbolDaysCompleted = 0;
 
   const resultsByDate = {};
@@ -1010,24 +1027,25 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
   for (let i = 0; i < tradingDays.length; i++) {
     if (opts.isCancelled && opts.isCancelled()) { cancelled = true; break; }
     const dateStr = tradingDays[i];
+    const daySymbols = daySymbolsFor(dateStr);
     if (opts.onProgress) opts.onProgress({ index: i, total: tradingDays.length, dateStr, symbolDaysCompleted, totalSymbolDays });
 
     let barsBySymbol;
     try {
-      const fetched = await fetchReplayBars(symbols, dateStr, opts.fetchOpts);
+      const fetched = await fetchReplayBars(daySymbols, dateStr, opts.fetchOpts);
       barsBySymbol = fetched.barsBySymbol;
       requests += fetched.requests;
     } catch (err) {
       resultsByDate[dateStr] = {};
-      for (const sym of symbols) resultsByDate[dateStr][sym] = { notEvaluated: true, reason: `fetch failed: ${err.message}` };
-      symbolDaysCompleted += symbols.length;
+      for (const sym of daySymbols) resultsByDate[dateStr][sym] = { notEvaluated: true, reason: `fetch failed: ${err.message}` };
+      symbolDaysCompleted += daySymbols.length;
       if (opts.onProgress) opts.onProgress({ index: i, total: tradingDays.length, dateStr, symbolDaysCompleted, totalSymbolDays });
       continue; // don't touch prevCloseBySymbol -- next day re-fetches whatever's missing
     }
 
     const expectedPrevDate = needsPrevClose ? _previousTradingDayStr(dateStr) : null;
     if (needsPrevClose) {
-      const missing = symbols.filter(sym => {
+      const missing = daySymbols.filter(sym => {
         const held = prevCloseBySymbol[sym];
         return !held || held.date !== expectedPrevDate;
       });
@@ -1046,7 +1064,7 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
     }
 
     resultsByDate[dateStr] = {};
-    for (const sym of symbols) {
+    for (const sym of daySymbols) {
       const bars = barsBySymbol[sym] || [];
       if (!bars.length) {
         resultsByDate[dateStr][sym] = { notEvaluated: true, reason: 'no bars (market closed for this symbol, or no data)' };
