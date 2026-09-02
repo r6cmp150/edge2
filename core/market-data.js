@@ -5,6 +5,17 @@
 // gap was fixed in Phase 0.6 (Bug 1) — see the comment on that function.
 // Every fetcher here still hardcodes feed:'iex'; that's separate known debt,
 // not part of Phase 0.6, not touched here.
+//
+// HISTORICAL_BAR_ADJUSTMENT (2026-09-01, found live): every 1Day-bar call
+// in this codebase omitted Alpaca's adjustment param, defaulting to 'raw'
+// (unadjusted) -- confirmed via a live run elsewhere in the app that
+// ranked a $0.14->$4.54 (+3,140%) "move" that was almost certainly a
+// reverse split. Here it corrupts scoreStock's ma20/high52/low52/
+// avgVol10 (EDGE's RVOL equivalent)/consecutive-up-days for any symbol
+// that split within the fetched window -- silently, no error, just a
+// wrong score. Systemic across every daily-bar consumer in this file;
+// fixed together, not one call site at a time.
+const HISTORICAL_BAR_ADJUSTMENT = 'all';
 
 // Confirmed in production: Alpaca rejects a batch /stocks/snapshots request
 // with a 400 ("invalid symbol") the moment it contains one malformed ticker
@@ -109,7 +120,7 @@ async function fetchMultiBars(tickers, limit = 10000) {
     try {
       let pageToken;
       do {
-        const params = { symbols: batch.join(','), timeframe:'1Day', start, limit, sort:'asc', feed:'iex' };
+        const params = { symbols: batch.join(','), timeframe:'1Day', start, limit, sort:'asc', feed:'iex', adjustment: HISTORICAL_BAR_ADJUSTMENT };
         if (pageToken) params.page_token = pageToken;
         const data = await alpacaGet('/stocks/bars', params);
         if (data.bars) {
@@ -157,7 +168,7 @@ async function fetchSingleBars(ticker, limit = 10000) {
     let bars = [];
     let pageToken;
     do {
-      const params = { timeframe:'1Day', start, limit, sort:'asc', feed:'iex' };
+      const params = { timeframe:'1Day', start, limit, sort:'asc', feed:'iex', adjustment: HISTORICAL_BAR_ADJUSTMENT };
       if (pageToken) params.page_token = pageToken;
       const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
       bars = bars.concat(data.bars || []);
@@ -182,7 +193,7 @@ async function fetchNextDayClose(ticker, sellDateStr) {
     d.setDate(d.getDate() + 1);
     const start = d.toISOString().split('T')[0];
     const data = await alpacaGet(`/stocks/${ticker}/bars`, {
-      timeframe: '1Day', start, limit: 3, sort: 'asc', feed: 'iex'
+      timeframe: '1Day', start, limit: 3, sort: 'asc', feed: 'iex', adjustment: HISTORICAL_BAR_ADJUSTMENT
     });
     const bars = data.bars || [];
     return bars.length ? bars[0].c : null;

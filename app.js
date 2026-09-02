@@ -1039,8 +1039,15 @@ async function fetchSellTimingBars(ticker, buyDate, sellDate) {
   const spanDays = Math.ceil((new Date(windowEnd + 'T00:00:00Z') - new Date(buyDate + 'T00:00:00Z')) / 86400000);
   const limit = Math.max(spanDays + 5, 15);
   try {
+    // adjustment: HISTORICAL_BAR_ADJUSTMENT (2026-09-01, found live) --
+    // core/market-data.js's own const, reused as an ordinary global
+    // (that file loads before this one — see index.html's script order)
+    // rather than redefined here. Omitting it defaults to Alpaca's 'raw'
+    // (unadjusted); a split inside a Sell Timing Analysis window would
+    // otherwise fabricate that trade's return. See market-data.js's
+    // header comment for the full family this fixes.
     const data = await alpacaGet(`/stocks/${ticker}/bars`, {
-      timeframe: '1Day', start: buyDate, limit, sort: 'asc', feed: 'iex'
+      timeframe: '1Day', start: buyDate, limit, sort: 'asc', feed: 'iex', adjustment: HISTORICAL_BAR_ADJUSTMENT
     });
     return data.bars || [];
   } catch(e) { return []; }

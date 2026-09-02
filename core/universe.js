@@ -283,7 +283,15 @@ async function _getPriorCloses(symbols) {
         const barsBySymbol = {};
         let pageToken;
         do {
-          const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: batch.length * 3, sort: 'desc', feed: 'iex' };
+          // adjustment:'all' (2026-09-01, found live — see
+          // _getSip30DayAvgVolume below for the full family): omitting
+          // this defaults to Alpaca's 'raw' (unadjusted). A reverse
+          // split lands a spurious price jump on the split date with
+          // nothing in the data to distinguish it from a real move —
+          // here that means a prior close read across a split boundary
+          // is silently wrong, corrupting the gap% this function exists
+          // to feed.
+          const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: batch.length * 3, sort: 'desc', feed: 'iex', adjustment: HISTORICAL_BAR_ADJUSTMENT };
           if (pageToken) params.page_token = pageToken;
           const data = await alpacaGet('/stocks/bars', params);
           if (data.bars) {
@@ -425,6 +433,23 @@ async function _fetchCumulativeMinuteVolume(symbols, start, end) {
 const RVOL_DAILY_AVG_LOOKBACK_DAYS = 30;
 const RVOL_DAILY_AVG_CHUNK_SIZE = 30;
 
+// adjustment: HISTORICAL_BAR_ADJUSTMENT (2026-09-01, found live) --
+// core/market-data.js's own const, referenced here as an ordinary global
+// (that file loads before this one — see index.html's script order),
+// NOT redeclared: classic scripts share one global lexical scope, and a
+// second top-level `const` with the same name would throw at load time
+// (same hazard core/store.js's own header already documents for
+// supabaseClient vs `const supabase`). Every 1Day-bar call in this
+// codebase omitted an adjustment param, defaulting to Alpaca's 'raw'
+// (unadjusted) -- confirmed via a live run of a later, separate
+// historical-reconstruction tool that ranked a $0.14->$4.54 (+3,140%)
+// "move" that was almost certainly a reverse split. THIS function is the
+// worst-affected: it IS Warrior's RVOL denominator (Pillar 3), read
+// fresh every trading day, so a symbol that split within the trailing 30
+// days silently corrupts its own RVOL threshold check -- not a one-off
+// bad row in an offline analysis, a wrong live gate decision. See
+// market-data.js's header comment for the full family this fixes.
+
 async function _getSip30DayAvgVolume(symbols) {
   const today = ptDateStr(getPT());
   let cache = state.warrior30DayVolumeCache;
@@ -439,7 +464,7 @@ async function _getSip30DayAvgVolume(symbols) {
         const barsBySymbol = {};
         let pageToken;
         do {
-          const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: 10000, sort: 'asc', feed: 'sip' };
+          const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: 10000, sort: 'asc', feed: 'sip', adjustment: HISTORICAL_BAR_ADJUSTMENT };
           if (pageToken) params.page_token = pageToken;
           const data = await alpacaGet('/stocks/bars', params);
           requests++;
