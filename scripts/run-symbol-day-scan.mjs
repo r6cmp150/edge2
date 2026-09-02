@@ -99,13 +99,32 @@ async function main() {
   }
 
   // ── Step 2: replay, same scanDateRangeForSetups the browser harness calls ──
+  // onRawDistribution pools RAW per-bar observations across the whole
+  // scan, per setup -- a true population percentile needs the raw
+  // values, not a median-of-medians across 1,000+ already-summarized
+  // per-symbol-day rows (mathematically invalid to merge that way). No
+  // extra fetch or classifier-eval cost: this reuses the exact
+  // captureEvaluationDistribution call scanDateRangeForSetups already
+  // makes internally for its own per-symbol-day summary, just also
+  // handing the raw array to this callback before it gets reduced.
   console.log('[run-symbol-day-scan] running scanDateRangeForSetups across all five classifiers…');
   const t1 = Date.now();
   let lastLoggedSymbolDays = -1;
+  const pooledObservations = {}; // setupId -> { volumeMultiple: [], baselineSpanMinutes: [], baselineBarCount: [] }
   const result = await setupsMod.scanDateRangeForSetups(
     setupsMod.ALL_SETUPS_ID, [], START_DATE, END_DATE,
     {
       symbolsByDate,
+      onRawDistribution: (dateStr, sym, observationsBySetup) => {
+        for (const setupId of Object.keys(observationsBySetup)) {
+          const bucket = pooledObservations[setupId] || (pooledObservations[setupId] = { volumeMultiple: [], baselineSpanMinutes: [], baselineBarCount: [] });
+          for (const obs of observationsBySetup[setupId]) {
+            bucket.volumeMultiple.push(obs.volumeMultiple);
+            bucket.baselineSpanMinutes.push(obs.baselineSpanMinutes);
+            bucket.baselineBarCount.push(obs.baselineBarCount);
+          }
+        }
+      },
       onProgress: (p) => {
         if (p.symbolDaysCompleted !== lastLoggedSymbolDays && (p.symbolDaysCompleted % 25 === 0 || p.symbolDaysCompleted === p.totalSymbolDays)) {
           lastLoggedSymbolDays = p.symbolDaysCompleted;
@@ -117,6 +136,32 @@ async function main() {
   );
   const elapsedSec = Math.round((Date.now() - t1) / 1000);
   console.log(`[run-symbol-day-scan] replay done: ${result.requests} requests, ${elapsedSec}s, cancelled=${result.cancelled}`);
+
+  // True population percentiles per setup, computed once from the pooled
+  // raw values (nearest-rank, same method as _distributionSummary in
+  // setups.js, kept consistent rather than reinventing a second
+  // percentile method here).
+  const percentile = (sortedAscending, p) => {
+    if (!sortedAscending.length) return null;
+    const idx = Math.min(sortedAscending.length - 1, Math.floor((p / 100) * sortedAscending.length));
+    return sortedAscending[idx];
+  };
+  const summarizeField = (values) => {
+    const finite = values.filter((v) => typeof v === 'number' && Number.isFinite(v));
+    if (!finite.length) return { count: 0, median: null, p75: null, p90: null, p99: null, max: null };
+    const sorted = [...finite].sort((a, b) => a - b);
+    return { count: sorted.length, median: percentile(sorted, 50), p75: percentile(sorted, 75), p90: percentile(sorted, 90), p99: percentile(sorted, 99), max: sorted[sorted.length - 1] };
+  };
+  const pooledDistributionSummary = {};
+  for (const setupId of Object.keys(pooledObservations)) {
+    const b = pooledObservations[setupId];
+    pooledDistributionSummary[setupId] = {
+      volumeMultiple: summarizeField(b.volumeMultiple),
+      baselineSpanMinutes: summarizeField(b.baselineSpanMinutes),
+      baselineBarCount: summarizeField(b.baselineBarCount),
+    };
+  }
+  console.log('[run-symbol-day-scan] pooled distribution (true population percentiles):', JSON.stringify(pooledDistributionSummary, null, 2));
 
   // ── Flatten: scripts/replay-scan.mjs's own flattenRangeScan/
   // flattenDistribution assume the SAME symbol list every day (a
@@ -170,6 +215,7 @@ async function main() {
   writeFileSync(path.join(artifactDir, 'matrix.json'), JSON.stringify(flattened.cells, null, 2));
   writeFileSync(path.join(artifactDir, 'triggers.json'), JSON.stringify(flattened.triggers, null, 2));
   writeFileSync(path.join(artifactDir, 'distribution.json'), JSON.stringify(distribution, null, 2));
+  writeFileSync(path.join(artifactDir, 'pooled_distribution.json'), JSON.stringify(pooledDistributionSummary, null, 2));
   writeFileSync(path.join(artifactDir, 'meta.json'), JSON.stringify({
     startDate: START_DATE, endDate: END_DATE,
     symbolDayCount: universeResult.symbolDays.length,
@@ -178,6 +224,7 @@ async function main() {
     replayElapsedSec: elapsedSec,
     cellCount: flattened.cells.length,
     triggerCount: flattened.triggers.length,
+    pooledDistributionSummary,
   }, null, 2));
 
   console.log(`[run-symbol-day-scan] cells=${flattened.cells.length} triggers=${flattened.triggers.length}`);
