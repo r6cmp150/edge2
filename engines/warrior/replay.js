@@ -268,6 +268,45 @@ function computeForwardReturns(bars, triggerIndex, entryPrice) {
 // wrong distance, not fabricate a result elsewhere) — but it's still
 // classifier-supplied domain knowledge (the HOD level, VWAP, etc.) the
 // harness has no independent way to compute itself.
+// Shared by runReplay and runReplayNaiveAndRearmed below so the trigger
+// detail shape can't drift between them — every field here is a pure
+// function of (bars, i, verdict), independent of naive vs. re-armed
+// bookkeeping, which is exactly what makes sharing one built object
+// between both modes correct (see runReplayNaiveAndRearmed's header).
+function _buildTriggerDetail(bars, i, current, verdict) {
+  // priceAtBreakLevel (Bug B, see file header above): only trusted when
+  // referenceLevel is a number AND this bar's own high actually cleared
+  // it — verified here, not assumed from the classifier's say-so. Falls
+  // back to the ordinary close-based price otherwise, same as every
+  // other setup.
+  let triggerPrice = current.c;
+  let closedBelowBrokenLevel = false;
+  if (verdict.priceAtBreakLevel && typeof verdict.referenceLevel === 'number' && verdict.referenceLevel <= current.h) {
+    triggerPrice = verdict.referenceLevel;
+    closedBelowBrokenLevel = current.c < verdict.referenceLevel;
+  }
+
+  return {
+    setupId: verdict.setupId,
+    triggerIndex: i,
+    triggerTime: current.t,
+    triggerPrice,
+    // barClose (2026-08-31, Bug B): the bar's actual close, retained
+    // unconditionally (not just when priceAtBreakLevel fires) so
+    // closedBelowBrokenLevel is auditable against a real number instead
+    // of standing as an unverifiable assertion — and so triggerPrice
+    // vs. barClose is directly comparable for every setup, not just the
+    // three affected ones.
+    barClose: current.c,
+    closedBelowBrokenLevel,
+    referenceLevel: verdict.referenceLevel ?? null,
+    margins: verdict.margins ?? null,
+    minutesOfSessionRemainingAtTrigger: _minutesUntilRegularSessionClose(current),
+    sessionPhase: _sessionPhase(current),
+    forwardReturns: computeForwardReturns(bars, i, triggerPrice),
+  };
+}
+
 function runReplay(bars, classifier, { rearmDistancePct } = {}) {
   const triggers = [];
   let activeSetupId = null;
@@ -305,40 +344,88 @@ function runReplay(bars, classifier, { rearmDistancePct } = {}) {
       coolingDirection = verdict.referenceDirection === 'below' ? 'below' : 'above';
     }
 
-    // priceAtBreakLevel (Bug B, see header comment above): only trusted
-    // when referenceLevel is a number AND this bar's own high actually
-    // cleared it — verified here, not assumed from the classifier's say-
-    // so. Falls back to the ordinary close-based price otherwise, same
-    // as every other setup.
-    let triggerPrice = current.c;
-    let closedBelowBrokenLevel = false;
-    if (verdict.priceAtBreakLevel && typeof verdict.referenceLevel === 'number' && verdict.referenceLevel <= current.h) {
-      triggerPrice = verdict.referenceLevel;
-      closedBelowBrokenLevel = current.c < verdict.referenceLevel;
-    }
-
-    triggers.push({
-      setupId: verdict.setupId,
-      triggerIndex: i,
-      triggerTime: current.t,
-      triggerPrice,
-      // barClose (2026-08-31, Bug B): the bar's actual close, retained
-      // unconditionally (not just when priceAtBreakLevel fires) so
-      // closedBelowBrokenLevel is auditable against a real number instead
-      // of standing as an unverifiable assertion — and so triggerPrice
-      // vs. barClose is directly comparable for every setup, not just the
-      // three affected ones.
-      barClose: current.c,
-      closedBelowBrokenLevel,
-      referenceLevel: verdict.referenceLevel ?? null,
-      margins: verdict.margins ?? null,
-      minutesOfSessionRemainingAtTrigger: _minutesUntilRegularSessionClose(current),
-      sessionPhase: _sessionPhase(current),
-      forwardReturns: computeForwardReturns(bars, i, triggerPrice),
-    });
+    triggers.push(_buildTriggerDetail(bars, i, current, verdict));
   }
 
   return triggers;
+}
+
+// The "free 2x" (2026-09-01): naive and re-armed produce IDENTICAL
+// classifier verdict sequences per bar — rearmDistancePct only changes
+// the POST-HOC bookkeeping that decides which verdicts become new
+// trigger events, never what the classifier itself returns for a given
+// barsSoFar (confirmed when this was first found, 2026-08-31: runReplay's
+// loop calls classifier(barsSoFar) unconditionally at every bar
+// regardless of rearmDistancePct). Calling _evaluateSetupsAgainstBars'
+// two separate runReplay(...) calls was therefore two full passes
+// computing the exact same verdicts, discarding one set's worth of work
+// every time. Deferred at n=19 (8-second runs — not worth the added
+// complexity for a run that fast); taken now because the same rule that
+// deferred it (measure before adding mechanism, don't guess) now points
+// the other way: at ~600 symbol-days this halves a run measured in tens
+// of minutes, and that's exactly the kind of scale change the original
+// deferral was conditioned on.
+//
+// Calls the classifier ONCE per bar, runs the naive ("reset on every
+// falsy call") and re-armed (cooling/retracement) state machines
+// side by side against that SAME verdict sequence, and builds each
+// trigger's detail object exactly once per unique triggering bar index
+// (detailCache) — shared by both output lists when a bar triggers under
+// both modes, since the detail itself never depends on which mode
+// produced it (see _buildTriggerDetail).
+function runReplayNaiveAndRearmed(bars, classifier, rearmDistancePct) {
+  const naiveTriggers = [];
+  const rearmedTriggers = [];
+  const detailCache = new Map(); // triggerIndex -> built detail object
+
+  let naiveActiveSetupId = null;
+  let rearmedActiveSetupId = null;
+  let coolingLevel = null;
+  let coolingDirection = null;
+
+  const hasRetraced = (price) => {
+    if (coolingLevel == null) return true;
+    return coolingDirection === 'below'
+      ? price >= coolingLevel * (1 + rearmDistancePct / 100)
+      : price <= coolingLevel * (1 - rearmDistancePct / 100);
+  };
+
+  for (let i = 0; i < bars.length; i++) {
+    const barsSoFar = bars.slice(0, i + 1);
+    const current = barsSoFar[barsSoFar.length - 1];
+
+    if (rearmedActiveSetupId != null && hasRetraced(current.c)) {
+      rearmedActiveSetupId = null;
+      coolingLevel = null;
+      coolingDirection = null;
+    }
+
+    const verdict = classifier(barsSoFar); // the ONE call this function exists to save a second copy of
+
+    if (!verdict) {
+      naiveActiveSetupId = null; // naive: reset on every falsy call
+      continue; // re-armed: stays cooling regardless — only the retracement check above clears it
+    }
+
+    const getDetail = () => {
+      if (!detailCache.has(i)) detailCache.set(i, _buildTriggerDetail(bars, i, current, verdict));
+      return detailCache.get(i);
+    };
+
+    if (verdict.setupId !== naiveActiveSetupId) {
+      naiveActiveSetupId = verdict.setupId;
+      naiveTriggers.push(getDetail());
+    }
+
+    if (verdict.setupId !== rearmedActiveSetupId) {
+      rearmedActiveSetupId = verdict.setupId;
+      coolingLevel = typeof verdict.referenceLevel === 'number' ? verdict.referenceLevel : current.c;
+      coolingDirection = verdict.referenceDirection === 'below' ? 'below' : 'above';
+      rearmedTriggers.push(getDetail());
+    }
+  }
+
+  return { naiveTriggers, rearmedTriggers };
 }
 
 // ── Example classifier (Phase 4 stand-in — see file header) ────────────
@@ -372,6 +459,7 @@ export {
   fetchPrevCloseAsOf,
   computeForwardReturns,
   runReplay,
+  runReplayNaiveAndRearmed,
   examplePriceMoveClassifier,
   runReplayForSymbols,
   _sessionPhase,
