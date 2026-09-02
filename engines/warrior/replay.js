@@ -69,7 +69,14 @@ async function fetchPrevCloseAsOf(symbols, dateStr) {
   const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 calendar days back, generous over any weekend/holiday gap
   let requests = 0;
   const prevCloseBySymbol = {};
-  const params0 = { symbols: symbols.join(','), timeframe: '1Day', start: start.toISOString(), end: end.toISOString(), limit: 10000, sort: 'desc', feed: 'sip' };
+  // adjustment:'all' (2026-09-01, found live — see core/market-data.js's
+  // HISTORICAL_BAR_ADJUSTMENT comment for the full family this fixes):
+  // omitting this defaults to Alpaca's 'raw' (unadjusted), and a reverse
+  // split lands a spurious price jump on the split date with nothing in
+  // the data to distinguish it from a genuine move -- here that means a
+  // prevClose read across a split boundary is silently wrong, corrupting
+  // gap-and-go/red-to-green's reference level for every trade after it.
+  const params0 = { symbols: symbols.join(','), timeframe: '1Day', start: start.toISOString(), end: end.toISOString(), limit: 10000, sort: 'desc', feed: 'sip', adjustment: 'all' };
   let pageToken;
   const barsBySymbol = {};
   do {
