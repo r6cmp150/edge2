@@ -76,8 +76,19 @@ function evaluatePillar2(candidate) {
 
 // elapsedMinutes: minutes since regular-session open (6:30am PT), only
 // meaningful when session==='OPEN' — callers must check session first.
-// rvolInput: { todayVolume, avgDailyVolume } for this candidate's symbol,
-// or undefined if the batch fetch found nothing for it.
+// rvolInput: { todayVolume, avgDailyVolume, fetchFailed } for this
+// candidate's symbol, or undefined if the batch fetch found nothing for it.
+//
+// fetchFailed (2026-09-04, gate-honesty pass): a REQUEST-level failure
+// (rate-limited, network error — see core/universe.js's
+// _fetchCumulativeMinuteVolume/_getSip30DayAvgVolume failedSymbols), never
+// fabricated as a symbol that simply "has no volume data." Checked FIRST,
+// ahead of the generic no-data fallback below, and never returns
+// 'not-checked' — see classifyGate's comment for why the two states can't
+// share a bucket: not-checked is structural (float, pre-market RVOL) and
+// never blocks qualification; fetch-failed means "we tried to measure this
+// and couldn't," and a stock we couldn't measure is not a stock that
+// passed.
 function evaluatePillar3(candidate, session, elapsedMinutes, rvolInput) {
   const threshold = `≥${RVOL_MIN}×`;
   if (session !== 'OPEN') {
@@ -88,6 +99,9 @@ function evaluatePillar3(candidate, session, elapsedMinutes, rvolInput) {
   }
   if (elapsedMinutes < RVOL_NOT_YET_AVAILABLE_MIN) {
     return _pillar('rvol', 'not-checked', null, threshold, { reason: 'not yet available (first 15 min)' });
+  }
+  if (rvolInput && rvolInput.fetchFailed) {
+    return _pillar('rvol', 'fetch-failed', null, threshold, { reason: 'volume fetch failed (rate-limited or network error) — not confirmed absent, could not be measured this scan' });
   }
   if (!rvolInput || rvolInput.avgDailyVolume == null || rvolInput.todayVolume == null) {
     return _pillar('rvol', 'not-checked', null, threshold, { reason: 'no volume data' });
@@ -111,7 +125,19 @@ function evaluatePillar3(candidate, session, elapsedMinutes, rvolInput) {
 // here, never inheriting the fetch window as the pass criterion. A
 // Friday-evening headline must not read as a fresh Monday-afternoon
 // catalyst just because it's present in the wider-windowed fetch.
-function evaluatePillar4(candidate, newsItemsForSymbol, now) {
+//
+// newsFetchFailed (2026-09-04, gate-honesty pass): this candidate's news
+// batch request failed outright (core/news.js's state.newsFailedSymbols) —
+// checked FIRST, ahead of the real "genuinely zero recent articles" fail
+// path below. Before this fix, a total news-fetch failure silently
+// returned newsItemsForSymbol=[] for every candidate, which this function
+// scored as a real, confirmed 'fail' — the worst version of this whole
+// defect class, since 'fail' actively counts against qualification instead
+// of just being invisible the way a missing not-checked would be.
+function evaluatePillar4(candidate, newsItemsForSymbol, now, newsFetchFailed) {
+  if (newsFetchFailed) {
+    return _pillar('news', 'fetch-failed', null, `<${NEWS_MAX_AGE_HOURS}h`, { reason: 'news fetch failed (rate-limited or network error) — not confirmed absent, could not be measured this scan' });
+  }
   const items = newsItemsForSymbol || [];
   const cutoffMs = now.getTime() - NEWS_MAX_AGE_HOURS * 3600 * 1000;
   const recent = items
@@ -183,12 +209,30 @@ function _elapsedSessionMinutes() {
 // — engines/warrior/index.js's renderTab reads evaluateGateBatch's
 // rvolCheckable flag and puts the caveat on the section header, one level
 // up from where the per-pillar not-checked labels already do this.
+//
+// BLOCKED (2026-09-04, gate-honesty pass, settled decision): a
+// fetch-failed pillar is NOT the same as not-checked and must not share
+// its "never counts against a candidate" treatment. not-checked means a
+// structural reason the check doesn't apply (float unbuilt, pre-market
+// RVOL) — the app made a deliberate choice not to look. fetch-failed means
+// the app TRIED to measure and the request failed — we simply don't know
+// the answer. A stock we couldn't measure is not a stock that passed, so
+// any fetch-failed pillar blocks qualification outright, checked BEFORE
+// the substantive-pillar counting logic — never QUALIFIED, never
+// NEAR_MISS (near-miss implies a real, informative near-threshold result,
+// which a fetch failure isn't), always 'BLOCKED'. Distinct from plain
+// disqualification (null) so the card can say "couldn't verify," not
+// "failed the gate" — those mean different things to someone about to
+// trade on it.
 function classifyGate(gateResult) {
   const byId = {};
   gateResult.pillars.forEach(p => { byId[p.id] = p; });
 
   const freePillarsPass = byId.price.status === 'pass' && byId.change.status === 'pass';
   if (!freePillarsPass) return null; // plain disqualification — see header comment; never NEAR_MISS no matter which one failed
+
+  const anyFetchFailed = [byId.rvol, byId.news].some(p => p.status === 'fetch-failed');
+  if (anyFetchFailed) return 'BLOCKED';
 
   const substantive = [byId.rvol, byId.news].filter(p => p.status !== 'not-checked');
   const substantiveFailed = substantive.filter(p => p.status === 'fail');
@@ -205,7 +249,7 @@ function classifyGate(gateResult) {
 // unconditionally, regardless of whether Pillar 3 passed — see
 // classifyGate's comment for why halting between them broke the near-miss
 // tier's whole purpose.
-function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, newsItemsForSymbol, now }) {
+function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, newsItemsForSymbol, newsFetchFailed, now }) {
   const pillar1 = evaluatePillar1(candidate);
   const pillar2 = evaluatePillar2(candidate);
   const skip = (id, threshold) => _pillar(id, 'not-checked', null, threshold, { reason: 'gate short-circuited (price/change failed)' });
@@ -215,7 +259,7 @@ function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, newsItems
     ? evaluatePillar3(candidate, session, elapsedMinutes, rvolInput)
     : skip('rvol', `≥${RVOL_MIN}×`);
   const pillar4 = clearedFreePillars
-    ? evaluatePillar4(candidate, newsItemsForSymbol, now)
+    ? evaluatePillar4(candidate, newsItemsForSymbol, now, newsFetchFailed)
     : skip('news', `<${NEWS_MAX_AGE_HOURS}h`);
 
   const pillarFloat = evaluatePillarFloat();
@@ -275,13 +319,24 @@ async function evaluateGateBatch(candidates, session) {
     const sessionOpen = new Date(now.getTime() - elapsedMinutes * 60 * 1000);
     const end = new Date(now.getTime() - 16 * 60 * 1000); // PREMARKET_BAR_DELAY_MIN equivalent for the regular session
 
-    const [{ volumeBySymbol, requests: volReq }, { avgVolumes, requests: avgReq }] = await Promise.all([
+    const [
+      { volumeBySymbol, requests: volReq, failedSymbols: volFailedSymbols },
+      { avgVolumes, requests: avgReq, failedSymbols: avgFailedSymbols },
+    ] = await Promise.all([
       _fetchCumulativeMinuteVolume(symbols, sessionOpen, end),
       _getSip30DayAvgVolume(symbols),
     ]);
     requests += volReq + avgReq;
+    // A symbol failing EITHER fetch (today's cumulative volume or the
+    // 30-day average) means RVOL can't be computed for it — either half
+    // missing makes the ratio meaningless, not just one side of it.
+    const rvolFetchFailedSymbols = new Set([...(volFailedSymbols || []), ...(avgFailedSymbols || [])]);
     for (const sym of symbols) {
-      rvolInputBySymbol[sym] = { todayVolume: volumeBySymbol[sym], avgDailyVolume: avgVolumes[sym] };
+      rvolInputBySymbol[sym] = {
+        todayVolume: volumeBySymbol[sym],
+        avgDailyVolume: avgVolumes[sym],
+        fetchFailed: rvolFetchFailedSymbols.has(sym),
+      };
     }
   }
 
@@ -293,11 +348,18 @@ async function evaluateGateBatch(candidates, session) {
   // this function easier to read; revisit if wall-clock on a real scan
   // shows it matters.
   let newsBySymbol = {};
+  let newsFailedSymbolSet = new Set();
   if (pillar12Survivors.length) {
     const symbols = pillar12Survivors.map(c => c.symbol);
     const newsItems = await fetchNewsForTickers(symbols);
     requests += Math.ceil(symbols.length / 10); // fetchNewsForTickers's own NEWS_CHUNK_SIZE; exact count also visible via state.newsTruncatedSymbols if pagination capped
     newsBySymbol = _groupNewsBySymbol(newsItems);
+    // state.newsFailedSymbols (core/news.js, 2026-09-04): symbols whose
+    // news BATCH request failed outright — read right after the call,
+    // same pattern as newsTruncatedSymbols already used elsewhere, so a
+    // later concurrent scan's own fetch can't overwrite this one's
+    // reading of the flag before it's consumed.
+    newsFailedSymbolSet = new Set(state.newsFailedSymbols || []);
   }
 
   const results = candidates.map(c => evaluateGate(c, {
@@ -305,6 +367,7 @@ async function evaluateGateBatch(candidates, session) {
     elapsedMinutes,
     rvolInput: rvolInputBySymbol[c.symbol],
     newsItemsForSymbol: newsBySymbol[c.symbol],
+    newsFetchFailed: newsFailedSymbolSet.has(c.symbol),
     now,
   }));
 

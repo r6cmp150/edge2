@@ -950,6 +950,11 @@ a { color: var(--blue); }
 .warrior-pillar-row.wp-fail .warrior-pillar-icon { color: var(--red); }
 .warrior-pillar-row.wp-notchecked .warrior-pillar-icon { color: var(--muted); }
 .warrior-pillar-row.wp-notchecked .warrior-pillar-value { color: var(--muted); font-style: italic; }
+/* fetch-failed (2026-09-04): distinct from not-checked on purpose — yellow,
+   not red/muted, reads as "uncertain," not "failed a check" or "skipped by
+   design." See gate.js's classifyGate for why these can't share a style. */
+.warrior-pillar-row.wp-fetchfailed .warrior-pillar-icon { color: var(--yellow); }
+.warrior-pillar-row.wp-fetchfailed .warrior-pillar-value { color: var(--yellow); }
 
 /* ── Warrior setups (Phase 5) ── */
 .warrior-armed-levels { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }

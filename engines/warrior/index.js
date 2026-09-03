@@ -202,6 +202,12 @@ function _formatPTTime(date) {
 }
 
 function _pillarValueDisplay(pillar) {
+  // fetch-failed (2026-09-04): checked as its own branch, ahead of the
+  // not-checked one below — same reason field, but must never render with
+  // not-checked's neutral wording ("not checked" reads as a deliberate
+  // choice; a fetch failure is not one). See gate.js's classifyGate
+  // comment for the full fetch-failed vs not-checked distinction.
+  if (pillar.status === 'fetch-failed') return pillar.reason || 'could not be measured';
   if (pillar.status === 'not-checked') return pillar.reason || 'not checked';
   if (pillar.id === 'rvol' && typeof pillar.value === 'number') {
     const expected = pillar.expectedByNow != null ? Math.round(pillar.expectedByNow).toLocaleString() : '—';
@@ -213,9 +219,15 @@ function _pillarValueDisplay(pillar) {
   return pillar.value == null ? '—' : String(pillar.value);
 }
 
+// fetch-failed gets its own icon/class (2026-09-04) — before this, it fell
+// through to the same '—'/wp-notchecked treatment as a genuine not-checked,
+// which is exactly the misleading-display problem this whole pass exists
+// to close: a card reading "RVOL not checked" that actually means "we
+// tried and the fetch failed" looks identical to a deliberate skip. '?' /
+// wp-fetchfailed reads as "unknown," not "fine to ignore."
 function _renderPillarRow(pillar) {
-  const icon = pillar.status === 'pass' ? '✓' : pillar.status === 'fail' ? '✗' : '—';
-  const cls = pillar.status === 'pass' ? 'wp-pass' : pillar.status === 'fail' ? 'wp-fail' : 'wp-notchecked';
+  const icon = pillar.status === 'pass' ? '✓' : pillar.status === 'fail' ? '✗' : pillar.status === 'fetch-failed' ? '?' : '—';
+  const cls = pillar.status === 'pass' ? 'wp-pass' : pillar.status === 'fail' ? 'wp-fail' : pillar.status === 'fetch-failed' ? 'wp-fetchfailed' : 'wp-notchecked';
   return `<div class="warrior-pillar-row ${cls}">
     <span class="warrior-pillar-icon">${icon}</span>
     <span class="warrior-pillar-label">${pillar.id}</span>
@@ -721,6 +733,15 @@ function renderTab() {
   const { session, results, scannedAt, rvolCheckable } = _lastScanResults;
   const qualified = results.filter(r => r.tier === 'QUALIFIED');
   const nearMiss = results.filter(r => r.tier === 'NEAR_MISS');
+  // BLOCKED (2026-09-04): a candidate that cleared price+change but had a
+  // REQUEST failure on RVOL or news — not a real pass, not a real fail,
+  // not the same as a structural not-checked. Shown as its own section,
+  // muted rather than alarming (see _renderCandidateCard — the pillar rows
+  // already carry the honest "could not be measured" wording and yellow
+  // styling; this section just says "here's who that affected"). See
+  // gate.js's classifyGate for the full fetch-failed-blocks-qualification
+  // rationale: a stock we couldn't measure is not a stock that passed.
+  const blocked = results.filter(r => r.tier === 'BLOCKED');
   // RVOL is the most selective of the 5 pillars — a section header that
   // just says "QUALIFIED (10)" outside regular session (or in the first 15
   // minutes) claims more confidence than the pillars underneath it earned:
@@ -738,6 +759,7 @@ function renderTab() {
   ${qualified.length ? qualified.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>'}
   <div class="section-label mt12">NEAR MISS (${nearMiss.length})${rvolCaveat}</div>
   ${nearMiss.length ? nearMiss.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No near-miss candidates this scan.</p></div>'}
+  ${blocked.length ? `<div class="section-label mt12">COULD NOT VERIFY (${blocked.length})</div>${blocked.map(_renderCandidateCard).join('')}` : ''}
   ${replayPanel}`;
 }
 
