@@ -15,6 +15,13 @@ const { readSource, run } = require('./_lib');
 
 const src = readSource('core/market-data.js');
 global.assertPageNotSuspiciouslyFull = () => {}; // real impl in core/api-client.js — diagnostic-only, no-op here; set once, used by every extracted fetcher below
+// HISTORICAL_BAR_ADJUSTMENT (real impl: core/market-data.js top-level
+// const) — extractFn below pulls ONLY the target function's source via
+// regex, not the file's top-level declarations, so this global has to be
+// supplied here too (pre-existing gap, confirmed failing the same way on
+// unmerged main — not introduced by the 2026-09-04 merge, just found
+// while verifying it).
+global.HISTORICAL_BAR_ADJUSTMENT = 'all';
 
 // fetchMultiBars hits the multi-symbol endpoint, where data.bars is an
 // OBJECT keyed by symbol. fetchSingleBars/fetchMinuteBars/fetchHourlyBars

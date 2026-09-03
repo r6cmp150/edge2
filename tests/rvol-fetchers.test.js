@@ -24,6 +24,11 @@ function loadUniverse(alpacaGetMock, stateOverrides) {
   global.createApiClient = () => ({ alpacaGet: global.alpacaGet });
   global._coreClient = global.createApiClient('CORE');
   global.assertPageNotSuspiciouslyFull = () => {}; // real impl in core/api-client.js — diagnostic-only, no-op here
+  // HISTORICAL_BAR_ADJUSTMENT (real impl: core/market-data.js top-level
+  // const, referenced here as an ordinary global — see index.html's
+  // script order). Pre-existing gap, confirmed failing the same way on
+  // unmerged main — not introduced by the 2026-09-04 merge.
+  global.HISTORICAL_BAR_ADJUSTMENT = 'all';
   const src = readSource('core/universe.js');
   const exposeCode = `
     global.__fetchCumulativeMinuteVolume = _fetchCumulativeMinuteVolume;
