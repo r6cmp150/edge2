@@ -761,7 +761,16 @@ function renderTab() {
   // principle already applied to individual pillar rows, one level up. See
   // gate.js's evaluateGateBatch/classifyGate comments for why this isn't a
   // classification change — the tiers themselves are still correct.
-  const rvolCaveat = rvolCheckable ? '' : ' — RVOL not evaluated this session';
+  // Salience fix (2026-09-04): the caveat text used to be plain string
+  // concatenation into .section-label — same bold/uppercase/letter-spaced
+  // treatment as "QUALIFIED (12)" itself, so nothing told the eye this
+  // trailing clause was a lower-confidence qualifier rather than more of
+  // the same headline. .section-label-caveat below overrides weight/case/
+  // tracking (not color — the label is already --muted end to end) so it
+  // reads as an aside under a fast pre-open skim, not shouted prose.
+  // Keeps the pillar name (RVOL specifically), not a generic "3 of 4" —
+  // the caveat was never missing information, only visual separation.
+  const rvolCaveat = rvolCheckable ? '' : ' <span class="section-label-caveat">— RVOL not evaluated this session</span>';
   return `<div class="tab-header">
     <h1 class="tab-title">WARRIOR</h1>
   </div>
