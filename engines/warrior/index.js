@@ -718,12 +718,23 @@ function renderReplayPanel() {
   </div>`;
 }
 
+// 2026-09-04: the 18-month backtest found no edge, but the universe
+// reconstruction it depends on (/v2/assets only returns today's listed
+// symbols — no point-in-time query) was the weakest link in that test.
+// Forward-testing against live data is a legitimate next step, not a
+// disregard of the backtest result. Same tone as the EDGE scan's
+// dropped-count suffix (.tab-subtitle, muted, not a warning banner) — an
+// honest line, not an alarm. Shown on every render of the tab, including
+// before a first scan has ever run.
+const _PHASE5_UNVALIDATED_LINE = `<div class="tab-subtitle">Phase 5 — unvalidated. Backtest over Jun 2025–Aug 2026 found no edge; this is a live forward test, not a confirmed strategy.</div>`;
+
 function renderTab() {
   const replayPanel = renderReplayPanel();
   if (!_lastScanResults) {
     return `<div class="tab-header">
       <h1 class="tab-title">WARRIOR</h1>
     </div>
+    ${_PHASE5_UNVALIDATED_LINE}
     <div class="empty-state">
       <div class="empty-icon">🥋</div>
       <p>No scan yet — tap ↻ Refresh to run one.</p>
@@ -754,6 +765,7 @@ function renderTab() {
   return `<div class="tab-header">
     <h1 class="tab-title">WARRIOR</h1>
   </div>
+  ${_PHASE5_UNVALIDATED_LINE}
   <div class="tab-subtitle">Session: ${session} · ${results.length} scanned · last scan ${_formatPTTime(scannedAt)} PT</div>
   <div class="section-label">QUALIFIED (${qualified.length})${rvolCaveat}</div>
   ${qualified.length ? qualified.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>'}
