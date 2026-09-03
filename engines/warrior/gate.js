@@ -120,6 +120,50 @@ function evaluatePillar3(candidate, session, elapsedMinutes, rvolInput) {
   });
 }
 
+// Pillar 3, pre-market variant (2026-09-04, found live): a DISTINCT
+// metric from Pillar 3's regular-session RVOL, never sharing its id or
+// its threshold. Pre-market cumulative volume against a pre-market-
+// specific 30-day baseline (core/universe.js's _getPreMarketVolumeHistory
+// -- dividing pre-market volume by the regular-session RVOL's full-day
+// average would be a ratio of two different things, the same error class
+// this session has already caught three times).
+//
+// DELIBERATELY ALWAYS 'not-checked' as a STATUS, even when a real ratio
+// is computed: this session has zero evidence for where a pre-market
+// RVOL cutoff belongs (RVOL_MIN=5.0 is validated only for the regular-
+// session INTRADAY_CURVE denominator; nothing supports reusing it here,
+// and picking any other number would be the identical mistake with a
+// different value). Gating on a fabricated threshold would display an
+// invented number with the authority of a measured one -- exactly what
+// this whole gate-honesty pass exists to stop doing. The real ratio is
+// still surfaced via `value` (not-checked doesn't mean hidden, same as
+// float's own not-checked-but-displayed shape) and captured into
+// state.warriorPreMarketRvolObservations by the caller for a REAL,
+// data-derived threshold later -- see index.js's rendering and
+// evaluateGateBatch below for where that capture happens.
+function evaluatePillarPreMarketRvol(candidate, session, preMarketRvolInput) {
+  const threshold = 'unvalidated — no session-appropriate cutoff measured yet';
+  if (session !== 'PRE') {
+    return _pillar('rvol-premarket', 'not-checked', null, threshold, { reason: 'only computed pre-market' });
+  }
+  if (preMarketRvolInput && preMarketRvolInput.fetchFailed) {
+    return _pillar('rvol-premarket', 'not-checked', null, threshold, { reason: 'volume fetch failed (rate-limited or network error) — not confirmed absent' });
+  }
+  if (!preMarketRvolInput || preMarketRvolInput.avgPreMarketVolume == null || preMarketRvolInput.todayPreMarketVolume == null) {
+    return _pillar('rvol-premarket', 'not-checked', null, threshold, { reason: 'no pre-market volume data' });
+  }
+  if (!(preMarketRvolInput.avgPreMarketVolume > 0)) {
+    return _pillar('rvol-premarket', 'not-checked', null, threshold, { reason: 'no pre-market baseline (thin/quiet history)' });
+  }
+  const ratio = preMarketRvolInput.todayPreMarketVolume / preMarketRvolInput.avgPreMarketVolume;
+  return _pillar('rvol-premarket', 'not-checked', ratio, threshold, {
+    todayPreMarketVolume: preMarketRvolInput.todayPreMarketVolume,
+    avgPreMarketVolume: preMarketRvolInput.avgPreMarketVolume,
+    daysInAverage: preMarketRvolInput.daysInAverage,
+    reason: `measured, unvalidated threshold (${preMarketRvolInput.daysInAverage}-day pre-market average)`,
+  });
+}
+
 // Gate window (24h) is deliberately narrower than the fetch window (72h,
 // Bug 4's weekend-catalyst widening) — filtering by article age explicitly
 // here, never inheriting the fetch window as the pass criterion. A
@@ -249,7 +293,7 @@ function classifyGate(gateResult) {
 // unconditionally, regardless of whether Pillar 3 passed — see
 // classifyGate's comment for why halting between them broke the near-miss
 // tier's whole purpose.
-function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, newsItemsForSymbol, newsFetchFailed, now }) {
+function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, preMarketRvolInput, newsItemsForSymbol, newsFetchFailed, now }) {
   const pillar1 = evaluatePillar1(candidate);
   const pillar2 = evaluatePillar2(candidate);
   const skip = (id, threshold) => _pillar(id, 'not-checked', null, threshold, { reason: 'gate short-circuited (price/change failed)' });
@@ -258,6 +302,14 @@ function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, newsItems
   const pillar3 = clearedFreePillars
     ? evaluatePillar3(candidate, session, elapsedMinutes, rvolInput)
     : skip('rvol', `≥${RVOL_MIN}×`);
+  // Pre-market RVOL: same short-circuit as pillar3/pillar4 -- the fetch
+  // itself is scoped to pillar12Survivors (evaluateGateBatch below), so a
+  // candidate that never cleared price/change never has real
+  // preMarketRvolInput to show; skip() here reports that honestly as
+  // "gate short-circuited," not as a failed measurement.
+  const pillarPreMarketRvol = clearedFreePillars
+    ? evaluatePillarPreMarketRvol(candidate, session, preMarketRvolInput)
+    : skip('rvol-premarket', 'unvalidated — no session-appropriate cutoff measured yet');
   const pillar4 = clearedFreePillars
     ? evaluatePillar4(candidate, newsItemsForSymbol, now, newsFetchFailed)
     : skip('news', `<${NEWS_MAX_AGE_HOURS}h`);
@@ -266,7 +318,7 @@ function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, newsItems
 
   const gateResult = {
     symbol: candidate.symbol,
-    pillars: [pillar1, pillar2, pillar3, pillar4, pillarFloat],
+    pillars: [pillar1, pillar2, pillar3, pillarPreMarketRvol, pillar4, pillarFloat],
     haltStatus: 'unknown', // deferred — see spec's "Halt check" section
     dataTimestamp: now.toISOString(),
   };
@@ -340,6 +392,67 @@ async function evaluateGateBatch(candidates, session) {
     }
   }
 
+  // Pre-market RVOL (2026-09-04, found live): informational only, never
+  // gates (see evaluatePillarPreMarketRvol) -- fetched only during PRE,
+  // only for pillar12Survivors, same cost-scoping the regular-session
+  // RVOL fetch above already uses. 16 hardcoded (not referencing
+  // core/universe.js's PREMARKET_BAR_DELAY_MIN) for the same module-
+  // boundary reason the regular-session fetch's own `end` line above
+  // does: gate.js is a real ES module, universe.js's `const` doesn't
+  // cross that boundary as a bare global the way its functions do.
+  let preMarketRvolInputBySymbol = {};
+  if (pillar12Survivors.length && session === 'PRE') {
+    const symbols = pillar12Survivors.map(c => c.symbol);
+    const todayStr = ptDateStr(getPT(now));
+    const preMarketStart = ptWallClockToInstant(todayStr, 1, 0); // 4:00am ET
+    const preMarketEnd = new Date(now.getTime() - 16 * 60 * 1000); // PREMARKET_BAR_DELAY_MIN equivalent
+
+    const [
+      { volumeBySymbol: pmVolumeBySymbol, requests: pmVolReq, failedSymbols: pmVolFailedSymbols },
+      { avgVolumes: pmAvgVolumes, historyBySymbol: pmHistoryBySymbol, requests: pmAvgReq, failedSymbols: pmAvgFailedSymbols },
+    ] = await Promise.all([
+      _fetchCumulativeMinuteVolume(symbols, preMarketStart, preMarketEnd),
+      _getPreMarketVolumeHistory(symbols),
+    ]);
+    requests += pmVolReq + pmAvgReq;
+    const pmFetchFailedSymbols = new Set([...(pmVolFailedSymbols || []), ...(pmAvgFailedSymbols || [])]);
+    for (const sym of symbols) {
+      preMarketRvolInputBySymbol[sym] = {
+        todayPreMarketVolume: pmVolumeBySymbol[sym],
+        avgPreMarketVolume: pmAvgVolumes[sym],
+        daysInAverage: (pmHistoryBySymbol[sym] || []).length,
+        fetchFailed: pmFetchFailedSymbols.has(sym),
+      };
+    }
+
+    // Distribution capture (explicit ask, 2026-09-04): same "capture the
+    // distribution, set the threshold from data later" discipline the
+    // backtest's own onRawDistribution used -- RVOL_MIN=5.0 has zero
+    // evidence behind it for THIS metric, so the only honest path to a
+    // real cutoff is accumulating real observations first. One entry per
+    // candidate per scan (not deduped across a morning's repeated
+    // refreshes -- a symbol that stays a candidate longer gets captured
+    // more often; left for whoever eventually analyzes this to handle,
+    // not solved here), real ratios only (never fetch failures or
+    // thin/absent baselines masquerading as a zero).
+    const obs = state.warriorPreMarketRvolObservations || [];
+    for (const sym of symbols) {
+      const input = preMarketRvolInputBySymbol[sym];
+      if (input.fetchFailed || input.avgPreMarketVolume == null || input.todayPreMarketVolume == null || !(input.avgPreMarketVolume > 0)) continue;
+      obs.push({
+        capturedAt: now.toISOString(),
+        date: todayStr,
+        symbol: sym,
+        ratio: input.todayPreMarketVolume / input.avgPreMarketVolume,
+        todayPreMarketVolume: input.todayPreMarketVolume,
+        avgPreMarketVolume: input.avgPreMarketVolume,
+        daysInAverage: input.daysInAverage,
+      });
+    }
+    state.warriorPreMarketRvolObservations = obs;
+    persist('warriorPreMarketRvolObservations');
+  }
+
   // News is batched for the SAME survivor set as RVOL (pillar12Survivors),
   // not a narrower set filtered by Pillar 3's outcome — Pillar 3 no longer
   // gates Pillar 4 (see evaluateGate/classifyGate's comments). Could run
@@ -366,6 +479,7 @@ async function evaluateGateBatch(candidates, session) {
     session,
     elapsedMinutes,
     rvolInput: rvolInputBySymbol[c.symbol],
+    preMarketRvolInput: preMarketRvolInputBySymbol[c.symbol],
     newsItemsForSymbol: newsBySymbol[c.symbol],
     newsFetchFailed: newsFailedSymbolSet.has(c.symbol),
     now,
@@ -412,7 +526,7 @@ async function diagnoseGateCost(session) {
 export {
   PRICE_MIN, PRICE_MAX, CHANGE_MIN_PCT, RVOL_MIN, NEWS_MAX_AGE_HOURS, RVOL_NOT_YET_AVAILABLE_MIN,
   INTRADAY_CURVE, intradayCurve,
-  evaluatePillar1, evaluatePillar2, evaluatePillar3, evaluatePillar4, evaluatePillarFloat,
+  evaluatePillar1, evaluatePillar2, evaluatePillar3, evaluatePillarPreMarketRvol, evaluatePillar4, evaluatePillarFloat,
   classifyGate, evaluateGate, evaluateGateBatch,
   _selectStrategy, diagnoseGateCost,
 };

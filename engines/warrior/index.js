@@ -207,6 +207,19 @@ function _pillarValueDisplay(pillar) {
   // not-checked's neutral wording ("not checked" reads as a deliberate
   // choice; a fetch failure is not one). See gate.js's classifyGate
   // comment for the full fetch-failed vs not-checked distinction.
+  // rvol-premarket (2026-09-04): checked BEFORE the generic not-checked
+  // fallback below, even though its status is ALWAYS 'not-checked' by
+  // design (see gate.js's evaluatePillarPreMarketRvol — it never gates,
+  // on purpose, since there's no validated threshold). Status alone can't
+  // distinguish "structurally skipped" from "genuinely measured, just not
+  // gating" — the real ratio must still reach the card, or this pillar is
+  // functionally invisible despite being the whole point of building it.
+  if (pillar.id === 'rvol-premarket' && typeof pillar.value === 'number') {
+    const today = pillar.todayPreMarketVolume != null ? Math.round(pillar.todayPreMarketVolume).toLocaleString() : '—';
+    const avg = pillar.avgPreMarketVolume != null ? Math.round(pillar.avgPreMarketVolume).toLocaleString() : '—';
+    const days = pillar.daysInAverage != null ? pillar.daysInAverage : '?';
+    return `${pillar.value.toFixed(2)}× — unvalidated threshold (today ${today}, ${days}-day avg ${avg})`;
+  }
   if (pillar.status === 'fetch-failed') return pillar.reason || 'could not be measured';
   if (pillar.status === 'not-checked') return pillar.reason || 'not checked';
   if (pillar.id === 'rvol' && typeof pillar.value === 'number') {
@@ -225,12 +238,21 @@ function _pillarValueDisplay(pillar) {
 // to close: a card reading "RVOL not checked" that actually means "we
 // tried and the fetch failed" looks identical to a deliberate skip. '?' /
 // wp-fetchfailed reads as "unknown," not "fine to ignore."
+// 'rvol' and 'rvol-premarket' are DISTINCT metrics (2026-09-04, explicit
+// requirement — never the same number in the same slot) but
+// .warrior-pillar-label is a fixed 48px column sized for short ids
+// ("price", "change", "rvol"...) — "rvol-premarket" would overflow it and
+// "RVOL (pre-market)" doubly so. RVOL-SES/RVOL-PM keep both short enough
+// to fit while staying visually distinguishable from each other; the full
+// "pre-market, unvalidated threshold" context lives in the value text
+// instead, which has the room for it.
+const _PILLAR_LABELS = { rvol: 'RVOL-SES', 'rvol-premarket': 'RVOL-PM' };
 function _renderPillarRow(pillar) {
   const icon = pillar.status === 'pass' ? '✓' : pillar.status === 'fail' ? '✗' : pillar.status === 'fetch-failed' ? '?' : '—';
   const cls = pillar.status === 'pass' ? 'wp-pass' : pillar.status === 'fail' ? 'wp-fail' : pillar.status === 'fetch-failed' ? 'wp-fetchfailed' : 'wp-notchecked';
   return `<div class="warrior-pillar-row ${cls}">
     <span class="warrior-pillar-icon">${icon}</span>
-    <span class="warrior-pillar-label">${pillar.id}</span>
+    <span class="warrior-pillar-label">${_PILLAR_LABELS[pillar.id] || pillar.id}</span>
     <span class="warrior-pillar-value">${_pillarValueDisplay(pillar)}</span>
   </div>`;
 }

@@ -7,9 +7,19 @@
 // as parameters rather than reading globals.
 'use strict';
 const assert = require('assert');
-const { run } = require('./_lib');
+const { run, readSource, evalModule } = require('./_lib');
+
+// ptDateStr/ptWallClockToInstant (2026-09-04): evaluateGateBatch's new
+// pre-market-RVOL branch calls these as bare globals (same shared-scope
+// pattern as getPT, already relied on elsewhere in this file) — real
+// implementations via core/clock.js, not stubs, since they do real date
+// arithmetic other assertions below depend on being correct.
+function loadClockGlobals() {
+  evalModule(readSource('core/clock.js'), { expose: ['ptDateStr', 'ptWallClockToInstant'] });
+}
 
 async function loadGate() {
+  loadClockGlobals();
   return import('../engines/warrior/gate.js');
 }
 
@@ -117,6 +127,86 @@ async function testPillar4GateWindowNarrowerThanFetchWindow() {
   assert.strictEqual(p4None.value, null);
 }
 
+// 2026-09-04, found live: the backtested gate qualified 6.6% of
+// candidates; live it qualified 43% (12/28) because RVOL — its heaviest
+// pillar — reads 'not-checked' pre-market, when Warrior is a pre-open
+// method and that's exactly when candidates are actually looked at.
+// evaluatePillarPreMarketRvol is the fix's core: a DISTINCT metric from
+// the regular-session RVOL pillar, always 'not-checked' AS A STATUS
+// (there's zero evidence for a real cutoff yet — reusing RVOL_MIN=5.0 or
+// inventing a different number would be the identical fabricated-
+// precision mistake), but with a REAL computed ratio still surfaced via
+// `value` so it isn't functionally invisible despite never gating.
+async function testPreMarketPillarComputesRealRatioButNeverGates() {
+  const gate = await loadGate();
+  const p = gate.evaluatePillarPreMarketRvol({ symbol: 'ABCD' }, 'PRE', {
+    todayPreMarketVolume: 900_000, avgPreMarketVolume: 300_000, daysInAverage: 22,
+  });
+  console.log('pre-market RVOL pillar, real inputs:', p);
+  assert.strictEqual(p.id, 'rvol-premarket', 'must never share the "rvol" id — a distinct metric, distinct slot');
+  assert.strictEqual(p.status, 'not-checked', 'ALWAYS not-checked as a status, even with a real value -- no validated threshold to gate on');
+  assert.ok(Math.abs(p.value - 3.0) < 0.001, 'the real ratio must still be computed and surfaced, not hidden behind the not-checked status');
+  assert.strictEqual(p.daysInAverage, 22);
+  assert.ok(!p.threshold.match(/^\d/) && /unvalidated/i.test(p.threshold), 'threshold must read as unvalidated, never a bare number that looks measured');
+}
+
+async function testPreMarketPillarOutsidePreSessionAndOnFetchFailure() {
+  const gate = await loadGate();
+  const pOutside = gate.evaluatePillarPreMarketRvol({ symbol: 'ABCD' }, 'OPEN', { todayPreMarketVolume: 1, avgPreMarketVolume: 1, daysInAverage: 30 });
+  assert.strictEqual(pOutside.status, 'not-checked');
+  assert.strictEqual(pOutside.value, null, 'never computed outside PRE, regardless of what input happens to be passed');
+  assert.match(pOutside.reason, /only computed pre-market/i);
+
+  const pFailed = gate.evaluatePillarPreMarketRvol({ symbol: 'ABCD' }, 'PRE', { fetchFailed: true });
+  assert.strictEqual(pFailed.status, 'not-checked', 'a fetch failure here is still not-checked (never gates either way), but the reason must say so honestly');
+  assert.match(pFailed.reason, /fetch failed/i);
+  assert.doesNotMatch(pFailed.reason, /no pre-market volume data/i, 'must not be confused with the generic no-data case');
+}
+
+async function testClassifyGateNeverGatesOnPreMarketRvolRegardlessOfRatio() {
+  // The one-way door this whole design depends on: classifyGate must
+  // never consult rvol-premarket at all, in either direction -- an
+  // absurdly high OR low ratio must have zero effect on the tier.
+  const gate = await loadGate();
+  const ids = ['price', 'change', 'rvol', 'rvol-premarket', 'news', 'float'];
+  const makeResult = (statuses, preMarketValue) => ({
+    pillars: statuses.map((s, i) => ids[i] === 'rvol-premarket'
+      ? { id: 'rvol-premarket', status: 'not-checked', value: preMarketValue }
+      : { id: ids[i], status: s }),
+  });
+  const baseline = gate.classifyGate(makeResult(['pass', 'pass', 'pass', null, 'pass', 'not-checked'], 50)); // absurd 50x pre-market ratio
+  const low = gate.classifyGate(makeResult(['pass', 'pass', 'pass', null, 'pass', 'not-checked'], 0.001)); // absurd near-zero ratio
+  console.log('QUALIFIED regardless of pre-market ratio -- 50x:', baseline, '| 0.001x:', low);
+  assert.strictEqual(baseline, 'QUALIFIED');
+  assert.strictEqual(low, 'QUALIFIED', 'an extreme pre-market ratio in either direction must never change the classification');
+}
+
+async function testEvaluateGateBatchCapturesPreMarketRvolDistribution() {
+  const gate = await loadGate();
+  global.state = { newsFailedSymbols: [], warriorPreMarketRvolObservations: [] };
+  global.persist = () => {};
+  global._fetchCumulativeMinuteVolume = async (symbols) => {
+    const v = {}; symbols.forEach(s => v[s] = s === 'FAILS' ? undefined : 900_000);
+    return { volumeBySymbol: v, requests: 1, failedSymbols: symbols.includes('FAILS') ? ['FAILS'] : [] };
+  };
+  global._getPreMarketVolumeHistory = async (symbols) => {
+    const avg = {}, hist = {};
+    symbols.forEach(s => { if (s !== 'FAILS') { avg[s] = 300_000; hist[s] = Array.from({ length: 22 }, (_, i) => ({ date: `2026-08-${i + 1}`, volume: 300_000 })); } else { hist[s] = []; } });
+    return { avgVolumes: avg, historyBySymbol: hist, requests: 1, failedSymbols: symbols.includes('FAILS') ? ['FAILS'] : [] };
+  };
+  global.fetchNewsForTickers = async (symbols) => symbols.map(s => ({ symbols: [s], headline: 'x', created_at: new Date().toISOString() }));
+  global.getPT = () => { const d = new Date(); d.setHours(3, 0, 0, 0); return d; }; // PRE session, time irrelevant to the pre-market path
+
+  const candidates = ['A', 'FAILS'].map(sym => ({ symbol: sym, price: 5, changePct: 20 }));
+  await gate.evaluateGateBatch(candidates, 'PRE');
+  const obs = global.state.warriorPreMarketRvolObservations;
+  console.log('captured observations:', obs);
+  assert.strictEqual(obs.length, 1, 'only the real, successfully-measured candidate gets an observation -- the failed one must not pollute the distribution');
+  assert.strictEqual(obs[0].symbol, 'A');
+  assert.ok(Math.abs(obs[0].ratio - 3.0) < 0.001);
+  assert.strictEqual(obs[0].daysInAverage, 22);
+}
+
 async function testFloatNeverStubbedAsPassing() {
   const gate = await loadGate();
   const pFloat = gate.evaluatePillarFloat();
@@ -135,10 +225,11 @@ async function testGateShortCircuitsOnPillar1Failure() {
     now: new Date(),
   });
   console.log('Short-circuit result pillars:', result.pillars.map(p => `${p.id}:${p.status}`).join(' '));
-  assert.strictEqual(result.pillars[0].status, 'fail'); // price
-  assert.strictEqual(result.pillars[1].status, 'pass'); // change (still free/evaluable)
-  assert.strictEqual(result.pillars[2].status, 'not-checked'); // rvol — short-circuited, not fabricated as fail
-  assert.strictEqual(result.pillars[3].status, 'not-checked'); // news — short-circuited
+  const byId = Object.fromEntries(result.pillars.map(p => [p.id, p]));
+  assert.strictEqual(byId.price.status, 'fail');
+  assert.strictEqual(byId.change.status, 'pass'); // still free/evaluable
+  assert.strictEqual(byId.rvol.status, 'not-checked'); // short-circuited, not fabricated as fail
+  assert.strictEqual(byId.news.status, 'not-checked'); // short-circuited
   // A price failure is a basic disqualification, not "close" — must NOT
   // read as NEAR_MISS just because short-circuiting left only one 'fail'
   // in the array. See classifyGate's stage-1/stage-2 comment.
@@ -160,9 +251,10 @@ async function testGateEvaluatesNewsEvenWhenRvolFails() {
     now: new Date(),
   });
   console.log('rvol-fails result pillars:', result.pillars.map(p => `${p.id}:${p.status}`).join(' '));
-  assert.strictEqual(result.pillars[2].status, 'fail', 'rvol should genuinely fail given the inputs');
-  assert.strictEqual(result.pillars[3].status, 'pass', 'news must still be evaluated for real (and can pass) even though rvol failed — not skipped');
-  assert.strictEqual(result.pillars[3].value, 'Breaking news');
+  const byId = Object.fromEntries(result.pillars.map(p => [p.id, p]));
+  assert.strictEqual(byId.rvol.status, 'fail', 'rvol should genuinely fail given the inputs');
+  assert.strictEqual(byId.news.status, 'pass', 'news must still be evaluated for real (and can pass) even though rvol failed — not skipped');
+  assert.strictEqual(byId.news.value, 'Breaking news');
   assert.strictEqual(result.tier, 'NEAR_MISS', 'exactly one substantive pillar (rvol) failed, with a complete picture — genuine near-miss');
 }
 
@@ -323,9 +415,16 @@ async function testDiagnoseGateCostShapeAndStrategySelection() {
     usedStrategy = strategy;
     return [{ symbol: 'A', price: 5, changePct: 20 }, { symbol: 'B', price: 50, changePct: 5 }]; // A qualifies, B fails price+change
   };
-  global.state = { newsFailedSymbols: [] };
+  global.state = { newsFailedSymbols: [], warriorPreMarketRvolObservations: [] };
+  global.persist = () => {};
   global._fetchCumulativeMinuteVolume = async (symbols) => { const v = {}; symbols.forEach(s => v[s] = 2_000_000); return { volumeBySymbol: v, requests: 1, failedSymbols: [] }; };
   global._getSip30DayAvgVolume = async (symbols) => { const v = {}; symbols.forEach(s => v[s] = 1_000_000); return { avgVolumes: v, requests: 1, failedSymbols: [] }; };
+  // _getPreMarketVolumeHistory (2026-09-04): evaluateGateBatch's PRE-
+  // session branch calls this too, alongside _fetchCumulativeMinuteVolume
+  // above (which serves as BOTH the regular-session AND pre-market
+  // numerator fetch in this mock — fine here, this test only checks
+  // strategy selection and cost shape, not real pre-market RVOL values).
+  global._getPreMarketVolumeHistory = async (symbols) => { const v = {}, h = {}; symbols.forEach(s => { v[s] = 1_000_000; h[s] = [{ date: '2026-09-01', volume: 1_000_000 }]; }); return { avgVolumes: v, historyBySymbol: h, requests: 1, failedSymbols: [] }; };
   global.fetchNewsForTickers = async (symbols) => symbols.map(s => ({ symbols: [s], headline: 'x', created_at: new Date().toISOString() }));
   global.getPT = () => { const d = new Date(); d.setHours(8, 0, 0, 0); return d; }; // 90min after 6:30 open
 
@@ -352,6 +451,10 @@ async function testDiagnoseGateCostShapeAndStrategySelection() {
   await run('gate: Pillar 3 not-checked in first 15 minutes, never 0x', testPillar3First15MinutesNotChecked);
   await run('gate: Pillar 3 real computation + expected-by-now basis exposed', testPillar3RealComputationAndBasisDisplay);
   await run('gate: Pillar 4 — 25-72h-old news fails the 24h gate despite being fetched', testPillar4GateWindowNarrowerThanFetchWindow);
+  await run('gate: pre-market RVOL pillar computes a real ratio but never gates', testPreMarketPillarComputesRealRatioButNeverGates);
+  await run('gate: pre-market RVOL pillar outside PRE session and on fetch failure', testPreMarketPillarOutsidePreSessionAndOnFetchFailure);
+  await run('gate: classifyGate never gates on pre-market RVOL regardless of ratio', testClassifyGateNeverGatesOnPreMarketRvolRegardlessOfRatio);
+  await run('gate: evaluateGateBatch captures pre-market RVOL distribution, excluding failures', testEvaluateGateBatchCapturesPreMarketRvolDistribution);
   await run('gate: float pillar never stubbed as passing', testFloatNeverStubbedAsPassing);
   await run('gate: short-circuits on Pillar 1 failure without consulting rvol/news inputs', testGateShortCircuitsOnPillar1Failure);
   await run('gate: news is genuinely evaluated even when rvol fails (root-cause fix)', testGateEvaluatesNewsEvenWhenRvolFails);

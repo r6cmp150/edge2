@@ -846,6 +846,8 @@ let state = {
   universeAssetCache: null, // { fetchedAt, assets: [{symbol,exchange,name,isCommonStock}] } — core/universe.js, 24h cache — persisted
   universePriorCloseCache: null, // { date, closes: {symbol: price} } — core/universe.js, daily cache — persisted
   warrior30DayVolumeCache: null, // { date, avgVolumes: {symbol: avgDailyVolume} } — core/universe.js, Phase 3 Pillar 3 (RVOL), daily cache — persisted
+  warriorPreMarketVolumeCache: null, // { date, historyBySymbol: {symbol: [{date,volume}]} } — core/universe.js, pre-market-specific RVOL baseline (2026-09-04), daily cache — persisted
+  warriorPreMarketRvolObservations: [], // [{capturedAt,date,symbol,ratio,todayPreMarketVolume,avgPreMarketVolume,daysInAverage}] — engines/warrior/gate.js, accumulates across mornings so a real pre-market RVOL threshold can eventually be set from data instead of the unvalidated placeholder — persisted, unbounded (no retention policy set yet)
   lastScanTime: null,
   activeTab: 'signals',
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
@@ -874,7 +876,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache'].forEach(k => {
+  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });

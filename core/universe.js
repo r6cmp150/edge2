@@ -554,6 +554,145 @@ async function _getSip30DayAvgVolume(symbols, client = _coreClient) {
   return { avgVolumes: cache.avgVolumes, requests, failedSymbols: failedBatches.flat() };
 }
 
+// ── Pre-market-specific RVOL baseline (2026-09-04, found live) ───────────
+// evaluatePillar3 (gate.js) has always read 'not-checked' for RVOL outside
+// the regular session -- correct as far as it went, but Warrior is a
+// pre-open method: Roman looks at these cards at 6:00-6:30am PT, when
+// RVOL's "most selective pillar" claim (gate.js's own header) has never
+// actually been evaluated. Backtest gate-pass rate was 6.6%; live it was
+// 43% (12/28) -- a materially looser filter than the one the backtest
+// measured, because its heaviest pillar wasn't running.
+//
+// _getSip30DayAvgVolume's daily-bar average CANNOT be reused as the
+// pre-market denominator -- dividing pre-market cumulative volume by a
+// full-day average is a ratio of two different things (live check,
+// 2026-09-04: AAPL's pre-market window summed to ~1.6M shares against a
+// ~34M full-day bar, roughly 4-5% of the day for a LIQUID name; Warrior's
+// actual thin/low-float universe would read smaller and noisier still).
+// Same error class this session has already caught three times: the
+// sparsity-sensitive RVOL denominator, close-horizon non-comparability,
+// shares-outstanding-vs-float conflation.
+//
+// No daily-bar shortcut exists for "pre-market portion only" -- Alpaca's
+// 1Day bars aggregate the whole session. Built from minute bars instead,
+// one request per TRADING day per chunk (not one contiguous multi-week
+// fetch): a single day's pre-market window is cheap and provably
+// single-page; a 30-CALENDAR-day contiguous minute-bar fetch would pull
+// every regular-session/after-hours minute in between too, ~3x the data
+// this needs, for no benefit. PRE_MARKET_RVOL_CHUNK_SIZE proof: 330
+// minutes (1:00am-6:30am PT, same premarket boundary fetchReplayBars/
+// _getPreMarketGapUniverse already use) * 25 symbols = 8,250, under
+// Alpaca's 10,000 single-page ceiling for one day's window -- same margin
+// RVOL_VOLUME_CHUNK_SIZE=25 already uses for the regular session's larger
+// 390-minute window -- plus next_page_token followed regardless as the
+// safety net, same as every other fetcher in this file.
+//
+// Cached per calendar day, same "expensive once, free the rest of the
+// day" shape as _getPriorCloses/_getSip30DayAvgVolume -- ~30 requests for
+// a NEW symbol's first appearance that day (bounded by pillar12Survivors,
+// never the full eligible universe), ~0 on every later same-day call.
+const PRE_MARKET_RVOL_LOOKBACK_TRADING_DAYS = 30;
+const PRE_MARKET_RVOL_CHUNK_SIZE = 25;
+
+// Last N trading days strictly BEFORE beforeDateStr (never including it —
+// mixing "today" into the baseline would be circular against the live
+// numerator computed separately). Same safe getPT(ptWallClockToInstant(...))
+// idiom setups.js's _tradingDaysBetween/_previousTradingDayStr already use
+// for exactly this reason: a raw UTC-constructed Date's own .getDay() reads
+// back in the RUNTIME's local timezone, not a real PT calendar day -- the
+// same class of hazard CLAUDE.md's .setHours()/.setDate() rule documents.
+function _lastNTradingDayStrs(n, beforeDateStr) {
+  const days = [];
+  let cur = beforeDateStr;
+  while (days.length < n) {
+    const [y, m, d] = cur.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() - 1);
+    cur = dt.toISOString().split('T')[0];
+    if (isTradingDay(getPT(ptWallClockToInstant(cur, 12, 0)))) days.push(cur);
+  }
+  return days.reverse(); // oldest -> newest
+}
+
+// Returns { avgVolumes, historyBySymbol, requests, failedSymbols }.
+// historyBySymbol[sym] = [{date, volume}, ...] -- the raw per-day values,
+// not just the average, so a caller can capture the real distribution
+// (this session's own "capture the distribution, don't assume the
+// threshold" discipline, same as the backtest's onRawDistribution) rather
+// than only ever seeing the collapsed mean.
+//
+// failedSymbols here means "zero usable days, no average at all" -- NOT
+// "any single day's request failed." A symbol that succeeded on 25 of 30
+// days has a real, if smaller-sample, average; that's meaningfully
+// different from _fetchRawMinuteBars' all-or-nothing single request, and
+// collapsing the two would either discard usable data or misreport a
+// partial result as a total one. historyBySymbol[sym].length is the real
+// sample size for anyone who wants to judge confidence in a given average.
+async function _getPreMarketVolumeHistory(symbols, client = _coreClient) {
+  const today = ptDateStr(getPT());
+  let cache = state.warriorPreMarketVolumeCache;
+  if (!cache || cache.date !== today) cache = { date: today, historyBySymbol: {} };
+
+  const missing = symbols.filter(sym => !(sym in cache.historyBySymbol));
+  let requests = 0;
+  const failedBatches = [];
+  if (missing.length) {
+    const days = _lastNTradingDayStrs(PRE_MARKET_RVOL_LOOKBACK_TRADING_DAYS, today);
+    for (const sym of missing) cache.historyBySymbol[sym] = [];
+    for (const dateStr of days) {
+      const start = ptWallClockToInstant(dateStr, 1, 0);  // 4:00am ET
+      const end = ptWallClockToInstant(dateStr, 6, 30);   // 9:30am ET, regular open
+      await Promise.all(chunk(missing, PRE_MARKET_RVOL_CHUNK_SIZE).map(async batch => {
+        try {
+          const barsBySymbol = {};
+          let pageToken;
+          do {
+            const params = { symbols: batch.join(','), timeframe: '1Min', start: start.toISOString(), end: end.toISOString(), limit: 10000, feed: 'sip' };
+            if (pageToken) params.page_token = pageToken;
+            const data = await client.alpacaGet('/stocks/bars', params);
+            requests++;
+            let pageRowCount = 0;
+            if (data.bars) {
+              for (const sym of Object.keys(data.bars)) {
+                pageRowCount += data.bars[sym].length;
+                (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
+              }
+            }
+            pageToken = data.next_page_token || null;
+            assertPageNotSuspiciouslyFull(`_getPreMarketVolumeHistory (${dateStr})`, pageRowCount, params.limit, pageToken);
+          } while (pageToken);
+          batch.forEach(sym => {
+            const bars = barsBySymbol[sym];
+            if (bars && bars.length) {
+              const volume = bars.reduce((s, b) => s + (b.v || 0), 0);
+              cache.historyBySymbol[sym].push({ date: dateStr, volume });
+            }
+            // no bars this specific day: genuinely didn't trade pre-market
+            // that day (thin/quiet), not a fetch failure -- skipped, not
+            // recorded as a zero (a zero would silently pull the average
+            // down as if "no volume" were a measured fact rather than an
+            // absent one).
+          });
+        } catch (e) {
+          console.warn(`_getPreMarketVolumeHistory: batch error for ${batch.length} symbols on ${dateStr}: ${e.message}`);
+          failedBatches.push(...batch);
+        }
+      }));
+    }
+  }
+
+  state.warriorPreMarketVolumeCache = cache;
+  persist('warriorPreMarketVolumeCache');
+
+  const avgVolumes = {};
+  for (const sym of symbols) {
+    const hist = cache.historyBySymbol[sym] || [];
+    if (hist.length) avgVolumes[sym] = hist.reduce((s, h) => s + h.volume, 0) / hist.length;
+  }
+  const failedSymbols = [...new Set(failedBatches)].filter(sym => avgVolumes[sym] == null);
+  return { avgVolumes, historyBySymbol: cache.historyBySymbol, requests, failedSymbols };
+}
+
 // Two-tier fetch. Pass 1 (45min, provably single-page) covers the vast
 // majority of symbols cheaply. Pass 2 re-requests ONLY the symbols pass 1
 // found nothing for, with the wider 3h window — thin/stale premarket
