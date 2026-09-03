@@ -33,10 +33,22 @@ import { CHANGE_MIN_PCT } from './gate.js';
 // tests/pagination-merge.test.js) — more round trips, still correct.
 const REPLAY_CHUNK_SIZE = 13;
 
-async function fetchReplayBars(symbols, dateStr, { startHour = 1, startMinute = 0, endHour = 13, endMinute = 0 } = {}) {
+// hardFailOnIncomplete (2026-09-02, default false): threaded straight
+// through to _fetchRawMinuteBars — see that function's comment. Callers
+// running an offline batch replay whose output becomes an artifact
+// (scanDateRangeForSetups, wired via opts.fetchOpts) should pass true: a
+// day whose bars silently came back partial due to a failed chunk must
+// not get folded into "notEvaluated: no bars" indistinguishably from a
+// symbol that legitimately didn't trade that day. Live/interactive
+// callers keep the default.
+async function fetchReplayBars(symbols, dateStr, { startHour = 1, startMinute = 0, endHour = 13, endMinute = 0, hardFailOnIncomplete = false } = {}) {
   const start = ptWallClockToInstant(dateStr, startHour, startMinute);
   const end = ptWallClockToInstant(dateStr, endHour, endMinute);
-  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, REPLAY_CHUNK_SIZE, `replay ${dateStr}`);
+  // client left undefined -- _fetchRawMinuteBars's own default (_coreClient,
+  // evaluated in core/universe.js's scope where it's guaranteed to exist)
+  // applies, same as before this change; replay.js has never referenced
+  // _coreClient directly and shouldn't start now just to fill a slot.
+  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, REPLAY_CHUNK_SIZE, `replay ${dateStr}`, undefined, { hardFailOnIncomplete });
   // _fetchRawMinuteBars returns each symbol's bars sort:'desc' (newest
   // first) — replay needs chronological order.
   const barsBySymbol = {};
@@ -83,12 +95,15 @@ async function fetchPrevCloseAsOf(symbols, dateStr) {
     const params = pageToken ? { ...params0, page_token: pageToken } : params0;
     const data = await alpacaGet('/stocks/bars', params);
     requests++;
+    let pageRowCount = 0;
     if (data.bars) {
       for (const sym of Object.keys(data.bars)) {
+        pageRowCount += data.bars[sym].length;
         (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
       }
     }
     pageToken = data.next_page_token || null;
+    assertPageNotSuspiciouslyFull('fetchPrevCloseAsOf', pageRowCount, params.limit, pageToken);
   } while (pageToken);
   // sort:'desc' -> each symbol's first bar is its most recent close before the replay window.
   for (const sym of Object.keys(barsBySymbol)) {

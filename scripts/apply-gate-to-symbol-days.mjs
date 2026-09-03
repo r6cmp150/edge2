@@ -48,6 +48,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gateSymbolDay, fetchNewsByDateSymbol } from './lib/gate-classifier.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const runDir = process.argv[2];
@@ -66,40 +67,18 @@ function readEnvLocal() {
   return { alpacaKeyId: kv.APCA_API_KEY_ID, alpacaSecretKey: kv.APCA_API_SECRET_KEY };
 }
 
-const PRICE_MIN = 1.00, PRICE_MAX = 20.00;
-const CHANGE_MIN_PCT = 10;
-const RVOL_MIN = 5.0;
-const NEWS_MAX_AGE_HOURS = 24;
-
-// classifyGate, ported verbatim from engines/warrior/gate.js -- same
-// two-stage logic (free pillars gate stage 2, never a plain fail-count),
-// so "QUALIFIED" here means exactly what it means in the live app.
-function classifyGate(pillars) {
-  const byId = {};
-  pillars.forEach(p => { byId[p.id] = p; });
-  const freePillarsPass = byId.price.status === 'pass' && byId.change.status === 'pass';
-  if (!freePillarsPass) return null;
-  const substantive = [byId.rvol, byId.news].filter(p => p.status !== 'not-checked');
-  const substantiveFailed = substantive.filter(p => p.status === 'fail');
-  if (substantiveFailed.length === 0 && substantive.length > 0) return 'QUALIFIED';
-  if (substantiveFailed.length === 1) return 'NEAR_MISS';
-  return null;
-}
-
 async function main() {
   const { alpacaKeyId, alpacaSecretKey } = readEnvLocal();
-  global.state = {};
+  global.state = { settings: { alpacaKey: alpacaKeyId, alpacaSecret: alpacaSecretKey } };
   global.persist = () => {};
-  global.chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
-  const realAlpacaGet = async (urlPath, params = {}, base = 'https://data.alpaca.markets/v2') => {
-    const url = new URL(base + urlPath);
-    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
-    const res = await fetch(url, { headers: { 'APCA-API-KEY-ID': alpacaKeyId, 'APCA-API-SECRET-KEY': alpacaSecretKey } });
-    if (!res.ok) throw new Error(`${urlPath}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
-    return res.json();
-  };
-  global.alpacaGet = realAlpacaGet;
-  global._coreClient = { alpacaGet: realAlpacaGet };
+  // core/api-client.js's real queue (2026-09-02 fix), not a hand-rolled
+  // fetch — see run-symbol-day-scan.mjs's header comment for why: the
+  // previous bare fetch here had no 429 retry/backoff or concurrency
+  // limit, and Alpaca's default bar sort (ascending) means a mid-
+  // pagination 429 silently truncates a chunk's MOST RECENT months while
+  // keeping its oldest ones.
+  const apiClientSrc = readFileSync(path.join(REPO_ROOT, 'core', 'api-client.js'), 'utf8');
+  eval(apiClientSrc + '\nglobal.chunk = chunk; global.alpacaGet = alpacaGet; global._coreClient = _coreClient; global.assertPageNotSuspiciouslyFull = assertPageNotSuspiciouslyFull; global.createApiClient = createApiClient;');
 
   const clockSrc = readFileSync(path.join(REPO_ROOT, 'core', 'clock.js'), 'utf8');
   eval(clockSrc + '\nglobal.getPT = getPT; global.ptWallClockToInstant = ptWallClockToInstant;');
@@ -127,56 +106,19 @@ async function main() {
 
   // ── Historical news, batched per trading day (24h before that day's open) ──
   const t1 = Date.now();
-  let newsRequests = 0;
-  const newsByDateSymbol = new Map(); // `${date}|${symbol}` -> most recent headline within window, or null
-  for (const date of dates) {
-    const daySymbols = [...new Set(targetSymbolDays.filter(r => r.date === date).map(r => r.symbol))];
-    const openInstant = global.ptWallClockToInstant(date, 6, 30);
-    const startInstant = new Date(openInstant.getTime() - NEWS_MAX_AGE_HOURS * 3600 * 1000);
-    for (const batch of global.chunk(daySymbols, 100)) {
-      try {
-        let pageToken;
-        const items = [];
-        do {
-          const params = { symbols: batch.join(','), start: startInstant.toISOString(), end: openInstant.toISOString(), limit: 50, sort: 'desc' };
-          if (pageToken) params.page_token = pageToken;
-          const data = await global.alpacaGet('/news', params, 'https://data.alpaca.markets/v1beta1');
-          newsRequests++;
-          items.push(...(data.news || []));
-          pageToken = data.next_page_token || null;
-        } while (pageToken);
-        for (const sym of batch) {
-          const hit = items.find(n => (n.symbols || []).includes(sym));
-          newsByDateSymbol.set(targetKey(date, sym), hit ? hit.headline : null);
-        }
-      } catch (e) {
-        console.warn(`[apply-gate] news batch error for ${date}: ${e.message}`);
-      }
-    }
-  }
+  const { newsByDateSymbol, newsRequests } = await fetchNewsByDateSymbol(
+    dates,
+    (date) => targetSymbolDays.filter(r => r.date === date).map(r => r.symbol)
+  );
   console.log(`[apply-gate] news: ${newsRequests} requests, ${Math.round((Date.now() - t1) / 1000)}s`);
 
   // ── Gate each symbol-day ──
   const results = [];
   for (const { date, symbol } of targetSymbolDays) {
     const own = ownMetricsByKey.get(targetKey(date, symbol));
-    const priceVal = own ? own.close : null;
-    const changeVal = own ? own.dayOverDayPct * 100 : null; // own.dayOverDayPct is a fraction (0.12 = 12%); pillar threshold is in percent
-    const relVolVal = own ? own.relVol : null;
     const headline = newsByDateSymbol.get(targetKey(date, symbol));
-
-    const pricePillar = { id: 'price', status: (typeof priceVal === 'number' && priceVal >= PRICE_MIN && priceVal <= PRICE_MAX) ? 'pass' : 'fail', value: priceVal };
-    const changePillar = { id: 'change', status: (typeof changeVal === 'number' && changeVal >= CHANGE_MIN_PCT) ? 'pass' : 'fail', value: changeVal };
-    const freePass = pricePillar.status === 'pass' && changePillar.status === 'pass';
-    const rvolPillar = !freePass
-      ? { id: 'rvol', status: 'not-checked', value: null }
-      : (typeof relVolVal === 'number' ? { id: 'rvol', status: relVolVal >= RVOL_MIN ? 'pass' : 'fail', value: relVolVal } : { id: 'rvol', status: 'not-checked', value: null });
-    const newsPillar = !freePass
-      ? { id: 'news', status: 'not-checked', value: null }
-      : { id: 'news', status: headline ? 'pass' : 'fail', value: headline };
-
-    const tier = classifyGate([pricePillar, changePillar, rvolPillar, newsPillar]);
-    results.push({ date, symbol, tier, pillars: { price: pricePillar, change: changePillar, rvol: rvolPillar, news: newsPillar } });
+    const { pillars, tier } = gateSymbolDay({ own, headline });
+    results.push({ date, symbol, tier, pillars });
   }
 
   const qualified = results.filter(r => r.tier === 'QUALIFIED');

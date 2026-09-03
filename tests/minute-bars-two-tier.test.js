@@ -44,6 +44,7 @@ function loadUniverse(alpacaGetMock) {
   // through the same counted mock regardless of engine.
   global.createApiClient = () => ({ alpacaGet: global.alpacaGet });
   global._coreClient = global.createApiClient('CORE');
+  global.assertPageNotSuspiciouslyFull = () => {}; // real impl in core/api-client.js — diagnostic-only, no-op here
   const src = readSource('core/universe.js').replace(/^const ALPACA_TRADING_BASE.*$/m, "const ALPACA_TRADING_BASE = 'https://paper-api.alpaca.markets';");
   const exposeCode = 'global.__getPremarketGapUniverse = _getPremarketGapUniverse; global.__diagnosePremarketGap = diagnosePremarketGap;';
   // eslint-disable-next-line no-eval

@@ -1046,6 +1046,23 @@ async function scanDateRangeForSetups(setupId, symbols, startDateStr, endDateStr
       barsBySymbol = fetched.barsBySymbol;
       requests += fetched.requests;
     } catch (err) {
+      // hardFailOnIncomplete (2026-09-02): when the caller opted into it
+      // (opts.fetchOpts.hardFailOnIncomplete, threaded through to
+      // fetchReplayBars/_fetchRawMinuteBars), a fetch failure here means
+      // some of THIS DAY's symbols have no data because a request failed,
+      // not because they legitimately have none. Silently folding that
+      // into `notEvaluated: 'fetch failed'` and continuing to the next day
+      // is the exact same costume-of-completeness problem the fetch-layer
+      // fix addresses -- an artifact built from this scan would look
+      // complete (every symbol-day has SOME entry) while actually missing
+      // real data with no signal distinguishing the two. Re-throw instead:
+      // the whole range scan aborts, no artifact gets written downstream
+      // (every Node driver script's own main().catch() already exits
+      // non-zero on an uncaught rejection). Default (false) is unchanged
+      // for the live browser panel -- this only fires when a caller asks.
+      if (opts.fetchOpts && opts.fetchOpts.hardFailOnIncomplete) {
+        throw new Error(`scanDateRangeForSetups: aborting -- ${dateStr}'s bar fetch failed for ${daySymbols.length} symbols and hardFailOnIncomplete is set: ${err.message}`);
+      }
       resultsByDate[dateStr] = {};
       for (const sym of daySymbols) resultsByDate[dateStr][sym] = { notEvaluated: true, reason: `fetch failed: ${err.message}` };
       symbolDaysCompleted += daySymbols.length;

@@ -23,6 +23,7 @@ function loadUniverse(alpacaGetMock, stateOverrides) {
   // tests/engine-tagging.test.js for that).
   global.createApiClient = () => ({ alpacaGet: global.alpacaGet });
   global._coreClient = global.createApiClient('CORE');
+  global.assertPageNotSuspiciouslyFull = () => {}; // real impl in core/api-client.js — diagnostic-only, no-op here
   const src = readSource('core/universe.js');
   const exposeCode = `
     global.__fetchCumulativeMinuteVolume = _fetchCumulativeMinuteVolume;

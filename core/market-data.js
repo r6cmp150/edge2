@@ -118,12 +118,15 @@ async function fetchMultiBars(tickers, limit = 10000) {
         const params = { symbols: batch.join(','), timeframe:'1Day', start, limit, sort:'asc', feed:'iex' };
         if (pageToken) params.page_token = pageToken;
         const data = await alpacaGet('/stocks/bars', params);
+        let pageRowCount = 0;
         if (data.bars) {
           for (const sym of Object.keys(data.bars)) {
+            pageRowCount += data.bars[sym].length;
             results[sym] = (results[sym] || []).concat(data.bars[sym]);
           }
         }
         pageToken = data.next_page_token || null;
+        assertPageNotSuspiciouslyFull('fetchMultiBars', pageRowCount, params.limit, pageToken);
       } while (pageToken);
 
       // Completeness assertion: every symbol in `batch` already cleared the
@@ -168,6 +171,7 @@ async function fetchSingleBars(ticker, limit = 10000) {
       const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
       bars = bars.concat(data.bars || []);
       pageToken = data.next_page_token || null;
+      assertPageNotSuspiciouslyFull(`fetchSingleBars(${ticker})`, (data.bars || []).length, params.limit, pageToken);
     } while (pageToken);
     return bars;
   } catch(e) { return []; }
@@ -219,6 +223,7 @@ async function fetchMinuteBars(ticker) {
       const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
       bars = bars.concat(data.bars || []);
       pageToken = data.next_page_token || null;
+      assertPageNotSuspiciouslyFull(`fetchMinuteBars(${ticker})`, (data.bars || []).length, params.limit, pageToken);
     } while (pageToken);
     return bars;
   } catch(e) { return []; }
@@ -246,6 +251,7 @@ async function fetchHourlyBars(ticker) {
       const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
       bars = bars.concat(data.bars || []);
       pageToken = data.next_page_token || null;
+      assertPageNotSuspiciouslyFull(`fetchHourlyBars(${ticker})`, (data.bars || []).length, params.limit, pageToken);
     } while (pageToken);
     return bars;
   } catch(e) { return []; }

@@ -65,19 +65,28 @@ async function main() {
 
   // ── Real globals, shared scope (mirrors the browser's classic-script
   // sharing, per this codebase's own architecture — see CLAUDE.md) ──────
-  global.state = {};
+  // state.settings populated BEFORE eval'ing api-client.js -- alpacaHeaders()
+  // throws if it isn't. persist() is a no-op the same as before.
+  global.state = { settings: { alpacaKey: alpacaKeyId, alpacaSecret: alpacaSecretKey } };
   global.persist = () => {};
-  global.chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
 
-  const realAlpacaGet = async (urlPath, params = {}, base = 'https://data.alpaca.markets/v2') => {
-    const url = new URL(base + urlPath);
-    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
-    const res = await fetch(url, { headers: { 'APCA-API-KEY-ID': alpacaKeyId, 'APCA-API-SECRET-KEY': alpacaSecretKey } });
-    if (!res.ok) throw new Error(`${urlPath}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
-    return res.json();
-  };
-  global.alpacaGet = realAlpacaGet; // fetchPrevCloseAsOf (replay.js) calls this bare global directly
-  global._coreClient = { alpacaGet: realAlpacaGet }; // _fetchRawMinuteBars/_getAssetIndex etc. default to this
+  // core/api-client.js, not a hand-rolled fetch (2026-09-02 fix): the
+  // previous bare `fetch()` here had NO 429 retry/backoff and fired every
+  // chunk in a Promise.all with zero concurrency limit -- unlike the real
+  // browser path, which routes every request through this file's queue
+  // (token bucket + MAX_429_RETRIES exponential backoff + MAX_CONCURRENT
+  // throttling). Found live: the widened (~378-trading-day) scan's own
+  // universe-reconstruction step logged 29 distinct 90-symbol chunk
+  // failures to unhandled 429s -- and because Alpaca's default bar sort is
+  // ascending (oldest-first), a 429 mid-pagination silently truncates a
+  // chunk's MOST RECENT months while keeping its oldest ones, with nothing
+  // in the output distinguishing "no data" from "fetch got cut off partway
+  // through." Loading the real queue here closes the gap between this
+  // driver and the browser it's supposed to be functionally equivalent to,
+  // not just for scanDateRangeForSetups (the condition this script already
+  // exists under) but for every fetch beneath it too.
+  const apiClientSrc = readFileSync(path.join(REPO_ROOT, 'core', 'api-client.js'), 'utf8');
+  eval(apiClientSrc + '\nglobal.chunk = chunk; global.alpacaGet = alpacaGet; global._coreClient = _coreClient; global.assertPageNotSuspiciouslyFull = assertPageNotSuspiciouslyFull; global.createApiClient = createApiClient;');
 
   const clockSrc = readFileSync(path.join(REPO_ROOT, 'core', 'clock.js'), 'utf8');
   eval(clockSrc + '\nglobal.getPT = getPT; global.ptDateStr = ptDateStr; global.ptWallClockToInstant = ptWallClockToInstant; global.isTradingDay = isTradingDay;');
@@ -119,6 +128,14 @@ async function main() {
     setupsMod.ALL_SETUPS_ID, [], START_DATE, END_DATE,
     {
       symbolsByDate,
+      // hardFailOnIncomplete (2026-09-02): this run's output becomes an
+      // artifact other analysis is built on, not an interactive scan a
+      // human is watching live — a day whose bar fetch silently came back
+      // partial must abort the whole run, not get folded into
+      // "notEvaluated: no bars" indistinguishably from a symbol that
+      // genuinely didn't trade. See setups.js's scanDateRangeForSetups
+      // catch block and core/universe.js's _fetchRawMinuteBars.
+      fetchOpts: { hardFailOnIncomplete: true },
       onRawDistribution: (dateStr, sym, observationsBySetup) => {
         for (const setupId of Object.keys(observationsBySetup)) {
           const bucket = pooledObservations[setupId] || (pooledObservations[setupId] = { volumeMultiple: [], baselineSpanMinutes: [], baselineBarCount: [] });

@@ -30,6 +30,28 @@ function chunk(arr, n) {
   return out;
 }
 
+// See CLAUDE.md's pagination rule. Every unconditional-pagination loop in
+// this codebase already follows next_page_token to exhaustion -- this
+// catches the one failure mode that loop can't see on its own: a page that
+// comes back essentially full (row count at/near the requested `limit`)
+// with next_page_token already null. A well-behaved paginated API should
+// never do that -- a full page implies more data waiting, which implies a
+// token -- so if it ever happens, either a chunk-size/worst-case assumption
+// baked in somewhere upstream is silently wrong, or Alpaca's pagination
+// contract changed underneath us. Loud, not fatal — matches the existing
+// pagination-proof-violated check this generalizes (core/universe.js's
+// _fetchHistoricalDailyBars had a bespoke version of exactly this before
+// 2026-09-02; found the underlying loop wasn't even following the token at
+// all when a caller-supplied date range widened past what the original
+// chunk-size proof covered — this assertion is the backstop for every
+// OTHER loop in the codebase having the same class of latent gap, not
+// discovered yet only because no one has hit it live).
+function assertPageNotSuspiciouslyFull(label, rowCount, limit, nextPageToken) {
+  if (!nextPageToken && typeof limit === 'number' && limit > 0 && rowCount >= limit * 0.95) {
+    console.error(`assertPageNotSuspiciouslyFull: ${label} returned ${rowCount} rows (limit=${limit}) with no next_page_token — a page this close to the requested ceiling with no continuation token is exactly the shape of a silent-truncation bug. Re-verify before trusting this result.`);
+  }
+}
+
 // Alpaca rejects an entire batch request with a 400 if ANY symbol in it is
 // malformed (confirmed in production via AAC-U) — a hyphen, space, or other
 // non-alphanumeric character kills the whole batch, not just that ticker.

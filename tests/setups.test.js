@@ -21,6 +21,7 @@ function loadClockGlobals() {
 
 async function loadSetups() {
   loadClockGlobals();
+  global.assertPageNotSuspiciouslyFull = () => {}; // real impl in core/api-client.js — diagnostic-only, no-op here; fetchPrevCloseAsOf/fetchReplayBars's real pagination loops call this
   return import('../engines/warrior/setups.js');
 }
 

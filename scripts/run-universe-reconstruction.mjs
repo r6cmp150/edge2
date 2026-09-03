@@ -27,18 +27,16 @@ function readEnvLocal() {
 async function main() {
   const { alpacaKeyId, alpacaSecretKey } = readEnvLocal();
 
-  global.state = {};
+  global.state = { settings: { alpacaKey: alpacaKeyId, alpacaSecret: alpacaSecretKey } };
   global.persist = () => {};
-  global.chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
-  global._coreClient = {
-    alpacaGet: async (urlPath, params = {}, base = 'https://data.alpaca.markets/v2') => {
-      const url = new URL(base + urlPath);
-      for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
-      const res = await fetch(url, { headers: { 'APCA-API-KEY-ID': alpacaKeyId, 'APCA-API-SECRET-KEY': alpacaSecretKey } });
-      if (!res.ok) throw new Error(`${urlPath}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
-      return res.json();
-    },
-  };
+  // core/api-client.js's real queue (2026-09-02 fix), not a hand-rolled
+  // fetch — see run-symbol-day-scan.mjs's header comment for why: the
+  // previous bare fetch here had no 429 retry/backoff or concurrency
+  // limit, and Alpaca's default bar sort (ascending) means a mid-
+  // pagination 429 silently truncates a chunk's MOST RECENT months while
+  // keeping its oldest ones.
+  const apiClientSrc = readFileSync(path.join(REPO_ROOT, 'core', 'api-client.js'), 'utf8');
+  eval(apiClientSrc + '\nglobal.chunk = chunk; global.alpacaGet = alpacaGet; global._coreClient = _coreClient; global.assertPageNotSuspiciouslyFull = assertPageNotSuspiciouslyFull; global.createApiClient = createApiClient;');
 
   const src = readFileSync(path.join(REPO_ROOT, 'core', 'universe.js'), 'utf8');
   const exposeStatements = 'global.reconstructTopMoversUniverse = reconstructTopMoversUniverse;';

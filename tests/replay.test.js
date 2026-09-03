@@ -33,6 +33,7 @@ function makeBars(closes, startISO = '2026-08-26T13:30:00.000Z') {
 async function loadReplay() {
   loadClockGlobals(); // real getPT/ptDateStr/ptWallClockToInstant; individual tests override ptWallClockToInstant with a deterministic stand-in where needed
   global._fetchRawMinuteBars = undefined; // each test sets its own mock before calling fetch-dependent functions
+  global.assertPageNotSuspiciouslyFull = () => {}; // real impl in core/api-client.js — diagnostic-only, no-op here; fetchPrevCloseAsOf's own pagination loop calls this
   return import('../engines/warrior/replay.js');
 }
 

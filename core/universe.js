@@ -296,12 +296,15 @@ async function _getPriorCloses(symbols, client = _coreClient) {
           const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: batch.length * 3, sort: 'desc', feed: 'iex' };
           if (pageToken) params.page_token = pageToken;
           const data = await client.alpacaGet('/stocks/bars', params);
+          let pageRowCount = 0;
           if (data.bars) {
             for (const sym of Object.keys(data.bars)) {
+              pageRowCount += data.bars[sym].length;
               (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
             }
           }
           pageToken = data.next_page_token || null;
+          assertPageNotSuspiciouslyFull('_getPriorCloses', pageRowCount, params.limit, pageToken);
         } while (pageToken);
         // sort:'desc' -> each symbol's first bar is its most recent close.
         batch.forEach(sym => {
@@ -358,9 +361,27 @@ const PREMARKET_BAR_WINDOW_WIDE_MIN = 3 * 60;
 // of being. Safe to parallelize freely — chunk() partitions symbols into
 // disjoint sets, so each iteration writes to different result keys, and
 // each chunk's error handling is already independent.
-async function _fetchRawMinuteBars(symbols, start, end, chunkSize, windowLabel, client = _coreClient) {
+// hardFailOnIncomplete (2026-09-02, default false — LIVE callers unchanged):
+// when true, a chunk that fails all of core/api-client.js's own retries
+// throws an aggregate error naming every affected symbol, instead of the
+// default silent catch-and-continue below. Default stays false because
+// this function backs live-app paths (premarket-gap, RVOL) where a
+// transient chunk failure degrading gracefully for a few symbols is the
+// right behavior for an interactive scan a trader is actively watching.
+// The offline replay path (fetchReplayBars, "the replay half") opts in —
+// see that function's own comment: a partial minute-bar fetch there
+// doesn't just affect a few symbols' RVOL number, it silently gets
+// relabeled "notEvaluated: no bars," indistinguishable from a symbol that
+// legitimately had no trades that day. Found live 2026-09-02: this
+// function's old unconditional swallow-and-continue is the reason the
+// widened scan's OWN replay step could have absorbed a 429 exactly the
+// way its universe-reconstruction step did (see _fetchHistoricalDailyBars's
+// parallel fix) — same defect, one layer up, just never actually observed
+// firing because it hides identically either way.
+async function _fetchRawMinuteBars(symbols, start, end, chunkSize, windowLabel, client = _coreClient, { hardFailOnIncomplete = false } = {}) {
   const barsBySymbolAll = {};
   let requests = 0;
+  const failedBatches = [];
   await Promise.all(chunk(symbols, chunkSize).map(async batch => {
     try {
       const barsBySymbol = {};
@@ -374,19 +395,36 @@ async function _fetchRawMinuteBars(symbols, start, end, chunkSize, windowLabel, 
         if (pageToken) params.page_token = pageToken;
         const data = await client.alpacaGet('/stocks/bars', params);
         requests++;
+        let pageRowCount = 0;
         if (data.bars) {
           for (const sym of Object.keys(data.bars)) {
+            pageRowCount += data.bars[sym].length;
             (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
           }
         }
         pageToken = data.next_page_token || null;
+        assertPageNotSuspiciouslyFull(`_fetchRawMinuteBars (${windowLabel})`, pageRowCount, params.limit, pageToken);
       } while (pageToken);
       Object.assign(barsBySymbolAll, barsBySymbol);
     } catch (e) {
       console.warn(`_fetchRawMinuteBars: batch error for ${batch.length} symbols (${windowLabel}): ${e.message}`);
+      failedBatches.push({ batch, error: e });
     }
   }));
-  return { barsBySymbolAll, requests };
+  const failedSymbols = failedBatches.flatMap(f => f.batch);
+  if (hardFailOnIncomplete && failedSymbols.length) {
+    const err = new Error(`_fetchRawMinuteBars (${windowLabel}): ${failedBatches.length} chunk(s) failed after all retries, ${failedSymbols.length} symbols with NO data (request never completed, not "confirmed no bars"): ${failedSymbols.slice(0, 30).join(', ')}${failedSymbols.length > 30 ? ', …' : ''}. Aborting rather than silently reporting these as "no bars."`);
+    err.failedSymbols = failedSymbols;
+    throw err;
+  }
+  // failedSymbols returned even in default (soft) mode (2026-09-04, found
+  // live during the gate-honesty pass): this used to be computed and then
+  // thrown away after the console.warn, leaving every caller with no way
+  // to tell "this symbol has zero bars because the request failed" from
+  // "this symbol genuinely has no bars this window" — the same distinction
+  // gate.js's pillars need to render honestly instead of folding a fetch
+  // failure into the generic not-checked/fail bucket.
+  return { barsBySymbolAll, requests, failedSymbols };
 }
 
 // Single-window fetch, latest bar per symbol. Unchanged contract (existing
@@ -415,12 +453,12 @@ async function _fetchMinuteBarsWindow(symbols, end, windowMin, client = _coreCli
 const RVOL_VOLUME_CHUNK_SIZE = 25;
 
 async function _fetchCumulativeMinuteVolume(symbols, start, end, client = _coreClient) {
-  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, RVOL_VOLUME_CHUNK_SIZE, 'cumulative-volume window', client);
+  const { barsBySymbolAll, requests, failedSymbols } = await _fetchRawMinuteBars(symbols, start, end, RVOL_VOLUME_CHUNK_SIZE, 'cumulative-volume window', client);
   const volumeBySymbol = {};
   for (const sym of Object.keys(barsBySymbolAll)) {
     volumeBySymbol[sym] = barsBySymbolAll[sym].reduce((sum, b) => sum + (b.v || 0), 0);
   }
-  return { volumeBySymbol, requests };
+  return { volumeBySymbol, requests, failedSymbols };
 }
 
 // Phase 3 Pillar 3: 30-day SIP daily-volume average, cached per trading day
@@ -442,6 +480,7 @@ async function _getSip30DayAvgVolume(symbols, client = _coreClient) {
 
   const missing = symbols.filter(sym => !(sym in cache.avgVolumes));
   let requests = 0;
+  const failedBatches = [];
   if (missing.length) {
     const start = (() => { const d = new Date(); d.setDate(d.getDate() - RVOL_DAILY_AVG_LOOKBACK_DAYS); return d.toISOString().split('T')[0]; })();
     await Promise.all(chunk(missing, RVOL_DAILY_AVG_CHUNK_SIZE).map(async batch => {
@@ -453,12 +492,15 @@ async function _getSip30DayAvgVolume(symbols, client = _coreClient) {
           if (pageToken) params.page_token = pageToken;
           const data = await client.alpacaGet('/stocks/bars', params);
           requests++;
+          let pageRowCount = 0;
           if (data.bars) {
             for (const sym of Object.keys(data.bars)) {
+              pageRowCount += data.bars[sym].length;
               (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
             }
           }
           pageToken = data.next_page_token || null;
+          assertPageNotSuspiciouslyFull('_getSip30DayAvgVolume', pageRowCount, params.limit, pageToken);
         } while (pageToken);
         batch.forEach(sym => {
           const bars = barsBySymbol[sym];
@@ -469,12 +511,19 @@ async function _getSip30DayAvgVolume(symbols, client = _coreClient) {
         });
       } catch (e) {
         console.warn(`_getSip30DayAvgVolume: batch error for ${batch.length} symbols: ${e.message}`);
+        failedBatches.push(batch);
       }
     }));
   }
   state.warrior30DayVolumeCache = cache;
   persist('warrior30DayVolumeCache');
-  return { avgVolumes: cache.avgVolumes, requests };
+  // failedSymbols (2026-09-04, gate-honesty pass): a symbol whose fetch
+  // failed is simply absent from cache.avgVolumes, same as a symbol that
+  // genuinely has no 30-day history -- indistinguishable to gate.js's RVOL
+  // pillar without this. Not persisted (a real fetch failure should retry
+  // next call, same as it already silently does today via the "missing"
+  // filter above); this call's own failures only.
+  return { avgVolumes: cache.avgVolumes, requests, failedSymbols: failedBatches.flat() };
 }
 
 // Two-tier fetch. Pass 1 (45min, provably single-page) covers the vast
@@ -608,17 +657,16 @@ async function getUniverse({ session, strategy }, client = _coreClient) {
 // 60 calendar days of padding gives 40 real trading days before
 // 2026-06-01 for a real symbol (comfortable margin over the 30 needed).
 //
-// HISTORICAL_UNIVERSE_CHUNK_SIZE pagination proof (CLAUDE.md rule --
-// proof, not an estimate): verified live (2026-09-01) against
-// 2026-04-02..2026-08-28 (the padded window for this scan's actual
-// range) that the single symbol with the most history in a 100-symbol
-// sample carried 103 daily bars. Worst case for any 100-symbol chunk
-// would be 100*103=10,300 -- OVER Alpaca's 10,000-row ceiling, so
-// chunk=100 is NOT provably single-page for this window (the live test
-// happened to return 9,848 total and stay under it, which is exactly
-// the "looks fine, isn't proven" gap this rule exists to catch — a
-// different 100-symbol chunk with fuller history across the board could
-// exceed it). 90*103=9,270 is provably under 10,000; used instead.
+// HISTORICAL_UNIVERSE_CHUNK_SIZE (2026-09-01): originally sized to keep
+// each chunk provably single-page (90*103=9,270 < 10,000) for the
+// original ~103-trading-day padded window. That proof does NOT generalize
+// to arbitrary date ranges -- a widened, multi-hundred-trading-day window
+// blows past 10,000 rows per chunk at this size. Rather than re-deriving
+// and re-proving a chunk-size bound every time the scan range changes,
+// _fetchHistoricalDailyBars below now follows next_page_token to
+// exhaustion for real (CLAUDE.md's other permitted option), the same
+// pattern already used by _getPriorCloses/_getSip30DayAvgVolume in this
+// file. 90 is kept as a reasonable concurrency width, not a page-size proof.
 const HISTORICAL_UNIVERSE_LOOKBACK_TRADING_DAYS = 30;
 const HISTORICAL_UNIVERSE_LOOKBACK_PAD_CALENDAR_DAYS = 60;
 const HISTORICAL_UNIVERSE_CHUNK_SIZE = 90;
@@ -636,50 +684,78 @@ function _shiftDateStr(dateStr, days) {
 // invariant. Concurrent (Promise.all), same reasoning as
 // _fetchRawMinuteBars: chunk() partitions symbols into disjoint sets, so
 // parallelizing is safe.
+// Unconditionally hard-fails on any chunk that exhausts core/api-client.js's
+// own retries (2026-09-02, found live) — unlike _fetchRawMinuteBars, this
+// function has exactly one caller (reconstructTopMoversUniverse) and it is
+// offline-only; there is no live-app interactive scan whose graceful
+// degradation this would break. A partial universe reconstruction is not a
+// smaller universe, it's a wrong one -- the topN ranking for every trading
+// day in range would be computed against however many symbols happened to
+// survive rate-limiting, silently. Found live: the first widened-window
+// (~378-trading-day) scan reached only 92.2% symbol coverage this way and
+// produced an artifact anyway, with nothing short of manually diffing
+// eligibleSymbolCount against symbolsWithBars to reveal it.
 async function _fetchHistoricalDailyBars(symbols, fetchStartDateStr, endDateStr, client = _coreClient) {
   let requests = 0;
   const barsBySymbol = {};
+  const failedBatches = [];
   const chunks = chunk(symbols, HISTORICAL_UNIVERSE_CHUNK_SIZE);
   const results = await Promise.all(chunks.map(async (batch) => {
+    const chunkBars = {};
+    let chunkRequests = 0;
     try {
-      const data = await client.alpacaGet('/stocks/bars', {
-        symbols: batch.join(','),
-        timeframe: '1Day',
-        start: `${fetchStartDateStr}T00:00:00Z`,
-        end: `${endDateStr}T23:59:59Z`,
-        limit: 10000,
-        feed: 'sip',
-        // adjustment:'all' (2026-09-01, found live): Alpaca's daily-bar
-        // endpoint defaults to 'raw' (unadjusted) when this is omitted —
-        // exactly what this file's other 1Day call sites also do (see the
-        // 2026-09-01 audit note on _getSip30DayAvgVolume below: this is a
-        // FAMILY defect, not unique to this function). A reverse split
-        // produces a spurious ~(split ratio)x price jump between the last
-        // pre-split bar and the first post-split one with NOTHING in the
-        // data to distinguish it from a genuine move — confirmed live:
-        // the first real run of this function ranked a $0.14->$4.54
-        // (+3,140%) "mover" that was almost certainly exactly this.
-        // 'all' (not just 'split') also normalizes dividend adjustments,
-        // which this file had no reason to leave out for a historical
-        // ranking use case.
-        adjustment: 'all',
-      });
-      return { bars: data.bars || {}, nextPageToken: data.next_page_token || null };
+      let pageToken;
+      do {
+        const params = {
+          symbols: batch.join(','),
+          timeframe: '1Day',
+          start: `${fetchStartDateStr}T00:00:00Z`,
+          end: `${endDateStr}T23:59:59Z`,
+          limit: 10000,
+          feed: 'sip',
+          // adjustment:'all' (2026-09-01, found live): Alpaca's daily-bar
+          // endpoint defaults to 'raw' (unadjusted) when this is omitted —
+          // exactly what this file's other 1Day call sites also do (see the
+          // 2026-09-01 audit note on _getSip30DayAvgVolume below: this is a
+          // FAMILY defect, not unique to this function). A reverse split
+          // produces a spurious ~(split ratio)x price jump between the last
+          // pre-split bar and the first post-split one with NOTHING in the
+          // data to distinguish it from a genuine move — confirmed live:
+          // the first real run of this function ranked a $0.14->$4.54
+          // (+3,140%) "mover" that was almost certainly exactly this.
+          // 'all' (not just 'split') also normalizes dividend adjustments,
+          // which this file had no reason to leave out for a historical
+          // ranking use case.
+          adjustment: 'all',
+        };
+        if (pageToken) params.page_token = pageToken;
+        const data = await client.alpacaGet('/stocks/bars', params);
+        chunkRequests++;
+        let pageRowCount = 0;
+        if (data.bars) {
+          for (const sym of Object.keys(data.bars)) {
+            pageRowCount += data.bars[sym].length;
+            (chunkBars[sym] = chunkBars[sym] || []).push(...data.bars[sym]);
+          }
+        }
+        pageToken = data.next_page_token || null;
+        assertPageNotSuspiciouslyFull('_fetchHistoricalDailyBars', pageRowCount, params.limit, pageToken);
+      } while (pageToken);
     } catch (e) {
       console.warn(`_fetchHistoricalDailyBars: batch error for ${batch.length} symbols: ${e.message}`);
-      return { bars: {}, nextPageToken: null };
+      failedBatches.push({ batch, error: e });
     }
+    return { bars: chunkBars, requests: chunkRequests };
   }));
   for (const r of results) {
-    requests++;
-    if (r.nextPageToken) {
-      // Should be unreachable per the chunk-size proof above. Loud, not
-      // a silently truncated partial result masquerading as complete —
-      // if this ever fires, the proof no longer holds for this
-      // window/chunk size and must be re-verified, not patched around.
-      console.error('_fetchHistoricalDailyBars: unexpected next_page_token — a chunk was truncated to one page. The chunk-size proof above no longer holds; re-verify before trusting this run\'s ranking.');
-    }
+    requests += r.requests;
     Object.assign(barsBySymbol, r.bars);
+  }
+  if (failedBatches.length) {
+    const failedSymbols = failedBatches.flatMap(f => f.batch);
+    const err = new Error(`_fetchHistoricalDailyBars: ${failedBatches.length}/${chunks.length} chunk(s) failed after all retries, ${failedSymbols.length} symbols with NO data (request never completed, not "confirmed zero bars"): ${failedSymbols.slice(0, 30).join(', ')}${failedSymbols.length > 30 ? ', …' : ''}. A partial universe is not a universe — aborting rather than silently ranking against incomplete data.`);
+    err.failedSymbols = failedSymbols;
+    throw err;
   }
   return { barsBySymbol, requests };
 }
