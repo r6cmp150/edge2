@@ -1,0 +1,11 @@
+{
+  "name": "edge2-replay-scan-harness",
+  "private": true,
+  "description": "Not the app itself (edge2 has no build step — index.html loads app.js/core/*.js/engines/*.js directly). This package.json exists solely to run the Playwright replay-scan harness in scripts/replay-scan.mjs. Deliberately NOT \"type\": \"module\" — every tests/*.test.js is a plain CommonJS script (require('assert')), and that field is repo-wide, not scoped to scripts/. replay-scan.mjs already gets ESM treatment from its own .mjs extension, independent of this field, so leaving it unset is what keeps the existing test suite running at all.",
+  "scripts": {
+    "replay-scan": "node scripts/replay-scan.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.47.0"
+  }
+}

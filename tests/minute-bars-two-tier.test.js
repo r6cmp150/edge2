@@ -24,7 +24,27 @@ function loadUniverse(alpacaGetMock) {
   global.ptDateStr = () => '2026-08-24';
   global.getMarketStatus = () => ({ status: 'OPEN' });
   global.chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
-  global.alpacaGet = alpacaGetMock;
+  // Minimal stand-in for core/api-client.js's real request-stats tally —
+  // this file tests core/universe.js's own fetch/filter logic in isolation,
+  // not the tally itself (see tests/request-stats.test.js for that). Counts
+  // every alpacaGet call issue-time, same semantics as the real
+  // _drainWorker, so diagnosePremarketGap's requestsObserved fields report
+  // something real instead of crashing on undefined globals.
+  let _issuedCount = 0;
+  global.alpacaGet = async (...args) => { _issuedCount++; return alpacaGetMock(...args); };
+  global.getRequestStats = () => ({ issued: _issuedCount, succeeded: _issuedCount, failed: 0, retried: 0 });
+  global.diffRequestStats = (before, after) => ({
+    issued: after.issued - before.issued, succeeded: after.succeeded - before.succeeded,
+    failed: after.failed - before.failed, retried: after.retried - before.retried,
+  });
+  // Minimal stand-in for core/api-client.js's real createApiClient/
+  // _coreClient (2026-08-30) — this file tests universe.js's own fetch/
+  // filter logic in isolation, not engine tagging itself (see
+  // tests/engine-tagging.test.js for that), so every client just routes
+  // through the same counted mock regardless of engine.
+  global.createApiClient = () => ({ alpacaGet: global.alpacaGet });
+  global._coreClient = global.createApiClient('CORE');
+  global.assertPageNotSuspiciouslyFull = () => {}; // real impl in core/api-client.js — diagnostic-only, no-op here
   const src = readSource('core/universe.js').replace(/^const ALPACA_TRADING_BASE.*$/m, "const ALPACA_TRADING_BASE = 'https://paper-api.alpaca.markets';");
   const exposeCode = 'global.__getPremarketGapUniverse = _getPremarketGapUniverse; global.__diagnosePremarketGap = diagnosePremarketGap;';
   // eslint-disable-next-line no-eval
@@ -93,7 +113,7 @@ async function testTwoTierCoverageAndMissingSurfaced() {
 
   console.log('tradableCount:', diag.tradableCount, '| eligibleCount:', diag.eligibleCount, '| priceFilteredCount:', diag.priceFilteredCount);
   console.log('missingAfterBothPasses:', diag.missingAfterBothPasses, '| coverageRate:', diag.coverageRate);
-  console.log('requests:', diag.requests);
+  console.log('requests:', diag.requestsObserved);
 
   assert.strictEqual(diag.tradableCount, 250);
   assert.strictEqual(diag.eligibleCount, 240, 'WARR* symbols should be excluded before price filtering');

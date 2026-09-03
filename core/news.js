@@ -60,9 +60,17 @@ async function fetchNewsForTickers(tickers) {
   const start = new Date(Date.now() - lookbackHours * 3600 * 1000).toISOString();
   const allNews = [];
   const truncatedSymbols = [];
+  const failedSymbols = [];
 
-  try {
-    for (const batch of chunk(clean, NEWS_CHUNK_SIZE)) {
+  // Per-batch try/catch (2026-09-04, gate-honesty pass) -- this used to be
+  // ONE try/catch around the whole loop, so a single batch's request
+  // failure aborted every remaining batch and marked newsUnavailable=true
+  // for candidates whose news had already fetched successfully, not just
+  // the batch that actually failed. Same shape as the bars fetchers'
+  // per-chunk isolation (core/universe.js's _fetchRawMinuteBars etc) --
+  // one bad batch shouldn't cost every OTHER batch's real data.
+  for (const batch of chunk(clean, NEWS_CHUNK_SIZE)) {
+    try {
       const seenInBatch = new Set();
       let pageToken;
       let pages = 0;
@@ -88,14 +96,16 @@ async function fetchNewsForTickers(tickers) {
         truncatedSymbols.push(...stillMissing);
         console.warn(`fetchNewsForTickers: batch-limit page cap reached before exhausting window for a ${batch.length}-symbol batch; ${stillMissing.length} symbol(s) may have unretrieved news: ${stillMissing.join(', ')}`);
       }
+    } catch (e) {
+      console.error(`fetchNewsForTickers: batch error for ${batch.length} symbols: ${e.message}`);
+      failedSymbols.push(...batch);
     }
-    state.newsUnavailable = false;
-    state.newsTruncatedSymbols = truncatedSymbols;
-    return allNews;
-  } catch(e) {
-    console.error('News fetch failed:', e.message);
-    state.newsUnavailable = true;
-    state.newsTruncatedSymbols = [];
-    return [];
   }
+  // newsUnavailable now means "every batch failed" (a real, total outage),
+  // not "at least one batch failed" -- a partial failure is fully captured
+  // by failedSymbols/truncatedSymbols instead, per-symbol, honestly.
+  state.newsUnavailable = clean.length > 0 && failedSymbols.length === clean.length;
+  state.newsTruncatedSymbols = truncatedSymbols;
+  state.newsFailedSymbols = failedSymbols;
+  return allNews;
 }

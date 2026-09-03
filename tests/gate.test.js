@@ -186,14 +186,81 @@ async function testClassifyQualifiedAndNearMiss() {
   assert.strictEqual(gate.classifyGate(makeResult(['not-checked', 'not-checked', 'not-checked', 'not-checked', 'not-checked'])), null, 'nothing checkable at all -> neither tier (not a vacuous QUALIFIED)');
 }
 
+// 2026-09-04, gate-honesty pass: a REQUEST failure (rate-limited, network
+// error) must never render or classify the same as a structural
+// not-checked or a genuine fail — a candidate Roman is about to trade on
+// needs to know "we couldn't measure this" is a different claim than
+// "we checked and it's fine to ignore" or "we checked and it failed."
+async function testPillar3FetchFailedDistinctFromNotCheckedAndFail() {
+  const gate = await loadGate();
+  const candidate = { symbol: 'A', price: 5, changePct: 20 };
+  const result = gate.evaluatePillar3(candidate, 'OPEN', 60, { fetchFailed: true });
+  console.log('Pillar 3 fetch-failed:', result);
+  assert.strictEqual(result.status, 'fetch-failed', 'a request failure must be its own status, not folded into not-checked or fail');
+  assert.notStrictEqual(result.status, 'not-checked');
+  assert.notStrictEqual(result.status, 'fail');
+  assert.ok(result.reason && /fetch failed/i.test(result.reason), 'reason must say a fetch failed, not "no volume data" (which reads as confirmed-absent)');
+}
+
+async function testPillar4FetchFailedDistinctFromFail() {
+  // The worst version of the original bug: BEFORE this fix, a total news
+  // outage returned newsItemsForSymbol=[] for every candidate, which
+  // evaluatePillar4 scored as a real, confirmed 'fail' — actively
+  // counting against qualification instead of just being invisible.
+  const gate = await loadGate();
+  const candidate = { symbol: 'A', price: 5, changePct: 20 };
+  const result = gate.evaluatePillar4(candidate, [], new Date(), true);
+  console.log('Pillar 4 fetch-failed:', result);
+  assert.strictEqual(result.status, 'fetch-failed', 'a news fetch failure must never be scored as a real fail');
+  assert.notStrictEqual(result.status, 'fail');
+}
+
+async function testClassifyGateBlocksOnFetchFailed() {
+  const gate = await loadGate();
+  const ids = ['price', 'change', 'rvol', 'news', 'float'];
+  const makeResult = (statuses) => ({ pillars: statuses.map((s, i) => ({ id: ids[i], status: s })) });
+
+  assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'fetch-failed', 'pass', 'not-checked'])), 'BLOCKED', 'rvol fetch failure blocks qualification outright — never QUALIFIED, never NEAR_MISS');
+  assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'pass', 'fetch-failed', 'not-checked'])), 'BLOCKED', 'news fetch failure blocks the same way');
+  assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'fetch-failed', 'fail', 'not-checked'])), 'BLOCKED', 'BLOCKED takes priority even when the OTHER substantive pillar genuinely failed too — not a near-miss, we do not know enough to call it that');
+  assert.strictEqual(gate.classifyGate(makeResult(['fail', 'pass', 'fetch-failed', 'not-checked', 'not-checked'])), null, 'a fetch failure never overrides a real free-pillar disqualification — still plain null, not BLOCKED');
+}
+
+async function testEvaluateGateBatchThreadsFailedSymbolsToBlocked() {
+  // End-to-end: a symbol whose RVOL fetch failed must come out BLOCKED,
+  // not silently QUALIFIED (fetchFailed dropped) or silently disqualified
+  // (fetchFailed misread as fail).
+  const gate = await loadGate();
+  global.state = { newsFailedSymbols: [] };
+  global._fetchCumulativeMinuteVolume = async (symbols) => {
+    const v = {}; symbols.forEach(s => v[s] = 2_000_000);
+    return { volumeBySymbol: v, requests: 1, failedSymbols: ['B'] }; // B's cumulative-volume chunk failed
+  };
+  global._getSip30DayAvgVolume = async (symbols) => {
+    const v = {}; symbols.forEach(s => v[s] = 1_000_000);
+    return { avgVolumes: v, requests: 1, failedSymbols: [] };
+  };
+  global.fetchNewsForTickers = async (symbols) => symbols.map(s => ({ symbols: [s], headline: 'x', created_at: new Date().toISOString() }));
+  global.getPT = () => { const d = new Date(); d.setHours(7, 30, 0, 0); return d; }; // 60min after open
+
+  const candidates = ['A', 'B'].map(sym => ({ symbol: sym, price: 5, changePct: 20 }));
+  const { results } = await gate.evaluateGateBatch(candidates, 'OPEN');
+  const bySymbol = Object.fromEntries(results.map(r => [r.symbol, r]));
+  console.log('A tier:', bySymbol.A.tier, '| B tier:', bySymbol.B.tier, '| B rvol pillar status:', bySymbol.B.pillars.find(p => p.id === 'rvol').status);
+  assert.strictEqual(bySymbol.A.tier, 'QUALIFIED', 'unaffected candidate must still qualify normally');
+  assert.strictEqual(bySymbol.B.tier, 'BLOCKED', 'candidate whose RVOL fetch failed must be BLOCKED, not QUALIFIED and not silently disqualified');
+  assert.strictEqual(bySymbol.B.pillars.find(p => p.id === 'rvol').status, 'fetch-failed');
+}
+
 async function testEvaluateGateBatchNeverCallsPerCandidate() {
   // Verifies the batch orchestration shape without live Alpaca access:
   // mocks the global fetchers gate.js calls and confirms it invokes them
   // ONCE for the whole survivor set, not once per candidate.
   const gate = await loadGate();
   let cumulativeCalls = 0, avgCalls = 0, newsCalls = 0;
-  global._fetchCumulativeMinuteVolume = async (symbols) => { cumulativeCalls++; const v = {}; symbols.forEach(s => v[s] = 2_000_000); return { volumeBySymbol: v, requests: 1 }; };
-  global._getSip30DayAvgVolume = async (symbols) => { avgCalls++; const v = {}; symbols.forEach(s => v[s] = 1_000_000); return { avgVolumes: v, requests: 1 }; };
+  global.state = { newsFailedSymbols: [] };
+  global._fetchCumulativeMinuteVolume = async (symbols) => { cumulativeCalls++; const v = {}; symbols.forEach(s => v[s] = 2_000_000); return { volumeBySymbol: v, requests: 1, failedSymbols: [] }; };
+  global._getSip30DayAvgVolume = async (symbols) => { avgCalls++; const v = {}; symbols.forEach(s => v[s] = 1_000_000); return { avgVolumes: v, requests: 1, failedSymbols: [] }; };
   global.fetchNewsForTickers = async (symbols) => { newsCalls++; return symbols.map(s => ({ symbols: [s], headline: 'x', created_at: new Date().toISOString() })); };
   global.getPT = () => { const d = new Date(); d.setHours(7, 30, 0, 0); return d; }; // 60min after 6:30 open
 
@@ -221,9 +288,10 @@ async function testRvolCheckableFlagReflectsSessionStructurally() {
   const gate = await loadGate();
   const candidates = [{ symbol: 'A', price: 5, changePct: 20 }];
 
+  global.state = { newsFailedSymbols: [] };
   let calledOutsideSession = false;
-  global._fetchCumulativeMinuteVolume = async () => { calledOutsideSession = true; return { volumeBySymbol: {}, requests: 1 }; };
-  global._getSip30DayAvgVolume = async () => { calledOutsideSession = true; return { avgVolumes: {}, requests: 1 }; };
+  global._fetchCumulativeMinuteVolume = async () => { calledOutsideSession = true; return { volumeBySymbol: {}, requests: 1, failedSymbols: [] }; };
+  global._getSip30DayAvgVolume = async () => { calledOutsideSession = true; return { avgVolumes: {}, requests: 1, failedSymbols: [] }; };
   global.fetchNewsForTickers = async (symbols) => symbols.map(s => ({ symbols: [s], headline: 'x', created_at: new Date().toISOString() }));
   global.getPT = () => { const d = new Date(); d.setHours(3, 0, 0, 0); return d; }; // irrelevant while session isn't OPEN
 
@@ -240,8 +308,8 @@ async function testRvolCheckableFlagReflectsSessionStructurally() {
 
   // OPEN, past the first 15 minutes — genuinely checkable, and the fetchers actually run.
   let calledInSession = false;
-  global._fetchCumulativeMinuteVolume = async (symbols) => { calledInSession = true; const v = {}; symbols.forEach(s => v[s] = 2_000_000); return { volumeBySymbol: v, requests: 1 }; };
-  global._getSip30DayAvgVolume = async (symbols) => { calledInSession = true; const v = {}; symbols.forEach(s => v[s] = 1_000_000); return { avgVolumes: v, requests: 1 }; };
+  global._fetchCumulativeMinuteVolume = async (symbols) => { calledInSession = true; const v = {}; symbols.forEach(s => v[s] = 2_000_000); return { volumeBySymbol: v, requests: 1, failedSymbols: [] }; };
+  global._getSip30DayAvgVolume = async (symbols) => { calledInSession = true; const v = {}; symbols.forEach(s => v[s] = 1_000_000); return { avgVolumes: v, requests: 1, failedSymbols: [] }; };
   global.getPT = () => { const d = new Date(); d.setHours(7, 30, 0, 0); return d; }; // 60min after open
   const openResult = await gate.evaluateGateBatch(candidates, 'OPEN');
   assert.strictEqual(openResult.rvolCheckable, true, 'past the first 15 minutes of OPEN, RVOL is genuinely checkable');
@@ -255,8 +323,9 @@ async function testDiagnoseGateCostShapeAndStrategySelection() {
     usedStrategy = strategy;
     return [{ symbol: 'A', price: 5, changePct: 20 }, { symbol: 'B', price: 50, changePct: 5 }]; // A qualifies, B fails price+change
   };
-  global._fetchCumulativeMinuteVolume = async (symbols) => { const v = {}; symbols.forEach(s => v[s] = 2_000_000); return { volumeBySymbol: v, requests: 1 }; };
-  global._getSip30DayAvgVolume = async (symbols) => { const v = {}; symbols.forEach(s => v[s] = 1_000_000); return { avgVolumes: v, requests: 1 }; };
+  global.state = { newsFailedSymbols: [] };
+  global._fetchCumulativeMinuteVolume = async (symbols) => { const v = {}; symbols.forEach(s => v[s] = 2_000_000); return { volumeBySymbol: v, requests: 1, failedSymbols: [] }; };
+  global._getSip30DayAvgVolume = async (symbols) => { const v = {}; symbols.forEach(s => v[s] = 1_000_000); return { avgVolumes: v, requests: 1, failedSymbols: [] }; };
   global.fetchNewsForTickers = async (symbols) => symbols.map(s => ({ symbols: [s], headline: 'x', created_at: new Date().toISOString() }));
   global.getPT = () => { const d = new Date(); d.setHours(8, 0, 0, 0); return d; }; // 90min after 6:30 open
 
@@ -287,6 +356,10 @@ async function testDiagnoseGateCostShapeAndStrategySelection() {
   await run('gate: short-circuits on Pillar 1 failure without consulting rvol/news inputs', testGateShortCircuitsOnPillar1Failure);
   await run('gate: news is genuinely evaluated even when rvol fails (root-cause fix)', testGateEvaluatesNewsEvenWhenRvolFails);
   await run('gate: classify QUALIFIED / NEAR_MISS / neither', testClassifyQualifiedAndNearMiss);
+  await run('gate: Pillar 3 fetch-failed is distinct from not-checked and fail', testPillar3FetchFailedDistinctFromNotCheckedAndFail);
+  await run('gate: Pillar 4 fetch-failed is distinct from fail (the worst version of the original bug)', testPillar4FetchFailedDistinctFromFail);
+  await run('gate: classifyGate BLOCKS on any fetch-failed pillar', testClassifyGateBlocksOnFetchFailed);
+  await run('gate: evaluateGateBatch threads a fetch failure through to a BLOCKED tier end-to-end', testEvaluateGateBatchThreadsFailedSymbolsToBlocked);
   await run('gate: evaluateGateBatch fetches once for the whole survivor set, not per-candidate', testEvaluateGateBatchNeverCallsPerCandidate);
   await run('gate: rvolCheckable flag reflects session structurally, without burning a request when already known', testRvolCheckableFlagReflectsSessionStructurally);
   await run('gate: diagnoseGateCost selects the right strategy per session and reports real shape', testDiagnoseGateCostShapeAndStrategySelection);

@@ -4,10 +4,19 @@
 // its pure functions directly.
 'use strict';
 const assert = require('assert');
-const { run } = require('./_lib');
+const { run, readSource, evalModule } = require('./_lib');
 
 function bar(t, o, h, l, c, v = 1000) {
   return { t, o, h, l, c, v };
+}
+
+// runReplay computes minutesOfSessionRemainingAtTrigger via the REAL
+// getPT (core/clock.js), same reasoning as tests/setups.test.js's
+// loadClockGlobals — mocking getPT would test nothing about whether
+// that computation actually reads PT wall-clock fields correctly.
+function loadClockGlobals() {
+  global.state = { settings: {} };
+  evalModule(readSource('core/clock.js'), { expose: ['getPT', 'ptDateStr', 'ptWallClockToInstant'] });
 }
 
 // One bar per minute starting at this PT-equivalent instant, for however
@@ -22,7 +31,9 @@ function makeBars(closes, startISO = '2026-08-26T13:30:00.000Z') {
 }
 
 async function loadReplay() {
+  loadClockGlobals(); // real getPT/ptDateStr/ptWallClockToInstant; individual tests override ptWallClockToInstant with a deterministic stand-in where needed
   global._fetchRawMinuteBars = undefined; // each test sets its own mock before calling fetch-dependent functions
+  global.assertPageNotSuspiciouslyFull = () => {}; // real impl in core/api-client.js — diagnostic-only, no-op here; fetchPrevCloseAsOf's own pagination loop calls this
   return import('../engines/warrior/replay.js');
 }
 
@@ -49,6 +60,81 @@ async function testRunReplayEdgeTriggeredOncePerEpisode() {
   assert.strictEqual(triggers.length, 2, 'must record exactly one trigger per continuous episode, not one per elevated bar');
   assert.strictEqual(triggers[0].triggerIndex, 3);
   assert.strictEqual(triggers[1].triggerIndex, 9);
+}
+
+// ── Re-arm rule (Phase 5) ─────────────────────────────────────────────────
+
+async function testRearmSuppressesChopButAllowsGenuineSecondBreakout() {
+  const replay = await loadReplay();
+  // Reproduces the HVII 2026-08-24 shape found via the replay harness: a
+  // breakout above 10.0, harmless chop back and forth across the level
+  // (never retracing more than ~1%), then a REAL retreat (to 8.50, well
+  // past the 1% band) before a genuinely new breakout.
+  const bars = makeBars([9.90, 10.10, 9.95, 10.05, 9.95, 10.08, 8.50, 8.60, 10.20]);
+  const classifier = (barsSoFar) => {
+    const c = barsSoFar[barsSoFar.length - 1].c;
+    return c > 10.0 ? { setupId: 'breakout', referenceLevel: 10.0, referenceDirection: 'above' } : null;
+  };
+
+  const naive = replay.runReplay(bars, classifier);
+  const rearmed = replay.runReplay(bars, classifier, { rearmDistancePct: 1 });
+  console.log('naive trigger indices:', naive.map(t => t.triggerIndex), '| re-armed:', rearmed.map(t => t.triggerIndex));
+
+  assert.strictEqual(naive.length, 4, 'naive edge-triggering over-counts chop, same shape as the HVII finding (6 triggers for 1 real event)');
+  assert.strictEqual(rearmed.length, 2, 'with rearmDistancePct, only the genuine breakout and the genuine second breakout (after a real retreat) count');
+  assert.deepStrictEqual(rearmed.map(t => t.triggerIndex), [1, 8]);
+}
+
+async function testRunReplayNaiveAndRearmedMatchesTwoSeparateCalls() {
+  const replay = await loadReplay();
+  // Same oscillating fixture as testRearmSuppressesChopButAllowsGenuine-
+  // SecondBreakout above -- naive fires 4 times, re-armed 2, from the
+  // same classifier calls. If the combined single-pass function ever
+  // diverges from two separate runReplay calls, this is exactly the
+  // shape (chop + a genuine second episode) that would expose it.
+  const bars = makeBars([9.90, 10.10, 9.95, 10.05, 9.95, 10.08, 8.50, 8.60, 10.20]);
+  const classifier = (barsSoFar) => {
+    const c = barsSoFar[barsSoFar.length - 1].c;
+    return c > 10.0 ? { setupId: 'breakout', referenceLevel: 10.0, referenceDirection: 'above' } : null;
+  };
+
+  const separateNaive = replay.runReplay(bars, classifier);
+  const separateRearmed = replay.runReplay(bars, classifier, { rearmDistancePct: 1 });
+  const combined = replay.runReplayNaiveAndRearmed(bars, classifier, 1);
+
+  console.log('combined naive indices:', combined.naiveTriggers.map(t => t.triggerIndex), '| combined re-armed indices:', combined.rearmedTriggers.map(t => t.triggerIndex));
+  assert.deepStrictEqual(combined.naiveTriggers, separateNaive, 'combined naive output must be byte-identical to a separate runReplay(bars, classifier) call');
+  assert.deepStrictEqual(combined.rearmedTriggers, separateRearmed, 'combined re-armed output must be byte-identical to a separate runReplay(bars, classifier, {rearmDistancePct}) call');
+}
+
+async function testRearmBelowDirectionForBreakdownSetups() {
+  const replay = await loadReplay();
+  // 'below' direction: a breakdown-below-level setup re-arms only once
+  // price rallies back ABOVE level*(1+rearmDistancePct/100) — the mirror
+  // image of the 'above' case, included since a future short-side setup
+  // would need it even though none of Phase 5's five setups do.
+  const bars = makeBars([10.10, 9.90, 10.05, 9.95, 11.50, 11.40, 9.80]);
+  const classifier = (barsSoFar) => {
+    const c = barsSoFar[barsSoFar.length - 1].c;
+    return c < 10.0 ? { setupId: 'breakdown', referenceLevel: 10.0, referenceDirection: 'below' } : null;
+  };
+  const rearmed = replay.runReplay(bars, classifier, { rearmDistancePct: 1 });
+  console.log('below-direction re-armed indices:', rearmed.map(t => t.triggerIndex));
+  // i=1 (9.90) triggers. i=3 (9.95) is still within 1% of 10.0, no re-arm.
+  // i=4 (11.50) is well above 10.10 -> re-arms. i=6 (9.80) is a genuine new breakdown.
+  assert.deepStrictEqual(rearmed.map(t => t.triggerIndex), [1, 6]);
+}
+
+async function testRearmTriggerRecordCarriesReferenceLevelAndMargins() {
+  const replay = await loadReplay();
+  const bars = makeBars([9.90, 10.10]);
+  const classifier = (barsSoFar) => {
+    const c = barsSoFar[barsSoFar.length - 1].c;
+    return c > 10.0 ? { setupId: 'breakout', referenceLevel: 10.0, referenceDirection: 'above', margins: { volumeMultiple: 4.2, threshold: 3.0 } } : null;
+  };
+  const [trigger] = replay.runReplay(bars, classifier, { rearmDistancePct: 1 });
+  assert.strictEqual(trigger.referenceLevel, 10.0);
+  assert.deepStrictEqual(trigger.margins, { volumeMultiple: 4.2, threshold: 3.0 });
 }
 
 // ── No-lookahead: structural control ────────────────────────────────────
@@ -177,6 +263,75 @@ async function testComputeForwardReturnsAllNullWhenTriggerIsLastBar() {
   }
 }
 
+// ── minutesOfSessionRemainingAtTrigger (close-horizon comparability) ─────
+// Live-replay finding (2026-08-28): AMIX triggers 6 minutes before the
+// window's close scored +9.7%/+15.9% "to close"; HVII triggers hours
+// earlier scored -3.3%/-7.3% — not because one setup was better, but
+// because "close" measures completely different amounts of real time
+// depending on when the trigger happened. Kept as a metric (free,
+// sometimes genuinely useful) rather than deleted, but every trigger now
+// carries this field precisely so that incomparability is visible on the
+// row instead of silently misleading a reader who takes "close" at face
+// value the way the live run's first pass did.
+
+async function testMinutesOfSessionRemainingAtTriggerComputedFromPTClose() {
+  const replay = await loadReplay();
+  // makeBars' default start (2026-08-26T13:30:00.000Z) is exactly 6:30am
+  // PT (PDT, UTC-7) -- bar index N is N minutes after the regular-session
+  // open, so "minutes until 1:00pm PT close" for bar N is 390 - N.
+  const bars = makeBars([1, 1, 1, 1, 1, 2]); // trigger at index 5
+  const classifier = (barsSoFar) => barsSoFar[barsSoFar.length - 1].c >= 2 ? { setupId: 'x' } : null;
+  const [trigger] = replay.runReplay(bars, classifier);
+  console.log('minutesOfSessionRemainingAtTrigger:', trigger.minutesOfSessionRemainingAtTrigger);
+  assert.strictEqual(trigger.minutesOfSessionRemainingAtTrigger, 390 - 5);
+}
+
+async function testMinutesOfSessionRemainingAtTriggerMakesCloseHorizonInterpretable() {
+  const replay = await loadReplay();
+  const classifier = (barsSoFar) => barsSoFar[barsSoFar.length - 1].c >= 2 ? { setupId: 'x' } : null;
+
+  // Early trigger: hours of real time left before the window's close.
+  const earlyBars = makeBars([1, 2, ...Array(60).fill(1.5)]); // trigger at index 1 (6:31am PT), 60 more bars follow
+  const [earlyTrigger] = replay.runReplay(earlyBars, classifier);
+
+  // Late trigger: minutes before the window's close (mirrors AMIX firing
+  // 6 minutes before end of window).
+  const lateBars = [...makeBars(Array(383).fill(1)), ...makeBars([2, 1, 1, 1, 1, 1], '2026-08-26T19:53:00.000Z')];
+  const [lateTrigger] = replay.runReplay(lateBars, classifier);
+
+  console.log('early remaining:', earlyTrigger.minutesOfSessionRemainingAtTrigger, '| late remaining:', lateTrigger.minutesOfSessionRemainingAtTrigger);
+  assert.ok(earlyTrigger.minutesOfSessionRemainingAtTrigger > 300, 'an early trigger should show hours of session remaining');
+  assert.ok(lateTrigger.minutesOfSessionRemainingAtTrigger <= 10, 'a late trigger should show only minutes of session remaining');
+  assert.ok(earlyTrigger.minutesOfSessionRemainingAtTrigger - lateTrigger.minutesOfSessionRemainingAtTrigger > 250,
+    'the whole point: two triggers whose "close" return might look superficially comparable have wildly different real time behind that number, and this field is what makes that visible');
+}
+
+// ── _sessionPhase (flag, never a filter — 2026-08-31) ────────────────────
+
+async function testSessionPhaseBoundaries() {
+  const replay = await loadReplay();
+  const start = new Date('2026-08-26T13:30:00.000Z').getTime(); // 6:30am PT, session open
+  const atMinute = (m) => bar(new Date(start + m * 60000).toISOString(), 1, 1, 1, 1);
+
+  const cases = [
+    [0, 'opening'],
+    [4, 'opening'],
+    [5, 'momentum-window'],
+    [59, 'momentum-window'],
+    [60, 'mid'],
+    [299, 'mid'],
+    [300, 'late'],   // 90 min remaining -- not closing yet
+    [384, 'late'],   // 6 min remaining -- still not closing
+    [385, 'closing'], // exactly 5 min remaining
+    [389, 'closing'], // 1 min remaining, last bar of the session
+  ];
+  for (const [minutesSinceOpen, expected] of cases) {
+    const got = replay._sessionPhase(atMinute(minutesSinceOpen));
+    console.log(`sessionPhase at +${minutesSinceOpen}min:`, got);
+    assert.strictEqual(got, expected, `minute ${minutesSinceOpen} since open should be '${expected}', got '${got}'`);
+  }
+}
+
 // ── examplePriceMoveClassifier ───────────────────────────────────────────
 
 async function testExamplePriceMoveClassifierThreshold() {
@@ -212,6 +367,52 @@ async function testFetchReplayBarsUsesCorrectWindowChunkSizeAndOrdering() {
   assert.deepStrictEqual(barsBySymbol.AAPL.map(b => b.c), [1, 2, 3], 'must be reversed to ascending (chronological) order for replay');
 }
 
+// ── fetchPrevCloseAsOf ────────────────────────────────────────────────────
+
+async function testFetchPrevCloseAsOfPicksMostRecentCloseBeforeReplayWindow() {
+  const replay = await loadReplay();
+  global.ptWallClockToInstant = (dateStr, hour, minute) => new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00.000Z`);
+  let capturedParams = null;
+  global.alpacaGet = async (path, params) => {
+    capturedParams = params;
+    return {
+      bars: {
+        AAPL: [
+          { t: '2026-08-25T20:00:00Z', c: 150.25 }, // most recent (sort:desc -> first)
+          { t: '2026-08-24T20:00:00Z', c: 148.00 },
+        ],
+      },
+    };
+  };
+  const { prevCloseBySymbol, requests } = await replay.fetchPrevCloseAsOf(['AAPL'], '2026-08-26');
+  console.log('prevClose result:', prevCloseBySymbol, '| params:', { timeframe: capturedParams.timeframe, sort: capturedParams.sort, feed: capturedParams.feed });
+  assert.strictEqual(prevCloseBySymbol.AAPL.close, 150.25, 'must take the most recent (first, since sort:desc) close strictly before the replay window');
+  assert.strictEqual(prevCloseBySymbol.AAPL.date, '2026-08-25', 'must report the PT calendar date the close is actually FROM, not assume it matches the caller\'s expectation');
+  assert.strictEqual(capturedParams.timeframe, '1Day');
+  assert.strictEqual(capturedParams.sort, 'desc');
+  assert.strictEqual(capturedParams.feed, 'sip', 'must use feed=sip like every other Warrior bar request (CLAUDE.md rule)');
+  assert.strictEqual(requests, 1);
+}
+
+async function testFetchPrevCloseAsOfFollowsPagination() {
+  const replay = await loadReplay();
+  global.ptWallClockToInstant = (dateStr, hour, minute) => new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00.000Z`);
+  let callCount = 0;
+  global.alpacaGet = async (path, params) => {
+    callCount++;
+    if (!params.page_token) {
+      return { bars: { AAPL: [{ t: '2026-08-25T20:00:00Z', c: 150.25 }] }, next_page_token: 'page2' };
+    }
+    return { bars: { AAPL: [{ t: '2026-08-24T20:00:00Z', c: 148.00 }] } };
+  };
+  const { prevCloseBySymbol, requests } = await replay.fetchPrevCloseAsOf(['AAPL'], '2026-08-26');
+  console.log('paginated prevClose:', prevCloseBySymbol, 'calls:', callCount);
+  assert.strictEqual(callCount, 2, 'must follow next_page_token to exhaustion, not stop at the first page');
+  assert.strictEqual(requests, 2);
+  assert.strictEqual(prevCloseBySymbol.AAPL.close, 150.25, 'first page (sort:desc) still carries the actual most-recent close');
+  assert.strictEqual(prevCloseBySymbol.AAPL.date, '2026-08-25', 'date must come from the actual most-recent bar even when pagination was needed to find it');
+}
+
 async function testReplayChunkSizeIsSinglePageForDefaultWindow() {
   const replay = await loadReplay();
   const DEFAULT_WINDOW_MIN = 720;
@@ -245,13 +446,22 @@ async function testRunReplayForSymbolsOrchestratesFetchAndReplay() {
 (async () => {
   await run('replay: runReplay is deterministic', testRunReplayDeterministic);
   await run('replay: runReplay is edge-triggered, one record per episode', testRunReplayEdgeTriggeredOncePerEpisode);
+  await run('replay: re-arm rule suppresses chop, allows a genuine second breakout (reproduces the HVII finding)', testRearmSuppressesChopButAllowsGenuineSecondBreakout);
+  await run('replay: runReplayNaiveAndRearmed matches two separate runReplay calls exactly', testRunReplayNaiveAndRearmedMatchesTwoSeparateCalls);
+  await run('replay: re-arm rule, below-direction for breakdown setups', testRearmBelowDirectionForBreakdownSetups);
+  await run('replay: re-arm trigger record carries referenceLevel and margins', testRearmTriggerRecordCarriesReferenceLevelAndMargins);
   await run('replay: no-lookahead structural control (real loop correct, broken stand-in exposed)', testNoLookaheadStructuralControl);
   await run('replay: no-lookahead anchoring control is a mitigation, not a guarantee', testNoLookaheadAnchoringControlIsAMitigationNotAGuarantee);
   await run('replay: computeForwardReturns — correct return/MFE/MAE values', testComputeForwardReturnsCorrectValues);
   await run('replay: computeForwardReturns — null (not fabricated) when a horizon is unreachable', testComputeForwardReturnsNullWhenHorizonUnavailable);
   await run('replay: computeForwardReturns — all null when trigger is the last bar', testComputeForwardReturnsAllNullWhenTriggerIsLastBar);
+  await run('replay: minutesOfSessionRemainingAtTrigger computed from PT session close', testMinutesOfSessionRemainingAtTriggerComputedFromPTClose);
+  await run('replay: minutesOfSessionRemainingAtTrigger makes the close horizon interpretable (reproduces the AMIX/HVII finding)', testMinutesOfSessionRemainingAtTriggerMakesCloseHorizonInterpretable);
+  await run('replay: _sessionPhase boundaries (opening/momentum-window/mid/late/closing)', testSessionPhaseBoundaries);
   await run('replay: examplePriceMoveClassifier threshold (reuses gate.js\'s real CHANGE_MIN_PCT)', testExamplePriceMoveClassifierThreshold);
   await run('replay: fetchReplayBars — window/chunk-size/ordering', testFetchReplayBarsUsesCorrectWindowChunkSizeAndOrdering);
+  await run('replay: fetchPrevCloseAsOf picks the most recent close before the replay window', testFetchPrevCloseAsOfPicksMostRecentCloseBeforeReplayWindow);
+  await run('replay: fetchPrevCloseAsOf follows pagination to exhaustion', testFetchPrevCloseAsOfFollowsPagination);
   await run('replay: REPLAY_CHUNK_SIZE is provably single-page for the default window, and tight', testReplayChunkSizeIsSinglePageForDefaultWindow);
   await run('replay: runReplayForSymbols orchestrates fetch + per-symbol replay', testRunReplayForSymbolsOrchestratesFetchAndReplay);
 })();

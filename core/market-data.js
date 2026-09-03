@@ -47,12 +47,18 @@ function getLivePrice(snap) {
 // core/universe.js's SNAPSHOT_CHUNK_SIZE comment) — not a limit that could
 // silently truncate a batch, since Alpaca either serves the whole batch or
 // errors on the request, it doesn't return a partial page.
-async function fetchSnapshots(tickers, onProgress) {
+// client (2026-08-30): defaults to the shared CORE client (core/api-
+// client.js) — same pattern as core/universe.js's own helpers. This is
+// the function checkPriceAlerts (app.js) uses to get background priority
+// without the ambient-flag hazard (see core/api-client.js's
+// withBackgroundPriority removal): pass a client built with
+// createApiClient(engine, 'background') instead of wrapping the call.
+async function fetchSnapshots(tickers, onProgress, client = _coreClient) {
   const clean = sanitizeTickerBatch(tickers);
   const results = {};
   let done = 0;
   for (const batch of chunk(clean, 100)) {
-    const data = await alpacaGet('/stocks/snapshots', { symbols: batch.join(','), feed:'iex' });
+    const data = await client.alpacaGet('/stocks/snapshots', { symbols: batch.join(','), feed:'iex' });
     Object.assign(results, data);
     done += batch.length;
     if (onProgress) onProgress(done, clean.length);
@@ -123,12 +129,15 @@ async function fetchMultiBars(tickers, limit = 10000) {
         const params = { symbols: batch.join(','), timeframe:'1Day', start, limit, sort:'asc', feed:'iex', adjustment: HISTORICAL_BAR_ADJUSTMENT };
         if (pageToken) params.page_token = pageToken;
         const data = await alpacaGet('/stocks/bars', params);
+        let pageRowCount = 0;
         if (data.bars) {
           for (const sym of Object.keys(data.bars)) {
+            pageRowCount += data.bars[sym].length;
             results[sym] = (results[sym] || []).concat(data.bars[sym]);
           }
         }
         pageToken = data.next_page_token || null;
+        assertPageNotSuspiciouslyFull('fetchMultiBars', pageRowCount, params.limit, pageToken);
       } while (pageToken);
 
       // Completeness assertion: every symbol in `batch` already cleared the
@@ -173,6 +182,7 @@ async function fetchSingleBars(ticker, limit = 10000) {
       const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
       bars = bars.concat(data.bars || []);
       pageToken = data.next_page_token || null;
+      assertPageNotSuspiciouslyFull(`fetchSingleBars(${ticker})`, (data.bars || []).length, params.limit, pageToken);
     } while (pageToken);
     return bars;
   } catch(e) { return []; }
@@ -224,6 +234,7 @@ async function fetchMinuteBars(ticker) {
       const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
       bars = bars.concat(data.bars || []);
       pageToken = data.next_page_token || null;
+      assertPageNotSuspiciouslyFull(`fetchMinuteBars(${ticker})`, (data.bars || []).length, params.limit, pageToken);
     } while (pageToken);
     return bars;
   } catch(e) { return []; }
@@ -251,6 +262,7 @@ async function fetchHourlyBars(ticker) {
       const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
       bars = bars.concat(data.bars || []);
       pageToken = data.next_page_token || null;
+      assertPageNotSuspiciouslyFull(`fetchHourlyBars(${ticker})`, (data.bars || []).length, params.limit, pageToken);
     } while (pageToken);
     return bars;
   } catch(e) { return []; }

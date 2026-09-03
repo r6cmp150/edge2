@@ -606,6 +606,8 @@ Historical minute bars are already free on the Basic plan. The harness is cheap 
 3. Replay them forward, bar by bar, feeding each prefix to the setup classifier as if it were live
 4. Record every trigger: setup id, trigger time, trigger price, and for each horizon (+5m / +15m / +30m / close): the close-based forward return, **plus max favorable and max adverse excursion within that horizon** (the best/worst price touched between the trigger and the horizon, not just the price AT the horizon). Same bars already fetched, no extra request. Ross exits at roughly 2:1 within minutes — a setup that runs +20% and closes flat is a good trade with a normal exit, not a failure, and a close-only return would read it as one. Fixed-horizon close returns alone systematically undervalue the setups this engine exists to find.
 
+**`close` is not comparable across triggers at different times of day** — found via live replay validation (2026-08-28): it scores against `bars[bars.length-1]` (whatever the fetched window's last bar is), so a trigger 6 minutes before the window ends and one 5 hours before it get scored on the same axis despite having wildly different room to move; MFE/MAE for that horizon inherit the same bias. Kept rather than deleted (it's free, already-fetched data, and "did this survive to end of day" is a real question for a specific trade), but every trigger now also carries `minutesOfSessionRemainingAtTrigger` (minutes to 1:00pm PT, `core/clock.js`'s own regular-session-close boundary) so the incomparability is visible on the row instead of silently misread — same "show what you don't know" principle as `gate.js`'s not-checked pillars.
+
 ### Fetch-window chunk size — proof, not estimate
 
 The default window (4:00am ET to regular close) is 720 minutes. Alpaca's single-page ceiling is 10,000 bars. `floor(10000 / 720) = 13` — 13 symbols/chunk stays single-page (13×720=9,360 ≤ 10,000); 14 does not (14×720=10,080 > 10,000). `REPLAY_CHUNK_SIZE = 13` is proven single-page **for the default window specifically**. Because the window is a caller-supplied parameter, not a compile-time constant, a wider custom window can't carry the same static proof — correctness there falls back to `_fetchRawMinuteBars`'s existing `next_page_token`-following (already tested, `pagination-merge.test.js`), at the cost of extra round trips. Both properties hold: the default case is single-page and cheap; any wider case is still correct, just not free.
@@ -619,6 +621,18 @@ The default window (4:00am ET to regular close) is 720 minutes. Alpaca's single-
 ### Access
 
 Hide behind a Settings toggle (`Developer tools`). It is not a user-facing feature. The toggle itself is generic (no Warrior-specific strings, per CLAUDE.md's engine-name rule for `shell/`); the replay panel it reveals is rendered by Warrior's own `renderTab()`, inside the Warrior tab.
+
+### Range-scan mode — validating across many days, not one (added 2026-08-29)
+
+**Why:** a single-day replay result is not evidence a classifier is right — "ABCD: 0 triggers on 2026-08-24" is equally consistent with "ABCD is broken" and "ABCD correctly didn't fire that day." The circularity the fixture-only tests already had (a wrong assumption encoded once in the classifier and again in its own test fixture, so both agree) reappears at the replay-harness level unless the harness is run across enough real days that a real pattern — never fires, fires constantly, only fires on stocks it shouldn't — becomes visible. Range-scan mode is that: the same replay panel, given an end date, walks every trading day in `[startDate, endDate]` and scores each classifier against real bars on all of them, then rolls the results into one totals row per setup. The totals row, not any single day's cell, is the actual acceptance evidence for a setup.
+
+- **One fetch, all five setups.** Selecting "All setups" (`ALL_SETUPS_ID`) evaluates all five classifiers against the same fetched bars for a given symbol/day, rather than five independent fetches — `_evaluateSetupsAgainstBars` in `setups.js`.
+- **`prevClose` carried forward, not re-fetched per day.** Symbols scanned in chronological order let each day's own last bar become the next day's `prevClose`; only the first day (or a day recovering from a fetch failure) needs a real `fetchPrevCloseAsOf` call. Self-healing: a broken chain link just re-fetches for the symbols missing a value.
+- **Three-state cells, matching the gate's not-checked/pass/fail discipline.** Every symbol-day-setup result is either evaluated-with-a-trigger-count (including zero, a real "checked and it didn't fire") or `{notEvaluated: true, reason}` (fetch failure, no bars for that symbol that day — market holiday, delisting, thin/no trading). Collapsing the second case into a bare zero would silently misrepresent "couldn't check" as "checked and rejected."
+- **DST-safe date walking.** `_nextDateStr` increments by UTC calendar-date string, never by adding 24h of real time, which breaks across a DST transition (directly informed by this project's earlier timezone-sweep findings elsewhere in this doc).
+- **Cost guardrail is a soft confirm, not a hard cap.** A live pre-flight estimate (`estimateRangeScanRequests`) is shown next to the Run button, updated on every input change. Crossing either of two thresholds — more than 30 trading days, or more than 100 estimated requests — requires one extra confirming click before the scan runs; a separate hard ceiling of 250 trading days blocks the request outright as a typo backstop. A flat day-count cap was considered and rejected — it would make the tool decorative for the actual use case (validating a setup across real market history, which needs weeks, not days).
+- **Live progress, partial-results-survive-failure, cancel.** The scan reports `{index, total, dateStr}` after each day; a day that fails to fetch is recorded as `notEvaluated` and the scan continues rather than aborting; a Cancel button sets a flag checked between days, returning whatever days completed rather than discarding them.
+- **Paced by the existing shared queue, not a custom delay.** Every Alpaca call still goes through `core/api-client.js`'s `alpacaGet` → `enqueue`, which already rate-limits every caller unconditionally; the scan's own sequential per-day `await` (required anyway by the `prevClose` carry-forward dependency) is enough to get correct pacing and per-day progress for free — no hand-rolled `setTimeout` delays.
 
 ### No-lookahead — two negative controls, not one positive test
 
@@ -716,6 +730,36 @@ These are our definitions, not Ross's. All operate on 1-minute SIP bars for the 
 - Trigger: first bar closing above `prevClose` with volume ≥ 2× the prior-15-bar mean
 - `triggerPrice` = `prevClose`
 
+### Margins — the actual field per setup (built 2026-08-28, revised 2026-08-29)
+
+The two examples in "Setups are not mutually exclusive" above show the *shape* of margins, not a template every setup must force itself into. Implemented per setup's own real conditions:
+
+- `gap-and-go`: `{volumeMultiple, threshold, gapPct, breakoutHigh, breakoutHighAbovePremarketHighPct, baselineSpanMinutes, baselineBarCount}`
+- `hod-momentum`: `{volumeMultiple, threshold, breakoutHigh, breakoutHighAboveHodPct, baselineSpanMinutes, baselineBarCount}`
+- `abcd`: `{volumeMultiple, threshold, aLevel, cLevel, gainPct, retracementPct, baselineSpanMinutes, baselineBarCount}`
+- `vwap-momentum`: `{volumeMultiple, threshold, vwap, distanceAboveVwapPct, baselineSpanMinutes, baselineBarCount}` — redesigned 2026-08-29, see below; was `{volumeRatio, threshold: 1.0, distanceAboveVwap}`
+- `red-to-green`: `{volumeMultiple, threshold, distanceAbovePrevClosePct, baselineSpanMinutes, baselineBarCount}`
+
+**Every derived percentage ends in `Pct`** (renamed 2026-08-29 from e.g. `distanceAboveHod` to `breakoutHighAboveHodPct`) so the render layer's existing `Pct`-suffix formatting picks it up automatically — the original names fell through to a raw, unlabeled decimal instead of a percentage, a real bug found alongside the reference-point issue below, not the same bug.
+
+**Every margin is recomputable from numbers shown on the same row** — a principle added 2026-08-29 after live-replay validation found `distanceAboveHod` couldn't be reconciled against the displayed price. Root cause: `gap-and-go`/`hod-momentum`'s trigger conditions check the bar's *high* against a level, while the harness's own `triggerPrice` (what's displayed, what entry/target/stop is built from) is always the bar's *close* — two different numbers on the same bar. `breakoutHigh` is now included explicitly so the derived `Pct` is checkable. Same principle applied to `abcd` (`aLevel`/`cLevel`, neither shown before) and `vwap-momentum` (`vwap`, the VWAP value itself, never shown before). `red-to-green` needed no addition — its trigger condition is close-based already, matching `triggerPrice`.
+
+### Volume-multiple denominator — time-windowed, not bar-count-windowed (2026-08-29)
+
+**Live-replay finding:** the original `hod-momentum`/`red-to-green` baseline ("mean of the last 15 bars") read 46.13× on a 64-bar (sparse) name against 2.21× on a 192-bar (dense) one for a similar-looking spike. Cause: Alpaca only returns a bar for a minute that actually traded, so "last 15 bars" for a thin name can reach back however far real time it takes to find them — 71 minutes, in the reported case — averaging in volume from over an hour earlier and comparing it to right now. Same failure shape Pillar 3's `intradayCurve()` fixed for RVOL: a window that looks fixed but silently varies in real elapsed time.
+
+**Fix:** `_volumeBaselineOverMinutes(regularBars, endIndexExclusive, minutes)` bounds the lookback by real minutes, not bar count — whatever bars actually fall within that time window, however few. Applied to `hod-momentum`, `red-to-green`, and (see below) the redesigned `vwap-momentum`; `priorMinutesForMeanVolume` replaces the old `priorBarsForMeanVolume` in `SETUP_CONFIG`, same default value (15), reinterpreted as minutes instead of bars.
+
+`gap-and-go` and `abcd` are deliberately **not** switched to this window shape: `gap-and-go`'s "average of the session's bars so far" is closer to the spec's own literal wording, and its own trigger condition ("first bar after the open") structurally fires within the first few minutes, so the unbounded-growth exposure is mostly theoretical there. `abcd`'s B→C window is the pullback itself — structurally defined by the price pattern, not an independent bar-count choice. Both still report `baselineSpanMinutes`/`baselineBarCount` for the same transparency, just without the window-shape change.
+
+**`vwap-momentum`'s volume check was redesigned, not just re-thresholded.** It was a single-prior-bar `volumeRatio` with `threshold: 1.0` — "any uptick in volume vs. the immediately preceding bar," which is close to coin-flip odds on a noisy series and the worst case of the sparsity problem (a 1-bar baseline has no averaging at all). Live replay confirmed it too weak: 9 naive fires in one day on one symbol, the one shown a loser. Now uses the same `_volumeBaselineOverMinutes` baseline as its siblings, with a real `volumeMultiple` threshold of 1.5× (matching `abcd`, the next-lowest in the family).
+
+### Pre-market armed levels — approved addition (2026-08-28)
+
+No setup can trigger before the open (every trigger definition above requires a post-open bar, even `gap-and-go`: "first bar *after* the open"), so detection itself doesn't run during PRE. But Ross's actual 6am workflow is building a watchlist of *levels*, not waiting on triggers — and `gap-and-go`'s `premarketHigh` is nearly free to surface early, since it's the same computation the setup needs once the session opens anyway, just read earlier.
+
+For every QUALIFIED candidate during PRE: compute and display `premarketHigh` as an **armed level** — "Gap and Go level: $4.18" — no trigger record, no setup object, no margins. Once OPEN begins, this is replaced by real detection (which may or may not actually fire on that level).
+
 ### Re-arm rule — one event, one trigger
 
 **Found via the Phase 4 replay harness (2026-08-27), on HVII 2026-08-24:** the harness's own edge-triggering (fire once while the classifier stays truthy, reset the instant it goes falsy) recorded six triggers for a price oscillating across a single threshold ($7.66–$7.71) — one HOD break, not six. Harmless for Phase 4's example classifier; not harmless here. Six `hod-momentum` records off one move means Phase 8's per-setup attribution counts it six times, and a setup that chops near its threshold reads as more active — and, once outcomes are attributed, as more reliable or less reliable than one that fires cleanly — than the same real signal fired once.
@@ -745,6 +789,8 @@ target = entry + (targetR × risk)                            // targetR default
 
 `recentSwingLow` = lowest low of the 5 bars before the trigger.
 
+**`maxStopPct`/`targetR` live in the same sweepable config object as every setup's own thresholds and `rearmDistancePct` — not inline constants, not a Settings field.** The replay harness exists to calibrate thresholds against real history; a bare constant in code can't be swept without an edit. Settings stays reserved for the one genuinely user-facing value (`riskPerTradePct` below) — per the spec's own explicit "new Settings field" language, which names only that one.
+
 ### Position sizing — new, and probably the highest-value addition
 
 Ross's actual discipline is fixed dollar risk per trade. The v1 doc defines a tight stop and then never uses it.
@@ -753,18 +799,20 @@ Ross's actual discipline is fixed dollar risk per trade. The v1 doc defines a ti
 suggestedShares = floor( riskPerTrade / (entry - stop) )
 ```
 
-`riskPerTrade` is a new Settings field, default 2% of the configured budget. Cap `suggestedShares × entry` at available budget and show which constraint bound the size.
+`riskPerTradePct` is a new Settings field (default 2) — a **percentage**, computed live against the current budget each time, not a stored dollar figure that goes stale silently if the budget changes. Available-budget cap reuses EDGE's own budget-bar formula (`budget − deployed`, extracted into a shared `getAvailableBudget()`) rather than a second, parallel computation that could drift from what the budget bar itself shows. Cap `suggestedShares × entry` at available budget and show which constraint bound the size.
 
 On a $500 budget with average wins of +$3.47 and losses of −$3.33 (per the June report), sizing is doing more work than setup selection. Show suggested share count on every Warrior card.
 
 ### Phase 5 acceptance
 
-- [ ] Every setup validated through the replay harness before shipping
-- [ ] Every setup implements the re-arm rule (price retracement from its own reference level, not the harness's raw edge-trigger) — verified by replaying a real chop-at-threshold day (HVII 2026-08-24 is a confirmed example) and checking trigger count drops to the real event count
-- [ ] Setups return arrays; a stock matching three setups shows all three, with a deterministic primary
-- [ ] `minutesSinceTrigger` displayed on every card; >20min flagged LATE and demoted
-- [ ] Suggested share count present and correct: `shares × (entry − stop) ≈ riskPerTrade`
-- [ ] No Warrior code path calls `calcEntryTargetStop` or `calcScore`
+- [x] Every setup validated through the replay harness before shipping. All five classifiers are written to `runReplay`'s exact interface and unit-tested; `hod-momentum` additionally has a dedicated test walking it through the real bar-by-bar `runReplay` loop (not just a single direct call), confirming the same guarantee Phase 4 established (correct trigger index, no lookahead) holds for a real setup, not just the disposable example.
+- [x] Every setup implements the re-arm rule via `detectSetupsForCandidate`'s uniform `runReplay(..., {rearmDistancePct})` wiring — no setup reimplements it individually. **Mechanism unit-tested** with a fixture reproducing HVII's exact shape (breakout, harmless chop within the retracement band, genuine retreat, genuine second breakout): naive edge-triggering gives 4 triggers, re-arm gives 2, matching real-event count. **OUTSTANDING** — genuine live verification against the real HVII 2026-08-24 data (not just a reproduction of its shape) needs either live Alpaca access or the replay panel gaining a way to select a real setup classifier instead of Phase 4's placeholder (a small, deliberately-deferred follow-up, not built here).
+- [x] Setups return arrays with a deterministic primary. Unit-tested with two simultaneous setups (mechanism is count-agnostic — sorting logic doesn't special-case "three"); primary is `SETUP_PRIORITY`'s first non-late entry.
+- [x] `minutesSinceTrigger` computed and rendered on every card; >20min flagged LATE **and demoted** — found while writing this checklist that the first implementation only flagged, not demoted (sorted by priority regardless of late status); fixed and unit-tested (a fixture where the highest-priority setup is late and a lower-priority one isn't confirms the non-late one sorts first).
+- [x] Suggested share count present and correct: unit-tested against hand-computed risk- and budget-bound cases, including a floating-point edge case (`5.00 − 4.80` in IEEE 754 is `0.20000000000000018`, which without an epsilon before flooring reports 49 shares where the real math supports 50 — caught by a direct test, not assumed away).
+- [x] No Warrior code path calls `calcEntryTargetStop` or `calcScore` — unit-tested across every file in `engines/warrior/`, not just `setups.js`.
+- [x] `maxStopPct`/`targetR`/`rearmDistancePct` live in the sweepable `SETUP_CONFIG` object, not inline constants — confirmed by the tests importing and asserting against `SETUP_CONFIG` directly rather than hardcoded expectations.
+- [x] Pre-market armed levels (approved addition) — `computeArmedLevels`/`computePremarketHigh` unit-tested; wired into `evaluateSetupsBatch`'s PRE-session branch.
 
 ---
 
@@ -937,6 +985,7 @@ Each engine produces its own stats block via `summarizeForReport(trades)` from t
 # Known open items (deferred, not yet scheduled)
 
 - **Chart X-axis labels render in browser-local time, not PT** (`app.js:3503-3510`). Every other timestamp in the app is PT; this is the one place that isn't. Found during the 2026-08-26 timezone sweep (prompted by two real getPT()/local-time-mixing bugs found the same day — see CLAUDE.md's rule on `.setHours()`/`.setDate()` on a `getPT()`-derived Date). Not fixed: it's a display-only inconsistency, not a wrong-answer bug like the other two, and no phase currently touches that code path. Revisit if a phase ends up in `app.js`'s charting code anyway, or if it's reported as confusing.
+- **`state.settings.showWatch` is functionally dead.** Found during the 2026-08-28 settings-schema sweep (prompted by `developerTools` silently failing to persist — see that finding elsewhere in this doc). Unlike `developerTools`, this one has full Supabase plumbing: the `show_watch` column exists, both `loadSettingsFromSupabase` and `saveSettingsToSupabase` wire it correctly. But nothing in the app ever *sets* it to anything but its `true` default — no checkbox, no `savePref('showWatch', ...)` call anywhere. It's only ever read once, in the Claude Report's configuration block (`Show WATCH signals: ...`), where it's presented as a live setting despite never having varied. Same category as `developerTools`/`riskPerTradePct` ("a `state.settings` field that isn't trustworthy"), but it fails by never varying rather than by never saving. Not fixed here — recorded so a future reading of that report doesn't reason about this value as if it reflects a real user choice.
 
 ---
 

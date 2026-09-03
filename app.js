@@ -226,6 +226,23 @@ async function newPinSubmit() {
 
 const VERSION = 'v2.9.7';
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
+// Own tagged client (2026-08-30, engine-tagging fix) — app.js's one direct
+// alpacaGet call site (fetchSellTimingBars) uses this instead of the bare
+// global, which now defaults to 'CORE' (unattributed) rather than the old
+// hardcoded-everywhere 'EDGE'. A plain `const alpacaGet = ...` shadow
+// isn't safe here the way it is in Warrior's real ES modules — app.js is
+// a classic script sharing one global lexical scope with every other
+// core/*.js file, so redeclaring the shared `alpacaGet` name a second
+// time is a parse-time collision, not a local shadow. A distinctly-named
+// client avoids that entirely.
+const edgeApiClient = createApiClient('EDGE');
+// Separate client for checkPriceAlerts' background poll (2026-08-30) —
+// priority is fixed at construction, the same static-property shape as
+// engine, so it replaces withBackgroundPriority's ambient flag (retired,
+// core/api-client.js) without threading a priority parameter through
+// fetchSnapshots' other callers, all of which stay foreground via
+// edgeApiClient/the default CORE client.
+const backgroundEdgeClient = createApiClient('EDGE', 'background');
 const GROQ_MODEL = 'openai/gpt-oss-20b';
 
 // SUPABASE_URL/SUPABASE_ANON_KEY/supabaseClient moved to core/store.js (Phase 0 extraction).
@@ -824,6 +841,7 @@ let state = {
   news: [],
   newsUnavailable: false, // set by core/news.js when the last news fetch failed (e.g. wrong path, network) — distinct from "fetched fine, zero results"
   newsTruncatedSymbols: [], // tickers whose news may be incomplete because their batch hit the 50-item page cap — distinct from "confirmed zero news"
+  newsFailedSymbols: [], // tickers whose news batch request failed outright (2026-09-04) — distinct from both truncated and "confirmed zero news"; gate.js's Pillar 4 renders these as fetch-failed, not fail
   newsLookbackHours: 72, // actual fetch window used by the last news request (core/news.js) — card-render visibility gate matches this exactly, not a duplicated literal
   universeAssetCache: null, // { fetchedAt, assets: [{symbol,exchange,name,isCommonStock}] } — core/universe.js, 24h cache — persisted
   universePriorCloseCache: null, // { date, closes: {symbol: price} } — core/universe.js, daily cache — persisted
@@ -863,7 +881,7 @@ function loadState() {
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
-    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false
+    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false, riskPerTradePct: 2
   }, state.settings);
   // API keys live in their own localStorage key, edge_apiKeys — authoritative
   // once present. If it doesn't exist yet but the legacy edge_settings blob
@@ -890,6 +908,7 @@ function loadState() {
       }
     }
   } catch(e) {}
+  loadLocalOnlySettings(); // developerTools/riskPerTradePct — see core/store.js's comment on why these two aren't Supabase-backed yet
   state.notifications = Object.assign({
     enabled: true, permission: 'default',
     lastPriceCheck: null, lastDailyCheck: null, alertHistory: {}
@@ -967,6 +986,18 @@ function updateMarketBanner() {
 
 // ── 4. BUDGET BAR ────────────────────────────────────────────────
 
+// Single source of truth for "how much is actually free to deploy" —
+// extracted so Warrior's Phase 5 position-sizing cap (docs/warrior-
+// engine-spec-v2.md: "Cap suggestedShares × entry at available budget")
+// reuses this exact formula instead of computing a second, parallel
+// notion of availability that could silently drift from what the budget
+// bar itself shows.
+function getAvailableBudget() {
+  const budget = parseFloat(state.settings.budget) || 0;
+  const deployed = state.portfolio.reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
+  return budget - deployed;
+}
+
 function updateBudgetBar() {
   const el = document.getElementById('budget-bar');
   const tab = state.activeTab;
@@ -978,8 +1009,8 @@ function updateBudgetBar() {
   }
 
   const budget = parseFloat(state.settings.budget) || 0;
-  const deployed = state.portfolio.reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
-  const avail = budget - deployed;
+  const avail = getAvailableBudget();
+  const deployed = budget - avail;
   const availClass = avail >= 0 ? 'pos' : 'neg';
 
   el.classList.remove('hidden');
@@ -1039,14 +1070,19 @@ async function fetchSellTimingBars(ticker, buyDate, sellDate) {
   const spanDays = Math.ceil((new Date(windowEnd + 'T00:00:00Z') - new Date(buyDate + 'T00:00:00Z')) / 86400000);
   const limit = Math.max(spanDays + 5, 15);
   try {
-    // adjustment: HISTORICAL_BAR_ADJUSTMENT (2026-09-01, found live) --
-    // core/market-data.js's own const, reused as an ordinary global
-    // (that file loads before this one — see index.html's script order)
-    // rather than redefined here. Omitting it defaults to Alpaca's 'raw'
-    // (unadjusted); a split inside a Sell Timing Analysis window would
-    // otherwise fabricate that trade's return. See market-data.js's
-    // header comment for the full family this fixes.
-    const data = await alpacaGet(`/stocks/${ticker}/bars`, {
+    // Two independent fixes, both real, combined here (merge conflict
+    // 2026-09-04): adjustment: HISTORICAL_BAR_ADJUSTMENT (2026-09-01,
+    // found live) -- core/market-data.js's own const, reused as an
+    // ordinary global (that file loads before this one — see
+    // index.html's script order) rather than redefined here. Omitting
+    // it defaults to Alpaca's 'raw' (unadjusted); a split inside a Sell
+    // Timing Analysis window would otherwise fabricate that trade's
+    // return. See market-data.js's header comment for the full family
+    // this fixes. edgeApiClient.alpacaGet (2026-08-30, engine-tagging
+    // fix) instead of the bare global -- see app.js's own edgeApiClient
+    // comment for why a plain `alpacaGet` call here reads as
+    // unattributed 'CORE' traffic instead of 'EDGE'.
+    const data = await edgeApiClient.alpacaGet(`/stocks/${ticker}/bars`, {
       timeframe: '1Day', start: buyDate, limit, sort: 'asc', feed: 'iex', adjustment: HISTORICAL_BAR_ADJUSTMENT
     });
     return data.bars || [];
@@ -6183,6 +6219,17 @@ function renderSettingsTab() {
       <div class="settings-row">
         <button class="btn btn-primary btn-sm" onclick="saveBudget()">Save Budget</button>
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Risk Per Trade (Warrior)</div>
+          <div class="settings-hint">Percent of budget risked per Warrior trade — scales suggestedShares with the budget above, so it never goes stale if the budget changes.</div>
+        </div>
+        <input id="set-risk-per-trade" class="settings-number" type="number"
+          min="0" max="100" step="0.5" value="${s.riskPerTradePct ?? 2}">
+      </div>
+      <div class="settings-row">
+        <button class="btn btn-primary btn-sm" onclick="saveRiskPerTrade()">Save Risk Per Trade</button>
+      </div>
     </div>
 
     <div class="settings-section mt12">
@@ -6797,6 +6844,14 @@ async function saveBudget() {
   alert('Budget saved.');
 }
 
+// Local-only (see core/store.js's persistLocalOnlySettings) — same reason
+// as toggleDeveloperTools: no Supabase settings-table column yet.
+function saveRiskPerTrade() {
+  state.settings.riskPerTradePct = parseFloat(document.getElementById('set-risk-per-trade')?.value) || 2;
+  persistLocalOnlySettings();
+  alert('Risk per trade saved.');
+}
+
 async function savePref(key, val) {
   const prev = state.settings[key];
   state.settings[key] = val;
@@ -6828,14 +6883,12 @@ async function toggleForcePreMarketMode(checked) {
 // reveals (currently: Warrior's Phase 4 replay panel) is rendered by that
 // engine's own renderTab(), gated on this same flag — this function only
 // owns the flag and its persistence.
-async function toggleDeveloperTools(checked) {
+// Local-only (see core/store.js's persistLocalOnlySettings) — no
+// Supabase settings-table column exists for this yet, so there's nothing
+// to await or roll back on failure the way saveBudget() does.
+function toggleDeveloperTools(checked) {
   state.settings.developerTools = checked;
-  try {
-    await saveSettingsToSupabase(state.settings);
-  } catch(e) {
-    state.settings.developerTools = !checked;
-    alert('Could not save setting to Supabase: ' + e.message);
-  }
+  persistLocalOnlySettings();
   renderSettingsTab();
   if (state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') renderWarriorTab();
 }
@@ -7078,8 +7131,8 @@ async function testPremarketGap() {
   showModal(`<div class="modal-header"><h2>Premarket-Gap Diagnostic</h2></div>
     <div class="test-result">Session: ${r.session}</div>
     <div class="test-result">${r.tradableCount} tradable -> ${r.eligibleCount} instrument-eligible -> ${r.priceFilteredCount} with prior close in \$1-\$20 -> ${r.resultCount} returned (top 50 by gap% + anything >=10%)</div>
-    <div class="section-label mt12">Requests by stage</div>
-    <div class="test-result">Asset index: ${r.requests.assetIndex} | Prior closes: ${r.requests.priorCloses} | Minute bars pass 1 (45min): ${r.requests.minuteBarsPass1} | Minute bars pass 2 (3h fallback): ${r.requests.minuteBarsPass2} | Total: ${r.requests.total}</div>
+    <div class="section-label mt12">Requests observed by stage</div>
+    <div class="test-result">Asset index: ${r.requestsObserved.assetIndex} | Prior closes: ${r.requestsObserved.priorCloses} | Minute bars (both passes): ${r.requestsObserved.minuteBars} | Total: ${r.requestsObserved.total}</div>
     <div class="test-result">Wall clock: ${(r.wallClockMs / 1000).toFixed(1)}s</div>
     <div class="test-result">${coverageNote}</div>
     <div class="section-label mt12">First-letter distribution (${r.resultCount} results)</div>
@@ -7227,8 +7280,12 @@ async function checkPriceAlerts() {
     const tickers = [...new Set(state.portfolio.map(p => p.ticker))];
     // Phase 0.5: this is the background poller the rate-limit queue's
     // priority ordering exists to isolate from whatever the user is
-    // actively looking at — see withBackgroundPriority in core/api-client.js.
-    const snaps = await withBackgroundPriority(() => fetchSnapshots(tickers));
+    // actively looking at. Own client (2026-08-30, replacing
+    // withBackgroundPriority — retired, see core/api-client.js for why the
+    // ambient flag it used was unsafe): priority is a static property of
+    // this client, not runtime state, so it can't leak onto an unrelated
+    // foreground request the way the ambient flag could.
+    const snaps = await fetchSnapshots(tickers, undefined, backgroundEdgeClient);
 
     for (const pos of state.portfolio) {
       const snap = snaps[pos.ticker];

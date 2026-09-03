@@ -950,6 +950,59 @@ a { color: var(--blue); }
 .warrior-pillar-row.wp-fail .warrior-pillar-icon { color: var(--red); }
 .warrior-pillar-row.wp-notchecked .warrior-pillar-icon { color: var(--muted); }
 .warrior-pillar-row.wp-notchecked .warrior-pillar-value { color: var(--muted); font-style: italic; }
+/* fetch-failed (2026-09-04): distinct from not-checked on purpose — yellow,
+   not red/muted, reads as "uncertain," not "failed a check" or "skipped by
+   design." See gate.js's classifyGate for why these can't share a style. */
+.warrior-pillar-row.wp-fetchfailed .warrior-pillar-icon { color: var(--yellow); }
+.warrior-pillar-row.wp-fetchfailed .warrior-pillar-value { color: var(--yellow); }
+
+/* ── Warrior setups (Phase 5) ── */
+.warrior-armed-levels { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.warrior-armed-level {
+  display: inline-block; font-size: 11px; font-family: var(--mono);
+  color: var(--yellow); background: rgba(255,209,102,0.1);
+  border: 1px solid rgba(255,209,102,0.3); border-radius: var(--radius-sm);
+  padding: 3px 7px; margin: 2px 4px 0 0;
+}
+.warrior-setups { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.warrior-setup-row { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.warrior-setup-row:last-child { border-bottom: none; }
+.warrior-setup-row.is-primary { background: rgba(160,120,255,0.06); border-radius: var(--radius-sm); padding: 6px 6px; }
+.warrior-setup-header { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.warrior-setup-id { font-family: var(--cond); font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+.warrior-setup-primary {
+  font-size: 9px; font-weight: 700; color: #a078ff; background: rgba(160,120,255,0.15);
+  border: 1px solid rgba(160,120,255,0.35); border-radius: var(--radius-sm); padding: 1px 5px;
+}
+.warrior-setup-late {
+  font-size: 9px; font-weight: 700; color: var(--yellow); background: rgba(255,209,102,0.12);
+  border: 1px solid rgba(255,209,102,0.35); border-radius: var(--radius-sm); padding: 1px 5px;
+}
+.warrior-setup-time { font-family: var(--mono); color: var(--muted); font-size: 11px; margin-left: auto; }
+.warrior-setup-margins { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
+.warrior-margin { margin-right: 8px; }
+.warrior-ets { display: flex; flex-wrap: wrap; gap: 10px; font-family: var(--mono); font-size: 11px; margin-top: 6px; }
+.warrior-ets-unavailable { font-size: 11px; color: var(--muted); font-style: italic; margin-top: 6px; }
+
+/* Range-scan matrix (dev-only replay panel) — rows are trading days,
+   columns are setups, three visually distinct cell states matching the
+   pillar not-checked/pass/fail discipline: fired (green, clickable to
+   expand per-trigger detail), zero (muted, still evaluated), and
+   not-evaluated (dashed border, hover shows the reason via title attr). */
+.warrior-scan-matrix { border-collapse: collapse; font-family: var(--mono); font-size: 11px; width: 100%; }
+.warrior-scan-matrix th, .warrior-scan-matrix td { padding: 4px 8px; text-align: right; white-space: nowrap; }
+.warrior-scan-matrix th { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.4px; font-weight: 400; border-bottom: 1px solid var(--border); }
+.warrior-scan-matrix td.warrior-scan-date { text-align: left; color: var(--muted); }
+.warrior-scan-cell.zero { color: var(--muted); }
+.warrior-scan-cell.fired { color: var(--green); cursor: pointer; }
+.warrior-scan-cell.fired:hover { text-decoration: underline; }
+.warrior-scan-cell.not-evaluated { color: var(--muted); font-style: italic; border: 1px dashed rgba(255,255,255,0.12); }
+.warrior-scan-totals { border-top: 1px solid var(--border); font-weight: 700; }
+.warrior-scan-totals td { color: var(--yellow); }
+.warrior-scan-totals td.warrior-scan-date { color: var(--muted); font-weight: 400; }
+.warrior-scan-cell-detail { text-align: left; white-space: normal; margin-top: 4px; }
+.warrior-scan-barcount { color: var(--muted); font-weight: 400; font-size: 10px; }
+
 .pf-meta { font-size: 11px; color: var(--muted); margin: 4px 0; }
 
 .pf-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }

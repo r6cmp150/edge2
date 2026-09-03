@@ -14,6 +14,7 @@ const assert = require('assert');
 const { readSource, run } = require('./_lib');
 
 const src = readSource('core/market-data.js');
+global.assertPageNotSuspiciouslyFull = () => {}; // real impl in core/api-client.js — diagnostic-only, no-op here; set once, used by every extracted fetcher below
 
 // fetchMultiBars hits the multi-symbol endpoint, where data.bars is an
 // OBJECT keyed by symbol. fetchSingleBars/fetchMinuteBars/fetchHourlyBars

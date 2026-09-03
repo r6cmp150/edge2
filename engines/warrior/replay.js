@@ -5,8 +5,8 @@
 // Warrior-file-importing-its-own-sibling shape as gate.js (see that
 // file's header for why that doesn't cross CLAUDE.md's shell/core/EDGE
 // boundary). References core/universe.js's _fetchRawMinuteBars and
-// core/clock.js's ptWallClockToInstant as ordinary globals, same pattern
-// gate.js already established for _fetchCumulativeMinuteVolume etc.
+// core/clock.js's ptWallClockToInstant/getPT as ordinary globals, same
+// pattern gate.js already established for _fetchCumulativeMinuteVolume etc.
 //
 // Phase 5 doesn't exist yet, so there is no real setup classifier to
 // replay against. examplePriceMoveClassifier below is a deliberately
@@ -33,10 +33,22 @@ import { CHANGE_MIN_PCT } from './gate.js';
 // tests/pagination-merge.test.js) — more round trips, still correct.
 const REPLAY_CHUNK_SIZE = 13;
 
-async function fetchReplayBars(symbols, dateStr, { startHour = 1, startMinute = 0, endHour = 13, endMinute = 0 } = {}) {
+// hardFailOnIncomplete (2026-09-02, default false): threaded straight
+// through to _fetchRawMinuteBars — see that function's comment. Callers
+// running an offline batch replay whose output becomes an artifact
+// (scanDateRangeForSetups, wired via opts.fetchOpts) should pass true: a
+// day whose bars silently came back partial due to a failed chunk must
+// not get folded into "notEvaluated: no bars" indistinguishably from a
+// symbol that legitimately didn't trade that day. Live/interactive
+// callers keep the default.
+async function fetchReplayBars(symbols, dateStr, { startHour = 1, startMinute = 0, endHour = 13, endMinute = 0, hardFailOnIncomplete = false } = {}) {
   const start = ptWallClockToInstant(dateStr, startHour, startMinute);
   const end = ptWallClockToInstant(dateStr, endHour, endMinute);
-  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, REPLAY_CHUNK_SIZE, `replay ${dateStr}`);
+  // client left undefined -- _fetchRawMinuteBars's own default (_coreClient,
+  // evaluated in core/universe.js's scope where it's guaranteed to exist)
+  // applies, same as before this change; replay.js has never referenced
+  // _coreClient directly and shouldn't start now just to fill a slot.
+  const { barsBySymbolAll, requests } = await _fetchRawMinuteBars(symbols, start, end, REPLAY_CHUNK_SIZE, `replay ${dateStr}`, undefined, { hardFailOnIncomplete });
   // _fetchRawMinuteBars returns each symbol's bars sort:'desc' (newest
   // first) — replay needs chronological order.
   const barsBySymbol = {};
@@ -46,12 +58,123 @@ async function fetchReplayBars(symbols, dateStr, { startHour = 1, startMinute = 
   return { barsBySymbol, requests, start, end };
 }
 
+// gap-and-go and red-to-green need prevClose — NOT derivable from the
+// replay window's own bars. core/universe.js's _getPriorCloses does the
+// live equivalent, but it's hardcoded to "today" (getPT()/new Date()) —
+// exactly the "as of a past date" gap Phase 4's own planning flagged and
+// deliberately deferred for an RVOL baseline, now genuinely needed here
+// so the replay panel can run gap-and-go/red-to-green at all. A small,
+// date-parameterized daily-bar fetch, not a reimplementation of
+// _getPriorCloses's caching (replay runs are manual/occasional, a fresh
+// fetch every run is fine).
+// Returns { prevCloseBySymbol: { sym: {close, date} }, requests } — date
+// (not just close) so a caller can VERIFY which trading day this close is
+// actually from, rather than assuming it's the expected previous trading
+// day. It usually is, but a thin symbol that didn't trade on the expected
+// prior day either would return the next most recent one before that —
+// still a real close, just not an adjacent one, and setups.js's caller
+// needs the date to catch that (2026-08-30 fix — see setups.js's
+// scanDateRangeForSetups header comment for the carry-forward bug this
+// closes).
+async function fetchPrevCloseAsOf(symbols, dateStr) {
+  const end = ptWallClockToInstant(dateStr, 1, 0); // replay window's own start — prevClose must be strictly before this
+  const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 calendar days back, generous over any weekend/holiday gap
+  let requests = 0;
+  const prevCloseBySymbol = {};
+  // adjustment:'all' (2026-09-01, found live — see core/market-data.js's
+  // HISTORICAL_BAR_ADJUSTMENT comment for the full family this fixes):
+  // omitting this defaults to Alpaca's 'raw' (unadjusted), and a reverse
+  // split lands a spurious price jump on the split date with nothing in
+  // the data to distinguish it from a genuine move -- here that means a
+  // prevClose read across a split boundary is silently wrong, corrupting
+  // gap-and-go/red-to-green's reference level for every trade after it.
+  const params0 = { symbols: symbols.join(','), timeframe: '1Day', start: start.toISOString(), end: end.toISOString(), limit: 10000, sort: 'desc', feed: 'sip', adjustment: 'all' };
+  let pageToken;
+  const barsBySymbol = {};
+  do {
+    const params = pageToken ? { ...params0, page_token: pageToken } : params0;
+    const data = await alpacaGet('/stocks/bars', params);
+    requests++;
+    let pageRowCount = 0;
+    if (data.bars) {
+      for (const sym of Object.keys(data.bars)) {
+        pageRowCount += data.bars[sym].length;
+        (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
+      }
+    }
+    pageToken = data.next_page_token || null;
+    assertPageNotSuspiciouslyFull('fetchPrevCloseAsOf', pageRowCount, params.limit, pageToken);
+  } while (pageToken);
+  // sort:'desc' -> each symbol's first bar is its most recent close before the replay window.
+  for (const sym of Object.keys(barsBySymbol)) {
+    const bars = barsBySymbol[sym];
+    if (bars && bars.length) prevCloseBySymbol[sym] = { close: bars[0].c, date: ptDateStr(getPT(new Date(bars[0].t))) };
+  }
+  return { prevCloseBySymbol, requests };
+}
+
 // ── Forward-return / MFE / MAE scoring ──────────────────────────────────
 // Runs AFTER a trigger is detected, on the FULL bars array — deliberately
 // not subject to the no-lookahead constraint, which applies only to the
 // classifier's own decision at replay time (see runReplay below). Looking
 // forward from a trigger to score it is the whole point.
+//
+// The 'close' horizon is NOT comparable across triggers at different
+// times of day, and was reported as if it were (live-replay finding,
+// 2026-08-28): it scores against bars[bars.length-1] — whatever the
+// fetched window's last bar happens to be — so a trigger 6 minutes
+// before the window ends and one 5 hours before it get scored on the
+// same axis despite having wildly different room to move. Kept
+// (computing it is free, and "did this survive to end of day" is a real
+// question for a specific trade) rather than deleted, but runReplay
+// below always pairs every trigger's forwardReturns with
+// minutesOfSessionRemainingAtTrigger precisely so this can't be silently
+// misread as comparable the way it was before — same "make the
+// incompleteness visible instead of hiding it" principle as gate.js's
+// not-checked pillars and the QUALIFIED-header RVOL caveat.
 const FORWARD_HORIZONS_MIN = [5, 15, 30]; // 'close' handled separately, no fixed minute offset
+const REGULAR_SESSION_OPEN_TMIN = 390; // 6:30am PT — core/clock.js's own getMarketStatus() boundary
+const REGULAR_SESSION_CLOSE_TMIN = 780; // 1:00pm PT — core/clock.js's own getMarketStatus() boundary
+
+function _minutesUntilRegularSessionClose(bar) {
+  const pt = getPT(new Date(bar.t));
+  return REGULAR_SESSION_CLOSE_TMIN - (pt.getHours() * 60 + pt.getMinutes());
+}
+
+// sessionPhase (2026-08-31) — a FLAG, never a filter: nothing here
+// suppresses a trigger or changes whether/when a classifier fires. Exists
+// so the closing-minutes artifact (AMIX 2026-08-24: the two biggest
+// winners in the sample fired with 2 and 4 minutes of the session left,
+// where a single wide range-to-close move produces an outsized % return
+// off a tiny base) can be excluded in ANALYSIS without changing what the
+// engine actually detects — a real, later-stage question (should CLOSING
+// or LATE be down-weighted, excluded, or sized differently) needs this
+// visible on every trigger first; it doesn't answer that question itself.
+// Boundaries are minutes-since-open on a 390-minute regular session
+// (6:30am-1:00pm PT), not minutes-remaining, except CLOSING which is
+// naturally a remaining-time concept (the last few minutes before the
+// bell, regardless of how the open behaved):
+//   OPENING          0-5 min since open   (matches hod-momentum's own excludeFirstMinutes)
+//   MOMENTUM_WINDOW  5-60 min since open  (Ross Cameron's method is built around the first hour)
+//   MID              60-300 min since open
+//   LATE             300 min since open through 5 min remaining
+//   CLOSING          last 5 min of the session
+const SESSION_PHASE_OPENING_END_MIN = 5;
+const SESSION_PHASE_MOMENTUM_WINDOW_END_MIN = 60;
+const SESSION_PHASE_LATE_START_MIN = 300;
+const SESSION_PHASE_CLOSING_REMAINING_MIN = 5;
+
+function _sessionPhase(bar) {
+  const pt = getPT(new Date(bar.t));
+  const tMin = pt.getHours() * 60 + pt.getMinutes();
+  const minutesSinceOpen = tMin - REGULAR_SESSION_OPEN_TMIN;
+  const minutesRemaining = REGULAR_SESSION_CLOSE_TMIN - tMin;
+  if (minutesRemaining <= SESSION_PHASE_CLOSING_REMAINING_MIN) return 'closing';
+  if (minutesSinceOpen < SESSION_PHASE_OPENING_END_MIN) return 'opening';
+  if (minutesSinceOpen < SESSION_PHASE_MOMENTUM_WINDOW_END_MIN) return 'momentum-window';
+  if (minutesSinceOpen < SESSION_PHASE_LATE_START_MIN) return 'mid';
+  return 'late';
+}
 
 function _barIndexAtOrAfter(bars, fromIndexExclusive, targetTimeMs) {
   for (let i = fromIndexExclusive + 1; i < bars.length; i++) {
@@ -64,8 +187,18 @@ function _barIndexAtOrAfter(bars, fromIndexExclusive, targetTimeMs) {
 // session doesn't extend that far (never a partial/misleading window
 // mislabeled as e.g. "5m" when only 2 minutes of bars actually existed —
 // same "not fabricated" discipline as gate.js's not-checked pillars).
-function computeForwardReturns(bars, triggerIndex) {
+//
+// entryPrice (2026-08-31, Bug B): optional, defaults to trigger.c —
+// every existing caller/test that doesn't pass it gets byte-identical
+// results. runReplay passes its own computed triggerPrice explicitly
+// (see below), which for a HIGH-gated classifier (gap-and-go/
+// hod-momentum/abcd) is the broken level, not the bar's close — so
+// returns/MFE/MAE are measured from the same price the trade is actually
+// recorded as entering at, not silently re-anchored to the close behind
+// that entry's back.
+function computeForwardReturns(bars, triggerIndex, entryPrice) {
   const trigger = bars[triggerIndex];
+  const entry = typeof entryPrice === 'number' ? entryPrice : trigger.c;
   const result = {};
 
   const scoreWindow = (horizonIndex) => {
@@ -73,13 +206,13 @@ function computeForwardReturns(bars, triggerIndex) {
     const window = bars.slice(triggerIndex + 1, horizonIndex + 1);
     if (!window.length) return { return: null, mfe: null, mae: null };
     const horizonBar = bars[horizonIndex];
-    const pctReturn = ((horizonBar.c - trigger.c) / trigger.c) * 100;
+    const pctReturn = ((horizonBar.c - entry) / entry) * 100;
     const maxHigh = Math.max(...window.map(b => b.h));
     const minLow = Math.min(...window.map(b => b.l));
     return {
       return: pctReturn,
-      mfe: ((maxHigh - trigger.c) / trigger.c) * 100,
-      mae: ((minLow - trigger.c) / trigger.c) * 100,
+      mfe: ((maxHigh - entry) / entry) * 100,
+      mae: ((minLow - entry) / entry) * 100,
     };
   };
 
@@ -101,49 +234,220 @@ function computeForwardReturns(bars, triggerIndex) {
 // controls (tests/replay.test.js) that verify this is real, not just
 // asserted.
 //
-// Edge-triggered, not level-triggered: a classifier that stays truthy for
-// many consecutive bars (e.g. price holds >10% for 50 minutes) records
-// ONE trigger at the first bar it went true, not 50 near-duplicate
-// triggers a minute apart. Resets the moment the classifier returns
-// falsy, so the same setupId can trigger again later in the session as a
-// genuinely new episode.
-//
 // The harness NEVER reads a price or time field off the classifier's
-// return value — trigger.triggerPrice/triggerTime are always derived from
-// barsSoFar's own last element (== bars[i], the position the harness
-// itself controls). This is a mitigation against a classifier that closes
-// over data outside its argument and tries to self-report a fabricated
-// price, not a claim that such a classifier can be prevented from
-// deciding to trigger early in the first place — see the spec's Phase 4
+// return value — trigger.triggerTime is always derived from barsSoFar's
+// own last element (== bars[i], the position the harness itself
+// controls), and triggerPrice defaults to that same bar's close.
+//
+// priceAtBreakLevel (2026-08-31, Bug B) is the one narrow exception, and
+// it doesn't weaken this principle: a classifier can ask the harness to
+// price entry at verdict.referenceLevel instead of current.c, but
+// referenceLevel was never a self-reported PRICE ACHIEVED — it's a level
+// computed from PRIOR bars only (same trust class already relied on for
+// re-arm's cooling threshold below), and the harness independently
+// verifies it against THIS bar's own high before using it
+// (referenceLevel <= current.h) rather than taking the classifier's word
+// for it. gap-and-go/hod-momentum/abcd all gate on the bar's HIGH
+// (current.h vs. a broken level) while pricing at the CLOSE — a bar
+// whose high broke out and whose close round-tripped back below that
+// level was being priced at the lower close, which is favorable to the
+// setup in every one of these cases (see docs/warrior-engine-spec-v2.md
+// Phase 5's "Bug B" note). Pricing at the level instead is a best-case,
+// zero-slippage fill assumption, not a claim of realism — forward
+// returns computed from it are an upper bound, not a prediction.
+//
+// This is a mitigation against a classifier that closes over data
+// outside its argument and tries to self-report a fabricated price, not
+// a claim that such a classifier can be prevented from deciding to
+// trigger early in the first place — see the spec's Phase 4
 // "Anchoring control" note. A classifier's return value therefore only
 // ever needs to carry `setupId` (plus whatever caller-defined metadata it
-// wants to keep) — never price or time.
-function runReplay(bars, classifier) {
+// wants to keep, and — only when rearmDistancePct is in use, see below —
+// referenceLevel/referenceDirection) — never price or time.
+//
+// Default mode (rearmDistancePct omitted): edge-triggered, not
+// level-triggered — a classifier that stays truthy for many consecutive
+// bars records ONE trigger at the first bar it went true, and resets the
+// MOMENT it goes falsy, so the same setupId can trigger again immediately
+// once the classifier's own condition is next satisfied. This is Phase
+// 4's original, unchanged behavior — every existing caller/test that
+// doesn't pass the new option gets byte-identical results.
+//
+// Re-arm mode (rearmDistancePct provided): docs/warrior-engine-spec-v2.md
+// Phase 5's "Re-arm rule" — found via replaying HVII 2026-08-24 through
+// Phase 4's own harness, where naive edge-triggering recorded six
+// triggers for one price oscillating across a single threshold. Instead
+// of resetting on the classifier's first falsy call, the harness enters a
+// COOLING state remembering the classifier-supplied referenceLevel/
+// referenceDirection from the triggering verdict, and only re-arms once
+// price has retraced beyond rearmDistancePct from that level in the
+// invalidating direction ('above' — the default — re-arms on a retreat
+// BELOW level*(1-rearmDistancePct/100); 'below' re-arms on a rally ABOVE
+// level*(1+rearmDistancePct/100)). referenceLevel is trusted from the
+// classifier — unlike price/time, there's no incentive to misreport it
+// (it only feeds this internal state machine, never the trigger record's
+// own price/time, and a wrong value only makes THIS setup re-arm at the
+// wrong distance, not fabricate a result elsewhere) — but it's still
+// classifier-supplied domain knowledge (the HOD level, VWAP, etc.) the
+// harness has no independent way to compute itself.
+// Shared by runReplay and runReplayNaiveAndRearmed below so the trigger
+// detail shape can't drift between them — every field here is a pure
+// function of (bars, i, verdict), independent of naive vs. re-armed
+// bookkeeping, which is exactly what makes sharing one built object
+// between both modes correct (see runReplayNaiveAndRearmed's header).
+function _buildTriggerDetail(bars, i, current, verdict) {
+  // priceAtBreakLevel (Bug B, see file header above): only trusted when
+  // referenceLevel is a number AND this bar's own high actually cleared
+  // it — verified here, not assumed from the classifier's say-so. Falls
+  // back to the ordinary close-based price otherwise, same as every
+  // other setup.
+  let triggerPrice = current.c;
+  let closedBelowBrokenLevel = false;
+  if (verdict.priceAtBreakLevel && typeof verdict.referenceLevel === 'number' && verdict.referenceLevel <= current.h) {
+    triggerPrice = verdict.referenceLevel;
+    closedBelowBrokenLevel = current.c < verdict.referenceLevel;
+  }
+
+  return {
+    setupId: verdict.setupId,
+    triggerIndex: i,
+    triggerTime: current.t,
+    triggerPrice,
+    // barClose (2026-08-31, Bug B): the bar's actual close, retained
+    // unconditionally (not just when priceAtBreakLevel fires) so
+    // closedBelowBrokenLevel is auditable against a real number instead
+    // of standing as an unverifiable assertion — and so triggerPrice
+    // vs. barClose is directly comparable for every setup, not just the
+    // three affected ones.
+    barClose: current.c,
+    closedBelowBrokenLevel,
+    referenceLevel: verdict.referenceLevel ?? null,
+    margins: verdict.margins ?? null,
+    minutesOfSessionRemainingAtTrigger: _minutesUntilRegularSessionClose(current),
+    sessionPhase: _sessionPhase(current),
+    forwardReturns: computeForwardReturns(bars, i, triggerPrice),
+  };
+}
+
+function runReplay(bars, classifier, { rearmDistancePct } = {}) {
   const triggers = [];
   let activeSetupId = null;
+  let coolingLevel = null;
+  let coolingDirection = null;
+
+  const hasRetraced = (price) => {
+    if (coolingLevel == null) return true; // no reference level supplied — nothing to wait for, behaves like default mode
+    return coolingDirection === 'below'
+      ? price >= coolingLevel * (1 + rearmDistancePct / 100)
+      : price <= coolingLevel * (1 - rearmDistancePct / 100);
+  };
 
   for (let i = 0; i < bars.length; i++) {
     const barsSoFar = bars.slice(0, i + 1);
+    const current = barsSoFar[barsSoFar.length - 1];
+
+    if (rearmDistancePct != null && activeSetupId != null && hasRetraced(current.c)) {
+      activeSetupId = null;
+      coolingLevel = null;
+      coolingDirection = null;
+    }
+
     const verdict = classifier(barsSoFar);
 
     if (!verdict) {
-      activeSetupId = null;
-      continue;
+      if (rearmDistancePct == null) activeSetupId = null; // default mode: reset on every falsy call
+      continue; // re-arm mode: stay cooling regardless of this call's verdict — only the retracement check above clears it
     }
     if (verdict.setupId === activeSetupId) continue; // same episode, already recorded
 
     activeSetupId = verdict.setupId;
-    const current = barsSoFar[barsSoFar.length - 1];
-    triggers.push({
-      setupId: verdict.setupId,
-      triggerIndex: i,
-      triggerTime: current.t,
-      triggerPrice: current.c,
-      forwardReturns: computeForwardReturns(bars, i),
-    });
+    if (rearmDistancePct != null) {
+      coolingLevel = typeof verdict.referenceLevel === 'number' ? verdict.referenceLevel : current.c;
+      coolingDirection = verdict.referenceDirection === 'below' ? 'below' : 'above';
+    }
+
+    triggers.push(_buildTriggerDetail(bars, i, current, verdict));
   }
 
   return triggers;
+}
+
+// The "free 2x" (2026-09-01): naive and re-armed produce IDENTICAL
+// classifier verdict sequences per bar — rearmDistancePct only changes
+// the POST-HOC bookkeeping that decides which verdicts become new
+// trigger events, never what the classifier itself returns for a given
+// barsSoFar (confirmed when this was first found, 2026-08-31: runReplay's
+// loop calls classifier(barsSoFar) unconditionally at every bar
+// regardless of rearmDistancePct). Calling _evaluateSetupsAgainstBars'
+// two separate runReplay(...) calls was therefore two full passes
+// computing the exact same verdicts, discarding one set's worth of work
+// every time. Deferred at n=19 (8-second runs — not worth the added
+// complexity for a run that fast); taken now because the same rule that
+// deferred it (measure before adding mechanism, don't guess) now points
+// the other way: at ~600 symbol-days this halves a run measured in tens
+// of minutes, and that's exactly the kind of scale change the original
+// deferral was conditioned on.
+//
+// Calls the classifier ONCE per bar, runs the naive ("reset on every
+// falsy call") and re-armed (cooling/retracement) state machines
+// side by side against that SAME verdict sequence, and builds each
+// trigger's detail object exactly once per unique triggering bar index
+// (detailCache) — shared by both output lists when a bar triggers under
+// both modes, since the detail itself never depends on which mode
+// produced it (see _buildTriggerDetail).
+function runReplayNaiveAndRearmed(bars, classifier, rearmDistancePct) {
+  const naiveTriggers = [];
+  const rearmedTriggers = [];
+  const detailCache = new Map(); // triggerIndex -> built detail object
+
+  let naiveActiveSetupId = null;
+  let rearmedActiveSetupId = null;
+  let coolingLevel = null;
+  let coolingDirection = null;
+
+  const hasRetraced = (price) => {
+    if (coolingLevel == null) return true;
+    return coolingDirection === 'below'
+      ? price >= coolingLevel * (1 + rearmDistancePct / 100)
+      : price <= coolingLevel * (1 - rearmDistancePct / 100);
+  };
+
+  for (let i = 0; i < bars.length; i++) {
+    const barsSoFar = bars.slice(0, i + 1);
+    const current = barsSoFar[barsSoFar.length - 1];
+
+    if (rearmedActiveSetupId != null && hasRetraced(current.c)) {
+      rearmedActiveSetupId = null;
+      coolingLevel = null;
+      coolingDirection = null;
+    }
+
+    const verdict = classifier(barsSoFar); // the ONE call this function exists to save a second copy of
+
+    if (!verdict) {
+      naiveActiveSetupId = null; // naive: reset on every falsy call
+      continue; // re-armed: stays cooling regardless — only the retracement check above clears it
+    }
+
+    const getDetail = () => {
+      if (!detailCache.has(i)) detailCache.set(i, _buildTriggerDetail(bars, i, current, verdict));
+      return detailCache.get(i);
+    };
+
+    if (verdict.setupId !== naiveActiveSetupId) {
+      naiveActiveSetupId = verdict.setupId;
+      naiveTriggers.push(getDetail());
+    }
+
+    if (verdict.setupId !== rearmedActiveSetupId) {
+      rearmedActiveSetupId = verdict.setupId;
+      coolingLevel = typeof verdict.referenceLevel === 'number' ? verdict.referenceLevel : current.c;
+      coolingDirection = verdict.referenceDirection === 'below' ? 'below' : 'above';
+      rearmedTriggers.push(getDetail());
+    }
+  }
+
+  return { naiveTriggers, rearmedTriggers };
 }
 
 // ── Example classifier (Phase 4 stand-in — see file header) ────────────
@@ -174,8 +478,11 @@ async function runReplayForSymbols(symbols, dateStr, classifier = examplePriceMo
 export {
   REPLAY_CHUNK_SIZE,
   fetchReplayBars,
+  fetchPrevCloseAsOf,
   computeForwardReturns,
   runReplay,
+  runReplayNaiveAndRearmed,
   examplePriceMoveClassifier,
   runReplayForSymbols,
+  _sessionPhase,
 };
