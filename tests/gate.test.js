@@ -207,6 +207,41 @@ async function testEvaluateGateBatchCapturesPreMarketRvolDistribution() {
   assert.strictEqual(obs[0].daysInAverage, 22);
 }
 
+// 2026-09-04, real risk not tidiness: state.warriorPreMarketRvolObservations
+// is persisted and grows on every PRE-session scan -- unbounded, that's a
+// real localStorage quota risk (which, per persist()'s own fix, cascades
+// into every OTHER key silently failing too). Both bounds tested
+// independently: age (90 days) and count (5,000), with the more retentive
+// call taking effect at each check.
+async function testTrimPreMarketRvolObservationsCapsByAge() {
+  const gate = await loadGate();
+  const now = new Date('2026-09-04T13:00:00.000Z');
+  const fresh = { capturedAt: new Date(now.getTime() - 10 * 86400000).toISOString(), symbol: 'FRESH' }; // 10 days old
+  const stale = { capturedAt: new Date(now.getTime() - 91 * 86400000).toISOString(), symbol: 'STALE' }; // 91 days old -- over the bound
+  const boundary = { capturedAt: new Date(now.getTime() - 90 * 86400000).toISOString(), symbol: 'BOUNDARY' }; // exactly 90 days
+  const trimmed = gate._trimPreMarketRvolObservations([stale, boundary, fresh], now);
+  console.log('age-trimmed symbols:', trimmed.map(o => o.symbol));
+  assert.ok(!trimmed.some(o => o.symbol === 'STALE'), '91-day-old observation must be dropped');
+  assert.ok(trimmed.some(o => o.symbol === 'FRESH'), '10-day-old observation must survive');
+  assert.ok(trimmed.some(o => o.symbol === 'BOUNDARY'), 'exactly-90-day-old observation is still within bound (>=  not >)');
+}
+
+async function testTrimPreMarketRvolObservationsCapsByCount() {
+  const gate = await loadGate();
+  const now = new Date('2026-09-04T13:00:00.000Z');
+  // 5,010 observations, all recent (age bound doesn't apply), oldest-first
+  // (matches how they're actually appended live -- push() order).
+  const obs = Array.from({ length: 5010 }, (_, i) => ({
+    capturedAt: new Date(now.getTime() - (5010 - i) * 1000).toISOString(), // i=0 is oldest
+    symbol: `S${i}`,
+  }));
+  const trimmed = gate._trimPreMarketRvolObservations(obs, now);
+  console.log('count-trimmed length:', trimmed.length, '| first kept:', trimmed[0].symbol, '| last kept:', trimmed[trimmed.length - 1].symbol);
+  assert.strictEqual(trimmed.length, 5000, 'must cap at exactly the configured max count');
+  assert.strictEqual(trimmed[0].symbol, 'S10', 'must keep the MOST RECENT 5,000 (drop the oldest 10), not an arbitrary slice');
+  assert.strictEqual(trimmed[trimmed.length - 1].symbol, 'S5009');
+}
+
 async function testFloatNeverStubbedAsPassing() {
   const gate = await loadGate();
   const pFloat = gate.evaluatePillarFloat();
@@ -455,6 +490,8 @@ async function testDiagnoseGateCostShapeAndStrategySelection() {
   await run('gate: pre-market RVOL pillar outside PRE session and on fetch failure', testPreMarketPillarOutsidePreSessionAndOnFetchFailure);
   await run('gate: classifyGate never gates on pre-market RVOL regardless of ratio', testClassifyGateNeverGatesOnPreMarketRvolRegardlessOfRatio);
   await run('gate: evaluateGateBatch captures pre-market RVOL distribution, excluding failures', testEvaluateGateBatchCapturesPreMarketRvolDistribution);
+  await run('gate: pre-market RVOL observations trimmed by age (90 days)', testTrimPreMarketRvolObservationsCapsByAge);
+  await run('gate: pre-market RVOL observations trimmed by count (5,000, most recent kept)', testTrimPreMarketRvolObservationsCapsByCount);
   await run('gate: float pillar never stubbed as passing', testFloatNeverStubbedAsPassing);
   await run('gate: short-circuits on Pillar 1 failure without consulting rvol/news inputs', testGateShortCircuitsOnPillar1Failure);
   await run('gate: news is genuinely evaluated even when rvol fails (root-cause fix)', testGateEvaluatesNewsEvenWhenRvolFails);

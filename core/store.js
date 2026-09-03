@@ -54,8 +54,41 @@ function loadLocalOnlySettings() {
   } catch(e) {}
 }
 
+// Quota-failure surfacing (2026-09-04, found live while adding
+// state.warriorPreMarketRvolObservations — an array persisted on every
+// PRE-session scan with no retention bound until this same pass capped
+// it): this function backs EVERY persisted state field in the app
+// (signals, sold, portfolio-adjacent caches, this new one), and used to
+// swallow ANY write failure silently, quota exhaustion included. A quota
+// failure doesn't just drop the one field that pushed it over — every
+// LATER persist() call for ANY key keeps failing the same way, silently,
+// for the rest of the session. "A save that silently stops working" is
+// this project's own recurring bug shape (the request-counter undercount,
+// the truthfulness-of-requests-issued fixes earlier this project);
+// applying the same principle here rather than adding a second, narrower
+// try/catch around just the new field.
+//
+// state.persistFailure is checked by updateMarketBanner (app.js) and
+// rendered as a real, alarming banner state — not muted like the other
+// disclosures this session added elsewhere (Phase 5 unvalidated, RVOL
+// caveats), because THIS one means state stops saving at all, which is a
+// materially worse failure than "one metric wasn't measured this scan."
+// Cleared automatically the next time ANY persist() call succeeds, so a
+// transient/resolved quota issue doesn't leave a stale alarm on screen.
+//
+// Known, not fixed here: persistApiKeys/persistLocalOnlySettings (above)
+// have the identical silent-swallow shape — out of scope for this pass
+// (this fix was scoped to the field that motivated it), flagged so a
+// future pass doesn't have to rediscover it.
 function persist(key) {
-  try { localStorage.setItem('edge_' + key, JSON.stringify(state[key])); } catch(e) {}
+  try {
+    localStorage.setItem('edge_' + key, JSON.stringify(state[key]));
+    if (state.persistFailure) { state.persistFailure = null; updateMarketBanner(); }
+  } catch(e) {
+    console.error(`persist('${key}') failed — localStorage write threw: ${e.message}. State for '${key}' (and every other key, until this clears) may not survive a reload.`);
+    state.persistFailure = { key, message: e.message, at: new Date().toISOString() };
+    updateMarketBanner();
+  }
 }
 
 // Unlike writeTradeToSupabase()/writeRatingSnapshots() in app.js, which

@@ -793,11 +793,22 @@ function renderTab() {
   // Keeps the pillar name (RVOL specifically), not a generic "3 of 4" —
   // the caveat was never missing information, only visual separation.
   const rvolCaveat = rvolCheckable ? '' : ' <span class="section-label-caveat">— RVOL not evaluated this session</span>';
+  // Condition, not a bug (2026-09-04, explicit ask): pre-open qualification
+  // runs on 3 pillars (price, change, news) -- RVOL-PM is measured (see the
+  // card rows below) but deliberately never gates (evaluatePillarPreMarketRvol
+  // has no validated threshold to gate on yet). Stated plainly here, not just
+  // implied by the rvolCaveat above, so reviewing the forward test in 30
+  // trades or 60 days doesn't require reconstructing what was actually being
+  // tested from the code -- it's on the screen every session it was true.
+  const preOpenConditionLine = session === 'PRE'
+    ? `<div class="tab-subtitle">Pre-open gate: 3 pillars (price, change, news) — RVOL-PM is measured, not yet gating.</div>`
+    : '';
   return `<div class="tab-header">
     <h1 class="tab-title">WARRIOR</h1>
   </div>
   ${_PHASE5_UNVALIDATED_LINE}
   <div class="tab-subtitle">Session: ${session} · ${results.length} scanned · last scan ${_formatPTTime(scannedAt)} PT</div>
+  ${preOpenConditionLine}
   <div class="section-label">QUALIFIED (${qualified.length})${rvolCaveat}</div>
   ${qualified.length ? qualified.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>'}
   <div class="section-label mt12">NEAR MISS (${nearMiss.length})${rvolCaveat}</div>

@@ -25,6 +25,31 @@ const RVOL_MIN = 5.0;
 const NEWS_MAX_AGE_HOURS = 24;
 const RVOL_NOT_YET_AVAILABLE_MIN = 15; // SIP delay — see core/universe.js PREMARKET_BAR_DELAY_MIN
 
+// Retention bound for state.warriorPreMarketRvolObservations (2026-09-04,
+// real risk, not tidiness): unbounded + persisted means every localStorage
+// write for the WHOLE app degrades toward a quota failure, and a quota
+// failure doesn't just drop this one field -- persist()'s own fix
+// (core/store.js) means a LATER write for ANY key (settings, sold
+// history, portfolio-adjacent caches) can start failing too, the exact
+// "silent save stopped working" shape this project keeps finding. Both
+// bounds applied together: age first (a 91-day-old observation is stale
+// for a percentile that should track current conditions anyway, not just
+// storage pressure), then count (5,000 is comfortably enough for a real
+// percentile estimate -- at ~30 survivors/morning that's ~5+ months of
+// full history even before the age cutoff would have pruned anything).
+const PRE_MARKET_RVOL_OBSERVATIONS_MAX_AGE_DAYS = 90;
+const PRE_MARKET_RVOL_OBSERVATIONS_MAX_COUNT = 5000;
+
+function _trimPreMarketRvolObservations(obs, now) {
+  const cutoffMs = now.getTime() - PRE_MARKET_RVOL_OBSERVATIONS_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  const notTooOld = obs.filter(o => {
+    const t = new Date(o.capturedAt).getTime();
+    return !isNaN(t) && t >= cutoffMs;
+  });
+  if (notTooOld.length <= PRE_MARKET_RVOL_OBSERVATIONS_MAX_COUNT) return notTooOld;
+  return notTooOld.slice(notTooOld.length - PRE_MARKET_RVOL_OBSERVATIONS_MAX_COUNT); // keep the most recent N
+}
+
 // Pillar 3's static cumulative-share table — a hardcoded approximation of
 // intraday volume distribution, deliberately NOT elapsedMinutes/390 (a
 // linear proxy reads ~1.7x RVOL for every stock at the open and deflates
@@ -449,7 +474,7 @@ async function evaluateGateBatch(candidates, session) {
         daysInAverage: input.daysInAverage,
       });
     }
-    state.warriorPreMarketRvolObservations = obs;
+    state.warriorPreMarketRvolObservations = _trimPreMarketRvolObservations(obs, now);
     persist('warriorPreMarketRvolObservations');
   }
 
@@ -528,5 +553,5 @@ export {
   INTRADAY_CURVE, intradayCurve,
   evaluatePillar1, evaluatePillar2, evaluatePillar3, evaluatePillarPreMarketRvol, evaluatePillar4, evaluatePillarFloat,
   classifyGate, evaluateGate, evaluateGateBatch,
-  _selectStrategy, diagnoseGateCost,
+  _selectStrategy, diagnoseGateCost, _trimPreMarketRvolObservations,
 };

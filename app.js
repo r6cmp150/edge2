@@ -847,7 +847,8 @@ let state = {
   universePriorCloseCache: null, // { date, closes: {symbol: price} } — core/universe.js, daily cache — persisted
   warrior30DayVolumeCache: null, // { date, avgVolumes: {symbol: avgDailyVolume} } — core/universe.js, Phase 3 Pillar 3 (RVOL), daily cache — persisted
   warriorPreMarketVolumeCache: null, // { date, historyBySymbol: {symbol: [{date,volume}]} } — core/universe.js, pre-market-specific RVOL baseline (2026-09-04), daily cache — persisted
-  warriorPreMarketRvolObservations: [], // [{capturedAt,date,symbol,ratio,todayPreMarketVolume,avgPreMarketVolume,daysInAverage}] — engines/warrior/gate.js, accumulates across mornings so a real pre-market RVOL threshold can eventually be set from data instead of the unvalidated placeholder — persisted, unbounded (no retention policy set yet)
+  warriorPreMarketRvolObservations: [], // [{capturedAt,date,symbol,ratio,todayPreMarketVolume,avgPreMarketVolume,daysInAverage}] — engines/warrior/gate.js, accumulates across mornings so a real pre-market RVOL threshold can eventually be set from data instead of the unvalidated placeholder — persisted, capped (see gate.js's _trimPreMarketRvolObservations)
+  persistFailure: null, // { key, message, at } — core/store.js's persist(), set on ANY localStorage write failure (quota exhaustion, etc), cleared on the next successful persist() — surfaced via updateMarketBanner, not silent
   lastScanTime: null,
   activeTab: 'signals',
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
@@ -972,9 +973,26 @@ function getAHData(ticker) {
 }
 
 function updateMarketBanner() {
-  const ms = getMarketStatus();
   const el = document.getElementById('market-banner');
   if (!el) return;
+  // persistFailure (core/store.js, 2026-09-04) takes over the banner
+  // entirely rather than sharing space with market status — a save that's
+  // silently stopped working is a more urgent fact than what session it
+  // is, and this is deliberately NOT muted the way the RVOL/Phase-5
+  // disclosures elsewhere are: those mean "one thing wasn't measured,"
+  // this means "state may not survive a reload."
+  if (state.persistFailure) {
+    el.style.color = 'var(--red)';
+    el.innerHTML = `
+      <div>
+        <span class="market-status-dot" style="background:var(--red)"></span>
+        <strong>Save failed — ${state.persistFailure.key}</strong>
+      </div>
+      <span class="market-countdown">Storage full? Free up space, then reload.</span>
+    `;
+    return;
+  }
+  const ms = getMarketStatus();
   el.style.color = ms.color;
   el.innerHTML = `
     <div>
