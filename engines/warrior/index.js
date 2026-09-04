@@ -227,6 +227,18 @@ function _pillarValueDisplay(pillar) {
     const actual = pillar.todayVolume != null ? Math.round(pillar.todayVolume).toLocaleString() : '—';
     return `${pillar.value.toFixed(2)}× (expected by now ${expected}, actual ${actual})`;
   }
+  // float (2026-09-04, Phase 6): spec's own explicit requirement --
+  // "display the float value... show the float's date field alongside
+  // the value" (written for FMP's staleness concern, same requirement
+  // applies to EDGAR's filing staleness). Labeled "shares outstanding,"
+  // never "float" bare -- the backtest's own settled honesty convention,
+  // no haircut applied.
+  if (pillar.id === 'float' && typeof pillar.value === 'number') {
+    const shares = pillar.value.toLocaleString();
+    const asOf = pillar.asOfDate ? `as of ${pillar.asOfDate}` : 'as-of date unknown';
+    const staleness = pillar.stalenessDays != null ? ` (${pillar.stalenessDays}d old)` : '';
+    return `${shares} shares outstanding — ${asOf}${staleness}`;
+  }
   if (pillar.id === 'change' && typeof pillar.value === 'number') return `${pillar.value.toFixed(1)}%`;
   if (pillar.id === 'price' && typeof pillar.value === 'number') return `$${pillar.value.toFixed(2)}`;
   return pillar.value == null ? '—' : String(pillar.value);

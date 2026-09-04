@@ -581,7 +581,7 @@ This serves debugging and the project's stated goal of understanding why somethi
 - [ ] Gate short-circuits — a stock failing pillar 1 triggers no further calls
 - [ ] Near-miss tier renders with real values on a day with zero qualified candidates
 - [x] Every candidate card displays the halt-status-unknown line (there is no halted boolean — halt detection is deferred; see above) — live-checked 2026-08-26
-- [x] Float renders as `not-checked`, never as a pass, and never absent from the pillar list — live-checked 2026-08-26
+- [x] Float renders as `not-checked`, never as a pass, and never absent from the pillar list — live-checked 2026-08-26. **Superseded by Phase 6 (2026-09-04):** float is real now; this line records what was true in Phase 3, before it existed. Phase 6's own acceptance checklist below covers the current, real behavior.
 - [ ] RVOL uses the static intraday curve, not a linear elapsed fraction — verify a mid-session candidate's expected-by-now figure is materially above `dailyAvg × elapsed/390`
 - [ ] In the first 15 minutes of a session, RVOL reads "not yet available" rather than 0×
 - [ ] During pre-market, Pillar 3 renders `not-checked` — never 0×, never a divide-by-zero, never a number derived from a regular-session curve (live-checked 2026-08-26, but during CLOSED not PRE specifically — reads "not available outside regular session"; the PRE-specific case is still unverified live)
@@ -816,31 +816,43 @@ On a $500 budget with average wins of +$3.47 and losses of −$3.33 (per the Jun
 
 ---
 
-# Phase 6 — FMP float, completing Pillar 5
+# Phase 6 — float, completing Pillar 5
 
-Confirmed available: FMP's `stable/shares-float` endpoint is on the free tier and returns float shares, outstanding shares, and free-float percentage. Free tier is **250 calls/day**.
+**Shipped against SEC EDGAR (data.sec.gov), not FMP** (2026-09-04) — this
+section was written assuming FMP; live testing during the 18-month
+backtest found FMP 402s on exactly this gate's microcap population
+(DAIC/SPCE/HUBC/QH/HCWC all blocked — a symbol-coverage restriction on
+the available tier, not a documented "needs a paid plan" nuance). EDGAR
+requires no key, no daily quota (rate-limited by request pacing, ~10/s,
+not a call count) and was confirmed live to serve exactly the symbols
+FMP couldn't. Shares outstanding only, not "float" — no haircut, labeled
+honestly, same settled convention the backtest itself used. Real
+implementation: `core/edgar.js` (fetch/cache), `engines/warrior/gate.js`'s
+`evaluatePillarFloat` (threshold logic).
 
-### Three conditions
+### Three conditions (adapted to EDGAR)
 
-1. **Apply last.** It is already the last gate in Phase 3's order. Never call FMP for a symbol that failed an earlier pillar.
-2. **Cache hard.** Float changes on offerings, not daily. Cache per-ticker for 7–30 days in `core/store.js`. Track daily call count and stop at 240 with a visible warning rather than silently failing.
-3. **Not a boolean.** Ross's <10M is his *ideal*, not a wall — he trades higher float when RVOL is extreme. Make the threshold configurable (default 10M) and **display the float value** on the card, not just pass/fail.
+1. **Apply last.** Scoped to `pillar12Survivors` (price+change survivors), same population `rvol`/`news` already use — not further narrowed to "only if rvol+news both already passed" (that stricter reading was considered and rejected: it would reintroduce exactly the short-circuit-between-stage-2-pillars bug already fixed for rvol/news, where a NEAR_MISS/disqualified card would show an incomplete picture). The cost pressure that motivated the original FMP-era "never call for an already-failed candidate" language (a 250/day quota) doesn't transfer to EDGAR, which has no daily cap.
+2. **Cache hard.** 14 days per symbol (midpoint of the spec's 7–30 day range) in `state.warriorFloatCache`, plus a 24h cache on the CIK-map lookup itself. No daily-quota counter — EDGAR has none; the FMP-era "stop at 240" language doesn't apply.
+3. **Not a boolean.** Threshold configurable via Settings (`state.settings.floatThresholdShares`, default 10,000,000, same default this section always specified), never hardcoded. Float value **and** its as-of filing date shown on the card.
 
-**Known limitation to surface in the UI:** FMP float for sub-$300M microcaps is often stale and will not reflect a dilutive offering from last week — exactly the population being gated. Show the float's `date` field alongside the value.
+**Known limitation, adapted from the original FMP-era note:** EDGAR filings are as fresh as the company's own reporting cadence (quarterly for domestic 10-Q filers, annual-only for foreign private issuers on 20-F) — a filing can be materially stale relative to a dilutive offering from last week, same risk the original note flagged for FMP's cache. `stalenessDays` (nearest-preceding-filing age) is captured and shown alongside the value for exactly this reason.
 
-### Settings additions
+**A real divergence, disclosed rather than silently resolved:** the original acceptance line below ("qualified candidates fall back to 4/5 near-miss rather than disappearing" on daily-quota exhaustion) is FMP-quota-specific and has no EDGAR analog. What EDGAR DOES have — a real request failure (rate-limited, network error) — is treated as `'fetch-failed'`, which **BLOCKS** qualification outright (a new `BLOCKED` tier, distinct from disqualified), matching the same fetch-failed-vs-not-checked decision this session's gate-honesty pass made for rvol/news. A near-miss implies "we checked, it's close"; a fetch failure isn't that.
 
-- FMP API Key — text input with show/hide toggle
-- "Test Connections" extended to ping FMP independently (✓/✗ per API, as with Alpaca and Groq)
-- Float threshold — numeric, default 10,000,000
-- Daily FMP call counter, displayed
+### Settings additions (adapted)
+
+- ~~FMP API Key~~ — not applicable, EDGAR needs no key
+- ~~"Test Connections" extended to ping FMP~~ — not built; EDGAR self-validates on first real use, no auth to independently verify
+- Float threshold — numeric, default 10,000,000 — **shipped**
+- ~~Daily FMP call counter~~ — not applicable, EDGAR has no daily quota
 
 ### Phase 6 acceptance
 
-- [ ] Float cache hit does not consume a call
-- [ ] Daily counter stops at 240 with a visible warning; qualified candidates fall back to 4/5 near-miss rather than disappearing
-- [ ] Float value and its as-of date shown on the card
-- [ ] Key stored in localStorage/Supabase, never hardcoded
+- [x] Float cache hit does not consume a call — verified live 2026-09-04 (second call for the same symbol: 0 requests)
+- [ ] ~~Daily counter stops at 240...~~ — not applicable to EDGAR (see divergence note above); superseded by the `BLOCKED`-on-fetch-failure behavior instead
+- [x] Float value and its as-of date shown on the card — verified live 2026-09-04 (DAIC: 30,259,579 shares as of 2026-05-12, SPCE: 151,595,903 as of 2026-08-12)
+- [x] ~~Key stored in localStorage/Supabase, never hardcoded~~ — not applicable, no key exists to store
 
 ---
 

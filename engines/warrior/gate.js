@@ -6,10 +6,11 @@
 // EDGE boundary CLAUDE.md protects; that boundary is about core/shell/EDGE
 // never reaching INTO Warrior, and Warrior never reaching into EDGE). This
 // file references core/universe.js's exported fetchers, core/news.js's
-// fetchNewsForTickers, and core/clock.js's getPT/getMarketStatus as
-// ordinary globals — same as engines/warrior/index.js already does for
-// state/registerEngine. See that file's header for why that's expected,
-// not a boundary leak: the rule is one-directional.
+// fetchNewsForTickers, core/edgar.js's getFloatDataForSymbols (Phase 6),
+// and core/clock.js's getPT/getMarketStatus as ordinary globals — same as
+// engines/warrior/index.js already does for state/registerEngine. See
+// that file's header for why that's expected, not a boundary leak: the
+// rule is one-directional.
 //
 // This file owns the ACTUAL gate logic (thresholds, the intraday curve,
 // pillar pass/fail/not-checked rules). core/universe.js's Phase 3 additions
@@ -24,6 +25,7 @@ const CHANGE_MIN_PCT = 10;
 const RVOL_MIN = 5.0;
 const NEWS_MAX_AGE_HOURS = 24;
 const RVOL_NOT_YET_AVAILABLE_MIN = 15; // SIP delay — see core/universe.js PREMARKET_BAR_DELAY_MIN
+const FLOAT_THRESHOLD_DEFAULT_SHARES = 10_000_000; // spec's own stated default, Phase 6 — configurable via Settings (state.settings.floatThresholdShares), never hardcoded past this fallback
 
 // Retention bound for state.warriorPreMarketRvolObservations (2026-09-04,
 // real risk, not tidiness): unbounded + persisted means every localStorage
@@ -219,12 +221,46 @@ function evaluatePillar4(candidate, newsItemsForSymbol, now, newsFetchFailed) {
   return _pillar('news', pass ? 'pass' : 'fail', value, `<${NEWS_MAX_AGE_HOURS}h`);
 }
 
-// Pillar 5 (float): Phase 6 (FMP), not built here. Never stubbed as
-// passing — a fabricated check on unverified data is the $0.00 P&L failure
-// again. Always 'not-checked' in Phase 3; same shape survives Phase 6
-// landing without a signalSnapshot migration.
-function evaluatePillarFloat() {
-  return _pillar('float', 'not-checked', null, '<10,000,000', { reason: 'not checked until Phase 6' });
+// Pillar 5 (float), Phase 6 (2026-09-04): real now, via core/edgar.js
+// (spec originally wrote this against FMP; FMP 402s on exactly this
+// gate's microcap population -- confirmed live during the backtest --
+// SEC EDGAR is the substitute, see core/edgar.js's header). Shares
+// outstanding only, not EntityPublicFloat -- the backtest's own settled
+// design: two independent measurements, never blended into one
+// ambiguous-unit slot.
+//
+// FLOAT_THRESHOLD_DEFAULT_SHARES=10,000,000 is the spec's own stated
+// default (docs/warrior-engine-spec-v2.md Phase 6: "Float threshold —
+// numeric, default 10,000,000"), not invented here -- and per that same
+// section ("Ross's <10M is his ideal, not a wall"), configurable via
+// Settings rather than hardcoded; evaluateGateBatch reads the real
+// configured value and passes it in.
+//
+// fetchFailed -> BLOCKS qualification, same fetch-failed/not-checked
+// split as RVOL/news (see classifyGate's own comment on that decision).
+// NOTE, disclosed rather than silently resolved: this diverges from the
+// spec's older FMP-era language ("qualified candidates fall back to 4/5
+// near-miss rather than disappearing" on daily-quota exhaustion) -- that
+// text predates this session's gate-honesty pass and was written for a
+// DIFFERENT failure mode (a daily call-count ceiling, which EDGAR has no
+// direct analog to; its own constraint is request pacing, not a quota).
+// A near-miss reads as "we checked, it's close" -- a fetch failure isn't
+// that, and treating it as one would reintroduce exactly the missing-
+// data-wearing-a-real-answer's-costume problem this whole pass exists to
+// close. Flagged here rather than silently picked either way.
+function evaluatePillarFloat(floatInput, thresholdShares) {
+  const threshold = `<${thresholdShares.toLocaleString()}`;
+  if (floatInput && floatInput.fetchFailed) {
+    return _pillar('float', 'fetch-failed', null, threshold, { reason: 'float fetch failed (SEC EDGAR rate-limited or network error) — not confirmed absent, could not be measured this scan' });
+  }
+  if (!floatInput || floatInput.sharesOutstanding == null) {
+    return _pillar('float', 'not-checked', null, threshold, { reason: 'no EDGAR shares-outstanding data available for this symbol' });
+  }
+  const pass = floatInput.sharesOutstanding < thresholdShares;
+  return _pillar('float', pass ? 'pass' : 'fail', floatInput.sharesOutstanding, threshold, {
+    asOfDate: floatInput.asOfDate,
+    stalenessDays: floatInput.stalenessDays,
+  });
 }
 
 function _groupNewsBySymbol(newsItems) {
@@ -300,10 +336,13 @@ function classifyGate(gateResult) {
   const freePillarsPass = byId.price.status === 'pass' && byId.change.status === 'pass';
   if (!freePillarsPass) return null; // plain disqualification — see header comment; never NEAR_MISS no matter which one failed
 
-  const anyFetchFailed = [byId.rvol, byId.news].some(p => p.status === 'fetch-failed');
+  // float joins rvol/news here as of Phase 6 (2026-09-04) -- see
+  // evaluatePillarFloat's own comment for why a fetch failure blocks the
+  // same way, diverging from the older FMP-era spec text.
+  const anyFetchFailed = [byId.rvol, byId.news, byId.float].some(p => p.status === 'fetch-failed');
   if (anyFetchFailed) return 'BLOCKED';
 
-  const substantive = [byId.rvol, byId.news].filter(p => p.status !== 'not-checked');
+  const substantive = [byId.rvol, byId.news, byId.float].filter(p => p.status !== 'not-checked');
   const substantiveFailed = substantive.filter(p => p.status === 'fail');
   if (substantiveFailed.length === 0 && substantive.length > 0) return 'QUALIFIED';
   if (substantiveFailed.length === 1) return 'NEAR_MISS';
@@ -318,7 +357,7 @@ function classifyGate(gateResult) {
 // unconditionally, regardless of whether Pillar 3 passed — see
 // classifyGate's comment for why halting between them broke the near-miss
 // tier's whole purpose.
-function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, preMarketRvolInput, newsItemsForSymbol, newsFetchFailed, now }) {
+function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, preMarketRvolInput, newsItemsForSymbol, newsFetchFailed, floatInput, floatThresholdShares, now }) {
   const pillar1 = evaluatePillar1(candidate);
   const pillar2 = evaluatePillar2(candidate);
   const skip = (id, threshold) => _pillar(id, 'not-checked', null, threshold, { reason: 'gate short-circuited (price/change failed)' });
@@ -338,8 +377,20 @@ function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, preMarket
   const pillar4 = clearedFreePillars
     ? evaluatePillar4(candidate, newsItemsForSymbol, now, newsFetchFailed)
     : skip('news', `<${NEWS_MAX_AGE_HOURS}h`);
-
-  const pillarFloat = evaluatePillarFloat();
+  // Float ("apply last" per spec): same clearedFreePillars gate as rvol/
+  // news, NOT further narrowed to "only if rvol+news both already
+  // passed." A stricter reading of "apply last" (skip whenever the
+  // candidate is already doomed by 2 other fails) was considered and
+  // rejected -- it would reintroduce exactly the short-circuit-between-
+  // stage-2-pillars bug classifyGate's own comment documents fixing
+  // (NEAR_MISS/disqualified cards showing an incomplete picture). The
+  // spec's ORIGINAL cost pressure for "apply last" was FMP's 250/day
+  // quota; EDGAR has no daily cap (just pacing) and this call is cached
+  // 14 days, so the cost case for a stricter skip is much weaker here
+  // than it was written against.
+  const pillarFloat = clearedFreePillars
+    ? evaluatePillarFloat(floatInput, floatThresholdShares ?? FLOAT_THRESHOLD_DEFAULT_SHARES)
+    : skip('float', `<${(floatThresholdShares ?? FLOAT_THRESHOLD_DEFAULT_SHARES).toLocaleString()}`);
 
   const gateResult = {
     symbol: candidate.symbol,
@@ -500,6 +551,33 @@ async function evaluateGateBatch(candidates, session) {
     newsFailedSymbolSet = new Set(state.newsFailedSymbols || []);
   }
 
+  // Float, Phase 6 (2026-09-04): same pillar12Survivors scoping as rvol/
+  // news -- "apply last" per spec, but not narrowed further; see
+  // evaluateGate's own comment for why. core/edgar.js caches per-symbol
+  // for 14 days, so a repeat candidate across mornings costs zero
+  // additional requests here.
+  let floatInputBySymbol = {};
+  if (pillar12Survivors.length) {
+    const symbols = pillar12Survivors.map(c => c.symbol);
+    const { sharesOutstandingBySymbol, requests: floatReq, failedSymbols: floatFailedSymbols } = await getFloatDataForSymbols(symbols);
+    requests += floatReq;
+    const floatFailedSymbolSet = new Set(floatFailedSymbols || []);
+    for (const sym of symbols) {
+      const entry = sharesOutstandingBySymbol[sym];
+      floatInputBySymbol[sym] = {
+        sharesOutstanding: entry ? entry.sharesOutstanding : null,
+        asOfDate: entry ? entry.asOfDate : null,
+        stalenessDays: entry ? entry.stalenessDays : null,
+        fetchFailed: floatFailedSymbolSet.has(sym),
+      };
+    }
+  }
+  // Configurable per spec ("not a boolean... make the threshold
+  // configurable"), never hardcoded past the documented default.
+  const floatThresholdShares = (typeof state.settings?.floatThresholdShares === 'number' && state.settings.floatThresholdShares > 0)
+    ? state.settings.floatThresholdShares
+    : FLOAT_THRESHOLD_DEFAULT_SHARES;
+
   const results = candidates.map(c => evaluateGate(c, {
     session,
     elapsedMinutes,
@@ -507,6 +585,8 @@ async function evaluateGateBatch(candidates, session) {
     preMarketRvolInput: preMarketRvolInputBySymbol[c.symbol],
     newsItemsForSymbol: newsBySymbol[c.symbol],
     newsFetchFailed: newsFailedSymbolSet.has(c.symbol),
+    floatInput: floatInputBySymbol[c.symbol],
+    floatThresholdShares,
     now,
   }));
 
@@ -549,7 +629,7 @@ async function diagnoseGateCost(session) {
 }
 
 export {
-  PRICE_MIN, PRICE_MAX, CHANGE_MIN_PCT, RVOL_MIN, NEWS_MAX_AGE_HOURS, RVOL_NOT_YET_AVAILABLE_MIN,
+  PRICE_MIN, PRICE_MAX, CHANGE_MIN_PCT, RVOL_MIN, NEWS_MAX_AGE_HOURS, RVOL_NOT_YET_AVAILABLE_MIN, FLOAT_THRESHOLD_DEFAULT_SHARES,
   INTRADAY_CURVE, intradayCurve,
   evaluatePillar1, evaluatePillar2, evaluatePillar3, evaluatePillarPreMarketRvol, evaluatePillar4, evaluatePillarFloat,
   classifyGate, evaluateGate, evaluateGateBatch,

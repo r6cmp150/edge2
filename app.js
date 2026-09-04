@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.9.7';
+const VERSION = 'v2.10.0'; // Phase 5 (real setup detection) + Phase 6 (float via EDGAR) landed 2026-09
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 // Own tagged client (2026-08-30, engine-tagging fix) — app.js's one direct
 // alpacaGet call site (fetchSellTimingBars) uses this instead of the bare
@@ -849,6 +849,8 @@ let state = {
   warriorPreMarketVolumeCache: null, // { date, historyBySymbol: {symbol: [{date,volume}]} } — core/universe.js, pre-market-specific RVOL baseline (2026-09-04), daily cache — persisted
   warriorPreMarketRvolObservations: [], // [{capturedAt,date,symbol,ratio,todayPreMarketVolume,avgPreMarketVolume,daysInAverage}] — engines/warrior/gate.js, accumulates across mornings so a real pre-market RVOL threshold can eventually be set from data instead of the unvalidated placeholder — persisted, capped (see gate.js's _trimPreMarketRvolObservations)
   persistFailure: null, // { key, message, at } — core/store.js's persist(), set on ANY localStorage write failure (quota exhaustion, etc), cleared on the next successful persist() — surfaced via updateMarketBanner, not silent
+  warriorEdgarCikMapCache: null, // { fetchedAt, cikBySymbol } — core/edgar.js, Phase 6, 24h cache (mirrors universeAssetCache's own duration) — persisted
+  warriorFloatCache: null, // { bySymbol: { SYM: {fetchedAt, sharesOutstanding, asOfDate, stalenessDays, unmapped} } } — core/edgar.js, Phase 6, 14-day per-symbol cache per spec's "cache hard" guidance — persisted
   lastScanTime: null,
   activeTab: 'signals',
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
@@ -877,14 +879,14 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations'].forEach(k => {
+  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations','warriorEdgarCikMapCache','warriorFloatCache'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
-    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false, riskPerTradePct: 2
+    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false, riskPerTradePct: 2, floatThresholdShares: 10000000
   }, state.settings);
   // API keys live in their own localStorage key, edge_apiKeys — authoritative
   // once present. If it doesn't exist yet but the legacy edge_settings blob
@@ -6250,6 +6252,17 @@ function renderSettingsTab() {
       <div class="settings-row">
         <button class="btn btn-primary btn-sm" onclick="saveRiskPerTrade()">Save Risk Per Trade</button>
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Float Threshold (Warrior)</div>
+          <div class="settings-hint">Shares outstanding — Ross's <10M is his ideal, not a wall (docs/warrior-engine-spec-v2.md Phase 6); configurable rather than hardcoded. Via SEC EDGAR, shares outstanding as a labeled proxy for true float — no evidence from the 18-month backtest that this pillar predicts returns; it's here for fidelity to the method.</div>
+        </div>
+        <input id="set-float-threshold" class="settings-number" type="number"
+          min="0" step="100000" value="${s.floatThresholdShares ?? 10000000}">
+      </div>
+      <div class="settings-row">
+        <button class="btn btn-primary btn-sm" onclick="saveFloatThreshold()">Save Float Threshold</button>
+      </div>
     </div>
 
     <div class="settings-section mt12">
@@ -6870,6 +6883,12 @@ function saveRiskPerTrade() {
   state.settings.riskPerTradePct = parseFloat(document.getElementById('set-risk-per-trade')?.value) || 2;
   persistLocalOnlySettings();
   alert('Risk per trade saved.');
+}
+
+function saveFloatThreshold() {
+  state.settings.floatThresholdShares = parseFloat(document.getElementById('set-float-threshold')?.value) || 10000000;
+  persistLocalOnlySettings();
+  alert('Float threshold saved.');
 }
 
 async function savePref(key, val) {

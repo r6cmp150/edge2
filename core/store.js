@@ -43,6 +43,7 @@ function persistLocalOnlySettings() {
     localStorage.setItem('edge_localOnlySettings', JSON.stringify({
       developerTools: state.settings.developerTools,
       riskPerTradePct: state.settings.riskPerTradePct,
+      floatThresholdShares: state.settings.floatThresholdShares, // Phase 6 (2026-09-04) — same no-Supabase-column gap as the two above, not a reversion of the Data Migration decision
     }));
   } catch(e) {}
 }
