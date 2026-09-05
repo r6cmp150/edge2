@@ -1,0 +1,31 @@
+-- `portfolio` is DELIBERATELY LEFT WITHOUT RLS. Not an oversight --
+-- recorded here so it doesn't read as one during a later audit of this
+-- database.
+--
+-- Enumerated usage (core/store.js): SELECT (207), INSERT+UPDATE via
+-- upsert on position_id (215, 221), DELETE by position_id when a
+-- position is sold (226). All four operations are genuinely needed --
+-- unlike trades/settings/rating_snapshots, there is no operation here
+-- that nothing legitimately performs.
+--
+-- This is a single-user app with no auth -- there is no user identity to
+-- write a row-level condition against. A `using (true)` policy for every
+-- one of insert/select/update/delete is functionally identical to RLS
+-- off: it permits exactly what no-RLS-at-all already permits, just
+-- routed through the policy engine instead of the default grant. Shipping
+-- four permissive policies here would read as protection without being
+-- any -- worse than leaving the gap visible, because it invites treating
+-- this table as handled when it isn't.
+--
+-- The actual mitigation for this table's threat model (public anon key,
+-- no way to restrict by identity) is recoverability, not access control:
+-- a scheduled backup job exporting `portfolio` (and `trades`) to the repo
+-- as JSON, same pattern as the existing movers-snapshot capture. That
+-- turns a wipe -- attacker or, more likely, our own migration bug -- into
+-- a restore instead of permanent data loss. See the backup job (next
+-- step after the three RLS passes in db/005-007).
+--
+-- No SQL in this file. If a real access-control mechanism becomes
+-- possible later (auth, a second real user, a server-side-only write
+-- path), revisit this note before assuming portfolio's exposure is
+-- unchanged.
