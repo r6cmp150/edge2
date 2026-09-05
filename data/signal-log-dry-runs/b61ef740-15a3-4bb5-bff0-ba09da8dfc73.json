@@ -1,0 +1,1403 @@
+{
+  "scanRun": {
+    "id": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+    "engine_source": "WARRIOR",
+    "session": "CLOSED",
+    "scan_date": "2026-09-05",
+    "started_at": "2026-09-05T23:10:47.189Z",
+    "universe_source": "self-fetched-fallback",
+    "universe_snapshot_captured_at": "2026-09-05T23:10:46.783Z",
+    "universe_count": 23,
+    "evaluated_count": 23,
+    "fetch_failed_count": 0,
+    "aborted": false,
+    "abort_reason": null,
+    "build_version": "v2.16.0"
+  },
+  "signalRows": [
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "GPRO",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "GPRO",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 1.7,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 22.3,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "pass",
+            "value": "Benzinga Bulls and Bears: Palo Alto, Ciena, Lululemon",
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "filing is 432 days old (reference date 2025-06-30), beyond the 180-day fallback bound, and today's volume wasn't available this scan to check plausibility directly instead",
+            "asOfDate": "2025-06-30",
+            "stalenessDays": 432
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 1.7
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "IMRN",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "IMRN",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 1.8,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 62.16,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "fail",
+            "value": "7 article(s) present, none under 24h",
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "no EntityPublicFloat filing on record for this symbol (checked 2026-09-04)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 1.8
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "PATH",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "PATH",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 15.2,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": -16.68950397369143,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 15.2
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "CDTG",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "CDTG",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 1.32,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 46.72,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "fail",
+            "value": "3 article(s) present, none under 24h",
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "no EntityPublicFloat filing on record for this symbol (checked 2026-09-04)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 1.32
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "AAL",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "AAL",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 13.12,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": 1.117533718689785,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 13.12
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "AMC",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "AMC",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 2.65,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": 4.330708661417318,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 2.65
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "NIO",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "NIO",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 3.8,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": -1.2987012987013056,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 3.8
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "NU",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "NU",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 15.35,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": -2.042118698149332,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 15.35
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "PCG",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "PCG",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 14.315,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": 2.5797205302758828,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 14.315
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "NOK",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "NOK",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 10.04,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": 2.763561924257928,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 10.04
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "PLUG",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "PLUG",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 2.165,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": 2.8503562945368195,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 2.165
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "ONDS",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "ONDS",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 7.62,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": -0.1310615989515044,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 7.62
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "RIG",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "RIG",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 5.84,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": -2.828618968386022,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 5.84
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "F",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "F",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 14.615,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": 1.4930555555555547,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 14.615
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "BTBT",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "BTBT",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 1.63,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": 0.30769230769230116,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 1.63
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "MARA",
+      "engine_source": "WARRIOR",
+      "tier": "REJECTED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "MARA",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 11.3,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "fail",
+            "value": -2.417962003454226,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "news",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<24h",
+            "reason": "gate short-circuited (price/change failed)"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "gate short-circuited (price/change failed)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "REJECTED",
+        "passed": false
+      },
+      "reference_price": 11.3
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "AOUT",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "AOUT",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 14.48,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 44.66,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "fail",
+            "value": "12 article(s) present, none under 24h",
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "filing is 309 days old (reference date 2025-10-31), beyond the 180-day fallback bound, and today's volume wasn't available this scan to check plausibility directly instead",
+            "asOfDate": "2025-10-31",
+            "stalenessDays": 309
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 14.48
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "ONCO",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "ONCO",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 1.02,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 38.02,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "fail",
+            "value": "1 article(s) present, none under 24h",
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "filing is 432 days old (reference date 2025-06-30), beyond the 180-day fallback bound, and today's volume wasn't available this scan to check plausibility directly instead",
+            "asOfDate": "2025-06-30",
+            "stalenessDays": 432
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 1.02
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "GRNQ",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "GRNQ",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 18.7,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 30.77,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "fail",
+            "value": null,
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "filing is 432 days old (reference date 2025-06-30), beyond the 180-day fallback bound, and today's volume wasn't available this scan to check plausibility directly instead",
+            "asOfDate": "2025-06-30",
+            "stalenessDays": 432
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 18.7
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "GRI",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "GRI",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 2.88,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 25.76,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "fail",
+            "value": "2 article(s) present, none under 24h",
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "filing is 432 days old (reference date 2025-06-30), beyond the 180-day fallback bound, and today's volume wasn't available this scan to check plausibility directly instead",
+            "asOfDate": "2025-06-30",
+            "stalenessDays": 432
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 2.88
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "MTEX",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "MTEX",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 9,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 23.46,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "fail",
+            "value": null,
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "filing is 432 days old (reference date 2025-06-30), beyond the 180-day fallback bound, and today's volume wasn't available this scan to check plausibility directly instead",
+            "asOfDate": "2025-06-30",
+            "stalenessDays": 432
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 9
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "NWGL",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "NWGL",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 1.27,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 23.3,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "fail",
+            "value": null,
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "no EntityPublicFloat filing on record for this symbol (checked 2026-09-04)"
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 1.27
+    },
+    {
+      "signal_date": "2026-09-05",
+      "symbol": "SJ",
+      "engine_source": "WARRIOR",
+      "tier": "NOT_EVALUATED",
+      "first_shown_at": "2026-09-05T23:10:47.189Z",
+      "scan_session": "b61ef740-15a3-4bb5-bff0-ba09da8dfc73",
+      "build_version": "v2.16.0",
+      "signal_snapshot": {
+        "symbol": "SJ",
+        "pillars": [
+          {
+            "id": "price",
+            "status": "pass",
+            "value": 1.048,
+            "threshold": "$1.00–$20.00"
+          },
+          {
+            "id": "change",
+            "status": "pass",
+            "value": 20.46,
+            "threshold": "≥10%"
+          },
+          {
+            "id": "rvol",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "≥5×",
+            "reason": "not available outside regular session"
+          },
+          {
+            "id": "rvol-premarket",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "unvalidated — no session-appropriate cutoff measured yet",
+            "reason": "only computed pre-market"
+          },
+          {
+            "id": "news",
+            "status": "fail",
+            "value": "1 article(s) present, none under 24h",
+            "threshold": "<24h"
+          },
+          {
+            "id": "float",
+            "status": "not-checked",
+            "value": null,
+            "threshold": "<10,000,000",
+            "reason": "filing is 2626 days old (reference date 2019-06-28), beyond the 180-day fallback bound, and today's volume wasn't available this scan to check plausibility directly instead",
+            "asOfDate": "2019-06-28",
+            "stalenessDays": 2626
+          }
+        ],
+        "haltStatus": "unknown",
+        "dataTimestamp": "2026-09-05T23:10:47.160Z",
+        "buildVersion": "v2.16.0",
+        "tier": "NOT_EVALUATED",
+        "passed": false
+      },
+      "reference_price": 1.048
+    }
+  ]
+}
