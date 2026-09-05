@@ -5,6 +5,36 @@
 -- just a role that exists in Postgres and is granted to `authenticator`,
 -- the role PostgREST itself connects as)?
 --
+-- RESULT (2026-09-05): CONFIRMED. The mechanism works -- three
+-- independent signals, not one: check A updated ret_5m and the anon
+-- re-select showed the write actually landed (no role, anon included,
+-- has ever had UPDATE on signal_log, so that can only mean the role
+-- switch happened); check B's column-level grant genuinely narrowed the
+-- role to ret_5m (ret_15m rejected, confirmed unchanged on re-select);
+-- and later, an attempted re-run of check C against the already-dropped
+-- role returned 401/22023 "role does not exist" -- meaning PostgREST
+-- had validated the JWT's signature and attempted the SET ROLE before
+-- discovering the role was gone, a third independent confirmation the
+-- claim-reading mechanism itself is real.
+--
+-- WHAT REMAINS UNVERIFIED, stated so it isn't quietly assumed later:
+-- cross-table UPDATE denial. Check D confirmed this role has no SELECT
+-- grant on trades_v2 (403/42501). It did NOT confirm UPDATE is denied
+-- there too -- UPDATE is a separate grant, and check C (which would have
+-- tested it) never produced a valid result: its first run tripped
+-- PostgREST's own unfiltered-mutation guard (400/21000, never reached
+-- Postgres's permission layer) and its planned re-run found the
+-- throwaway role already dropped (009b had already run). Recreating the
+-- role solely to chase this one check was rejected as the wrong move --
+-- the real outcome_filler role's own verification, required anyway
+-- before the outcome job goes live, must include a filtered
+-- cross-table UPDATE attempt (see db/009's role, matching check C's
+-- corrected shape in scripts/test-outcome-filler-role.mjs) so this gap
+-- gets closed by the real credential's test, not inferred from a
+-- SELECT-only result on a role that no longer exists. Don't assume
+-- UPDATE is denied just because SELECT was -- that's an inference this
+-- project's own discipline says not to cash without having earned it.
+--
 -- CORRECTED 2026-09-05 before this ever ran (caught in review, not after
 -- a false result): the first draft granted the role a table privilege
 -- (SELECT/UPDATE) but never schema USAGE and never an RLS policy. Three
