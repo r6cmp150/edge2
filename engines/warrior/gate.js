@@ -385,16 +385,44 @@ function _elapsedSessionMinutes() {
 // any fetch-failed pillar blocks qualification outright, checked BEFORE
 // the substantive-pillar counting logic — never QUALIFIED, never
 // NEAR_MISS (near-miss implies a real, informative near-threshold result,
-// which a fetch failure isn't), always 'BLOCKED'. Distinct from plain
-// disqualification (null) so the card can say "couldn't verify," not
-// "failed the gate" — those mean different things to someone about to
-// trade on it.
+// which a fetch failure isn't), always 'BLOCKED'. BLOCKED means
+// specifically "couldn't verify" — see REJECTED below for "did verify,
+// and it failed," which must not share this label or its wording.
+//
+// NO MORE BARE `null` RETURN (2026-09-05, found retroactively costly: see
+// warrior-engine-spec-v2.md's now-invalidated 2026-09-02/09-04 prior, and
+// caught before repeating the same mistake with a merge into BLOCKED — a
+// first draft of this fix folded every null case into 'BLOCKED', which
+// would have made "couldn't verify" mean "failed the gate" too, exactly
+// the conflation this comment already warns against one paragraph up).
+// This function used to return JS `null` from two different branches --
+// the free-pillar-fail case, and the final fallthrough covering BOTH
+// "two or more substantive pillars genuinely failed" AND "zero
+// substantive pillars were even checkable." `index.js`'s tier buckets
+// use strict string equality (`r.tier === 'BLOCKED'`, etc.), so a
+// `null` tier silently vanished from every rendered bucket -- not
+// miscategorized, just gone, with no visible count anywhere. Fixed by
+// naming every case explicitly, as its own tier rather than reusing an
+// existing one whose meaning it would corrupt:
+//   - free pillars (price/change) are ALWAYS evaluated for real, never
+//     not-checked -- a failure here is a genuine, confident reject, not
+//     an absence of information and not a fetch problem. 'REJECTED'.
+//   - zero substantive pillars checkable (rvol/news/float all
+//     not-checked) is genuinely different from a reject: nothing was
+//     judged at all. 'NOT_EVALUATED'.
+//   - two or more substantive pillars genuinely failing is exactly as
+//     confident a reject as the free-pillar-fail case above --
+//     'REJECTED', not 'BLOCKED' and not null.
+// So the full vocabulary is now QUALIFIED / NEAR_MISS / BLOCKED
+// (couldn't verify) / REJECTED (verified, failed) / NOT_EVALUATED
+// (nothing to verify) -- five real outcomes, no bare null anywhere, and
+// no tier's meaning stretched to cover a case it didn't originally mean.
 function classifyGate(gateResult) {
   const byId = {};
   gateResult.pillars.forEach(p => { byId[p.id] = p; });
 
   const freePillarsPass = byId.price.status === 'pass' && byId.change.status === 'pass';
-  if (!freePillarsPass) return null; // plain disqualification — see header comment; never NEAR_MISS no matter which one failed
+  if (!freePillarsPass) return 'REJECTED'; // genuine reject -- price/change are never not-checked, see header comment
 
   // float joins rvol/news here as of Phase 6 (2026-09-04) -- see
   // evaluatePillarFloat's own comment for why a fetch failure blocks the
@@ -403,10 +431,12 @@ function classifyGate(gateResult) {
   if (anyFetchFailed) return 'BLOCKED';
 
   const substantive = [byId.rvol, byId.news, byId.float].filter(p => p.status !== 'not-checked');
+  if (substantive.length === 0) return 'NOT_EVALUATED'; // nothing substantive was even checkable this scan
+
   const substantiveFailed = substantive.filter(p => p.status === 'fail');
-  if (substantiveFailed.length === 0 && substantive.length > 0) return 'QUALIFIED';
+  if (substantiveFailed.length === 0) return 'QUALIFIED';
   if (substantiveFailed.length === 1) return 'NEAR_MISS';
-  return null;
+  return 'REJECTED'; // 2+ genuine substantive fails -- as confident a reject as the free-pillar case
 }
 
 // Evaluates the gate for one candidate, given already-batch-fetched

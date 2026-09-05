@@ -70,10 +70,15 @@ async function _scanTick() {
     // keeping it unconditional means the logging line below can be deleted
     // on its own later without restoring two different call shapes for
     // getUniverse/evaluateGateBatch. Snapshotting the GLOBAL tally, not
-    // engine-scoped ('WARRIOR') — alpacaGet still hardcodes engine='EDGE'
-    // for every request regardless of caller (a stale Phase 0.5 assumption,
-    // not yet fixed), so a 'WARRIOR'-scoped read would silently show zero
-    // here rather than actually isolating Warrior's own traffic.
+    // engine-scoped ('WARRIOR') — corrected 2026-09-05, this comment was
+    // itself stale: the bare alpacaGet global no longer hardcodes 'EDGE'
+    // (core/api-client.js:454-456 tags it 'CORE'), but this file still
+    // calls that bare global rather than a WARRIOR-tagged client from
+    // createApiClient('WARRIOR') — confirmed zero production call sites
+    // for that in engines/warrior/*.js (only tests exercise it). The
+    // status doc's "createApiClient('WARRIOR') wiring" open item is
+    // accurate and still open; a 'WARRIOR'-scoped read here would show
+    // zero either way, just for a different reason than previously stated.
     const beforeUniverse = getRequestStats();
     const universe = await getUniverse({ session, strategy });
     const universeRequestsObserved = diffRequestStats(beforeUniverse, getRequestStats()).issued;
@@ -890,6 +895,19 @@ function renderTab() {
   // gate.js's classifyGate for the full fetch-failed-blocks-qualification
   // rationale: a stock we couldn't measure is not a stock that passed.
   const blocked = results.filter(r => r.tier === 'BLOCKED');
+  // REJECTED/NOT_EVALUATED (2026-09-05): classifyGate used to return bare
+  // `null` for both of these, and this file's bucket filters (strict
+  // equality against 'QUALIFIED'/'NEAR_MISS'/'BLOCKED') silently dropped
+  // null-tier candidates from every rendered section -- not miscounted,
+  // just gone, with `results.length` at the header being the only trace
+  // they ever existed. Not given full candidate cards like the three
+  // sections above: REJECTED in particular can be most of a scan's
+  // universe (everything that failed price/change or 2+ real checks),
+  // and rendering hundreds of cards for "here's what didn't qualify"
+  // isn't a fast-skim UI's job. A visible count is the fix for the
+  // invisibility bug; it is not an argument for full detail here too.
+  const rejected = results.filter(r => r.tier === 'REJECTED');
+  const notEvaluated = results.filter(r => r.tier === 'NOT_EVALUATED');
   // RVOL is the most selective of the 5 pillars — a section header that
   // just says "QUALIFIED (10)" outside regular session (or in the first 15
   // minutes) claims more confidence than the pillars underneath it earned:
@@ -947,6 +965,7 @@ function renderTab() {
   <div class="section-label mt12">NEAR MISS (${nearMiss.length})${rvolCaveat}</div>
   ${nearMiss.length ? nearMiss.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No near-miss candidates this scan.</p></div>'}
   ${blocked.length ? `<div class="section-label mt12">COULD NOT VERIFY (${blocked.length})</div>${blocked.map(_renderCandidateCard).join('')}` : ''}
+  <div class="tab-subtitle mt12">${rejected.length} rejected (failed price/change, or 2+ pillars) · ${notEvaluated.length} not evaluated (nothing substantive checkable)</div>
   ${replayPanel}`;
 }
 

@@ -333,7 +333,7 @@ async function testClassifyGateTreatsFloatAsSubstantiveAsOfPhase6() {
   );
   assert.strictEqual(
     gate.classifyGate(makeResult(['pass', 'pass', 'fail', 'not-checked', 'pass', 'fail'])),
-    null, 'two real substantive failures (rvol + float) is a plain disqualification, not near-miss'
+    'REJECTED', 'two real substantive failures (rvol + float) is a genuine reject, not near-miss and not bare null (2026-09-05 fix)'
   );
   assert.strictEqual(
     gate.classifyGate(makeResult(['pass', 'pass', 'pass', 'not-checked', 'pass', 'fetch-failed'])),
@@ -422,7 +422,7 @@ async function testGateShortCircuitsOnPillar1Failure() {
   // A price failure is a basic disqualification, not "close" — must NOT
   // read as NEAR_MISS just because short-circuiting left only one 'fail'
   // in the array. See classifyGate's stage-1/stage-2 comment.
-  assert.strictEqual(result.tier, null, 'a price failure must never classify as NEAR_MISS, regardless of how many other pillars are merely not-checked');
+  assert.strictEqual(result.tier, 'REJECTED', 'a price failure must never classify as NEAR_MISS, regardless of how many other pillars are merely not-checked — and must be a real, named tier, not bare null (2026-09-05 fix)');
 }
 
 async function testGateEvaluatesNewsEvenWhenRvolFails() {
@@ -455,16 +455,31 @@ async function testClassifyQualifiedAndNearMiss() {
   assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'pass', 'pass', 'not-checked'])), 'QUALIFIED', 'all checkable pillars pass, float not-checked -> QUALIFIED (not permanently empty passCount===5)');
   assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'pass', 'fail', 'not-checked'])), 'NEAR_MISS', 'news is the only failure, price/change/rvol all real passes -> NEAR_MISS');
   assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'fail', 'pass', 'not-checked'])), 'NEAR_MISS', 'rvol is the only failure -> NEAR_MISS');
-  assert.strictEqual(gate.classifyGate(makeResult(['fail', 'not-checked', 'not-checked', 'not-checked', 'not-checked'])), null, 'price is the (short-circuited) only failure -> NOT NEAR_MISS, a basic disqualification');
-  assert.strictEqual(gate.classifyGate(makeResult(['pass', 'fail', 'not-checked', 'not-checked', 'not-checked'])), null, 'change is the (short-circuited) only failure -> NOT NEAR_MISS');
+  assert.strictEqual(gate.classifyGate(makeResult(['fail', 'not-checked', 'not-checked', 'not-checked', 'not-checked'])), 'REJECTED', 'price is the (short-circuited) only failure -> NOT NEAR_MISS, a real reject, not bare null (2026-09-05 fix)');
+  assert.strictEqual(gate.classifyGate(makeResult(['pass', 'fail', 'not-checked', 'not-checked', 'not-checked'])), 'REJECTED', 'change is the (short-circuited) only failure -> NOT NEAR_MISS');
   // The precise gap a naive "just widen stage 2" fix would have missed:
   // price fails but change happens to PASS (both are evaluated
   // unconditionally, independent of each other) — "exactly one checkable
   // pillar fails" is trivially true here too unless stage 1 is gated as a
-  // pair, not counted individually. Must still be null, not NEAR_MISS.
-  assert.strictEqual(gate.classifyGate(makeResult(['fail', 'pass', 'not-checked', 'not-checked', 'not-checked'])), null, 'price fails even though change independently passes -> still NOT NEAR_MISS, not a vacuous 1-fail count');
-  assert.strictEqual(gate.classifyGate(makeResult(['pass', 'fail', 'fail', 'pass', 'not-checked'])), null, 'two failures -> neither tier (defensive — should not occur given short-circuiting, but classify must not misclassify it if it ever did)');
-  assert.strictEqual(gate.classifyGate(makeResult(['not-checked', 'not-checked', 'not-checked', 'not-checked', 'not-checked'])), null, 'nothing checkable at all -> neither tier (not a vacuous QUALIFIED)');
+  // pair, not counted individually. Must still be REJECTED, not NEAR_MISS.
+  assert.strictEqual(gate.classifyGate(makeResult(['fail', 'pass', 'not-checked', 'not-checked', 'not-checked'])), 'REJECTED', 'price fails even though change independently passes -> still NOT NEAR_MISS, not a vacuous 1-fail count');
+  // change='fail' here trips the free-pillar check before rvol/news are
+  // even consulted, same as the two assertions above — the "two
+  // failures" in the name describes the pillar array, not two distinct
+  // classifyGate branches; both routes this function has for a genuine
+  // reject converge on the same 'REJECTED' value.
+  assert.strictEqual(gate.classifyGate(makeResult(['pass', 'fail', 'fail', 'pass', 'not-checked'])), 'REJECTED', 'a free-pillar failure (change) rejects outright regardless of what rvol/news would have shown');
+  assert.strictEqual(gate.classifyGate(makeResult(['not-checked', 'not-checked', 'not-checked', 'not-checked', 'not-checked'])), 'REJECTED', 'price not-checked !== pass, so this trips the free-pillar-fail branch too -> REJECTED, not NOT_EVALUATED (that requires price/change to genuinely pass, see below)');
+  // Distinct from the free-pillar-fail cases above: price AND change both
+  // genuinely pass here, but nothing substantive was ever checkable —
+  // NOT_EVALUATED, not REJECTED, because nothing was actually judged.
+  // Synthetic (real gate.js's news pillar can never be 'not-checked' —
+  // see evaluatePillarNews, only pass/fail/fetch-failed — so this exact
+  // combination can't occur live today), but classifyGate is a pure
+  // function of whatever pillars array it's given, and must still
+  // classify this correctly rather than only handling inputs the live
+  // gate happens to produce.
+  assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'not-checked', 'not-checked', 'not-checked'])), 'NOT_EVALUATED', 'free pillars genuinely pass but nothing substantive was checkable -> NOT_EVALUATED, not a vacuous QUALIFIED and not REJECTED');
 }
 
 // 2026-09-04, gate-honesty pass: a REQUEST failure (rate-limited, network
@@ -504,7 +519,7 @@ async function testClassifyGateBlocksOnFetchFailed() {
   assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'fetch-failed', 'pass', 'not-checked'])), 'BLOCKED', 'rvol fetch failure blocks qualification outright — never QUALIFIED, never NEAR_MISS');
   assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'pass', 'fetch-failed', 'not-checked'])), 'BLOCKED', 'news fetch failure blocks the same way');
   assert.strictEqual(gate.classifyGate(makeResult(['pass', 'pass', 'fetch-failed', 'fail', 'not-checked'])), 'BLOCKED', 'BLOCKED takes priority even when the OTHER substantive pillar genuinely failed too — not a near-miss, we do not know enough to call it that');
-  assert.strictEqual(gate.classifyGate(makeResult(['fail', 'pass', 'fetch-failed', 'not-checked', 'not-checked'])), null, 'a fetch failure never overrides a real free-pillar disqualification — still plain null, not BLOCKED');
+  assert.strictEqual(gate.classifyGate(makeResult(['fail', 'pass', 'fetch-failed', 'not-checked', 'not-checked'])), 'REJECTED', 'a fetch failure never overrides a real free-pillar disqualification — still REJECTED, not BLOCKED (2026-09-05: was bare null, now a named tier)');
 }
 
 async function testEvaluateGateBatchThreadsFailedSymbolsToBlocked() {

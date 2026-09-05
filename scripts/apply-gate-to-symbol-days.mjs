@@ -123,9 +123,16 @@ async function main() {
 
   const qualified = results.filter(r => r.tier === 'QUALIFIED');
   const nearMiss = results.filter(r => r.tier === 'NEAR_MISS');
-  const disqualified = results.filter(r => r.tier === null);
+  // 2026-09-05: was `r.tier === null`, back when classifyGate returned bare
+  // null for two different cases (a genuine 2+-pillar reject, and nothing
+  // substantive being checkable at all) lumped into one `disqualified`
+  // bucket. gate-classifier.mjs now names both explicitly -- split here to
+  // match, so a symbol-day that was never evaluated isn't counted the same
+  // way as one that was evaluated and failed.
+  const disqualified = results.filter(r => r.tier === 'REJECTED');
+  const notEvaluated = results.filter(r => r.tier === 'NOT_EVALUATED');
   console.log(`[apply-gate] QUALIFIED: ${qualified.length} / ${results.length} (${(100 * qualified.length / results.length).toFixed(1)}%)`);
-  console.log(`[apply-gate] NEAR_MISS: ${nearMiss.length} | disqualified: ${disqualified.length}`);
+  console.log(`[apply-gate] NEAR_MISS: ${nearMiss.length} | disqualified (REJECTED): ${disqualified.length} | NOT_EVALUATED: ${notEvaluated.length}`);
   const failReasonCounts = {};
   for (const r of disqualified.concat(nearMiss)) {
     for (const id of ['price', 'change', 'rvol', 'news']) {
@@ -141,7 +148,7 @@ async function main() {
   console.log(`[apply-gate] triggers before gate: ${triggers.length} -> after (QUALIFIED symbol-days only): ${gatedTriggers.length}`);
 
   const outPath = path.join(runDir, 'gate_results.json');
-  writeFileSync(outPath, JSON.stringify({ results, qualifiedCount: qualified.length, nearMissCount: nearMiss.length, disqualifiedCount: disqualified.length, totalSymbolDays: results.length }, null, 2));
+  writeFileSync(outPath, JSON.stringify({ results, qualifiedCount: qualified.length, nearMissCount: nearMiss.length, disqualifiedCount: disqualified.length, notEvaluatedCount: notEvaluated.length, totalSymbolDays: results.length }, null, 2));
   const gatedTriggersPath = path.join(runDir, 'triggers_gated.json');
   writeFileSync(gatedTriggersPath, JSON.stringify(gatedTriggers, null, 2));
   console.log(`[apply-gate] wrote ${outPath} and ${gatedTriggersPath}`);

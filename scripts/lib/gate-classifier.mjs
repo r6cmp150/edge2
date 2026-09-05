@@ -12,17 +12,34 @@ export const NEWS_MAX_AGE_HOURS = 24;
 
 // classifyGate, ported verbatim from engines/warrior/gate.js -- same
 // two-stage logic (free pillars gate stage 2, never a plain fail-count),
-// so "QUALIFIED" here means exactly what it means in the live app.
+// so "QUALIFIED" here means exactly what it means in the live app. No
+// `fetch-failed` status exists in this approximation (it runs off
+// already-fetched historical bars, so there's no live fetch to fail) --
+// only 'BLOCKED' from the live vocabulary is inapplicable here.
+//
+// FIXED 2026-09-05 to match gate.js's own fix: this used to return bare
+// `null` for both the free-pillar-fail case and the final fallthrough
+// (which itself conflated "2+ substantive pillars genuinely failed" with
+// "nothing substantive was even checkable"). Confirmed this DIDN'T
+// corrupt the backtest's headline "410/6,255 QUALIFIED" figure --
+// apply-gate-to-symbol-days.mjs gives null its own named `disqualified`
+// bucket and computes the denominator from the full `results` array
+// before any tier filtering, so nothing was silently dropped the way
+// index.js's strict-equality UI buckets dropped it live. Fixed anyway,
+// for the same reason as the live gate: within `disqualified`, "really
+// failed" and "nothing to judge" were still indistinguishable, and any
+// future analysis of THAT breakdown would have inherited the gap.
 export function classifyGate(pillars) {
   const byId = {};
   pillars.forEach(p => { byId[p.id] = p; });
   const freePillarsPass = byId.price.status === 'pass' && byId.change.status === 'pass';
-  if (!freePillarsPass) return null;
+  if (!freePillarsPass) return 'REJECTED';
   const substantive = [byId.rvol, byId.news].filter(p => p.status !== 'not-checked');
+  if (substantive.length === 0) return 'NOT_EVALUATED';
   const substantiveFailed = substantive.filter(p => p.status === 'fail');
-  if (substantiveFailed.length === 0 && substantive.length > 0) return 'QUALIFIED';
+  if (substantiveFailed.length === 0) return 'QUALIFIED';
   if (substantiveFailed.length === 1) return 'NEAR_MISS';
-  return null;
+  return 'REJECTED';
 }
 
 // Computes all four pillars for one symbol-day given its day-D-own metrics

@@ -1390,9 +1390,28 @@ For Warrior, `signalSnapshot` holds the full gate result (§3 output shape) plus
 
 ### A prior worth recording before the signal log has enough data to settle it (2026-09-04)
 
-**Not a conclusion — written down now specifically so it can't later look
-fitted to data that hadn't arrived yet.** Two forward-test scans, one RVOL
-evaluated and one not:
+**UNVERIFIED as of 2026-09-05 — do not cite until recomputed, and it may
+not survive.** Both counts below were read off Warrior's live rendered
+UI (`index.js`'s three tier buckets), and `classifyGate` (`gate.js:392`)
+can return bare `null` for a candidate that genuinely failed two or more
+substantive pillars — a real, informative reject, not a missing case —
+and `index.js`'s bucket filters use strict string equality against
+`'BLOCKED'`, so a `null`-tier candidate is dropped from ALL THREE
+rendered buckets, not just miscategorized. Any such candidate in either
+scan below is missing from that scan's denominator (18/20 or 28), not
+merely misfiled. Checked whether this can be recomputed from anything
+already stored: it can't. `signal_log` did not exist yet at either
+timestamp, and the movers-snapshot capture log only holds raw
+screener output (ticker lists, basic stats), not per-candidate pillar
+results — there is no artifact anywhere that would let the two scans
+below be re-derived with the null-tier candidates restored. The prior is
+lost, not merely stale; it must be re-measured after `classifyGate` is
+fixed to stop returning bare `null` (see the Phase 7 signal-log design
+notes), using signal_log's own recorded tiers once enough mornings exist.
+
+**Not a conclusion even before this — written down now specifically so it
+can't later look fitted to data that hadn't arrived yet.** Two forward-test
+scans, one RVOL evaluated and one not:
 
 - **2026-09-02, closed market, RVOL structurally not-checked:** 12/28
   qualified (43%).
