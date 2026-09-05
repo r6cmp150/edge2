@@ -1,0 +1,49 @@
+-- Corrects a real defect found 2026-09-05, empirically, not by re-reading
+-- the code: trailing_stop_triggered is FALSE for all 37 migrated rows in
+-- trades_v2, not NULL as 003's own comment claimed ("left NULL by
+-- omission"). That comment was wrong. 003's INSERT never lists
+-- trailing_stop_triggered in its column list -- but 002 declared the
+-- column `boolean default false`, and omitting a column from an INSERT
+-- applies its DEFAULT, not NULL. The unknown/false distinction this
+-- field exists to preserve was destroyed at migration time, not just
+-- mis-read by the mapper (which has been fixed separately, in the same
+-- pass that found this, to stop assuming `!!row.trailing_stop_triggered`
+-- means "confirmed false").
+--
+-- Verified via direct query (not re-reading 002/003), same session:
+--   select trailing_stop_triggered, count(*) from trades_v2 group by 1;
+-- returned 37 rows, all `false`, zero `null` -- confirming the DEFAULT
+-- fired for every one of them, not a mix that a spot-check might have
+-- missed.
+--
+-- momentum_protection and catalyst_setup do NOT have this problem --
+-- checked the same way, not assumed clean by analogy: both were
+-- explicitly listed in 003's column list, both are copied from the old
+-- `trades` table's real historical values (catalyst_setup: 5 true / 32
+-- false, a genuine mix; momentum_protection: 37 false, confirmed to
+-- match the SAME distribution already present in the old `trades` table
+-- itself, i.e. real trading history, not a masked default). No fix
+-- needed for either.
+--
+-- STEP 1: reset the 37 already-migrated rows to the true unknown state.
+-- Safe to run exactly once, right now, because no trade has been
+-- recorded into trades_v2 since the migration -- every row currently in
+-- the table IS a migrated row. This statement must NOT be re-run after
+-- new trades exist (it would wipe real captured values back to null) --
+-- it has no re-run guard for that reason, unlike 003.
+update trades_v2 set trailing_stop_triggered = null;
+
+-- STEP 2: drop the column default so this can't happen again silently --
+-- any future insert that forgets to specify this column will now get a
+-- real NULL (correctly meaning "not captured"), not a false "confirmed
+-- not triggered." writeTradeToSupabase already sets this column
+-- explicitly on every new trade (app.js, trades_v2 cutover commit), so
+-- this only guards against a future insert path that doesn't.
+alter table trades_v2 alter column trailing_stop_triggered drop default;
+
+-- VERIFICATION: re-run the same query from above and confirm all 37 (or
+-- however many rows exist at the time) now show null, and that a fresh
+-- describe of the column shows no default:
+--   select trailing_stop_triggered, count(*) from trades_v2 group by 1;
+--   select column_default from information_schema.columns
+--     where table_name = 'trades_v2' and column_name = 'trailing_stop_triggered';
