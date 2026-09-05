@@ -616,14 +616,24 @@ async function testEvaluateGateBatchNeverCallsPerCandidate() {
 
 async function testRvolCheckableFlagReflectsSessionStructurally() {
   // Live-check finding (2026-08-26): outside regular session, RVOL is
-  // not-checked for every candidate, so a QUALIFIED tier there only
-  // means "cleared price+change+news" — RVOL, the most selective
-  // pillar, was never actually consulted. classifyGate is correct to
-  // still call that QUALIFIED (not-checked never counts against a
-  // candidate); what needed fixing was the render layer's aggregate
-  // label overclaiming. This test locks down the flag renderTab reads
-  // to build that caveat, and confirms it doesn't burn a request when
-  // the answer is already known.
+  // not-checked for every candidate.
+  //
+  // UPDATED 2026-09-05: this test used to assert the resulting tier was
+  // "unchanged" at QUALIFIED, on the theory that not-checked never
+  // counting against a candidate meant the caveat was purely a display
+  // concern. That was wrong, found live in the Phase 7 signal logger's
+  // first CLOSED-session dry run: with RVOL structurally not-checked AND
+  // no floatInput provided (so float also reads not-checked, "no
+  // EntityPublicFloat filing"), this candidate has exactly ONE checked
+  // substantive pillar (news) -- QUALIFIED on one pillar out of three is
+  // not a meaningfully evaluated candidate, it's not-checked wearing a
+  // pass's costume. See classifyGate's MINIMUM_SUBSTANTIVE_PILLARS_CHECKED
+  // comment for the full reasoning and the measured CLOSED-session data
+  // behind the floor of 2. This test locks down the flag renderTab reads
+  // to build the session caveat, and confirms it doesn't burn a request
+  // when the answer is already known -- the tier assertion below now
+  // reflects the corrected, evidence-floored behavior instead of the
+  // overclaiming one.
   const gate = await loadGate();
   const candidates = [{ symbol: 'A', price: 5, changePct: 20 }];
 
@@ -638,7 +648,7 @@ async function testRvolCheckableFlagReflectsSessionStructurally() {
   console.log('rvolCheckable outside session:', closedResult.rvolCheckable, '| tier:', closedResult.results[0].tier);
   assert.strictEqual(closedResult.rvolCheckable, false, 'RVOL is not checkable outside the regular session');
   assert.strictEqual(calledOutsideSession, false, 'must not spend an RVOL request when RVOL is already known to be unavailable this session');
-  assert.strictEqual(closedResult.results[0].tier, 'QUALIFIED', 'classification is unchanged — the caveat is a display concern (see gate.js comment on classifyGate)');
+  assert.strictEqual(closedResult.results[0].tier, 'NOT_EVALUATED', 'only 1 of 3 substantive pillars (news) was checkable -- below the evidence floor, this must not read as a meaningfully evaluated QUALIFIED');
 
   // OPEN but inside the first 15 minutes — same structural gate evaluatePillar3 checks itself.
   global.getPT = () => { const d = new Date(); d.setHours(6, 40, 0, 0); return d; }; // 10min after 6:30 open
@@ -653,6 +663,16 @@ async function testRvolCheckableFlagReflectsSessionStructurally() {
   const openResult = await gate.evaluateGateBatch(candidates, 'OPEN');
   assert.strictEqual(openResult.rvolCheckable, true, 'past the first 15 minutes of OPEN, RVOL is genuinely checkable');
   assert.strictEqual(calledInSession, true, 'RVOL fetchers must actually run once genuinely checkable');
+  // The positive case for the evidence floor: rvol is now genuinely
+  // checked (not just news), clearing the floor of 2 regardless of
+  // pass/fail -- must NOT read as NOT_EVALUATED just because it's a
+  // different session than the CLOSED case above. (Not asserting which
+  // of QUALIFIED/NEAR_MISS specifically -- evaluatePillar3's real RVOL
+  // formula isn't a flat todayVolume/avgDailyVolume ratio, and this
+  // test's mock data was never chosen to target a specific pass/fail
+  // outcome; the floor being cleared is what this assertion checks.)
+  console.log('open, past 15min, tier:', openResult.results[0].tier);
+  assert.notStrictEqual(openResult.results[0].tier, 'NOT_EVALUATED', 'rvol is now genuinely checked alongside news, clearing the evidence floor -- must not read as insufficiently evaluated');
 }
 
 async function testDiagnoseGateCostShapeAndStrategySelection() {

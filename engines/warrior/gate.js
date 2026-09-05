@@ -456,6 +456,76 @@ function _elapsedSessionMinutes() {
 // (couldn't verify) / REJECTED (verified, failed) / NOT_EVALUATED
 // (nothing to verify) -- five real outcomes, no bare null anywhere, and
 // no tier's meaning stretched to cover a case it didn't originally mean.
+//
+// MINIMUM-EVIDENCE FLOOR (2026-09-05, found live, one commit after the
+// null-tier fix above -- caused by that fix, not a separate bug): the
+// null-tier fix correctly promoted "nothing substantive checkable" to
+// its own NOT_EVALUATED tier, but left QUALIFIED/NEAR_MISS reachable off
+// however few substantive pillars happened to BE checkable, with no
+// floor on that count. GPRO, a ~131M-share stock, reached QUALIFIED in
+// the Phase 7 signal logger's post-staleness-fix dry run on the
+// strength of exactly ONE checked substantive pillar (news, which
+// passed) -- rvol was structurally not-checked (CLOSED session, RVOL is
+// never checkable outside OPEN-past-open) and float was correctly
+// not-checked (the very staleness fallback just added). One pillar
+// passing produced the same tier a real 3-pillar clearance would have.
+//
+// Generalizes badly: in ANY non-OPEN session, RVOL is ALWAYS
+// structurally not-checked, and float frequently is too (no filing, or
+// stale-with-no-volume-to-check-instead -- the same condition a
+// non-OPEN session already creates). A scheduled logger running
+// PRE/CLOSED/AH would routinely produce QUALIFIED rows carrying almost
+// no evidence -- not-checked wearing a pass's costume, this project's
+// oldest failure mode, reintroduced by the very fix meant to close a
+// different instance of it.
+//
+// Measured directly from the two real CLOSED-session dry runs before
+// proposing a number (not picked by feel): every one of 23 candidates,
+// both runs, had at most 1 of 3 substantive pillars checked (rvol always
+// not-checked outside OPEN; float not-checked for all 23 post-fix, since
+// none had a sub-180-day filing). Zero CLOSED-session candidates in
+// either run reached 2+. A floor of "at least 2 of 3 substantive pillars
+// checked" (MINIMUM_SUBSTANTIVE_PILLARS_CHECKED below) therefore means,
+// as measured: CLOSED sessions cannot produce QUALIFIED or NEAR_MISS at
+// all today -- not a bug to engineer around, the correct and honest
+// conclusion given what's actually checkable in that session. An
+// OPEN-session, RVOL-checkable scan clears the floor easily (rvol+news
+// at minimum, +float whenever a filing exists) -- untested against real
+// OPEN-session data as of this fix (market was closed both times this
+// was measured), flagged as the one gap in this evidence rather than
+// assumed clean by extrapolation.
+//
+// 2, not 3: requiring ALL THREE would make QUALIFIED nearly unreachable
+// even in a healthy OPEN session, since only ~52% of gate-qualified
+// candidates have any usable float coverage at all (Phase 6's own
+// measured coverage) -- a single structural gap (no float filing) is
+// normal and shouldn't alone block a verdict; two simultaneous gaps
+// (e.g. non-OPEN session AND no float filing) is what this floor
+// actually catches, which is exactly the CLOSED-session case measured
+// above.
+//
+// Applies identically to NEAR_MISS, not just QUALIFIED -- checked
+// directly, not assumed clean by only fixing the case that was caught
+// live: 10 of the 23 CLOSED-session candidates read NEAR_MISS on
+// checked=1 (news alone, failed) in the same dry run. "Near a miss"
+// implies a real, mostly-complete evaluation with one thing wrong --
+// one checked pillar failing isn't that, it's the same insufficient-
+// evidence case QUALIFIED had, just landing on the failure side instead
+// of the pass side. Below the floor, the honest tier is NOT_EVALUATED
+// regardless of which way the few checked pillars went.
+//
+// NOT applied to scripts/lib/gate-classifier.mjs (the backtest
+// approximation): checked directly rather than assumed to need the same
+// fix. That classifier has no session concept and only two possible
+// substantive pillars (rvol, news, no float) -- both are `not-checked`
+// ONLY when free pillars already failed (which routes to REJECTED before
+// reaching this logic), so once execution reaches the substantive check
+// there, both are essentially always attempted. The evidence-floor gap
+// is a live-gate, session-dependent phenomenon that doesn't have an
+// analog in a lagless daily-bar retrospective; retrofitting the same
+// floor there would be an unverified assumption, not a checked fix.
+const MINIMUM_SUBSTANTIVE_PILLARS_CHECKED = 2; // out of 3: rvol, news, float
+
 function classifyGate(gateResult) {
   const byId = {};
   gateResult.pillars.forEach(p => { byId[p.id] = p; });
@@ -470,7 +540,7 @@ function classifyGate(gateResult) {
   if (anyFetchFailed) return 'BLOCKED';
 
   const substantive = [byId.rvol, byId.news, byId.float].filter(p => p.status !== 'not-checked');
-  if (substantive.length === 0) return 'NOT_EVALUATED'; // nothing substantive was even checkable this scan
+  if (substantive.length < MINIMUM_SUBSTANTIVE_PILLARS_CHECKED) return 'NOT_EVALUATED'; // too little evidence to call QUALIFIED or NEAR_MISS, however the few checked pillars went -- subsumes the old substantive.length===0 case (0 < 2)
 
   const substantiveFailed = substantive.filter(p => p.status === 'fail');
   if (substantiveFailed.length === 0) return 'QUALIFIED';
