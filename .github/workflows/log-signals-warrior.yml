@@ -1,0 +1,66 @@
+name: Log Warrior signals
+
+# Phase 7's actual deliverable -- see scripts/log-signals-warrior.mjs's
+# header for the full design (universe provenance, scan completeness,
+# dry-run-by-default).
+#
+# workflow_dispatch ONLY for now, deliberately -- no schedule yet. A
+# schedule means picking real cron times staggered against
+# capture-movers-snapshot.yml's three daily runs (constraint: never the
+# same minute, since these are separate processes with no shared
+# rate-limit queue), which is a decision for after the dry-run output has
+# actually been reviewed, not before. Manual trigger only until then.
+#
+# dry_run input defaults to true. The workflow REFUSES to pass --write
+# unless dry_run is explicitly set to 'false' -- this is the one
+# workflow in this repo where the default and the safe path must be the
+# same value, since signal_log is insert-only for anon (no UPDATE, no
+# DELETE) and a wrong row has no cleanup path short of the SQL editor.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true = compute and log only, write nothing to Supabase. Must be explicitly set to false to write for real."
+        required: true
+        default: "true"
+      session:
+        description: "Override the detected market session (OPEN/PRE/AH/CLOSED). Leave blank to use the real current session."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  log-signals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run logger
+        env:
+          ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+            ARGS="--write"
+          fi
+          if [ -n "${{ github.event.inputs.session }}" ]; then
+            ARGS="$ARGS --session=${{ github.event.inputs.session }}"
+          fi
+          echo "Running: node scripts/log-signals-warrior.mjs $ARGS"
+          node scripts/log-signals-warrior.mjs $ARGS
+
+      - name: Commit dry-run artifact, if one was written
+        if: always()
+        run: |
+          git config user.name "log-signals-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/signal-log-dry-runs/ 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "Signal log dry run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git diff --cached --quiet || git push
