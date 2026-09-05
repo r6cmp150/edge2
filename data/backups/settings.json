@@ -1,0 +1,13 @@
+[
+  {
+    "id": 3,
+    "budget": 1500,
+    "include_under2": true,
+    "show_watch": true,
+    "min_volume": 100000,
+    "force_pre_market_mode": false,
+    "created_at": "2026-08-17T00:25:38.767963+00:00",
+    "updated_at": "2026-08-28T04:07:41.326+00:00",
+    "disable_macro_overlay": true
+  }
+]

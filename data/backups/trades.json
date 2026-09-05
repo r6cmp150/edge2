@@ -1,0 +1,3052 @@
+[
+  {
+    "id": 14,
+    "ticker": "BITO",
+    "company": "BITO",
+    "buy_date": "2026-08-17",
+    "buy_time": "06:58",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-17",
+    "sell_time": "09:41",
+    "sell_day_of_week": "Monday",
+    "shares": 30,
+    "buy_price": 8.58,
+    "sell_price": 8.66,
+    "pnl_dollars": 2.400000000000002,
+    "pnl_pct": 0.9324009324009332,
+    "signal_score": 41,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 43.41563786008231,
+    "volume_ratio_at_buy": 0.0251619176128618,
+    "risk_score": 4,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": true,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": null,
+    "distance_from_target": 1,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-17T16:41:59.207655+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 70,
+    "top_exit_factors_at_sale": [
+      "Current score 45 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Score improved from 41 → 45"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 43.41563786008231,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 10.8,
+    "best_exit_date": "2026-08-24",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 10.67,
+    "price_momentum_pts": null,
+    "vol_spike_pts": null,
+    "rsi_pts": null,
+    "ma_pts": null,
+    "vol_build_pts": null,
+    "mean_reversion_pts": null,
+    "cons_up_days": null,
+    "cons_up_pts": null,
+    "rel_strength_pts": null,
+    "macro_adjustment_pts": null,
+    "ma_pct_at_buy": null,
+    "raw_score_at_buy": null,
+    "full_ure_factors_at_sale": null,
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 13,
+    "ticker": "PTEN",
+    "company": "PTEN",
+    "buy_date": "2026-08-17",
+    "buy_time": "07:29",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-17",
+    "sell_time": "07:33",
+    "sell_day_of_week": "Monday",
+    "shares": 28,
+    "buy_price": 11.64,
+    "sell_price": 11.68,
+    "pnl_dollars": 1.1199999999999761,
+    "pnl_pct": 0.34364261168384147,
+    "signal_score": 38,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 43.76528117359414,
+    "volume_ratio_at_buy": 0.12237660391410012,
+    "risk_score": 3,
+    "duration_classification": "WEEK",
+    "price_tier": "$10–$20",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": null,
+    "distance_from_target": 8.9,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-17T14:33:29.410343+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 65,
+    "top_exit_factors_at_sale": [
+      "Current score 38 — weak signal",
+      "Volume fading at 0.1x"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "RSI neutral-bullish at 44"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": -25,
+    "peak_rsi_during_hold": 43.76528117359414,
+    "top_peak_risk_factors_at_sale": [
+      "20% above 20-day MA — severe overextension"
+    ],
+    "sell_timing_resolved": true,
+    "best_exit_price": 12.54,
+    "best_exit_date": "2026-08-21",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 11.71,
+    "price_momentum_pts": null,
+    "vol_spike_pts": null,
+    "rsi_pts": null,
+    "ma_pts": null,
+    "vol_build_pts": null,
+    "mean_reversion_pts": null,
+    "cons_up_days": null,
+    "cons_up_pts": null,
+    "rel_strength_pts": null,
+    "macro_adjustment_pts": null,
+    "ma_pct_at_buy": null,
+    "raw_score_at_buy": null,
+    "full_ure_factors_at_sale": null,
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 17,
+    "ticker": "ALT",
+    "company": "ALT",
+    "buy_date": "2026-08-17",
+    "buy_time": "09:32",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-18",
+    "sell_time": "12:42",
+    "sell_day_of_week": "Tuesday",
+    "shares": 80,
+    "buy_price": 2.98,
+    "sell_price": 3,
+    "pnl_dollars": 1.6000000000000014,
+    "pnl_pct": 0.671140939597316,
+    "signal_score": 41,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 54.70588235294118,
+    "volume_ratio_at_buy": 0.6215682372435498,
+    "risk_score": 6,
+    "duration_classification": "3-DAY",
+    "price_tier": "$1–$3",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 10,
+    "groq_at_purchase": null,
+    "distance_from_target": 8.7,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-18T19:42:52.45847+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 35,
+    "top_exit_factors_at_sale": [
+      "Current score 24 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 2-4 day window",
+      "RSI neutral-bullish at 55"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 54.70588235294118,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 3.235,
+    "best_exit_date": "2026-08-21",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 3.195,
+    "price_momentum_pts": null,
+    "vol_spike_pts": null,
+    "rsi_pts": null,
+    "ma_pts": null,
+    "vol_build_pts": null,
+    "mean_reversion_pts": null,
+    "cons_up_days": null,
+    "cons_up_pts": null,
+    "rel_strength_pts": null,
+    "macro_adjustment_pts": null,
+    "ma_pct_at_buy": null,
+    "raw_score_at_buy": null,
+    "full_ure_factors_at_sale": null,
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 16,
+    "ticker": "KEEL",
+    "company": "KEEL",
+    "buy_date": "2026-08-17",
+    "buy_time": "14:06",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-18",
+    "sell_time": "11:30",
+    "sell_day_of_week": "Tuesday",
+    "shares": 50,
+    "buy_price": 3.83,
+    "sell_price": 3.2,
+    "pnl_dollars": -31.499999999999993,
+    "pnl_pct": -16.44908616187989,
+    "signal_score": 55,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 19.86842105263159,
+    "volume_ratio_at_buy": 1.0705806285137196,
+    "risk_score": 10,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": null,
+    "distance_from_target": 41.1,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-18T18:30:56.085976+00:00",
+    "unified_recommendation_at_sale": "CONSIDER SELLING",
+    "unified_composite_at_sale": 0,
+    "top_exit_factors_at_sale": [
+      "Down 16% from purchase"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Early in hold window"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 19.86842105263159,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 3.91,
+    "best_exit_date": "2026-08-17",
+    "best_exit_timing": "BEFORE",
+    "price_at_plus5_days": 3.36,
+    "price_momentum_pts": null,
+    "vol_spike_pts": null,
+    "rsi_pts": null,
+    "ma_pts": null,
+    "vol_build_pts": null,
+    "mean_reversion_pts": null,
+    "cons_up_days": null,
+    "cons_up_pts": null,
+    "rel_strength_pts": null,
+    "macro_adjustment_pts": null,
+    "ma_pct_at_buy": null,
+    "raw_score_at_buy": null,
+    "full_ure_factors_at_sale": null,
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 15,
+    "ticker": "BTDR",
+    "company": "BTDR",
+    "buy_date": "2026-08-17",
+    "buy_time": "07:12",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-18",
+    "sell_time": "10:56",
+    "sell_day_of_week": "Tuesday",
+    "shares": 30,
+    "buy_price": 9.42,
+    "sell_price": 8.74,
+    "pnl_dollars": -20.39999999999999,
+    "pnl_pct": -7.2186836518046675,
+    "signal_score": 52,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 58.77016129032259,
+    "volume_ratio_at_buy": 0.5439256546318025,
+    "risk_score": 5,
+    "duration_classification": "3-DAY",
+    "price_tier": "$4–$9",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 5,
+    "groq_at_purchase": null,
+    "distance_from_target": 9.4,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-18T17:56:19.622587+00:00",
+    "unified_recommendation_at_sale": "SELL NOW — Stop-loss hit",
+    "unified_composite_at_sale": null,
+    "top_exit_factors_at_sale": [
+      "Stop-loss breach"
+    ],
+    "top_hold_factors_at_sale": [],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 58.77016129032259,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 11.785,
+    "best_exit_date": "2026-08-21",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 11.09,
+    "price_momentum_pts": null,
+    "vol_spike_pts": null,
+    "rsi_pts": null,
+    "ma_pts": null,
+    "vol_build_pts": null,
+    "mean_reversion_pts": null,
+    "cons_up_days": null,
+    "cons_up_pts": null,
+    "rel_strength_pts": null,
+    "macro_adjustment_pts": null,
+    "ma_pct_at_buy": null,
+    "raw_score_at_buy": null,
+    "full_ure_factors_at_sale": null,
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 20,
+    "ticker": "MSTU",
+    "company": "MSTU",
+    "buy_date": "2026-08-17",
+    "buy_time": "10:10",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-19",
+    "sell_time": "07:27",
+    "sell_day_of_week": "Wednesday",
+    "shares": 100,
+    "buy_price": 1.88,
+    "sell_price": 1.92,
+    "pnl_dollars": 4.0000000000000036,
+    "pnl_pct": 2.1276595744680873,
+    "signal_score": 55,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 33.68421052631578,
+    "volume_ratio_at_buy": 1.2805381206419761,
+    "risk_score": 8,
+    "duration_classification": "WEEK",
+    "price_tier": "$1–$3",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": null,
+    "distance_from_target": 15.7,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-19T14:27:27.873753+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 45,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Current score 52 — support signal"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 50.212765957446805,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 31.19,
+    "best_exit_date": "2026-08-24",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 29.185,
+    "price_momentum_pts": null,
+    "vol_spike_pts": null,
+    "rsi_pts": null,
+    "ma_pts": null,
+    "vol_build_pts": null,
+    "mean_reversion_pts": null,
+    "cons_up_days": null,
+    "cons_up_pts": null,
+    "rel_strength_pts": null,
+    "macro_adjustment_pts": null,
+    "ma_pct_at_buy": null,
+    "raw_score_at_buy": null,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "Current score 52 — support signal",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 18,
+    "ticker": "UNG",
+    "company": "UNG",
+    "buy_date": "2026-08-18",
+    "buy_time": "11:45",
+    "buy_day_of_week": "Tuesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-19",
+    "sell_time": "06:55",
+    "sell_day_of_week": "Wednesday",
+    "shares": 30,
+    "buy_price": 10.07,
+    "sell_price": 10.29,
+    "pnl_dollars": 6.599999999999966,
+    "pnl_pct": 2.1847070506454704,
+    "signal_score": 52,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 34.400000000000034,
+    "volume_ratio_at_buy": 1.996041341275867,
+    "risk_score": 3,
+    "duration_classification": "WEEK",
+    "price_tier": "$10–$20",
+    "macro_condition": "TECH_ROTATION_OUT",
+    "catalyst_setup": false,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": null,
+    "distance_from_target": 8.2,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-19T13:55:14.578435+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 55,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Near target — 8% away"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 34.400000000000034,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 10.37,
+    "best_exit_date": "2026-08-26",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 10.355,
+    "price_momentum_pts": null,
+    "vol_spike_pts": null,
+    "rsi_pts": null,
+    "ma_pts": null,
+    "vol_build_pts": null,
+    "mean_reversion_pts": null,
+    "cons_up_days": null,
+    "cons_up_pts": null,
+    "rel_strength_pts": null,
+    "macro_adjustment_pts": null,
+    "ma_pct_at_buy": null,
+    "raw_score_at_buy": null,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "Near target — 8% away",
+        "points": 15
+      },
+      {
+        "name": "Price tier $10–$20 (best win rate)",
+        "points": 10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 19,
+    "ticker": "NUVB",
+    "company": "NUVB",
+    "buy_date": "2026-08-18",
+    "buy_time": "16:47",
+    "buy_day_of_week": "Tuesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-19",
+    "sell_time": "06:59",
+    "sell_day_of_week": "Wednesday",
+    "shares": 35,
+    "buy_price": 6.98,
+    "sell_price": 7.2,
+    "pnl_dollars": 7.699999999999991,
+    "pnl_pct": 3.1518624641833775,
+    "signal_score": 66,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 38.715953307393015,
+    "volume_ratio_at_buy": 1.643295469382426,
+    "risk_score": 4,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "TECH_ROTATION_OUT",
+    "catalyst_setup": false,
+    "sub10_adjustment": 10,
+    "groq_at_purchase": null,
+    "distance_from_target": 12.6,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-19T13:59:14.840437+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 45,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "RSI neutral-bullish at 39"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 38.715953307393015,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 7.58,
+    "best_exit_date": "2026-08-19",
+    "best_exit_timing": "ON",
+    "price_at_plus5_days": 7,
+    "price_momentum_pts": null,
+    "vol_spike_pts": null,
+    "rsi_pts": null,
+    "ma_pts": null,
+    "vol_build_pts": null,
+    "mean_reversion_pts": null,
+    "cons_up_days": null,
+    "cons_up_pts": null,
+    "rel_strength_pts": null,
+    "macro_adjustment_pts": null,
+    "ma_pct_at_buy": null,
+    "raw_score_at_buy": null,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 39",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 23,
+    "ticker": "ALT",
+    "company": "ALT",
+    "buy_date": "2026-08-19",
+    "buy_time": "07:30",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-19",
+    "sell_time": "08:16",
+    "sell_day_of_week": "Wednesday",
+    "shares": 80,
+    "buy_price": 3.06,
+    "sell_price": 3.1,
+    "pnl_dollars": 3.200000000000003,
+    "pnl_pct": 1.3071895424836613,
+    "signal_score": 52,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 52.10526315789473,
+    "volume_ratio_at_buy": 0.733188213531643,
+    "risk_score": 6,
+    "duration_classification": "3-DAY",
+    "price_tier": "$4–$9",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 10,
+    "groq_at_purchase": null,
+    "distance_from_target": 7.5,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-19T15:16:34.841749+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 75,
+    "top_exit_factors_at_sale": [
+      "Current score 48 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 2-4 day window",
+      "RSI neutral-bullish at 52"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 52.10526315789473,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 3.235,
+    "best_exit_date": "2026-08-21",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 3.105,
+    "price_momentum_pts": 10,
+    "vol_spike_pts": 15,
+    "rsi_pts": 15,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 3.5856573705179287,
+    "raw_score_at_buy": 75,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 2-4 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 52",
+        "points": 15
+      },
+      {
+        "name": "Current score 48 — weak signal",
+        "points": -10
+      },
+      {
+        "name": "Quiet accumulation at 0.8x",
+        "points": 10
+      },
+      {
+        "name": "Above 20-day MA",
+        "points": 15
+      },
+      {
+        "name": "Near target — 7% away",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 21,
+    "ticker": "AMC",
+    "company": "AMC Entertainment",
+    "buy_date": "2026-08-19",
+    "buy_time": "07:14",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-19",
+    "sell_time": "07:28",
+    "sell_day_of_week": "Wednesday",
+    "shares": 100,
+    "buy_price": 2.48,
+    "sell_price": 2.5,
+    "pnl_dollars": 2.0000000000000018,
+    "pnl_pct": 0.8064516129032264,
+    "signal_score": 52,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 53.12499999999999,
+    "volume_ratio_at_buy": 0.07550094075594722,
+    "risk_score": 7,
+    "duration_classification": "3-DAY",
+    "price_tier": "$1–$3",
+    "macro_condition": "TECH_ROTATION_OUT",
+    "catalyst_setup": false,
+    "sub10_adjustment": 10,
+    "groq_at_purchase": null,
+    "distance_from_target": 11.4,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-19T14:28:43.118831+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 65,
+    "top_exit_factors_at_sale": [
+      "Volume fading at 0.1x"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 2-4 day window",
+      "RSI neutral-bullish at 53"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": -15,
+    "peak_rsi_during_hold": 53.12499999999999,
+    "top_peak_risk_factors_at_sale": [
+      "19% above 20-day MA — moderate overextension"
+    ],
+    "sell_timing_resolved": true,
+    "best_exit_price": 2.755,
+    "best_exit_date": "2026-08-24",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 2.685,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 0,
+    "rsi_pts": 15,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 19.37072174852885,
+    "raw_score_at_buy": 75,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 2-4 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 53",
+        "points": 15
+      },
+      {
+        "name": "Current score 52 — support signal",
+        "points": 15
+      },
+      {
+        "name": "Volume fading at 0.1x",
+        "points": -10
+      },
+      {
+        "name": "Above 20-day MA",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": [
+      {
+        "name": "19% above 20-day MA — moderate overextension",
+        "points": -15
+      }
+    ]
+  },
+  {
+    "id": 27,
+    "ticker": "RR",
+    "company": "RR",
+    "buy_date": "2026-08-19",
+    "buy_time": "13:45",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-21",
+    "sell_time": "06:44",
+    "sell_day_of_week": "Friday",
+    "shares": 150,
+    "buy_price": 1.65,
+    "sell_price": 1.67,
+    "pnl_dollars": 3.0000000000000027,
+    "pnl_pct": 1.2121212121212133,
+    "signal_score": 59,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 36.41304347826086,
+    "volume_ratio_at_buy": 0.7239623947941596,
+    "risk_score": 7,
+    "duration_classification": "WEEK",
+    "price_tier": "$1–$3",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": true,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": null,
+    "distance_from_target": 12.4,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-21T13:44:50.96425+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 35,
+    "top_exit_factors_at_sale": [
+      "Current score 59 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "RSI neutral-bullish at 36"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 36.41304347826086,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 1.99,
+    "best_exit_date": "2026-08-25",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 0,
+    "vol_spike_pts": 15,
+    "rsi_pts": 15,
+    "ma_pts": 0,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 20,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 10,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -14.860480207657382,
+    "raw_score_at_buy": 86,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 36",
+        "points": 15
+      },
+      {
+        "name": "Current score 59 — weak signal",
+        "points": -10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 28,
+    "ticker": "BBAI",
+    "company": "BBAI",
+    "buy_date": "2026-08-20",
+    "buy_time": "07:31",
+    "buy_day_of_week": "Thursday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-21",
+    "sell_time": "06:46",
+    "sell_day_of_week": "Friday",
+    "shares": 75,
+    "buy_price": 3.08,
+    "sell_price": 3.2,
+    "pnl_dollars": 9.000000000000007,
+    "pnl_pct": 3.8961038961038996,
+    "signal_score": 45,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 31.496062992125985,
+    "volume_ratio_at_buy": 0.1174337446600728,
+    "risk_score": 6,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH",
+    "catalyst_setup": false,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": "REACH TARGET: 12% likely",
+    "distance_from_target": 6.8,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-21T13:46:01.654568+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 35,
+    "top_exit_factors_at_sale": [
+      "Current score 45 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Near target — 7% away"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 31.496062992125985,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 3.275,
+    "best_exit_date": "2026-08-27",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 0,
+    "vol_spike_pts": 0,
+    "rsi_pts": 10,
+    "ma_pts": 0,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 20,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 0,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -11.088695150947485,
+    "raw_score_at_buy": 45,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "Current score 45 — weak signal",
+        "points": -10
+      },
+      {
+        "name": "Near target — 7% away",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 24,
+    "ticker": "ABR",
+    "company": "ABR",
+    "buy_date": "2026-08-19",
+    "buy_time": "08:19",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-19",
+    "sell_time": "09:44",
+    "sell_day_of_week": "Wednesday",
+    "shares": 50,
+    "buy_price": 5.19,
+    "sell_price": 5.17,
+    "pnl_dollars": -1.000000000000023,
+    "pnl_pct": -0.38535645472062546,
+    "signal_score": 62,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 47.72727272727274,
+    "volume_ratio_at_buy": 0.7610895201097457,
+    "risk_score": 4,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 10,
+    "groq_at_purchase": null,
+    "distance_from_target": 4.8,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-19T16:44:39.792282+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 60,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "RSI neutral-bullish at 48"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 47.72727272727274,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 5.285,
+    "best_exit_date": "2026-08-21",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 5.135,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 15,
+    "rsi_pts": 15,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 1.4648437500000036,
+    "raw_score_at_buy": 90,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 48",
+        "points": 15
+      },
+      {
+        "name": "Current score 62 — support signal",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 30,
+    "ticker": "ACDC",
+    "company": "ACDC",
+    "buy_date": "2026-08-21",
+    "buy_time": "16:39",
+    "buy_day_of_week": "Friday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-25",
+    "sell_time": "06:58",
+    "sell_day_of_week": "Tuesday",
+    "shares": 50,
+    "buy_price": 4.82,
+    "sell_price": 4.86,
+    "pnl_dollars": 2.0000000000000018,
+    "pnl_pct": 0.8298755186721999,
+    "signal_score": 75,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 33.56890459363957,
+    "volume_ratio_at_buy": 1.6134250056010908,
+    "risk_score": 5,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "BROAD_RALLY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 10,
+    "groq_at_purchase": null,
+    "distance_from_target": 9.4,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-25T13:58:24.885798+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 50,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Current score 75 — support signal"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 59.36507936507937,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 5.38,
+    "best_exit_date": "2026-08-27",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 5.145,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 10,
+    "ma_pts": 0,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -11.008539118393713,
+    "raw_score_at_buy": 75,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Current score 75 — support signal",
+        "points": 15
+      },
+      {
+        "name": "Near target — 9% away",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 31,
+    "ticker": "PACB",
+    "company": "PACB",
+    "buy_date": "2026-08-25",
+    "buy_time": "16:27",
+    "buy_day_of_week": "Tuesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-26",
+    "sell_time": "06:55",
+    "sell_day_of_week": "Wednesday",
+    "shares": 150,
+    "buy_price": 1.51,
+    "sell_price": 1.52,
+    "pnl_dollars": 1.5000000000000013,
+    "pnl_pct": 0.6622516556291397,
+    "signal_score": 90,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 61.194029850746276,
+    "volume_ratio_at_buy": 1.572730658136435,
+    "risk_score": 7,
+    "duration_classification": "3-DAY",
+    "price_tier": "$1–$3",
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY",
+    "catalyst_setup": false,
+    "sub10_adjustment": -10,
+    "groq_at_purchase": null,
+    "distance_from_target": 10.8,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-26T13:55:25.487827+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 95,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Within intended 2-4 day window",
+      "RSI in sweet spot at 61"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": -15,
+    "peak_rsi_during_hold": 70.2857142857143,
+    "top_peak_risk_factors_at_sale": [
+      "19% above 20-day MA — moderate overextension"
+    ],
+    "sell_timing_resolved": true,
+    "best_exit_price": 1.605,
+    "best_exit_date": "2026-08-26",
+    "best_exit_timing": "ON",
+    "price_at_plus5_days": 1.315,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 1,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 19.332679097154077,
+    "raw_score_at_buy": 90,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 2-4 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI in sweet spot at 61",
+        "points": 20
+      },
+      {
+        "name": "Current score 90 — support signal",
+        "points": 15
+      },
+      {
+        "name": "Healthy volume 1.6x",
+        "points": 15
+      },
+      {
+        "name": "Above 20-day MA",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": [
+      {
+        "name": "19% above 20-day MA — moderate overextension",
+        "points": -15
+      }
+    ]
+  },
+  {
+    "id": 32,
+    "ticker": "OFAL",
+    "company": "OFAL",
+    "buy_date": "2026-08-26",
+    "buy_time": "07:15",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-26",
+    "sell_time": "11:15",
+    "sell_day_of_week": "Wednesday",
+    "shares": 300,
+    "buy_price": 0.97,
+    "sell_price": 0.98,
+    "pnl_dollars": 3.0000000000000027,
+    "pnl_pct": 1.0309278350515474,
+    "signal_score": 90,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 53.22527015793849,
+    "volume_ratio_at_buy": 1.00805216806819,
+    "risk_score": 8,
+    "duration_classification": "3-DAY",
+    "price_tier": "$1–$3",
+    "macro_condition": "GEOPOLITICAL",
+    "catalyst_setup": false,
+    "sub10_adjustment": 10,
+    "groq_at_purchase": null,
+    "distance_from_target": 34.6,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-26T18:15:44.720872+00:00",
+    "unified_recommendation_at_sale": "CONSIDER SELLING",
+    "unified_composite_at_sale": 5,
+    "top_exit_factors_at_sale": [
+      "Current score 35 — weak signal",
+      "Score dropped from 90 → 35"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 2-4 day window",
+      "RSI neutral-bullish at 53"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 54.35022493846023,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 0.9645,
+    "best_exit_date": "2026-08-26",
+    "best_exit_timing": "ON",
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 15,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 1,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 17.265018942810755,
+    "raw_score_at_buy": 90,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 2-4 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 53",
+        "points": 15
+      },
+      {
+        "name": "Current score 35 — weak signal",
+        "points": -25
+      },
+      {
+        "name": "Score dropped from 90 → 35",
+        "points": -15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 34,
+    "ticker": "AHCO",
+    "company": "AHCO",
+    "buy_date": "2026-08-27",
+    "buy_time": "06:57",
+    "buy_day_of_week": "Thursday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-27",
+    "sell_time": "12:21",
+    "sell_day_of_week": "Thursday",
+    "shares": 50,
+    "buy_price": 5.62,
+    "sell_price": 5.72,
+    "pnl_dollars": 4.999999999999982,
+    "pnl_pct": 1.7793594306049758,
+    "signal_score": 105,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 42.528735632183924,
+    "volume_ratio_at_buy": 1.2646928750200623,
+    "risk_score": 4,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH",
+    "catalyst_setup": true,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": null,
+    "distance_from_target": 2.8,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-27T19:21:30.492281+00:00",
+    "unified_recommendation_at_sale": "HOLD",
+    "unified_composite_at_sale": 20,
+    "top_exit_factors_at_sale": [
+      "Current score 25 — weak signal",
+      "Score dropped from 105 → 25"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "RSI neutral-bullish at 43"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 50.97613882863341,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 6.14,
+    "best_exit_date": "2026-09-02",
+    "best_exit_timing": "AFTER",
+    "price_at_plus5_days": 6.12,
+    "price_momentum_pts": 10,
+    "vol_spike_pts": 20,
+    "rsi_pts": 15,
+    "ma_pts": 0,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 20,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -13.24008430733854,
+    "raw_score_at_buy": 105,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 43",
+        "points": 15
+      },
+      {
+        "name": "Current score 25 — weak signal",
+        "points": -25
+      },
+      {
+        "name": "Score dropped from 105 → 25",
+        "points": -15
+      },
+      {
+        "name": "Near target — 3% away",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 33,
+    "ticker": "BTDR",
+    "company": "BTDR",
+    "buy_date": "2026-08-21",
+    "buy_time": "06:48",
+    "buy_day_of_week": "Friday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-27",
+    "sell_time": "07:27",
+    "sell_day_of_week": "Thursday",
+    "shares": 25,
+    "buy_price": 11.61,
+    "sell_price": 11.8,
+    "pnl_dollars": 4.750000000000032,
+    "pnl_pct": 1.636520241171415,
+    "signal_score": 70,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 64.78034251675355,
+    "volume_ratio_at_buy": 0.4091105051325917,
+    "risk_score": 4,
+    "duration_classification": "3-DAY",
+    "price_tier": "$10–$20",
+    "macro_condition": "BROAD_RALLY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": null,
+    "distance_from_target": 10.7,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-27T14:27:12.922917+00:00",
+    "unified_recommendation_at_sale": "SELL SOON",
+    "unified_composite_at_sale": -35,
+    "top_exit_factors_at_sale": [
+      "Past intended hold window",
+      "Current score 25 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "RSI in sweet spot at 65",
+      "Price tier $10–$20 (best win rate)"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 64.78034251675355,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 11.9,
+    "best_exit_date": "2026-08-27",
+    "best_exit_timing": "ON",
+    "price_at_plus5_days": 11.525,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 0,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 42.0298689423956,
+    "raw_score_at_buy": 70,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Past intended hold window",
+        "points": -25
+      },
+      {
+        "name": "RSI in sweet spot at 65",
+        "points": 20
+      },
+      {
+        "name": "Current score 25 — weak signal",
+        "points": -25
+      },
+      {
+        "name": "Score dropped from 70 → 25",
+        "points": -15
+      },
+      {
+        "name": "Price tier $10–$20 (best win rate)",
+        "points": 10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 29,
+    "ticker": "ABR",
+    "company": "ABR",
+    "buy_date": "2026-08-19",
+    "buy_time": "14:14",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-21",
+    "sell_time": "06:57",
+    "sell_day_of_week": "Friday",
+    "shares": 50,
+    "buy_price": 5.17,
+    "sell_price": 5.2,
+    "pnl_dollars": 1.5000000000000124,
+    "pnl_pct": 0.5802707930367553,
+    "signal_score": 72,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 47.72727272727274,
+    "volume_ratio_at_buy": 1.5983363904900645,
+    "risk_score": 4,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 5,
+    "groq_at_purchase": null,
+    "distance_from_target": 4.2,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-21T13:57:01.572712+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 50,
+    "top_exit_factors_at_sale": [
+      "Current score 55 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "RSI neutral-bullish at 48"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 51.06382978723405,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 5.285,
+    "best_exit_date": "2026-08-21",
+    "best_exit_timing": "ON",
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 15,
+    "ma_pts": 10,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 1.1718749999999925,
+    "raw_score_at_buy": 104,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 48",
+        "points": 15
+      },
+      {
+        "name": "Current score 55 — weak signal",
+        "points": -10
+      },
+      {
+        "name": "Near target — 4% away",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 26,
+    "ticker": "CRGY",
+    "company": "CRGY",
+    "buy_date": "2026-08-20",
+    "buy_time": "07:36",
+    "buy_day_of_week": "Thursday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-21",
+    "sell_time": "06:39",
+    "sell_day_of_week": "Friday",
+    "shares": 15,
+    "buy_price": 13.78,
+    "sell_price": 13.9,
+    "pnl_dollars": 1.800000000000015,
+    "pnl_pct": 0.8708272859216328,
+    "signal_score": 60,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 55.400000000000034,
+    "volume_ratio_at_buy": 0.36344172723991,
+    "risk_score": 3,
+    "duration_classification": "3-DAY",
+    "price_tier": "$10–$20",
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH",
+    "catalyst_setup": false,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": "REACH TARGET: 48% likely",
+    "distance_from_target": 1.4,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-21T13:39:32.179956+00:00",
+    "unified_recommendation_at_sale": "LOCK IN PROFITS",
+    "unified_composite_at_sale": 70,
+    "top_exit_factors_at_sale": [
+      "Current score 60 — weak signal",
+      "Volume fading at 0.4x"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 2-4 day window",
+      "RSI in sweet spot at 55"
+    ],
+    "lock_in_profits_fired": true,
+    "peak_risk_score_at_sale": -45,
+    "peak_rsi_during_hold": 55.400000000000034,
+    "top_peak_risk_factors_at_sale": [
+      "39% above 20-day MA — severe overextension",
+      "Within 3% of 52-week high ($14.28)"
+    ],
+    "sell_timing_resolved": true,
+    "best_exit_price": 14.115,
+    "best_exit_date": "2026-08-21",
+    "best_exit_timing": "ON",
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 10,
+    "vol_spike_pts": 0,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 38.9000603257591,
+    "raw_score_at_buy": 60,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 2-4 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI in sweet spot at 55",
+        "points": 20
+      },
+      {
+        "name": "Current score 60 — weak signal",
+        "points": -10
+      },
+      {
+        "name": "Volume fading at 0.4x",
+        "points": -10
+      },
+      {
+        "name": "Above 20-day MA",
+        "points": 15
+      },
+      {
+        "name": "Near target — 1% away",
+        "points": 15
+      },
+      {
+        "name": "Price tier $10–$20 (best win rate)",
+        "points": 10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": [
+      {
+        "name": "39% above 20-day MA — severe overextension",
+        "points": -25
+      },
+      {
+        "name": "Within 3% of 52-week high ($14.28)",
+        "points": -20
+      }
+    ]
+  },
+  {
+    "id": 36,
+    "ticker": "VISN",
+    "company": "VISN",
+    "buy_date": "2026-08-28",
+    "buy_time": "11:40",
+    "buy_day_of_week": "Friday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-31",
+    "sell_time": "07:07",
+    "sell_day_of_week": "Monday",
+    "shares": 50,
+    "buy_price": 6.1,
+    "sell_price": 6.31,
+    "pnl_dollars": 10.499999999999998,
+    "pnl_pct": 3.4426229508196715,
+    "signal_score": 45,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 18.181818181818187,
+    "volume_ratio_at_buy": 1.1657837407783134,
+    "risk_score": 8,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH",
+    "catalyst_setup": false,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": "REACH TARGET: 15% likely",
+    "distance_from_target": 15.8,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-31T14:07:57.84996+00:00",
+    "unified_recommendation_at_sale": "HOLD",
+    "unified_composite_at_sale": 25,
+    "top_exit_factors_at_sale": [
+      "Current score 45 — weak signal",
+      "Below 20-day MA"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Healthy volume 1.2x"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 18.002392344497608,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 0,
+    "vol_spike_pts": 20,
+    "rsi_pts": 10,
+    "ma_pts": 0,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 0,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -44.286322583536894,
+    "raw_score_at_buy": 45,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "Current score 45 — weak signal",
+        "points": -10
+      },
+      {
+        "name": "Healthy volume 1.2x",
+        "points": 15
+      },
+      {
+        "name": "Below 20-day MA",
+        "points": -10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 37,
+    "ticker": "UAMY",
+    "company": "UAMY",
+    "buy_date": "2026-08-31",
+    "buy_time": "07:16",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-31",
+    "sell_time": "07:44",
+    "sell_day_of_week": "Monday",
+    "shares": 50,
+    "buy_price": 5,
+    "sell_price": 5.02,
+    "pnl_dollars": 0.9999999999999787,
+    "pnl_pct": 0.39999999999999153,
+    "signal_score": 85,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 34.64870067372475,
+    "volume_ratio_at_buy": 0.5484333985809847,
+    "risk_score": 6,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "GEOPOLITICAL",
+    "catalyst_setup": false,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": null,
+    "distance_from_target": 9.7,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-31T14:44:11.211162+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 60,
+    "top_exit_factors_at_sale": [
+      "Below 20-day MA"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Current score 85 — support signal"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 34.64870067372475,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 10,
+    "vol_spike_pts": 15,
+    "rsi_pts": 10,
+    "ma_pts": 0,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 20,
+    "cons_up_days": 1,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -10.851850202609437,
+    "raw_score_at_buy": 85,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "Current score 85 — support signal",
+        "points": 15
+      },
+      {
+        "name": "Quiet accumulation at 0.5x",
+        "points": 10
+      },
+      {
+        "name": "Below 20-day MA",
+        "points": -10
+      },
+      {
+        "name": "Near target — 10% away",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 38,
+    "ticker": "DJT",
+    "company": "DJT",
+    "buy_date": "2026-08-28",
+    "buy_time": "06:56",
+    "buy_day_of_week": "Friday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-31",
+    "sell_time": "10:40",
+    "sell_day_of_week": "Monday",
+    "shares": 25,
+    "buy_price": 9.76,
+    "sell_price": 9.78,
+    "pnl_dollars": 0.49999999999998934,
+    "pnl_pct": 0.20491803278688087,
+    "signal_score": 115,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 44.09857328145266,
+    "volume_ratio_at_buy": 1.3559679819587123,
+    "risk_score": 4,
+    "duration_classification": "WEEK",
+    "price_tier": "$10–$20",
+    "macro_condition": "TECH_ROTATION_OUT",
+    "catalyst_setup": false,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": null,
+    "distance_from_target": 12.6,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-31T17:40:26.091828+00:00",
+    "unified_recommendation_at_sale": "CONSIDER SELLING",
+    "unified_composite_at_sale": 5,
+    "top_exit_factors_at_sale": [
+      "Current score 30 — weak signal",
+      "Score dropped from 115 → 30"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "RSI neutral-bullish at 44"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 65.91695501730102,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 10,
+    "vol_spike_pts": 20,
+    "rsi_pts": 15,
+    "ma_pts": 10,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 6.3789204065505904,
+    "raw_score_at_buy": 115,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 44",
+        "points": 15
+      },
+      {
+        "name": "Current score 30 — weak signal",
+        "points": -25
+      },
+      {
+        "name": "Score dropped from 115 → 30",
+        "points": -15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 39,
+    "ticker": "SPCH",
+    "company": "SPCH",
+    "buy_date": "2026-08-31",
+    "buy_time": "10:55",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-31",
+    "sell_time": "11:36",
+    "sell_day_of_week": "Monday",
+    "shares": 25,
+    "buy_price": 9.3,
+    "sell_price": 9.2,
+    "pnl_dollars": -2.5000000000000355,
+    "pnl_pct": -1.0752688172043163,
+    "signal_score": 80,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 57.69828926905133,
+    "volume_ratio_at_buy": 0.9100851221317543,
+    "risk_score": 5,
+    "duration_classification": "3-DAY",
+    "price_tier": "$10–$20",
+    "macro_condition": "GEOPOLITICAL",
+    "catalyst_setup": false,
+    "sub10_adjustment": 5,
+    "groq_at_purchase": null,
+    "distance_from_target": 9.6,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-31T18:36:07.855915+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 90,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Within intended 2-4 day window",
+      "RSI in sweet spot at 58"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": -20,
+    "peak_rsi_during_hold": 58.0246913580247,
+    "top_peak_risk_factors_at_sale": [
+      "5 consecutive up days — exhaustion risk"
+    ],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 0,
+    "vol_spike_pts": 15,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 5,
+    "cons_up_pts": 15,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 8.004194337644172,
+    "raw_score_at_buy": 80,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 2-4 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI in sweet spot at 58",
+        "points": 20
+      },
+      {
+        "name": "Current score 80 — support signal",
+        "points": 15
+      },
+      {
+        "name": "Quiet accumulation at 0.9x",
+        "points": 10
+      },
+      {
+        "name": "Above 20-day MA",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": [
+      {
+        "name": "5 consecutive up days — exhaustion risk",
+        "points": -20
+      }
+    ]
+  },
+  {
+    "id": 40,
+    "ticker": "SLI",
+    "company": "SLI",
+    "buy_date": "2026-08-31",
+    "buy_time": "10:30",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-01",
+    "sell_time": "06:53",
+    "sell_day_of_week": "Tuesday",
+    "shares": 100,
+    "buy_price": 2.69,
+    "sell_price": 2.66,
+    "pnl_dollars": -2.9999999999999805,
+    "pnl_pct": -1.1152416356877253,
+    "signal_score": 95,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 60.27397260273973,
+    "volume_ratio_at_buy": 1.359966550649582,
+    "risk_score": 6,
+    "duration_classification": "3-DAY",
+    "price_tier": "$1–$3",
+    "macro_condition": "GEOPOLITICAL",
+    "catalyst_setup": false,
+    "sub10_adjustment": -5,
+    "groq_at_purchase": "REACH TARGET: 60% likely",
+    "distance_from_target": 2.9,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-01T13:53:46.668069+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 100,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Current score 100 — support signal",
+      "Within intended 2-4 day window"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 60.63348416289593,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 1,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 11.295336787564745,
+    "raw_score_at_buy": 95,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 2-4 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI in sweet spot at 60",
+        "points": 20
+      },
+      {
+        "name": "Current score 100 — support signal",
+        "points": 30
+      },
+      {
+        "name": "Score improved from 95 → 100",
+        "points": 20
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 41,
+    "ticker": "BTBT",
+    "company": "BTBT",
+    "buy_date": "2026-08-28",
+    "buy_time": "08:15",
+    "buy_day_of_week": "Friday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-01",
+    "sell_time": "06:55",
+    "sell_day_of_week": "Tuesday",
+    "shares": 200,
+    "buy_price": 1.42,
+    "sell_price": 1.43,
+    "pnl_dollars": 2.0000000000000018,
+    "pnl_pct": 0.7042253521126767,
+    "signal_score": 35,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 59.024390243902445,
+    "volume_ratio_at_buy": 0.16579677031167536,
+    "risk_score": 7,
+    "duration_classification": "3-DAY",
+    "price_tier": "$1–$3",
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH",
+    "catalyst_setup": false,
+    "sub10_adjustment": 5,
+    "groq_at_purchase": null,
+    "distance_from_target": 16.5,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-01T13:55:18.618391+00:00",
+    "unified_recommendation_at_sale": "HOLD",
+    "unified_composite_at_sale": 15,
+    "top_exit_factors_at_sale": [
+      "Current score 25 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 2-4 day window",
+      "RSI in sweet spot at 59"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 59.024390243902445,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 0,
+    "vol_spike_pts": 0,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 0,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 1.106382978723426,
+    "raw_score_at_buy": 35,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 2-4 day window",
+        "points": 20
+      },
+      {
+        "name": "RSI in sweet spot at 59",
+        "points": 20
+      },
+      {
+        "name": "Current score 25 — weak signal",
+        "points": -25
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 42,
+    "ticker": "DAMD",
+    "company": "DAMD",
+    "buy_date": "2026-09-02",
+    "buy_time": "06:53",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-02",
+    "sell_time": "07:12",
+    "sell_day_of_week": "Wednesday",
+    "shares": 20,
+    "buy_price": 1.72,
+    "sell_price": 1.74,
+    "pnl_dollars": 0.40000000000000036,
+    "pnl_pct": 1.1627906976744196,
+    "signal_score": 100,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 54.85436893203884,
+    "volume_ratio_at_buy": 1.611384757754855,
+    "risk_score": 7,
+    "duration_classification": "WEEK",
+    "price_tier": "$1–$3",
+    "macro_condition": "GEOPOLITICAL",
+    "catalyst_setup": false,
+    "sub10_adjustment": 5,
+    "groq_at_purchase": null,
+    "distance_from_target": 1.8,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-02T14:12:59.794036+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 35,
+    "top_exit_factors_at_sale": [
+      "Score dropped from 100 → 65",
+      "Current score 65 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "RSI neutral-bullish at 55"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 56.60377358490565,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 15,
+    "ma_pts": 10,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 2,
+    "cons_up_pts": 5,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 6.137517305029996,
+    "raw_score_at_buy": 100,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 55",
+        "points": 15
+      },
+      {
+        "name": "Current score 65 — weak signal",
+        "points": -10
+      },
+      {
+        "name": "Score dropped from 100 → 65",
+        "points": -15
+      },
+      {
+        "name": "Near target — 2% away",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 43,
+    "ticker": "PGEN",
+    "company": "PGEN",
+    "buy_date": "2026-08-26",
+    "buy_time": "07:26",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-02",
+    "sell_time": "08:05",
+    "sell_day_of_week": "Wednesday",
+    "shares": 25,
+    "buy_price": 7.6,
+    "sell_price": 6.94,
+    "pnl_dollars": -16.499999999999982,
+    "pnl_pct": -8.68421052631578,
+    "signal_score": 75,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 59.742120343839545,
+    "volume_ratio_at_buy": 0.32796573308874977,
+    "risk_score": 4,
+    "duration_classification": "3-DAY",
+    "price_tier": "$4–$9",
+    "macro_condition": "GEOPOLITICAL",
+    "catalyst_setup": false,
+    "sub10_adjustment": 5,
+    "groq_at_purchase": null,
+    "distance_from_target": 16.7,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-02T15:05:53.720476+00:00",
+    "unified_recommendation_at_sale": "SELL NOW — Stop-loss hit",
+    "unified_composite_at_sale": null,
+    "top_exit_factors_at_sale": [
+      "Stop-loss breach"
+    ],
+    "top_hold_factors_at_sale": [],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 59.97150997150997,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 0,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 2,
+    "cons_up_pts": 5,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 10.940358580314665,
+    "raw_score_at_buy": 75,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Stop-loss breach",
+        "points": null
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 44,
+    "ticker": "BIZD",
+    "company": "BIZD",
+    "buy_date": "2026-08-31",
+    "buy_time": "11:40",
+    "buy_day_of_week": "Monday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-03",
+    "sell_time": "06:53",
+    "sell_day_of_week": "Thursday",
+    "shares": 25,
+    "buy_price": 13.57,
+    "sell_price": 13.4,
+    "pnl_dollars": -4.249999999999998,
+    "pnl_pct": -1.252763448784082,
+    "signal_score": 80,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 59.01639344262294,
+    "volume_ratio_at_buy": 1.5765338496863286,
+    "risk_score": 3,
+    "duration_classification": "WEEK",
+    "price_tier": "$10–$20",
+    "macro_condition": "GEOPOLITICAL",
+    "catalyst_setup": false,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": null,
+    "distance_from_target": 7.8,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-03T13:53:40.878043+00:00",
+    "unified_recommendation_at_sale": "HOLD",
+    "unified_composite_at_sale": 20,
+    "top_exit_factors_at_sale": [
+      "Current score 30 — weak signal",
+      "Score dropped from 80 → 30"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "RSI in sweet spot at 59"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 59.81735159817345,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 0,
+    "vol_spike_pts": 20,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 1,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 2.137901209032949,
+    "raw_score_at_buy": 80,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI in sweet spot at 59",
+        "points": 20
+      },
+      {
+        "name": "Current score 30 — weak signal",
+        "points": -25
+      },
+      {
+        "name": "Score dropped from 80 → 30",
+        "points": -15
+      },
+      {
+        "name": "Price tier $10–$20 (best win rate)",
+        "points": 10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 45,
+    "ticker": "NEOG",
+    "company": "NEOG",
+    "buy_date": "2026-08-19",
+    "buy_time": "14:12",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-03",
+    "sell_time": "06:54",
+    "sell_day_of_week": "Thursday",
+    "shares": 25,
+    "buy_price": 12.3,
+    "sell_price": 11.75,
+    "pnl_dollars": -13.750000000000018,
+    "pnl_pct": -4.47154471544716,
+    "signal_score": 76,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 64.57564575645759,
+    "volume_ratio_at_buy": 1.5779265475941608,
+    "risk_score": 3,
+    "duration_classification": "3-DAY",
+    "price_tier": "$10–$20",
+    "macro_condition": "CHOPPY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": null,
+    "distance_from_target": 8.9,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-03T13:54:39.063182+00:00",
+    "unified_recommendation_at_sale": "CONSIDER SELLING",
+    "unified_composite_at_sale": -30,
+    "top_exit_factors_at_sale": [
+      "Severely past intended hold window",
+      "Current score 70 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "RSI in sweet spot at 65",
+      "Price tier $10–$20 (best win rate)"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 64.57564575645759,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 29.804865009355808,
+    "raw_score_at_buy": 110,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Severely past intended hold window",
+        "points": -50
+      },
+      {
+        "name": "RSI in sweet spot at 65",
+        "points": 20
+      },
+      {
+        "name": "Current score 70 — weak signal",
+        "points": -10
+      },
+      {
+        "name": "Price tier $10–$20 (best win rate)",
+        "points": 10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 46,
+    "ticker": "TLYS",
+    "company": "TLYS",
+    "buy_date": "2026-09-03",
+    "buy_time": "07:17",
+    "buy_day_of_week": "Thursday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-03",
+    "sell_time": "07:20",
+    "sell_day_of_week": "Thursday",
+    "shares": 50,
+    "buy_price": 4.29,
+    "sell_price": 4.25,
+    "pnl_dollars": -2.0000000000000018,
+    "pnl_pct": -0.9324009324009332,
+    "signal_score": 60,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 59.26724137931034,
+    "volume_ratio_at_buy": 7.741149565680651,
+    "risk_score": 5,
+    "duration_classification": "DAY",
+    "price_tier": "$4–$9",
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH",
+    "catalyst_setup": false,
+    "sub10_adjustment": -10,
+    "groq_at_purchase": null,
+    "distance_from_target": 7.9,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-03T14:20:30.856284+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 55,
+    "top_exit_factors_at_sale": [
+      "Current score 60 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended exit-today window",
+      "RSI in sweet spot at 59"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": -15,
+    "peak_rsi_during_hold": 56.4516129032258,
+    "top_peak_risk_factors_at_sale": [
+      "12% above 20-day MA — moderate overextension"
+    ],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": -10,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 1,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 11.927070144340354,
+    "raw_score_at_buy": 60,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended exit-today window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI in sweet spot at 59",
+        "points": 20
+      },
+      {
+        "name": "Current score 60 — weak signal",
+        "points": -10
+      },
+      {
+        "name": "Above 20-day MA",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": [
+      {
+        "name": "12% above 20-day MA — moderate overextension",
+        "points": -15
+      }
+    ]
+  },
+  {
+    "id": 47,
+    "ticker": "DAMD",
+    "company": "DAMD",
+    "buy_date": "2026-09-03",
+    "buy_time": "07:31",
+    "buy_day_of_week": "Thursday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-03",
+    "sell_time": "08:37",
+    "sell_day_of_week": "Thursday",
+    "shares": 100,
+    "buy_price": 1.79,
+    "sell_price": 1.75,
+    "pnl_dollars": -4.0000000000000036,
+    "pnl_pct": -2.2346368715083815,
+    "signal_score": 35,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 71.26436781609196,
+    "volume_ratio_at_buy": 0.20336226321452466,
+    "risk_score": 6,
+    "duration_classification": "DAY",
+    "price_tier": "$1–$3",
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH",
+    "catalyst_setup": false,
+    "sub10_adjustment": -5,
+    "groq_at_purchase": null,
+    "distance_from_target": 6.9,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-03T15:37:37.399424+00:00",
+    "unified_recommendation_at_sale": "CONSIDER SELLING",
+    "unified_composite_at_sale": 0,
+    "top_exit_factors_at_sale": [
+      "Current score 35 — weak signal",
+      "RSI elevated at 71"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended exit-today window",
+      "Above 20-day MA"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 71.5909090909091,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 10,
+    "vol_spike_pts": 0,
+    "rsi_pts": 0,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 3,
+    "cons_up_pts": 10,
+    "rel_strength_pts": 10,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 8.453922315308464,
+    "raw_score_at_buy": 35,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended exit-today window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI elevated at 71",
+        "points": -10
+      },
+      {
+        "name": "Current score 35 — weak signal",
+        "points": -25
+      },
+      {
+        "name": "Volume fading at 0.2x",
+        "points": -10
+      },
+      {
+        "name": "Above 20-day MA",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 48,
+    "ticker": "TENX",
+    "company": "TENX",
+    "buy_date": "2026-08-25",
+    "buy_time": "16:25",
+    "buy_day_of_week": "Tuesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-03",
+    "sell_time": "13:54",
+    "sell_day_of_week": "Thursday",
+    "shares": 100,
+    "buy_price": 2.33,
+    "sell_price": 1.77,
+    "pnl_dollars": -56.00000000000001,
+    "pnl_pct": -24.0343347639485,
+    "signal_score": 100,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 11.894586894586894,
+    "volume_ratio_at_buy": 1.349760204932139,
+    "risk_score": 10,
+    "duration_classification": "WEEK",
+    "price_tier": "$1–$3",
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": "REACH TARGET: 30% likely",
+    "distance_from_target": 49.2,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-03T20:54:24.538519+00:00",
+    "unified_recommendation_at_sale": "SELL NOW — Stop-loss hit",
+    "unified_composite_at_sale": null,
+    "top_exit_factors_at_sale": [
+      "Stop-loss breach"
+    ],
+    "top_hold_factors_at_sale": [],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 73.49081364829397,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 10,
+    "ma_pts": 0,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 2,
+    "cons_up_pts": 5,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -65.06813219905142,
+    "raw_score_at_buy": 100,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Stop-loss breach",
+        "points": null
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 49,
+    "ticker": "CPRI",
+    "company": "CPRI",
+    "buy_date": "2026-09-03",
+    "buy_time": "14:18",
+    "buy_day_of_week": "Thursday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-04",
+    "sell_time": "07:33",
+    "sell_day_of_week": "Friday",
+    "shares": 25,
+    "buy_price": 13.24,
+    "sell_price": 13.68,
+    "pnl_dollars": 10.999999999999988,
+    "pnl_pct": 3.32326283987915,
+    "signal_score": 90,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 26.681614349775785,
+    "volume_ratio_at_buy": 1.5370097962905545,
+    "risk_score": 5,
+    "duration_classification": "WEEK",
+    "price_tier": "$10–$20",
+    "macro_condition": "BROAD_RALLY",
+    "catalyst_setup": true,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": null,
+    "distance_from_target": 2.3,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-04T14:33:49.033229+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 70,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Current score 90 — support signal"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 38.66039952996475,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 10,
+    "ma_pts": 0,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 1,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -6.362078408508706,
+    "raw_score_at_buy": 90,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "Current score 90 — support signal",
+        "points": 15
+      },
+      {
+        "name": "Near target — 2% away",
+        "points": 15
+      },
+      {
+        "name": "Price tier $10–$20 (best win rate)",
+        "points": 10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 35,
+    "ticker": "PURR",
+    "company": "PURR",
+    "buy_date": "2026-08-28",
+    "buy_time": "07:15",
+    "buy_day_of_week": "Friday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-08-28",
+    "sell_time": "07:26",
+    "sell_day_of_week": "Friday",
+    "shares": 20,
+    "buy_price": 13.12,
+    "sell_price": 13.41,
+    "pnl_dollars": 5.8000000000000185,
+    "pnl_pct": 2.2103658536585438,
+    "signal_score": 30,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 93.62126245847176,
+    "volume_ratio_at_buy": 0.16446747673391604,
+    "risk_score": 6,
+    "duration_classification": "DAY",
+    "price_tier": "$10–$20",
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH",
+    "catalyst_setup": false,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": null,
+    "distance_from_target": 3.2,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-08-28T14:26:35.056713+00:00",
+    "unified_recommendation_at_sale": "HOLD",
+    "unified_composite_at_sale": 10,
+    "top_exit_factors_at_sale": [
+      "RSI overbought at 94",
+      "Current score 30 — weak signal"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended exit-today window",
+      "Above 20-day MA"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 93.873643905552,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": true,
+    "best_exit_price": 13.86,
+    "best_exit_date": "2026-08-28",
+    "best_exit_timing": "ON",
+    "price_at_plus5_days": 11.81,
+    "price_momentum_pts": 10,
+    "vol_spike_pts": 0,
+    "rsi_pts": -10,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 2,
+    "cons_up_pts": 5,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 53.317010609770286,
+    "raw_score_at_buy": 30,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended exit-today window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI overbought at 94",
+        "points": -25
+      },
+      {
+        "name": "Current score 30 — weak signal",
+        "points": -25
+      },
+      {
+        "name": "Volume fading at 0.2x",
+        "points": -10
+      },
+      {
+        "name": "Above 20-day MA",
+        "points": 15
+      },
+      {
+        "name": "Near target — 3% away",
+        "points": 15
+      },
+      {
+        "name": "Price tier $10–$20 (best win rate)",
+        "points": 10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": null
+  },
+  {
+    "id": 50,
+    "ticker": "ENVX",
+    "company": "ENVX",
+    "buy_date": "2026-09-03",
+    "buy_time": "14:24",
+    "buy_day_of_week": "Thursday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-04",
+    "sell_time": "07:49",
+    "sell_day_of_week": "Friday",
+    "shares": 70,
+    "buy_price": 3.36,
+    "sell_price": 3.38,
+    "pnl_dollars": 1.4000000000000012,
+    "pnl_pct": 0.5952380952380958,
+    "signal_score": 75,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 29.900990099009903,
+    "volume_ratio_at_buy": 0.9586795562479501,
+    "risk_score": 9,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "BROAD_RALLY",
+    "catalyst_setup": true,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": null,
+    "distance_from_target": 4.9,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-04T14:49:22.645924+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 60,
+    "top_exit_factors_at_sale": [],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Current score 75 — support signal"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 45.01424501424502,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 0,
+    "vol_spike_pts": 15,
+    "rsi_pts": 10,
+    "ma_pts": 0,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 20,
+    "cons_up_days": 1,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 5,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -9.872675154989667,
+    "raw_score_at_buy": 75,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "Current score 75 — support signal",
+        "points": 15
+      },
+      {
+        "name": "Near target — 5% away",
+        "points": 15
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  },
+  {
+    "id": 51,
+    "ticker": "CXM",
+    "company": "CXM",
+    "buy_date": "2026-09-03",
+    "buy_time": "10:42",
+    "buy_day_of_week": "Thursday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-09-04",
+    "sell_time": "07:54",
+    "sell_day_of_week": "Friday",
+    "shares": 40,
+    "buy_price": 6.38,
+    "sell_price": 6.09,
+    "pnl_dollars": -11.600000000000001,
+    "pnl_pct": -4.545454545454546,
+    "signal_score": 45,
+    "signal_label": "WATCH",
+    "rsi_at_buy": 42.51748251748252,
+    "volume_ratio_at_buy": 0.6913263912682924,
+    "risk_score": 4,
+    "duration_classification": "WEEK",
+    "price_tier": "$4–$9",
+    "macro_condition": "BROAD_RALLY",
+    "catalyst_setup": false,
+    "sub10_adjustment": 15,
+    "groq_at_purchase": null,
+    "distance_from_target": 14.7,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "created_at": "2026-09-04T14:54:03.202094+00:00",
+    "unified_recommendation_at_sale": "HOLD STRONG",
+    "unified_composite_at_sale": 60,
+    "top_exit_factors_at_sale": [
+      "Current score 60 — weak signal",
+      "Below 20-day MA"
+    ],
+    "top_hold_factors_at_sale": [
+      "Within intended 5-7 day window",
+      "Score improved from 45 → 60"
+    ],
+    "lock_in_profits_fired": false,
+    "peak_risk_score_at_sale": 0,
+    "peak_rsi_during_hold": 42.998585572843,
+    "top_peak_risk_factors_at_sale": [],
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "price_momentum_pts": 0,
+    "vol_spike_pts": 15,
+    "rsi_pts": 15,
+    "ma_pts": 0,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 0,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 0,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": -11.784068466096114,
+    "raw_score_at_buy": 45,
+    "full_ure_factors_at_sale": [
+      {
+        "name": "Within intended 5-7 day window",
+        "points": 20
+      },
+      {
+        "name": "Early in hold window",
+        "points": 10
+      },
+      {
+        "name": "RSI neutral-bullish at 43",
+        "points": 15
+      },
+      {
+        "name": "Current score 60 — weak signal",
+        "points": -10
+      },
+      {
+        "name": "Score improved from 45 → 60",
+        "points": 20
+      },
+      {
+        "name": "Healthy volume 1.6x",
+        "points": 15
+      },
+      {
+        "name": "Below 20-day MA",
+        "points": -10
+      }
+    ],
+    "full_peak_risk_factors_at_sale": []
+  }
+]

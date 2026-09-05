@@ -1,0 +1,89 @@
+name: Backup trades/portfolio/settings/rating_snapshots
+
+# See scripts/backup-tables.mjs's header comment for why this exists, and
+# for why the rules are per-table rather than one global rule (portfolio
+# and rating_snapshots shrink by design; trades and settings should not).
+#
+# Daily is plenty -- these are small, slow-changing tables, not the
+# minute-resolution movers capture this workflow is patterned after.
+# Read-only: no new credential, the anon key already has SELECT
+# everywhere via the RLS policies in db/005-007.
+#
+# THREE-STEP SHAPE, deliberately: the backup script can fail for ONE
+# table (e.g. trades shrank) while others are fine, and the tables that
+# passed must still be committed -- a legitimately-shrinking portfolio
+# must never cost the trades backup. So:
+#   1. Run the script, but don't let a non-zero exit stop the job here --
+#      capture the exit code instead (continue-on-error, `set +e`).
+#   2. Commit and push whatever the script actually wrote, unconditionally
+#      (if: always()) -- this runs whether step 1 passed or failed, so
+#      good data lands either way.
+#   3. THEN fail the job if step 1's exit code was non-zero -- after the
+#      good data is already committed, not instead of committing it. This
+#      is what makes the run show red in GitHub with the reason visible
+#      in step 1's log, rather than a green run that quietly skipped a
+#      table -- the silent-failure mode this whole job exists to avoid.
+#
+# STEP 2 REBASES AND RETRIES ON A REJECTED PUSH (2026-09-05): this repo
+# also has capture-movers-snapshot pushing to main up to three times every
+# weekday. Different schedules make a collision rare, not impossible --
+# this project has already hit that exact case once, and a delayed run
+# makes it eventually certain. A plain `git push` failing for that reason
+# would fail this job for a cause that has nothing to do with the backup
+# itself, which is the kind of red run that trains you to stop reading
+# why a run is red.
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Backup tables (per-table rules -- does not fail this step itself)
+        id: backup
+        continue-on-error: true
+        run: |
+          set +e
+          node scripts/backup-tables.mjs
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push whatever passed
+        if: always()
+        run: |
+          git config user.name "backup-tables-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/backups/*.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Table backup $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            git rebase origin/main
+            if git push; then
+              echo "Pushed on attempt $i."
+              exit 0
+            fi
+            echo "Push rejected (attempt $i) -- likely a concurrent push from another workflow (e.g. capture-movers-snapshot). Retrying after rebase."
+            sleep $((i * 5))
+          done
+          echo "Failed to push after 5 attempts." >&2
+          exit 1
+
+      - name: Fail the run if any table was rejected this run
+        if: steps.backup.outputs.exit_code != '0'
+        run: |
+          echo "One or more tables failed their shrink-rule check this run -- see the 'Backup tables' step's log above for which table and why. Tables that passed were still committed in the previous step." >&2
+          exit 1
