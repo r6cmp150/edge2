@@ -2204,11 +2204,34 @@ async function runScreener() {
     const category = state.selectedUniverse || 'OTHER';
     const macroCondition = state.macroContext?.condition || null;
     const displayThreshold = getDisplayThreshold(macroCondition, category);
+    const minP2 = state.settings.includeUnder2 ? 0 : 2;
     const updatedOwnedTickers = new Set();
-    const scored = candidates.map(([ticker, snap]) => {
+    // scoredAll preserves EVERY candidate's outcome, including the ones
+    // scoreStock couldn't score at all (bars.length < 15 -> null) and the
+    // ones that scored but never cleared displayThreshold/minP2 -- neither
+    // case reaches state.signals below, and until this array existed they
+    // were indistinguishable: both vanished via the same
+    // `.filter(s => s && s.score >= displayThreshold)` predicate, with
+    // nothing recording which had happened. This is EDGE's equivalent of
+    // the gap classifyGate's NOT_EVALUATED/REJECTED split closes for
+    // Warrior (2026-09-05) -- checked directly rather than assumed clean
+    // by analogy, and found to be exactly as real here, structurally
+    // worse in one way (no intermediate array existed at all before this).
+    // Consumed by the signal_log write-site (Phase 7), not by any
+    // existing rendering path -- state.signals below is unchanged.
+    const scoredAll = candidates.map(([ticker, snap]) => {
       const bars = allBars[ticker] || [];
       const s = scoreStock(ticker, snap, bars, newsMap[ticker] || null, spyChangePct, category);
-      if (s) s.thresholdAtBuy = displayThreshold;
+      if (s) {
+        s.thresholdAtBuy = displayThreshold;
+        // buildVersion (2026-09-05): mirrors engines/warrior/gate.js's
+        // gateResult.buildVersion stamp (added 2026-09-03, "the forward
+        // test's value depends on knowing which build produced which
+        // morning's candidates") -- EDGE had no equivalent until now,
+        // confirmed by grep before assuming otherwise. Stamped on the
+        // signal object itself, not a side table, same as Warrior.
+        s.buildVersion = VERSION;
+      }
       // Owned positions often drift below the display threshold over time and
       // would otherwise never make it into state.signals — snapshot their score
       // here, before the threshold/price filters below can drop them, so the
@@ -2217,12 +2240,12 @@ async function runScreener() {
         state.ownedScores[ticker] = { score: s.score, label: s.signal };
         updatedOwnedTickers.add(ticker);
       }
-      return s;
-    }).filter(s => s && s.score >= displayThreshold);
+      const shown = !!s && s.score >= displayThreshold && s.price >= minP2;
+      return { ticker, signal: s, shown, tier: s ? (shown ? 'SHOWN' : 'BELOW_THRESHOLD') : 'NOT_EVALUATED' };
+    });
+    state.lastFullScanResults = scoredAll;
 
-    // 7. Apply under-$2 filter
-    const minP2 = state.settings.includeUnder2 ? 0 : 2;
-    const final = scored.filter(s => s.price >= minP2);
+    const final = scoredAll.filter(r => r.shown).map(r => r.signal);
 
     state.signals = final;
 
