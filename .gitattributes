@@ -1,0 +1,11 @@
+# Force LF in the working tree for every text file, regardless of any
+# user/system core.autocrlf setting. Added 2026-09-05 after the working
+# tree flipped to CRLF across the whole repo mid-session (Git for
+# Windows' default install sets core.autocrlf=true system-wide, at
+# C:\Program Files\Git\etc\gitconfig -- neither this repo's local config
+# nor the user's global config had ever overridden it). Without this
+# file, that default is one `git checkout`/`git reset --hard`/`git stash
+# pop` away from rewriting every tracked file's line endings again,
+# turning any future small change into a repo-wide diff that buries the
+# real edit and makes `git blame`/`git log -p` useless.
+* text=auto eol=lf
