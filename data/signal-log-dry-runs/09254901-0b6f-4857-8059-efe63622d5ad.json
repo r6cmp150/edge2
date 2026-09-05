@@ -1,0 +1,18 @@
+{
+  "scanRun": {
+    "id": "09254901-0b6f-4857-8059-efe63622d5ad",
+    "engine_source": "WARRIOR",
+    "session": "PRE",
+    "scan_date": "2026-09-05",
+    "started_at": "2026-09-05T22:43:08.619Z",
+    "universe_source": "self-fetched-fallback",
+    "universe_snapshot_captured_at": "2026-09-05T22:43:08.325Z",
+    "universe_count": 0,
+    "evaluated_count": 0,
+    "fetch_failed_count": 0,
+    "aborted": false,
+    "abort_reason": null,
+    "build_version": "v2.16.0"
+  },
+  "signalRows": []
+}
