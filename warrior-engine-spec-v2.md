@@ -825,34 +825,546 @@ backtest found FMP 402s on exactly this gate's microcap population
 the available tier, not a documented "needs a paid plan" nuance). EDGAR
 requires no key, no daily quota (rate-limited by request pacing, ~10/s,
 not a call count) and was confirmed live to serve exactly the symbols
-FMP couldn't. Shares outstanding only, not "float" — no haircut, labeled
-honestly, same settled convention the backtest itself used. Real
-implementation: `core/edgar.js` (fetch/cache), `engines/warrior/gate.js`'s
-`evaluatePillarFloat` (threshold logic).
+FMP couldn't. Real implementation: `core/edgar.js` (fetch/cache),
+`engines/warrior/gate.js`'s `evaluatePillarFloat` (threshold logic).
 
-### Three conditions (adapted to EDGAR)
+**Revision, 2026-09-03 — the shares-outstanding-only design shipped
+2026-09-04 gated the WRONG QUANTITY, not just a looser proxy.** Confirmed
+live via DAIC: `EntityCommonStockSharesOutstanding` = 30,259,579 vs.
+`EntityPublicFloat` = $7,171,964 — an order-of-magnitude gap that's
+insiders/restricted stock, not measurement noise. Ross's rule is about the
+free-tradable float; shares outstanding routinely exceeds it by 2-10x on a
+microcap. The pillar now gates on **EntityPublicFloat-implied float
+shares**: EntityPublicFloat's dollar value divided by the historical close
+on **its own reference date** (the `end` field — last business day of the
+registrant's most recently completed second fiscal quarter), never
+today's price — EntityPublicFloat is priced as of that date, and dividing
+by today's price on a microcap that's moved since would be wrong by
+exactly the price drift (a stock up 3x since its reference date would
+appear to have a third of its real float). `_fetchHistoricalDailyBars`
+(`core/universe.js`) is reused for the lookup — with the SPLIT-ADJUSTED
+close (`adjustment:'all'`, a new optional parameter added to that
+function, defaulting to `'all'` to leave the universe-reconstruction
+caller unchanged), **not** raw.
 
-1. **Apply last.** Scoped to `pillar12Survivors` (price+change survivors), same population `rvol`/`news` already use — not further narrowed to "only if rvol+news both already passed" (that stricter reading was considered and rejected: it would reintroduce exactly the short-circuit-between-stage-2-pillars bug already fixed for rvol/news, where a NEAR_MISS/disqualified card would show an incomplete picture). The cost pressure that motivated the original FMP-era "never call for an already-failed candidate" language (a 250/day quota) doesn't transfer to EDGAR, which has no daily cap.
-2. **Cache hard.** 14 days per symbol (midpoint of the spec's 7–30 day range) in `state.warriorFloatCache`, plus a 24h cache on the CIK-map lookup itself. No daily-quota counter — EDGAR has none; the FMP-era "stop at 240" language doesn't apply.
-3. **Not a boolean.** Threshold configurable via Settings (`state.settings.floatThresholdShares`, default 10,000,000, same default this section always specified), never hardcoded. Float value **and** its as-of filing date shown on the card.
+**A same-day correction on top of the above, caught before ship:** an
+earlier version of this section (and the code) used the RAW close, reasoning
+that EntityPublicFloat was itself priced against the actual unadjusted
+trade — true, but the wrong basis for the comparison. Dividing by the raw
+historical price returns the share count in THAT HISTORICAL DATE's basis;
+the 10M threshold (and shares outstanding, see below) are in TODAY's
+basis. Those two bases are identical only if no split occurred in between
+— routinely false in this population. Confirmed live, not just reasoned:
+DAIC's raw vs. adjusted close on its float's own reference date
+(2026-03-10) were $0.2454 vs. $6.135 — a 25.0x ratio, matching DAIC's known
+~25:1 reverse split. Raw-derived implied float (29.2M shares, pre-split
+basis) happened to still read below DAIC's current shares outstanding
+(30.26M, post-split basis) — passing a naive sanity check while comparing
+two different unit systems. Adjusted-derived implied float (1.17M shares)
+is in the same basis as shares outstanding and is the number that means
+something. HCWC showed the same pattern (~35x factor).
 
-**Known limitation, adapted from the original FMP-era note:** EDGAR filings are as fresh as the company's own reporting cadence (quarterly for domestic 10-Q filers, annual-only for foreign private issuers on 20-F) — a filing can be materially stale relative to a dilutive offering from last week, same risk the original note flagged for FMP's cache. `stalenessDays` (nearest-preceding-filing age) is captured and shown alongside the value for exactly this reason.
+**Invariant guard, added same day:** `EntityCommonStockSharesOutstanding`
+is now fetched alongside `EntityPublicFloat` purely as a validation check
+(not a gating value or fallback) — float is a subset of shares outstanding
+by definition, so `impliedFloatShares > sharesOutstanding` is provably
+wrong and is discarded (rendered `not-checked` with the specific reason,
+and logged) rather than surfaced as a fabricated number. This is necessary
+but not sufficient on its own to catch a unit-basis error like the one
+above (a wrong-basis value can still coincidentally read below shares
+outstanding, as DAIC's raw-basis number did) — it catches the cases where
+the wrong number happens to overshoot.
 
-**A real divergence, disclosed rather than silently resolved:** the original acceptance line below ("qualified candidates fall back to 4/5 near-miss rather than disappearing" on daily-quota exhaustion) is FMP-quota-specific and has no EDGAR analog. What EDGAR DOES have — a real request failure (rate-limited, network error) — is treated as `'fetch-failed'`, which **BLOCKS** qualification outright (a new `BLOCKED` tier, distinct from disqualified), matching the same fetch-failed-vs-not-checked decision this session's gate-honesty pass made for rvol/news. A near-miss implies "we checked, it's close"; a fetch failure isn't that.
+A calibrated shares-outstanding fallback for the ~35% of symbols with no
+EntityPublicFloat filing was considered (multiply shares outstanding by a
+measured float/shares-outstanding ratio) and **rejected** —
+`scripts/measure-float-ratio-dispersion.mjs`, re-run under the corrected
+adjusted-price basis, measured that ratio across 204 of 209 backtest
+symbols with both data points and a resolvable price: median 0.58, p10
+0.02, p90 1.00, range 0.00–27.6 (22/204 = 10.8% of pairs still physically
+impossible even under the correct unit basis — real staleness/mismatch
+between the two filings' own dates, not a units bug this time, exactly
+what the invariant guard exists to catch per-symbol live). Meaningfully
+tighter than the pre-correction measurement (0.00–331, 18% impossible,
+mostly the raw-price units error itself) but still nowhere near a
+defensible single calibration. Those symbols read `not-checked` —
+identical to how float read before Phase 6 existed for them, no
+regression, no fallback (Option E, not a blended fallback slot — the same
+"distinct metric, distinct slot" principle pre-market RVOL was built to
+keep, applied here against blending float-shares-implied and raw-shares-
+outstanding into one ambiguous number).
+
+**Standalone finding, worth recording on its own — POPULATION-SCOPED, not
+universal (2026-09-03, corrected 2026-09-04):** even under the CORRECT
+unit basis, 22/204 (10.8%) of the 340-symbol BACKTEST's gate-qualified
+movers with both an EntityPublicFloat filing and a shares-outstanding
+filing produce an implied float that exceeds shares outstanding — one
+symbol in roughly nine, **in that population specifically**.
+
+The first version of this finding read as universal. It isn't: the first
+full-universe float-table build (`scripts/build-float-table.mjs`, the full
+~5,700-symbol instrument-eligible set, not the 340 gate-qualified movers)
+measured the guard's discard rate at **[PENDING — see the delivery-
+architecture subsection's real build numbers; fill in on the next spec
+pass: discardedByGuardCount / (usableCount + discardedByGuardCount)]**,
+meaningfully HIGHER than 10.8%. Isolated the two candidate explanations
+(population vs. method) by running BOTH matching methodologies against the
+IDENTICAL 204-symbol backtest set: the dispersion script's nearest-BY-DATE
+shares-outstanding match gives 10.8% on that set; core/edgar.js's actual
+production match (nearest filing PRECEDING TODAY, not nearest-by-date to
+the float's own reference date) gives **4.9%** on that SAME set — LOWER,
+not higher. 198/204 rows use a different shares-outstanding value between
+the two methods, and production's is consistently the larger, more-recent
+figure (expected — it always pulls the freshest available filing rather
+than one matched to the float's own era, and shares outstanding tends to
+grow via dilution over time). Method bias therefore runs OPPOSITE the
+direction that would explain the full-universe gap — meaning the true
+population effect (full universe vs. the 340 gate-qualified movers) is
+LARGER than the raw headline numbers alone suggest, not an artifact of a
+methodology inconsistency. Read: mega-caps and other widely-held names
+with very low insider ownership (float ≈ shares outstanding, confirmed
+live for AAPL earlier this session) have far less headroom before an
+ordinary filing-date mismatch crosses the impossible boundary than
+Ross-eligible low-float microcaps do — the backtest's 10.8% describes ITS
+population, not SEC filing data in general.
+
+### Actual coverage — Phase 6 does not complete Pillar 5 the way it implies
+
+The section title says "completing Pillar 5." Two versions of this number
+exist, and they matter for different reasons:
+
+- **Full instrument-eligible universe** (~5,700 symbols, everything
+  tradable on NASDAQ/NYSE/AMEX): this is what `scripts/
+  build-float-table.mjs` actually attempts every week — see the delivery-
+  architecture subsection above for the real live-build numbers. This
+  population is NOT what the live gate's float check runs against (that's
+  scoped to price+change survivors), but it's the honest denominator for
+  "how much of SEC's free filing data can this derivation actually use."
+- **Backtest gate-qualified population** (340 symbols) — the best current
+  proxy for "reaches the live float check" (the captured movers-snapshot
+  log, `data/movers-snapshots/log.jsonl`, is still too sparse — a handful
+  of captures from one morning — to use as of this writing). Recomputed
+  2026-09-04 with core/edgar.js's ACTUAL production matching method
+  (nearest filing preceding today, not nearest-by-date — an earlier
+  version of this section used a different, non-production method here
+  and read ~42%/58%; see the standalone finding above for the full trace
+  on why that number changes with method, not just population). This
+  number went through three revisions in one day, each superseding the
+  last for a real reason — kept here as the full trace, not just the
+  ending:
+  1. **Uncorrected, no staleness bound: 207/340 usable (60.9%).** Wrong to
+     show — a real boot check found BIAF (174,868 implied float shares)
+     and GRI (41,528) both PASSING the `<10M` gate on filings 431 days
+     old, both wildly inconsistent with real trading volume. The
+     invariant guard is ONE-SIDED (catches over-, not under-estimates),
+     so an implausibly small float — exactly what makes a candidate
+     qualify — sailed through it.
+  2. **Uncorrected, 180-day staleness bound applied: 4/340 usable
+     (1.2%).** The bound closed the false-pass hole but at a cost that
+     turned out to be the SYMPTOM of the wrong fix, not the real cost of
+     staleness — EntityPublicFloat is annual-only and 74% of filings
+     shared one reference date (2025-06-30), so the bound only had real
+     coverage roughly half the calendar year.
+  3. **FINAL: dilution-corrected, staleness bound DROPPED: 178/340 usable
+     (52.4%), 118/340 no filing (34.7%), 38/340 guard-discarded (11.2%),
+     5/340 no price data (1.5%).** core/edgar.js's dilution correction
+     (see its own dedicated subsection below) fixes the ACTUAL error
+     (unmeasured share issuance since the reference date) directly, using
+     EDGAR's own dated shares-outstanding history — confirmed BIAF's
+     corrected value now correctly FAILS the gate and GRI's now genuinely
+     passes a live volume-consistency check (~0.43x). Re-measuring showed
+     the correction does the job the bound was only ever proxying for
+     (corrected volume-ratio p99=0.50x, only 0.28% implausible), so the
+     bound was dropped — see "180-day staleness bound" below for the full
+     decision. **This is the number `_renderPhase6FloatCoverageBlock()`
+     (`engines/warrior/index.js`) shows on the Warrior tab.**
+
+Regardless of which population or the exact percentage, the principle is
+unchanged: this is the honest ceiling of what free SEC filing data
+supports for this pillar, not a defect and not something this phase
+should try to close — `not-checked` is the correct answer exactly where
+the derivation can't be trusted, per this whole pass's own gate-honesty
+standard. Correcting the actual error beat filtering around it: 52.4% is
+a materially better number than either the false 60.9% or the technically-
+honest-but-gutted 1.2%, because it's honest AND it's usable. Once
+`data/movers-snapshots/log.jsonl` has enough real trading days captured,
+re-measuring against that (a live-captured population rather than a
+backtest artifact) would be the more faithful number still.
+
+### Dilution correction — fixing the error the 180-day bound was only proxying for (2026-09-04)
+
+The 180-day staleness bound (below this section) was built first, and it
+worked — but re-measuring the backtest population under it collapsed
+usable coverage from 60.9% to 1.2% (see "Actual coverage" above). Before
+accepting that a pillar built on annual filing data is functionally
+useless most of the year, the error itself was reconsidered: **the
+derivation is correct AT its own reference date.** What makes a 431-day-old
+BIAF or GRI figure wrong today isn't the arithmetic — it's that the
+company issued shares in the intervening months, which the split-adjusted
+price does NOT correct for (it only undoes SPLITS, not dilution). EDGAR
+already provides the full dated `EntityCommonStockSharesOutstanding`
+history — already fetched for the invariant guard — so that error is
+directly correctable rather than merely filterable:
+
+```
+impliedFloatToday = impliedFloatAtRef × (sharesOutstandingToday ÷ sharesTrueNearRefInTodaysUnits)
+sharesTrueNearRefInTodaysUnits = sharesNearRef ÷ R
+R = adjustedClose / rawClose, at the float's own reference date
+```
+
+`sharesNearRef` is the shares-outstanding filing CLOSEST BY DATE (not
+necessarily preceding — a retrospective reconstruction, not a live
+no-lookahead decision) to the float's reference date. **The ÷R step is not
+optional** — an initial version of this formula, proposed without it,
+scaled by the raw `sharesOutstandingToday ÷ sharesNearRef` ratio directly.
+That DOUBLE-APPLIES any split in the window, since `impliedFloatAtRef` is
+already split-adjusted. Caught before building: BIAF's naive-formula
+result (49,772 shares) moved the WRONG direction — smaller, not larger —
+while the R-corrected result (22,394,073) correctly flips it to fail the
+`<10M` gate.
+
+**R=450 (BIAF's cumulative split factor) was verified independently
+before trusting it** — a number this extreme, with the whole correction
+now resting on it, gets checked directly rather than assumed. Scanned
+BIAF's raw daily close series for split-sized discontinuities: two real
+jumps found, 29.45x on 2025-09-19 and 14.55x on 2026-08-24 — product ≈
+428, matching the adjusted/raw price ratio (450) within the noise expected
+from closing-price-based measurement, and consistent with round declared
+ratios (plausibly 1-for-30 and 1-for-15). Two compounding reverse splits,
+not an Alpaca data artifact.
+
+**GPRO's zero `dei:EntityCommonStockSharesOutstanding` coverage was NOT
+about GPRO specifically — checked, and it's a systemic tag gap.** Queried
+GPRO's full SEC company-facts response directly: `dei` facts contain only
+`EntityPublicFloat`, no shares-outstanding concept at all. It DOES have
+`us-gaap:CommonStockSharesOutstanding` — but that tag's data for GPRO
+(and for HIMS and TOST, checked as a broader sample) is stale, pre-2021,
+zero-valued legacy entries, not a usable modern fallback. Measured the
+real scope: **486/3,032 usable entries (16.0%)** lack `dei` shares-
+outstanding coverage entirely, including real, established filers (ENPH,
+SUN, HIMS, XYZ/Block, TOST, FIGS, NWSA among them) — a systemic extraction
+gap (most likely dual-class or other cover-page tagging variations needing
+dimension-aware XBRL parsing), not a per-symbol data-quality issue. For
+these, the correction is skipped and the uncorrected `impliedFloatAtRef`
+value stands — the volume-consistency backstop (below) is their ONLY
+protection, which is exactly why that check stays regardless of the
+correction's own coverage. Tracked as its own number in the table
+(`dilutionCorrectedCount`/`uncorrectedNoSharesDataCount`), not folded into
+the float-coverage percentage, so a future session can see how much of
+"usable" is actually corrected vs. how much is riding on the backstop
+alone.
+
+**Residual bias, stated rather than merely known (2026-09-04, explicit
+requirement):** the correction assumes the FREE-TRADING FRACTION held
+constant since the reference date — newly issued shares are often
+restricted at issuance and become free-trading only later. For a heavy
+diluter, that assumption still UNDERSTATES today's true float, just less
+than doing nothing would. Understating float is the DANGEROUS direction —
+it produces a false PASS, the same failure mode this whole fix exists to
+close. Disclosed on the card itself (`_pillarValueDisplay`, `engines/
+warrior/index.js`: "dilution-adj., assumes constant free-float %" for
+corrected values, "NOT dilution-adjusted (no shares data)" for the ~16%
+that can't be corrected) and here, rather than left as something only the
+code comments know. This is exactly why the volume-consistency backstop
+below is kept as an independent, age-blind check rather than retired now
+that the correction exists — it's a direct plausibility test on the
+CURRENT (corrected or not) value, and it caught both BIAF and GRI on its
+own before either the split-factor verification or the correction itself
+was built.
+
+**GRI is the encouraging case worth keeping in mind:** 1.01M corrected,
+volume ratio ≈0.43x. It was never a bad estimate — it was a correct figure
+nobody had rescaled through a 28x reverse split. That distinction —
+data that's wrong vs. data that's merely un-normalized — is why
+correcting beat filtering here, and it's the reason the 180-day bound's
+fate below is now an open, re-measured question rather than a settled one.
+
+### Volume-consistency backstop — the guard's blind side (2026-09-04)
+
+The invariant guard added 2026-09-03 (`impliedFloatShares <=
+sharesOutstanding`) is necessary but was NEVER sufficient — it can only
+catch a derivation that comes out too LARGE. BIAF and GRI's implied floats
+(174,868 and 41,528 shares) were both trivially smaller than shares
+outstanding, so the guard never fired, and both PASSED the `<10M` gate.
+That's the dangerous direction: an under-estimated float QUALIFIES a
+candidate that shouldn't qualify, exactly the failure mode Ross's rule
+exists to filter for. (Both are now caught earlier — dilution-corrected,
+BIAF now genuinely fails the gate and GRI genuinely passes it — but the
+backstop below stays regardless, see the residual-bias note above.)
+
+`evaluatePillarFloat` (`engines/warrior/gate.js`) checks the candidate's
+LIVE `todayVolume` (already fetched for the RVOL pillar,
+`rvolInput.todayVolume` — no new fetch) against the implied float
+(corrected when possible, uncorrected otherwise): if volume exceeds
+`VOLUME_TO_FLOAT_MULTIPLE_MAX` the implied float, the pillar reads
+`not-checked` instead of surfacing the value. This is a genuinely LIVE,
+read-time check (today's volume, not something bakeable into the weekly
+table) — skipped cleanly, not treated as a failure, when `todayVolume`
+isn't available (pre-market/closed sessions, when RVOL itself is
+`not-checked`).
+
+**The 10x cutoff was data-derived pre-correction, then re-measured
+post-correction rather than assumed to still hold.** Original measurement
+(uncorrected values, 2,992 rows): p50=0.013, p75=0.027, p90=0.076,
+p95=0.30, p97≈1.0, p99=11.3, p99.5=28.1, 1.1% exceed 10x. **Re-measured
+2026-09-04 on the dilution-corrected table (3,531 rows, same population,
+same methodology):** p50=0.011, p75=0.019, p90=0.036, p95=0.062,
+p97=0.10, **p99=0.50, p99.5=1.58**, only 10/3,531 (0.28%) exceed 10x —
+the whole distribution collapsed roughly 20x tighter. The correction
+doesn't just rescue BIAF and GRI specifically; it makes the entire
+population's plausibility distribution what it should look like. The 10x
+cutoff is now generous relative to the corrected data (real values cluster
+under 1-2x almost everywhere) rather than sitting at the population's own
+p99 boundary — left unchanged rather than tightened, since the backstop's
+job is catching what the correction still misses, not adding a second,
+redundant precision layer.
+
+**The backstop still catches real residual cases post-correction** — the
+correction is not perfect. `ADGM` in the corrected table: implied float 8
+shares against 231,800 volume, a 29,812x ratio — a degenerate case (an
+extreme split factor combined with a very small `sharesNearRef` producing
+a near-zero denominator) the correction's own math doesn't protect against
+on its own. The volume-consistency check catches it cleanly regardless of
+why the value went wrong, which is exactly its role: an independent,
+age-blind, method-blind plausibility test, not a check that only works
+when the correction's assumptions hold.
+
+### 180-day staleness bound — added, then dropped, from re-measured data (2026-09-04)
+
+Per the explicit instruction that measurement, not preference, would
+decide this: **re-measured after building the dilution correction, and
+the bound was dropped.**
+
+- **Even with correction, 99.7% of usable entries (3,560/3,571) are still
+  beyond 180 days by reference date.** The correction rescales the SHARE
+  COUNT for issuance since the reference date; it does not and cannot
+  change what date the underlying filing references. A hard age bound
+  would still gut coverage almost entirely, for a reason the correction
+  has already addressed.
+- **The corrected volume-ratio distribution (above) is the evidence that
+  matters: p99=0.50x, only 0.28% exceed 10x.** If corrected values were
+  still routinely implausible, keeping the bound would have been the
+  right call regardless of coverage cost. They aren't — the correction
+  does the job the bound was only ever a proxy for.
+- **The backtest-population coverage line, final, bound-free, corrected:**
+  178/340 usable (52.4%), 118/340 no filing (34.7%), 38/340 guard-
+  discarded (11.2%), 5/340 no price data (1.5%), 1 not currently in the
+  eligible universe. Notably HIGHER guard-discard rate than the
+  uncorrected pre-bound measurement (38 vs. 10) — real, not a regression:
+  Ross-eligible low-float microcaps are exactly the population most prone
+  to the splits/dilution the old, uncorrected derivation was blind to, so
+  the corrected guard catching more of them there (while catching FEWER
+  overall across the full universe, 397 vs. 945) is the correction working
+  as intended on the population that actually matters for this pillar.
+- `stalenessDays` is still computed and shown on every card (2026-09-04,
+  explicit requirement to keep displaying age prominently) — it's honest
+  provenance, no longer a gate.
+- **Clustering-norm disclosure, added alongside (explicit ask):** ~74% of
+  filings reference the same date (2025-06-30, currently) — EntityPublicFloat
+  is an annual disclosure, so a large age on a card is the structural norm
+  here, not a red flag on that specific stock. Surfaced on the Warrior tab
+  itself (`_renderPhase6FloatCoverageBlock()`) so a large "Nd old" figure
+  on every single card doesn't read as alarming for a reason that has
+  nothing to do with the stock in question.
+
+### Delivery architecture, 2026-09-04 — a static weekly table, not a live client fetch
+
+**A real boot check found the live float pillar failing for every candidate
+that reached it** — MARA, a large NASDAQ filer with a certain
+EntityPublicFloat on file, still read "float fetch failed." Diagnosis,
+confirmed live rather than assumed: `data.sec.gov`/`www.sec.gov` send no
+`Access-Control-Allow-Origin` on a real GET (curled directly with an
+`Origin` header — `200 OK`, no ACAO header anywhere in the response), and
+flatly `403` any CORS preflight `OPTIONS` request (an Akamai WAF, before
+SEC's own app logic is ever reached). Either path — a browser skips the
+preflight and gets a response it's blocked from reading, or it sends the
+preflight a custom `User-Agent` header would require and that's rejected
+outright — ends the same way: **a browser can never call SEC EDGAR
+directly, full stop.** Every EDGAR verification earlier in this project
+that looked clean ran from Node (`curl`, this project's own scripts,
+`tests/edgar.test.js`'s mocked-but-structurally-faithful harness), where
+CORS doesn't apply — the actual browser path had never been exercised
+until this boot check.
+
+**The fix:** `core/edgar.js`'s derivation logic (everything above this
+subsection) is correct and unchanged, but it no longer runs in the
+browser. `scripts/build-float-table.mjs` — a weekly GitHub Action,
+`.github/workflows/build-float-table.yml` — calls it from Node (where
+CORS is a non-issue) for the WHOLE instrument-eligible universe (the same
+`core/universe.js` `_getAssetIndex`/`_isEligibleInstrument` set the live
+app's own scans already draw from, ~5,700-5,710 symbols measured live),
+and commits the settled per-symbol verdicts to `data/float-table.json` —
+same pattern already running in this repo for
+`data/movers-snapshots/log.jsonl`. `core/float-table.js` replaces
+`core/edgar.js` in `index.html`'s script list and does one same-origin
+`fetch()` of that file per page load — no CORS, no forbidden headers, no
+runtime rate limit, no new infrastructure. `engines/warrior/gate.js`'s
+call site is unchanged (`getFloatDataForSymbols(symbols)`, same return
+shape) — only which file defines that global differs between the two
+contexts, and only one is ever loaded into a given global scope at a time.
+
+**Full rebuild every run, not incremental, weekly not daily** (2026-09-04
+decision): EntityPublicFloat is an annual figure, already 6-18 months
+stale by nature — a week's table age is noise against that, and tracking
+SEC's daily filing index to find what changed would be real complexity
+for no real freshness gain. ~2 EDGAR calls/symbol at SEC's self-imposed
+~8/s pace measured well under an hour for the full universe locally
+(`buildDurationSeconds` in the table itself) — comfortable inside a
+scheduled Action's 90-minute timeout.
+
+**The derivation and the guard now run server-side, not in the app.** The
+build job computes `impliedFloatShares`, runs the shares-outstanding
+invariant, and stores the SETTLED VERDICT with its provenance (the value,
+the reference date, the shares-outstanding figure it was checked against,
+and a reason string when discarded) — the app reads an answer rather than
+recomputing one.
+
+**Four states now, not three — kept distinct, never collapsed:**
+- in the table with a usable value → pass/fail (unchanged)
+- in the table but discarded by the guard → `not-checked`, by-design, non-blocking, reason = the guard's own message
+- in the table with no EntityPublicFloat filing on record → `not-checked`, by-design, non-blocking, its own reason
+- **NOT in the table at all** → `not-checked`, but its OWN distinct reason ("not in this week's float table... new listing or a build-coverage gap, not confirmed absent") — deliberately never worded like "no filing." A new listing the build hasn't caught up to yet, or a symbol the build failed to resolve that week, means something different from "we checked and there's genuinely no filing" — collapsing the two would hide the exact signal that tells a future session the build is missing coverage.
+
+A table-fetch failure itself (network error, non-2xx, bad JSON) still
+reads `fetch-failed`/**BLOCKS**, same honesty rule as a live EDGAR request
+failure always had — now a single fetch instead of N per-symbol ones, but
+the failure mode and its consequence are unchanged.
+
+**A real parsing bug found live building the first full-universe table**
+(2026-09-04): `core/edgar.js`'s `(data?.units?.X || [])` assumed SEC's
+companyconcept endpoint always returns either an array or an absent key
+for "no data." False — some filers (confirmed for BIIB, and roughly two
+dozen others in the first ~700 symbols of the first attempt, not a rare
+edge case) return `units: { shares: {} }`, an EMPTY OBJECT. `{} || []`
+stays `{}` (truthy), so `.map()` threw for every one of those, silently
+routing real, legitimate large-cap symbols into the "failed" bucket.
+Fixed with an explicit `Array.isArray` guard in `core/edgar.js` and (same
+latent defect, hadn't fired on the smaller 340-symbol backtest population
+by chance) `scripts/lib/edgar.mjs`/`scripts/check-edgar-coverage.mjs` —
+locked in with a regression test reproducing the exact `{}` shape
+(`tests/edgar.test.js`).
+
+**Hard-fail on incomplete, same rule as `core/universe.js`'s
+`_fetchHistoricalDailyBars`** (2026-09-04, same day the parsing bug above
+was found — the two are related: a build that silently drops several
+percent of symbols into "not in table" is indistinguishable, from the live
+app's perspective, from a genuine coverage gap, which is exactly the
+"92.2% problem" `_fetchHistoricalDailyBars`'s own hard-fail rule was
+already written to prevent, now recurring in a NEW place — a committed
+file that persists rather than a one-off artifact). `scripts/
+build-float-table.mjs` asserts completeness BEFORE writing anything:
+symbols that failed outright (`failedCount`, request/derivation errors —
+NOT the structural unmapped/no-filing/discarded buckets, which are real
+verdicts, not incompleteness) must stay under 2% of the attempted
+universe, or the script throws, writes nothing, and the previously
+committed `data/float-table.json` stays in place — stale but honest,
+never silently replaced by a partial one.
+
+**Two MORE not-checked buckets, found live building the first
+full-universe table, same day:** the initial hard-fail threshold (2%)
+tripped on the very first real run — 233/5,736 (4.06%) failed. Investigated
+rather than loosened: 232 of those 233 shared one failure text ("no usable
+adjusted close near the reference date"), heavily clustered on a handful
+of reference dates (170 on one single date), which pointed at a possible
+batch bug rather than genuine scattered flakiness. Confirmed live via a
+direct Alpaca query for five of the clustered symbols: `bars: {}` — Alpaca
+genuinely has zero data, not a bug. These read like recent IPOs/SPACs
+whose EntityPublicFloat filing has a reference date that predates when
+they started trading. A SEPARATE single case (NATH) resolved to a
+reference date literally in the future relative to the build — a SEC
+filing data-integrity issue, not a missing price, caught and reasoned
+BEFORE attempting a price lookup at all (no point spending an Alpaca call
+finding out there's no legitimate price for a future date).
+
+Both are PERMANENT for that specific filing — no retry, no bug fix, and no
+amount of waiting resolves them, structurally the same kind of thing as
+"no filing exists," not a build defect — so both were reclassified OUT of
+`failedCount` into their own dedicated not-checked buckets:
+`noPriceDataCount` and `invalidReferenceDateCount`. Deliberately NOT
+folded into `noFilingCount` either, even though the live-app-facing
+behavior (non-blocking `not-checked`) is identical — each is individually
+diagnostic (see the drift check below, which depends on this exact
+granularity: if `noPriceDataCount` alone spikes next week, that's a
+specific, actionable signal a merged bucket would hide). The table now
+carries SIX per-symbol status buckets: `usableCount` (value),
+`discardedByGuardCount`, `noFilingCount`, `unmappedCount`,
+`noPriceDataCount`, `invalidReferenceDateCount`, plus `failedCount` for
+genuine build failures — `attemptedCount`/`usableCount`/
+`discardedByGuardCount`/`failedCount` are the four-number contract this
+was originally asked for; the other three are the finer split within
+"not-checked, structural" that make each bucket individually diagnostic.
+
+**Drift detection against the previous committed table** (2026-09-04,
+matters more than the static 2% tolerance above): a fixed threshold can't
+catch a NEW failure mode that wears a permanent-gap costume — if
+`noPriceDataCount` jumped from 4% to 40% next week, every instance would
+still be individually classified as permanent and non-blocking, the
+completeness check would pass cleanly, and a broken build would commit
+anyway. Each build now reads the previous committed `data/float-table.json`
+(already right there in the repo, no extra state needed) and compares
+every bucket's SHARE of the attempted population against it — if any
+bucket moves by more than 5 percentage points (absolute), the build fails
+loudly and writes nothing, same "previous table stays in place" behavior
+as the completeness check. 5pp is a starting point, not a measured
+constant (no real week-over-week history exists yet to calibrate against)
+— reasoned as generous enough to absorb ordinary week-to-week filing-volume
+noise while still catching a swing the size of the illustrative 4%→40%
+example; revisit once a few real weekly runs establish what normal drift
+actually looks like. Skipped cleanly (logged, not an error) on the very
+first build, when there's nothing to compare against yet. Verified via a
+synthetic-previous-table smoke test in both directions (a deliberately
+mismatched baseline correctly fails and writes nothing; a genuinely
+first-ever build correctly skips and proceeds) before the real rebuild.
+
+**Table size, measured not assumed** (2026-09-04, per an explicit request
+not to commit to a single-file design without checking): the real, full
+first build — 5,736 attempted, 0 failed outright, completeness check PASS
+— produced a 632.3 KB (647,452 byte) `data/float-table.json`. Comfortably
+under the ~1MB single-file threshold; no redesign needed.
+
+**`builtAt` and staleness are surfaced on the tab, not just in the file**
+(2026-09-04, explicit requirement): "if the Action breaks, the committed
+table just sits there and keeps serving — a stale table looks exactly like
+a fresh one." `_renderPhase6FloatCoverageBlock()` (`engines/warrior/
+index.js`) shows the table's build date and age on every render once a
+scan has reported it, carried forward across scans where float was never
+fetched (zero `pillar12Survivors`) so it doesn't blink to "unknown."
+Past 14 days, a visibly distinct warning renders (`.stale-table-warning`,
+yellow/bold — the same salience as the update-available banner, not the
+muted `.tab-subtitle` treatment the rest of this disclosure uses) — not a
+silent aging artifact.
+
+### Three conditions (revised for the static-table architecture)
+
+1. **Apply last.** Unchanged — still scoped to `pillar12Survivors` (price+change survivors), same population `rvol`/`news` use. The original cost pressure (FMP's 250/day quota) is now doubly moot: EDGAR's own pacing constraint lives entirely inside the weekly build job, off the live request path altogether.
+2. **Cache hard — now a weekly full rebuild, not a per-symbol client cache.** The old `state.warriorFloatCache` (14-day per-symbol) and `state.warriorEdgarCikMapCache` (24h) are retired from the browser (see `app.js`'s state comment) — `core/float-table.js` fetches the whole table once per page load and answers every lookup from that same in-memory copy for the rest of the session.
+3. **Not a boolean.** Unchanged. Threshold configurable via Settings (`state.settings.floatThresholdShares`, default 10,000,000), never hardcoded. Float value **and** its reference date shown on the card — `stalenessDays` recomputed at read time against the table entry's `referenceDate`.
+
+**Known limitation, updated 2026-09-04 — no longer just "known," now bounded:** EntityPublicFloat is annual-only (10-K cover page) — its reference date is typically 6-18 months old relative to a live check, on top of however old the table itself is. `stalenessDays` (vs. the filing's own reference date) and the table's own age (vs. its `builtAt`) are two separate staleness numbers, both surfaced — and `stalenessDays` is now also a HARD BOUND, not just a display figure: beyond 180 days (`STALENESS_BOUND_DAYS`, `core/float-table.js`, same primary bound the backtest uses), the value reads `not-checked` rather than being surfaced. See "Volume-consistency backstop" and the "Actual coverage" section above for why this was added and what it actually costs in practice (most of the calendar year, most of it).
 
 ### Settings additions (adapted)
 
 - ~~FMP API Key~~ — not applicable, EDGAR needs no key
 - ~~"Test Connections" extended to ping FMP~~ — not built; EDGAR self-validates on first real use, no auth to independently verify
 - Float threshold — numeric, default 10,000,000 — **shipped**
-- ~~Daily FMP call counter~~ — not applicable, EDGAR has no daily quota
+- ~~Daily FMP call counter~~ — not applicable, EDGAR has no daily quota, and the whole client-fetch concept it applied to is retired
 
 ### Phase 6 acceptance
 
-- [x] Float cache hit does not consume a call — verified live 2026-09-04 (second call for the same symbol: 0 requests)
-- [ ] ~~Daily counter stops at 240...~~ — not applicable to EDGAR (see divergence note above); superseded by the `BLOCKED`-on-fetch-failure behavior instead
-- [x] Float value and its as-of date shown on the card — verified live 2026-09-04 (DAIC: 30,259,579 shares as of 2026-05-12, SPCE: 151,595,903 as of 2026-08-12)
+- [x] Float cache hit does not consume a call — verified live 2026-09-04 pre-CORS-fix (second call for the same symbol: 0 requests); superseded by the table architecture, where the equivalent claim is "the table is fetched once per page load" (`tests/float-table.test.js`)
+- [ ] ~~Daily counter stops at 240...~~ — not applicable; superseded by the `BLOCKED`-on-fetch-failure behavior
+- [x] Float value and its reference date shown on the card — re-verified 2026-09-04 against the static-table architecture via `tests/float-table.test.js`
 - [x] ~~Key stored in localStorage/Supabase, never hardcoded~~ — not applicable, no key exists to store
+- [x] Client-side EDGAR fetch never attempted from the browser — `core/edgar.js` removed from `index.html`/`sw.js` entirely, verified by grep (no remaining reference outside comments and `scripts/build-float-table.mjs`)
+- [x] Table file size — 934.0 KB (956,374 bytes) after the dilution correction's added provenance fields (up from 632.3 KB pre-correction, 5,709 attempted symbols) — still under the ~1MB single-file threshold, but meaningfully closer to it than before; worth watching if further per-symbol fields are ever added
+- [x] First full-universe build (uncorrected): 3,032 usable (52.9%), 1,446 no filing (25.2%), 945 guard-discarded (16.5%), 232 no price data (4.05%), 80 unmapped (1.4%), 1 invalid reference date (0.02%), 0 failed outright — completeness check PASS, drift check correctly skipped (first build)
+- [x] Dilution-corrected full-universe rebuild: 3,571 usable (62.5%, up from 3,032), 397 guard-discarded (down from 945 — the correction rescues more than it newly catches, in aggregate), 3,081/3,571 (86.3%) of usable entries actually dilution-corrected, 490 (13.7%) fell back to the uncorrected value for lack of shares-outstanding history — completeness check PASS (0 failed outright), drift check skipped (treated as a first build under the new methodology — comparing pre/post-correction bucket ratios directly would be apples-to-oranges, not a meaningful drift signal)
+- [x] Build hard-fails and writes nothing on incomplete data (>2% failed outright) — `scripts/build-float-table.mjs`'s completeness check, verified by inspection and a passing smoke run (`--limit 20`); the four coverage numbers (`attemptedCount`/`usableCount`/`discardedByGuardCount`/`failedCount`) are recorded in the table itself
+- [x] Dilution correction implemented and verified — `core/edgar.js`, scales `impliedFloatAtRef` for share issuance since the reference date using EDGAR's own dated shares-outstanding history and the SAME split factor (R = adjustedClose/rawClose) the primary derivation already computes; the naive (non-R-corrected) formula was checked and rejected BEFORE building (BIAF moved the wrong direction); R=450 (BIAF's cumulative split factor) verified independently via a raw-price discontinuity scan (two real splits found, product ≈428, matching within noise); GPRO's zero `dei` shares-outstanding coverage checked and found systemic (486/3,032 usable entries, 16.0%, confirmed for other real established filers too) rather than a GPRO-specific gap; pinned with tests reproducing the exact BIAF-shaped 10:1-split-plus-2x-dilution case and a regression guard against the naive (double-split-counting) formula (`tests/edgar.test.js`)
+- [x] 180-day staleness bound — added, then DROPPED, both same day, decided from re-measured data rather than preference: even with correction, 99.7% of usable entries remain beyond 180 days by reference date (the correction rescales share count, not filing date), but the corrected volume-ratio distribution is tight enough (p99=0.50x, 0.28% implausible) that the bound was proxying for an error now measured and fixed directly. `stalenessDays` still computed and shown on every card, no longer a gate (`core/float-table.js`, `tests/float-table.test.js`)
+- [x] Volume-consistency backstop, re-measured post-correction — `evaluatePillarFloat` (`engines/warrior/gate.js`), 10x cutoff originally data-derived from 2,992 uncorrected rows (p99=11.3x), re-measured on 3,531 corrected rows post-build: distribution collapsed ~20x tighter (p99=0.50x, 0.28% exceed 10x) — cutoff left unchanged (now comfortably generous rather than sitting at the population's own boundary) since the backstop's job is catching what the correction still misses (a real residual case found: `ADGM`, a degenerate near-zero-denominator result at 29,812x, caught cleanly) — verified against the exact BIAF/GRI shapes and a plausible-ratio/missing-volume control (`tests/gate.test.js`)
+- [x] Residual bias disclosed, not just known — the correction assumes the free-trading fraction held constant since the reference date (newly issued shares are often restricted at issuance); understating float is the dangerous direction (false PASS), so this is stated on the card itself ("dilution-adj., assumes constant free-float %" / "NOT dilution-adjusted (no shares data)") and in this spec, not left only in code comments
+- [x] Clustering-norm disclosure added — ~74% of filings share one reference date (EntityPublicFloat is annual), surfaced on the Warrior tab so a large "Nd old" figure doesn't read as a red flag on a specific stock when it's actually structural
 
 ---
 
@@ -872,7 +1384,37 @@ implementation: `core/edgar.js` (fetch/cache), `engines/warrior/gate.js`'s
 
 For Warrior, `signalSnapshot` holds the full gate result (§3 output shape) plus the setups array, entry/target/stop, and suggested shares. This pairs with the Full Signal Capture doc — capture everything at buy time.
 
+**Build-version stamping (2026-09-03, non-negotiable before forward-testing starts):** the forward test's value depends on knowing which build produced which morning's candidates. Rather than wire this in when Phase 7 itself is built, `evaluateGate`'s `gateResult` (`engines/warrior/gate.js`) already carries `buildVersion: VERSION` (app.js's cross-script global, same "ordinary global" pattern this file already uses for `getPT`/`getFloatDataForSymbols` — see its header) on every result, every scan, today — so it's already present in the §3 output shape `signalSnapshot` copies wholesale, with nothing left to retrofit once Phase 7's persistence layer lands.
+
 `minutesLate` exists so the report can separate latency from setup quality. Without it, Phase 8's statistics will blame the wrong thing.
+
+### A prior worth recording before the signal log has enough data to settle it (2026-09-04)
+
+**Not a conclusion — written down now specifically so it can't later look
+fitted to data that hadn't arrived yet.** Two forward-test scans, one RVOL
+evaluated and one not:
+
+- **2026-09-02, closed market, RVOL structurally not-checked:** 12/28
+  qualified (43%).
+- **2026-09-04, live market, RVOL evaluated (RVOL-SES computed live for the
+  first time — e.g. 23.74x on IMRN, expected/actual both shown):** 2/20
+  qualified (10%).
+
+That's a ~4x tightening once RVOL actually gates, in the direction the
+original RVOL-explains-the-live-vs-backtest-qualify-rate-gap hypothesis
+predicted — the same hypothesis a percentile analysis earlier this session
+appeared to rule out (session RVOL sitting at only the ~43rd percentile of
+its own distribution, not the ~95th a 5x-threshold selectivity story would
+need). The candidate explanation for why that analysis may have misled:
+it was computed on candidates that had ALREADY PASSED the backtest's
+earlier gate stages (price, change), not on the raw universe RVOL would
+have been screening — a percentile measured post-filter doesn't describe
+what a pre-filter threshold actually excludes.
+
+n=1 morning vs. n=1 morning. Explicitly not being acted on. Phase 7's
+signal log, once it has enough real mornings, is what actually settles
+this — logged here so the prior predates the data, not the other way
+around.
 
 ### First: the Supabase migration is only half done for sold trades
 

@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.10.0'; // Phase 5 (real setup detection) + Phase 6 (float via EDGAR) landed 2026-09
+const VERSION = 'v2.16.0'; // 2026-09-04: dilution correction — BIAF/GRI's real problem was unmeasured share issuance since the float's reference date, not merely its age. Corrects impliedFloat using EDGAR's own dated shares-outstanding history and the same split factor the derivation already computes; verified BIAF now correctly fails the gate and GRI now genuinely passes. Re-measurement showed this replaces the need for the 180-day staleness bound (dropped) — float coverage is 52.4% of gate-qualified candidates, corrected and volume-verified, not the 1% a hard age bound would have left
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 // Own tagged client (2026-08-30, engine-tagging fix) — app.js's one direct
 // alpacaGet call site (fetchSellTimingBars) uses this instead of the bare
@@ -849,8 +849,15 @@ let state = {
   warriorPreMarketVolumeCache: null, // { date, historyBySymbol: {symbol: [{date,volume}]} } — core/universe.js, pre-market-specific RVOL baseline (2026-09-04), daily cache — persisted
   warriorPreMarketRvolObservations: [], // [{capturedAt,date,symbol,ratio,todayPreMarketVolume,avgPreMarketVolume,daysInAverage}] — engines/warrior/gate.js, accumulates across mornings so a real pre-market RVOL threshold can eventually be set from data instead of the unvalidated placeholder — persisted, capped (see gate.js's _trimPreMarketRvolObservations)
   persistFailure: null, // { key, message, at } — core/store.js's persist(), set on ANY localStorage write failure (quota exhaustion, etc), cleared on the next successful persist() — surfaced via updateMarketBanner, not silent
-  warriorEdgarCikMapCache: null, // { fetchedAt, cikBySymbol } — core/edgar.js, Phase 6, 24h cache (mirrors universeAssetCache's own duration) — persisted
-  warriorFloatCache: null, // { bySymbol: { SYM: {fetchedAt, sharesOutstanding, asOfDate, stalenessDays, unmapped} } } — core/edgar.js, Phase 6, 14-day per-symbol cache per spec's "cache hard" guidance — persisted
+  // warriorEdgarCikMapCache/warriorFloatCache RETIRED 2026-09-04: they backed
+  // core/edgar.js's live client-side EDGAR fetch, which a real boot check
+  // proved CORS-blocks entirely from a browser (see core/edgar.js's own
+  // header). Float is now a static table (data/float-table.json,
+  // core/float-table.js) with its own in-memory, page-lifetime cache, not
+  // a persisted localStorage one — nothing in the browser writes these two
+  // keys anymore. Deliberately not migrated/cleared from an existing
+  // user's localStorage on this deploy (harmless, unread leftovers) — just
+  // no longer read or written going forward.
   lastScanTime: null,
   activeTab: 'signals',
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
@@ -879,7 +886,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations','warriorEdgarCikMapCache','warriorFloatCache'].forEach(k => {
+  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -6255,7 +6262,7 @@ function renderSettingsTab() {
       <div class="settings-row">
         <div>
           <div class="settings-label">Float Threshold (Warrior)</div>
-          <div class="settings-hint">Shares outstanding — Ross's <10M is his ideal, not a wall (docs/warrior-engine-spec-v2.md Phase 6); configurable rather than hardcoded. Via SEC EDGAR, shares outstanding as a labeled proxy for true float — no evidence from the 18-month backtest that this pillar predicts returns; it's here for fidelity to the method.</div>
+          <div class="settings-hint">Implied float shares — Ross's <10M is his ideal, not a wall (docs/warrior-engine-spec-v2.md Phase 6); configurable rather than hardcoded. Via SEC EDGAR's EntityPublicFloat, divided by the historical close on its own reference date — no evidence from the 18-month backtest that this pillar predicts returns; it's here for fidelity to the method.</div>
         </div>
         <input id="set-float-threshold" class="settings-number" type="number"
           min="0" step="100000" value="${s.floatThresholdShares ?? 10000000}">
@@ -7264,10 +7271,38 @@ let _notifDailyInterval = null;
 let _notifNextCheckTime = null;
 const NOTIF_PRICE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
+// Shows/hides the update-banner (index.html) — separated from
+// registerServiceWorker so it can be called from either the updatefound/
+// installed path below or (defensively) re-checked on visibilitychange,
+// without duplicating the DOM lookup.
+function _showUpdateAvailableBanner() {
+  const el = document.getElementById('update-banner');
+  if (el) el.classList.remove('hidden');
+}
+
+// updatefound/controllerchange listener (2026-09-03, standard PWA
+// practice) -- previously this app's ONLY remedy for a stale cached bundle
+// was the manual "Force Update App" settings button, which nobody would
+// think to press without already suspecting something was wrong (see the
+// live version-staleness finding this was built to close). navigator.
+// serviceWorker.controller being non-null on 'updatefound' is what
+// distinguishes "a genuinely NEW version was found" from "this is just the
+// very first install" -- on first install there's no existing controller
+// yet, and showing an "update available" banner then would be a false
+// positive.
 async function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   try {
     _swRegistration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+    _swRegistration.addEventListener('updatefound', () => {
+      const installingWorker = _swRegistration.installing;
+      if (!installingWorker) return;
+      installingWorker.addEventListener('statechange', () => {
+        if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          _showUpdateAvailableBanner();
+        }
+      });
+    });
   } catch(e) {
     console.warn('SW registration failed:', e.message);
   }

@@ -32,8 +32,18 @@ export async function fetchEdgarDataForSymbol(cik) {
     secGet(`https://data.sec.gov/submissions/CIK${cikPadded}.json`),
   ]);
   await sleep(120); // ~8/s, comfortably under SEC's ~10/s guidance
-  const sharesPoints = sharesData?.units?.shares || [];
-  const floatPoints = floatData?.units?.USD || [];
+  // Array.isArray guard (2026-09-04, found live building the full float
+  // table): SEC's companyconcept endpoint sometimes returns an EMPTY
+  // OBJECT for "no data" (e.g. `units: { shares: {} }`, confirmed live for
+  // BIIB and ~25 others) instead of omitting the key or using an empty
+  // array. `{} || []` stays `{}` (truthy), so a bare `.map()` on it throws
+  // -- didn't corrupt this session's own measurements (none of the 209-340
+  // symbols in that population happened to trigger it), but a real latent
+  // defect worth closing here too, not just in core/edgar.js.
+  const sharesRaw = sharesData?.units?.shares;
+  const floatRaw = floatData?.units?.USD;
+  const sharesPoints = Array.isArray(sharesRaw) ? sharesRaw : [];
+  const floatPoints = Array.isArray(floatRaw) ? floatRaw : [];
   const recentForms = submissions?.filings?.recent?.form || [];
   const recentDates = submissions?.filings?.recent?.filingDate || [];
   const is20F = recentForms.includes('20-F') || recentForms.includes('20-F/A');

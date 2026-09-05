@@ -52,8 +52,14 @@ async function main() {
       secGet(`https://data.sec.gov/submissions/CIK${cikPadded}.json`),
     ]);
     reqCount += 3;
-    const sharesPoints = sharesData?.units?.shares || [];
-    const floatPoints = floatData?.units?.USD || [];
+    // Array.isArray guard (2026-09-04, found live building the full float
+    // table) -- see scripts/lib/edgar.mjs's copy of this same fix for the
+    // full explanation. Didn't corrupt this file's own original 340-symbol
+    // run by chance, but a real latent defect on any re-run.
+    const sharesRaw = sharesData?.units?.shares;
+    const floatRaw = floatData?.units?.USD;
+    const sharesPoints = Array.isArray(sharesRaw) ? sharesRaw : [];
+    const floatPoints = Array.isArray(floatRaw) ? floatRaw : [];
     const recentForms = submissions?.filings?.recent?.form || [];
     const recentDates = submissions?.filings?.recent?.filingDate || [];
     const is20F = recentForms.includes('20-F') || recentForms.includes('20-F/A');

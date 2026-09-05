@@ -24,7 +24,7 @@ async function loadGate() {
   // that doesn't care about float specifically (empty data -> every
   // candidate's float pillar reads not-checked, same as before Phase 6
   // existed). Tests exercising float override this themselves.
-  global.getFloatDataForSymbols = async () => ({ sharesOutstandingBySymbol: {}, requests: 0, failedSymbols: [], unmappedSymbols: [] });
+  global.getFloatDataForSymbols = async () => ({ floatBySymbol: {}, requests: 0, failedSymbols: [], unmappedSymbols: [] });
   return import('../engines/warrior/gate.js');
 }
 
@@ -252,31 +252,70 @@ async function testTrimPreMarketRvolObservationsCapsByCount() {
 // real pass/fail/not-checked/fetch-failed behavior.
 async function testFloatPillarPassesFailsAndRespectsConfigurableThreshold() {
   const gate = await loadGate();
-  const under = gate.evaluatePillarFloat({ sharesOutstanding: 4_000_000, asOfDate: '2026-08-01', stalenessDays: 30 }, 10_000_000);
+  const under = gate.evaluatePillarFloat({ impliedFloatShares: 4_000_000, referenceDate: '2026-08-01', stalenessDays: 30 }, 10_000_000);
   console.log('float under threshold:', under);
   assert.strictEqual(under.status, 'pass');
   assert.strictEqual(under.value, 4_000_000);
-  assert.strictEqual(under.asOfDate, '2026-08-01', 'the as-of filing date must reach the card, per spec (\"show the float\'s date field alongside the value\")');
+  assert.strictEqual(under.asOfDate, '2026-08-01', 'the float\'s own reference date must reach the card, per spec (\"show the float\'s date field alongside the value\")');
 
-  const over = gate.evaluatePillarFloat({ sharesOutstanding: 24_100_000, asOfDate: '2026-08-01', stalenessDays: 30 }, 10_000_000);
+  const over = gate.evaluatePillarFloat({ impliedFloatShares: 24_100_000, referenceDate: '2026-08-01', stalenessDays: 30 }, 10_000_000);
   assert.strictEqual(over.status, 'fail');
 
   // Configurable threshold (spec: "not a wall... make the threshold
-  // configurable") -- the SAME shares-outstanding value passes or fails
+  // configurable") -- the SAME implied-float value passes or fails
   // depending purely on the configured cutoff, not a hardcoded one.
-  const sameValueDifferentThreshold = gate.evaluatePillarFloat({ sharesOutstanding: 24_100_000, asOfDate: '2026-08-01', stalenessDays: 30 }, 30_000_000);
-  assert.strictEqual(sameValueDifferentThreshold.status, 'pass', 'the identical share count must pass under a looser configured threshold');
+  const sameValueDifferentThreshold = gate.evaluatePillarFloat({ impliedFloatShares: 24_100_000, referenceDate: '2026-08-01', stalenessDays: 30 }, 30_000_000);
+  assert.strictEqual(sameValueDifferentThreshold.status, 'pass', 'the identical implied-float value must pass under a looser configured threshold');
 }
 
 async function testFloatPillarNotCheckedAndFetchFailedAreDistinct() {
   const gate = await loadGate();
   const noData = gate.evaluatePillarFloat(undefined, 10_000_000);
   assert.strictEqual(noData.status, 'not-checked');
-  assert.match(noData.reason, /no EDGAR shares-outstanding data/i);
+  assert.match(noData.reason, /no EntityPublicFloat filing/i);
 
   const failed = gate.evaluatePillarFloat({ fetchFailed: true }, 10_000_000);
   assert.strictEqual(failed.status, 'fetch-failed', 'a request failure must never be fabricated as not-checked or, worse, a pass — the $0.00 P&L failure shape');
   assert.match(failed.reason, /fetch failed/i);
+}
+
+async function testFloatVolumeConsistencyBackstop() {
+  // Found live in a boot check (2026-09-04): BIAF (implied float 174,868)
+  // and GRI (41,528) both PASSED the <10M gate despite same-session volume
+  // 80x-263x their implied float -- the invariant guard (impliedFloatShares
+  // <= sharesOutstanding) is ONE-SIDED and cannot catch an under-estimate,
+  // which is exactly the direction that produces a false PASS.
+  const gate = await loadGate();
+
+  const biafShape = gate.evaluatePillarFloat({ impliedFloatShares: 174_868, referenceDate: '2026-03-10', stalenessDays: 10 }, 10_000_000, 13_937_520);
+  console.log('BIAF-shaped result (80x volume/float):', biafShape);
+  assert.strictEqual(biafShape.status, 'not-checked', 'an implausible volume/float ratio must block the pass, not just note it');
+  assert.match(biafShape.reason, /79\.7x/, 'the reason must state the actual computed multiple');
+  assert.match(biafShape.reason, /beyond what real trading can plausibly explain/i);
+
+  const griShape = gate.evaluatePillarFloat({ impliedFloatShares: 41_528, referenceDate: '2026-03-10', stalenessDays: 10 }, 10_000_000, 434_080);
+  console.log('GRI-shaped result (~10.5x volume/float):', griShape);
+  assert.strictEqual(griShape.status, 'not-checked', 'GRI\'s own ~10.5x ratio is above the 10x cutoff and must be caught');
+}
+
+async function testFloatVolumeConsistencyAllowsPlausibleRatios() {
+  // A genuine extreme-momentum float-rotation day (up to the 10x
+  // data-derived cutoff) must NOT be penalized -- Ross's own method
+  // targets exactly these days, and p97 of the real measured distribution
+  // sits near 1.0x (a full rotation), which is rare but real.
+  const gate = await loadGate();
+  const result = gate.evaluatePillarFloat({ impliedFloatShares: 1_000_000, referenceDate: '2026-03-10', stalenessDays: 10 }, 10_000_000, 5_000_000); // 5x, well under the 10x cutoff
+  console.log('5x volume/float (plausible extreme momentum):', result);
+  assert.strictEqual(result.status, 'pass', 'a 5x ratio is extreme but real -- must not be blocked');
+}
+
+async function testFloatVolumeConsistencySkippedWhenVolumeUnavailable() {
+  // Pre-market/closed sessions have no real todayVolume (RVOL itself reads
+  // not-checked then) -- the backstop must be skipped cleanly, not treated
+  // as a failure, matching the guard's own "skip when data unavailable" rule.
+  const gate = await loadGate();
+  const result = gate.evaluatePillarFloat({ impliedFloatShares: 1_000_000, referenceDate: '2026-03-10', stalenessDays: 10 }, 10_000_000, undefined);
+  assert.strictEqual(result.status, 'pass', 'missing todayVolume must not itself block an otherwise-valid float pass');
 }
 
 async function testClassifyGateTreatsFloatAsSubstantiveAsOfPhase6() {
@@ -312,7 +351,7 @@ async function testFloatAppliedLastNotFurtherShortCircuitedByOtherStage2Fails() 
     session: 'OPEN', elapsedMinutes: 60,
     rvolInput: { todayVolume: 100, avgDailyVolume: 1_000_000 }, // rvol genuinely fails
     newsItemsForSymbol: [],
-    floatInput: { sharesOutstanding: 4_000_000, asOfDate: '2026-08-01', stalenessDays: 10 },
+    floatInput: { impliedFloatShares: 4_000_000, referenceDate: '2026-08-01', stalenessDays: 10 },
     floatThresholdShares: 10_000_000,
     now: new Date(),
   });
@@ -332,7 +371,7 @@ async function testEvaluateGateBatchFetchesFloatOnlyForPillar12SurvivorsAndReads
   global.fetchNewsForTickers = async (symbols) => symbols.map(s => ({ symbols: [s], headline: 'x', created_at: new Date().toISOString() }));
   global.getFloatDataForSymbols = async (symbols) => {
     requestedSymbols = symbols;
-    return { sharesOutstandingBySymbol: { A: { sharesOutstanding: 24_100_000, asOfDate: '2026-08-01', stalenessDays: 5 } }, requests: 1, failedSymbols: [], unmappedSymbols: [] };
+    return { floatBySymbol: { A: { impliedFloatShares: 24_100_000, referenceDate: '2026-08-01', stalenessDays: 5 } }, requests: 1, failedSymbols: [], unmappedSymbols: [], tableBuiltAt: '2026-09-01T00:00:00.000Z', tableStalenessDays: 3 };
   };
   global.getPT = () => { const d = new Date(); d.setHours(7, 30, 0, 0); return d; }; // 60min after 6:30 open
 
@@ -340,14 +379,29 @@ async function testEvaluateGateBatchFetchesFloatOnlyForPillar12SurvivorsAndReads
     { symbol: 'A', price: 5, changePct: 20 },  // clears price+change
     { symbol: 'B', price: 50, changePct: 5 },  // fails BOTH -- must never reach the float fetch
   ];
-  const { results } = await gate.evaluateGateBatch(candidates, 'OPEN');
+  const { results, floatTableBuiltAt, floatTableStalenessDays } = await gate.evaluateGateBatch(candidates, 'OPEN');
   const byId = Object.fromEntries(results.map(r => [r.symbol, r]));
-  console.log('float requested for:', requestedSymbols, '| A float status:', byId.A.pillars.find(p => p.id === 'float').status, '| A tier:', byId.A.tier);
+  console.log('float requested for:', requestedSymbols, '| A float status:', byId.A.pillars.find(p => p.id === 'float').status, '| A tier:', byId.A.tier, '| table info:', { floatTableBuiltAt, floatTableStalenessDays });
 
   assert.deepStrictEqual(requestedSymbols, ['A'], 'must never fetch float for a symbol that failed the free pillars -- "apply last" per spec');
   const floatA = byId.A.pillars.find(p => p.id === 'float');
   assert.strictEqual(floatA.status, 'pass', '24.1M shares must pass under the configured 30M threshold (would fail under the 10M default -- proves the configured value, not the default, was actually used)');
   assert.strictEqual(floatA.asOfDate, '2026-08-01');
+  assert.strictEqual(floatTableBuiltAt, '2026-09-01T00:00:00.000Z', 'the float table\'s own builtAt must reach evaluateGateBatch\'s caller so the tab can display/warn on it');
+  assert.strictEqual(floatTableStalenessDays, 3);
+}
+
+async function testEvaluateGateBatchReportsNullTableInfoWhenFloatNeverFetched() {
+  // Zero pillar12Survivors -> the float fetch never runs -> table info must
+  // be null, not a stale leftover from some other call, so callers know to
+  // fall back to a carried-forward value rather than trust a fabricated one.
+  const gate = await loadGate();
+  global.state = { newsFailedSymbols: [], warriorPreMarketRvolObservations: [], settings: {} };
+  global.persist = () => {};
+  const candidates = [{ symbol: 'B', price: 50, changePct: 5 }]; // fails both free pillars
+  const { floatTableBuiltAt, floatTableStalenessDays } = await gate.evaluateGateBatch(candidates, 'OPEN');
+  assert.strictEqual(floatTableBuiltAt, null);
+  assert.strictEqual(floatTableStalenessDays, null);
 }
 
 async function testGateShortCircuitsOnPillar1Failure() {
@@ -594,9 +648,13 @@ async function testDiagnoseGateCostShapeAndStrategySelection() {
   await run('gate: pre-market RVOL observations trimmed by count (5,000, most recent kept)', testTrimPreMarketRvolObservationsCapsByCount);
   await run('gate: float pillar passes/fails and respects a configurable threshold', testFloatPillarPassesFailsAndRespectsConfigurableThreshold);
   await run('gate: float pillar not-checked and fetch-failed are distinct', testFloatPillarNotCheckedAndFetchFailedAreDistinct);
+  await run('gate: the volume-consistency backstop catches BIAF/GRI-shaped false passes', testFloatVolumeConsistencyBackstop);
+  await run('gate: the volume-consistency backstop allows plausible extreme-momentum ratios', testFloatVolumeConsistencyAllowsPlausibleRatios);
+  await run('gate: the volume-consistency backstop is skipped cleanly when todayVolume is unavailable', testFloatVolumeConsistencySkippedWhenVolumeUnavailable);
   await run('gate: classifyGate treats float as substantive as of Phase 6', testClassifyGateTreatsFloatAsSubstantiveAsOfPhase6);
   await run('gate: float is applied last but not further short-circuited by other stage-2 fails', testFloatAppliedLastNotFurtherShortCircuitedByOtherStage2Fails);
   await run('gate: evaluateGateBatch fetches float only for pillar12Survivors and reads the configured threshold', testEvaluateGateBatchFetchesFloatOnlyForPillar12SurvivorsAndReadsConfiguredThreshold);
+  await run('gate: evaluateGateBatch reports null table info when float is never fetched', testEvaluateGateBatchReportsNullTableInfoWhenFloatNeverFetched);
   await run('gate: short-circuits on Pillar 1 failure without consulting rvol/news inputs', testGateShortCircuitsOnPillar1Failure);
   await run('gate: news is genuinely evaluated even when rvol fails (root-cause fix)', testGateEvaluatesNewsEvenWhenRvolFails);
   await run('gate: classify QUALIFIED / NEAR_MISS / neither', testClassifyQualifiedAndNearMiss);

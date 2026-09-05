@@ -139,6 +139,22 @@ a { color: var(--blue); }
 }
 .market-countdown { color: var(--muted); font-size: 12px; }
 
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  background: var(--yellow);
+  color: #1a1a1a;
+  font-family: var(--cond);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-align: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 /* ── Budget Bar ── */
 .budget-bar {
   padding: 6px 16px;
@@ -218,6 +234,15 @@ a { color: var(--blue); }
 }
 .tab-title .accent { color: var(--green); }
 .tab-subtitle { font-size: 12px; color: var(--muted); margin: 0 16px 8px; }
+.stale-table-warning {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1a1a1a;
+  background: var(--yellow);
+  margin: 0 16px 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
 
 /* ── Freshness Warning ── */
 .freshness-warn {
@@ -1534,6 +1559,12 @@ input:checked + .toggle-slider::before { transform: translateX(20px); }
 }
 .empty-state .empty-icon { font-size: 48px; }
 .empty-state p { font-size: 14px; line-height: 1.6; max-width: 280px; }
+.empty-state.outage-notice {
+  padding: 24px 24px 16px;
+  color: var(--yellow);
+}
+.empty-state.outage-notice p { color: var(--text); max-width: 340px; }
+.empty-state.outage-notice strong { color: var(--yellow); }
 
 /* ── Spinner ── */
 .spinner {

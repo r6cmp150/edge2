@@ -41,6 +41,13 @@ let _scanIntervalId = null;
 // reference, no exceptions).
 let _lastScanResults = null; // { session, results: [gateResult...], scannedAt }
 let _scanInFlight = false;
+// Carried forward across scans that had zero pillar12Survivors (float is
+// never fetched then, so evaluateGateBatch reports null that scan) --
+// without this, the coverage line's table-age display would blink to
+// "unknown" on any all-fail-early scan even though the table itself
+// hasn't changed. Only updated when a scan actually reports a real value.
+let _lastKnownFloatTableBuiltAt = null;
+let _lastKnownFloatTableStalenessDays = null;
 
 // Self-contained: catches its own errors internally rather than relying on
 // the caller to wrap it, so the interval path and the manual-refresh path
@@ -74,7 +81,7 @@ async function _scanTick() {
     const beforeGate = getRequestStats();
     const gateResult = await evaluateGateBatch(universe, session);
     const gateRequestsObserved = diffRequestStats(beforeGate, getRequestStats()).issued;
-    const { results, rvolCheckable } = gateResult;
+    const { results, rvolCheckable, floatTableBuiltAt, floatTableStalenessDays } = gateResult;
 
     // Phase 5: setup detection runs only for QUALIFIED candidates (NEAR
     // MISS gets no setups section — those aren't actionable candidates)
@@ -116,6 +123,10 @@ async function _scanTick() {
       console.log(`[PHASE-3-UNVERIFIED] regular-session scan — universe: ${universeRequestsObserved} req observed, gate: ${gateRequestsObserved} req observed, setups: ${setupsRequestsObserved} req observed, total: ${total} req (acceptance: <30 for a 50-symbol universe). Also confirm feed=sip in the network log for this scan's requests.`);
     }
 
+    if (floatTableBuiltAt != null) {
+      _lastKnownFloatTableBuiltAt = floatTableBuiltAt;
+      _lastKnownFloatTableStalenessDays = floatTableStalenessDays;
+    }
     _lastScanResults = { session, results, scannedAt: new Date(), rvolCheckable };
     if (typeof state !== 'undefined' && state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') {
       renderWarriorTab();
@@ -227,17 +238,34 @@ function _pillarValueDisplay(pillar) {
     const actual = pillar.todayVolume != null ? Math.round(pillar.todayVolume).toLocaleString() : '—';
     return `${pillar.value.toFixed(2)}× (expected by now ${expected}, actual ${actual})`;
   }
-  // float (2026-09-04, Phase 6): spec's own explicit requirement --
-  // "display the float value... show the float's date field alongside
-  // the value" (written for FMP's staleness concern, same requirement
-  // applies to EDGAR's filing staleness). Labeled "shares outstanding,"
-  // never "float" bare -- the backtest's own settled honesty convention,
-  // no haircut applied.
+  // float (revised 2026-09-03): value is now EntityPublicFloat's dollar
+  // figure divided by the historical close on ITS OWN reference date --
+  // an ESTIMATED free-tradable share count, not a filed share count, so
+  // labeled "implied float" and rounded for display. asOfDate carries that
+  // reference date (the price-measurement date, not a filing date) and
+  // stalenessDays is days since THAT date -- spec's own explicit
+  // requirement to show the value's date/staleness alongside it, same as
+  // every other pillar carries its own provenance.
+  //
+  // dilutionCorrected disclosure (2026-09-04, explicit requirement — "state
+  // the residual bias on the card, not just know it"): the correction
+  // rescales the reference-date derivation for share issuance since then,
+  // assuming the FREE-TRADING FRACTION held constant -- newly issued
+  // shares are often restricted at issuance and become free-trading later,
+  // so even a corrected value can still UNDERSTATE today's true float
+  // (the dangerous direction — a false pass). An UNCORRECTED value (no
+  // shares-outstanding history existed to correct with, ~16% of usable
+  // entries, confirmed for real established filers like GPRO) carries that
+  // same risk with no correction attempt at all. Both are disclosed
+  // distinctly rather than the card reading as unqualified certainty.
   if (pillar.id === 'float' && typeof pillar.value === 'number') {
-    const shares = pillar.value.toLocaleString();
-    const asOf = pillar.asOfDate ? `as of ${pillar.asOfDate}` : 'as-of date unknown';
+    const shares = Math.round(pillar.value).toLocaleString();
+    const asOf = pillar.asOfDate ? `ref. ${pillar.asOfDate}` : 'reference date unknown';
     const staleness = pillar.stalenessDays != null ? ` (${pillar.stalenessDays}d old)` : '';
-    return `${shares} shares outstanding — ${asOf}${staleness}`;
+    const correctionNote = pillar.dilutionCorrected
+      ? ' — dilution-adj., assumes constant free-float %'
+      : ' — NOT dilution-adjusted (no shares data)';
+    return `~${shares} implied float shares${correctionNote} — ${asOf}${staleness}`;
   }
   if (pillar.id === 'change' && typeof pillar.value === 'number') return `${pillar.value.toFixed(1)}%`;
   if (pillar.id === 'price' && typeof pillar.value === 'number') return `$${pillar.value.toFixed(2)}`;
@@ -762,6 +790,80 @@ function renderReplayPanel() {
 // before a first scan has ever run.
 const _PHASE5_UNVALIDATED_LINE = `<div class="tab-subtitle">Phase 5 — unvalidated. Backtest over Jun 2025–Aug 2026 found no edge; this is a live forward test, not a confirmed strategy.</div>`;
 
+// Float coverage ceiling (2026-09-03, corrected 2026-09-04) — same
+// salience treatment as the Phase 5 line above (.tab-subtitle, shown on
+// every render, not buried in a pillar row) and for the same reason: a
+// not-checked rate this high on one pillar is a fact about the
+// free-filing-data ceiling, not something Roman should have to notice
+// from a pattern of individual cards before trusting it isn't a bug.
+//
+// POPULATION-CORRECTED (2026-09-04): the original ~58%/42% figure was
+// measured against the WHOLE instrument-eligible universe (~5,700
+// symbols, everything tradable on NASDAQ/NYSE/AMEX) — not what the live
+// gate's float check actually runs against, which is scoped to
+// price+change survivors (small, moving, $1-$20 names). Recomputed
+// against the 340 backtest gate-QUALIFIED symbols instead (the best
+// available proxy for "reaches the float check" — the live captured
+// movers-snapshot log is still too sparse, a handful of captures from one
+// morning, to use yet), with core/edgar.js's ACTUAL production matching
+// method (nearest filing preceding today, not nearest-by-date). Without a
+// staleness bound this read 60.9% usable — but that measurement never
+// applied one, and a real boot check found WHY that matters: BIAF and GRI
+// both PASSED the <10M gate on 431-day-old filings.
+//
+// STALENESS BOUND: added, then dropped, same day (2026-09-04). A hard
+// 180-day bound (the backtest's own primary analysis uses the same figure)
+// collapsed usable to 4/340 (1.2%) — EntityPublicFloat is annual-only and
+// 74% of filings share one reference date (2025-06-30), so a 180-day bound
+// only has real coverage roughly half the year. That number was the
+// symptom of the wrong fix: BIAF/GRI weren't wrong because they were old,
+// they were wrong because the derivation never accounted for share
+// issuance since the reference date. core/edgar.js's dilution correction
+// (below) fixes that directly using EDGAR's own dated shares-outstanding
+// history — confirmed BIAF's corrected value now correctly FAILS the gate
+// and GRI's now genuinely passes a live volume-consistency check. Bound
+// dropped once re-measurement confirmed the correction does the job the
+// bound was only proxying for (see core/float-table.js's header for the
+// full trace). FINAL, corrected, bound-free number: 178/340 usable
+// (52.4%), 118/340 no filing (34.7%), 43/340 unresolvable — guard-
+// discarded or no price data (12.6%). Higher discard rate than the
+// uncorrected measurement (38 vs. 10) is real, not a regression: Ross-
+// eligible low-float microcaps are exactly the population most prone to
+// splits/dilution the old, uncorrected derivation was blind to.
+const FLOAT_TABLE_STALE_WARNING_DAYS = 14;
+
+// Function, not a const, as of 2026-09-04 (static-table architecture) --
+// needs the CURRENT table's builtAt/staleness, which only exists after a
+// scan has actually run one. _lastKnownFloatTableBuiltAt/StalenessDays
+// carry forward across scans that had zero pillar12Survivors (see their
+// own declaration comment above) so this doesn't blink to "unknown" on an
+// all-fail-early scan.
+//
+// The staleness warning is DELIBERATELY separate markup from the base
+// coverage line, not appended text within it (2026-09-04, explicit ask):
+// "a visible warning... not a silent aging artifact." If the weekly
+// GitHub Action ever breaks, the committed table just sits there and
+// keeps serving -- a stale table looks exactly like a fresh one unless
+// something says otherwise. .stale-table-warning (styles.css) gets the
+// same yellow/bold salience as the update-available banner, not the muted
+// .tab-subtitle treatment the rest of this disclosure uses.
+function _renderPhase6FloatCoverageBlock() {
+  const baseLine = `<div class="tab-subtitle">Float check covers ~52% of gate-qualified candidates (backtest-measured, dilution-corrected) — ~35% have no EDGAR float filing, ~13% more unresolvable (guard-discarded or no price data); not-checked, not a fail.</div>`;
+  // Clustering-norm note (2026-09-04, explicit ask): most EntityPublicFloat
+  // filings reference the same date (2025-06-30 currently, ~74% of them) --
+  // an annual disclosure, not a per-symbol red flag. Without this, a large
+  // "Nd old" figure on every single card reads as alarming for a
+  // structural reason that has nothing to do with that stock specifically.
+  const clusteringNote = `<div class="tab-subtitle">Most float filings reference the same date (annual disclosure) — a large age shown on a card is the norm here, not a red flag on that stock.</div>`;
+  if (_lastKnownFloatTableBuiltAt == null) return baseLine + clusteringNote;
+  const builtAtDateStr = _lastKnownFloatTableBuiltAt.slice(0, 10);
+  const ageLine = `<div class="tab-subtitle">Float table built ${builtAtDateStr} (${_lastKnownFloatTableStalenessDays}d ago).</div>`;
+  const staleWarning = (_lastKnownFloatTableStalenessDays != null && _lastKnownFloatTableStalenessDays > FLOAT_TABLE_STALE_WARNING_DAYS)
+    ? `<div class="stale-table-warning">⚠ Float table is ${_lastKnownFloatTableStalenessDays} days old (expected weekly) — the weekly build job may have stopped running. Float pass/fail values below may be outdated.</div>`
+    : '';
+  return baseLine + clusteringNote + ageLine + staleWarning;
+}
+
 function renderTab() {
   const replayPanel = renderReplayPanel();
   if (!_lastScanResults) {
@@ -769,6 +871,7 @@ function renderTab() {
       <h1 class="tab-title">WARRIOR</h1>
     </div>
     ${_PHASE5_UNVALIDATED_LINE}
+    ${_renderPhase6FloatCoverageBlock()}
     <div class="empty-state">
       <div class="empty-icon">🥋</div>
       <p>No scan yet — tap ↻ Refresh to run one.</p>
@@ -815,14 +918,32 @@ function renderTab() {
   const preOpenConditionLine = session === 'PRE'
     ? `<div class="tab-subtitle">Pre-open gate: 3 pillars (price, change, news) — RVOL-PM is measured, not yet gating.</div>`
     : '';
+  // Outage-burial fix (2026-09-03, explicit rule): a quiet market and a
+  // broken data source must not look alike on a fast skim. When QUALIFIED
+  // is empty AND blocked is non-empty, the reason a data source failed
+  // this scan is surfaced HERE, at the very top of the QUALIFIED section —
+  // not after two separate "nothing here" empty-states (QUALIFIED's own,
+  // then NEAR MISS's) that would otherwise read as an unremarkably quiet
+  // morning before COULD NOT VERIFY finally explained why. Replaces
+  // (rather than joins) the plain "No qualified candidates" line in this
+  // case — that line would be actively misleading once a real fetch
+  // failure is in play.
+  const outageNotice = (qualified.length === 0 && blocked.length > 0)
+    ? `<div class="empty-state outage-notice">
+      <div class="empty-icon">⚠️</div>
+      <p><strong>${blocked.length} candidate${blocked.length === 1 ? '' : 's'} could not be verified this scan</strong> — a data source (RVOL, news, or float) failed to respond, not a quiet market. See COULD NOT VERIFY below.</p>
+    </div>`
+    : '';
   return `<div class="tab-header">
     <h1 class="tab-title">WARRIOR</h1>
   </div>
   ${_PHASE5_UNVALIDATED_LINE}
+  ${_renderPhase6FloatCoverageBlock()}
   <div class="tab-subtitle">Session: ${session} · ${results.length} scanned · last scan ${_formatPTTime(scannedAt)} PT</div>
   ${preOpenConditionLine}
   <div class="section-label">QUALIFIED (${qualified.length})${rvolCaveat}</div>
-  ${qualified.length ? qualified.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>'}
+  ${outageNotice}
+  ${qualified.length ? qualified.map(_renderCandidateCard).join('') : (outageNotice ? '' : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>')}
   <div class="section-label mt12">NEAR MISS (${nearMiss.length})${rvolCaveat}</div>
   ${nearMiss.length ? nearMiss.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No near-miss candidates this scan.</p></div>'}
   ${blocked.length ? `<div class="section-label mt12">COULD NOT VERIFY (${blocked.length})</div>${blocked.map(_renderCandidateCard).join('')}` : ''}

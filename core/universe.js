@@ -862,7 +862,7 @@ function _shiftDateStr(dateStr, days) {
 // (~378-trading-day) scan reached only 92.2% symbol coverage this way and
 // produced an artifact anyway, with nothing short of manually diffing
 // eligibleSymbolCount against symbolsWithBars to reveal it.
-async function _fetchHistoricalDailyBars(symbols, fetchStartDateStr, endDateStr, client = _coreClient) {
+async function _fetchHistoricalDailyBars(symbols, fetchStartDateStr, endDateStr, client = _coreClient, adjustment = 'all') {
   let requests = 0;
   const barsBySymbol = {};
   const failedBatches = [];
@@ -892,8 +892,16 @@ async function _fetchHistoricalDailyBars(symbols, fetchStartDateStr, endDateStr,
           // (+3,140%) "mover" that was almost certainly exactly this.
           // 'all' (not just 'split') also normalizes dividend adjustments,
           // which this file had no reason to leave out for a historical
-          // ranking use case.
-          adjustment: 'all',
+          // ranking use case. Overridable (core/edgar.js's float derivation
+          // also wants 'all', passed explicitly rather than relying on this
+          // default — dividing EntityPublicFloat's dollar value by a
+          // split-ADJUSTED historical close lands the result in TODAY's
+          // share-count basis, the same basis the 10M threshold and
+          // shares-outstanding comparison are in; the raw price would
+          // return a share count in that HISTORICAL date's basis instead,
+          // wrong by exactly the split ratio if one occurred since —
+          // confirmed live via DAIC, see core/edgar.js's own header).
+          adjustment,
         };
         if (pageToken) params.page_token = pageToken;
         const data = await client.alpacaGet('/stocks/bars', params);

@@ -6,8 +6,12 @@
 // EDGE boundary CLAUDE.md protects; that boundary is about core/shell/EDGE
 // never reaching INTO Warrior, and Warrior never reaching into EDGE). This
 // file references core/universe.js's exported fetchers, core/news.js's
-// fetchNewsForTickers, core/edgar.js's getFloatDataForSymbols (Phase 6),
-// and core/clock.js's getPT/getMarketStatus as ordinary globals — same as
+// fetchNewsForTickers, getFloatDataForSymbols (Phase 6 — defined by
+// core/float-table.js in the browser as of 2026-09-04, a static-table
+// lookup; core/edgar.js's own live-fetch version of the same function
+// name is Node-only now, called only from scripts/build-float-table.mjs —
+// see either file's header for why), and core/clock.js's
+// getPT/getMarketStatus as ordinary globals — same as
 // engines/warrior/index.js already does for state/registerEngine. See
 // that file's header for why that's expected, not a boundary leak: the
 // rule is one-directional.
@@ -224,10 +228,21 @@ function evaluatePillar4(candidate, newsItemsForSymbol, now, newsFetchFailed) {
 // Pillar 5 (float), Phase 6 (2026-09-04): real now, via core/edgar.js
 // (spec originally wrote this against FMP; FMP 402s on exactly this
 // gate's microcap population -- confirmed live during the backtest --
-// SEC EDGAR is the substitute, see core/edgar.js's header). Shares
-// outstanding only, not EntityPublicFloat -- the backtest's own settled
-// design: two independent measurements, never blended into one
-// ambiguous-unit slot.
+// SEC EDGAR is the substitute, see core/edgar.js's header).
+//
+// REVISED 2026-09-03: gates on EntityPublicFloat-implied float shares, not
+// shares outstanding -- shares outstanding was the WRONG QUANTITY (total
+// shares, not free-tradable float; confirmed live via DAIC, where the two
+// differed by an order of magnitude). core/edgar.js derives the implied
+// share count by dividing EntityPublicFloat's dollar value by the
+// historical close on ITS OWN reference date (never today's price -- see
+// that file's header). A measured dispersion check (n=204 backtest
+// symbols, scripts/measure-float-ratio-dispersion.mjs) ruled out a
+// calibrated shares-outstanding fallback for symbols with no
+// EntityPublicFloat filing -- those read not-checked, same as before
+// Phase 6 existed, no fallback attempted (Option E, not Option C/D: a slot
+// that sometimes means dollars-derived shares and sometimes raw shares
+// outstanding is exactly the ambiguity pre-market RVOL was built to avoid).
 //
 // FLOAT_THRESHOLD_DEFAULT_SHARES=10,000,000 is the spec's own stated
 // default (docs/warrior-engine-spec-v2.md Phase 6: "Float threshold —
@@ -238,6 +253,10 @@ function evaluatePillar4(candidate, newsItemsForSymbol, now, newsFetchFailed) {
 //
 // fetchFailed -> BLOCKS qualification, same fetch-failed/not-checked
 // split as RVOL/news (see classifyGate's own comment on that decision).
+// Covers both "EDGAR request failed" and "we found a real EntityPublicFloat
+// filing but couldn't complete the historical-price half of the
+// derivation" -- both are "we found real data but couldn't finish
+// measuring it this scan," not a structural absence.
 // NOTE, disclosed rather than silently resolved: this diverges from the
 // spec's older FMP-era language ("qualified candidates fall back to 4/5
 // near-miss rather than disappearing" on daily-quota exhaustion) -- that
@@ -248,18 +267,59 @@ function evaluatePillar4(candidate, newsItemsForSymbol, now, newsFetchFailed) {
 // that, and treating it as one would reintroduce exactly the missing-
 // data-wearing-a-real-answer's-costume problem this whole pass exists to
 // close. Flagged here rather than silently picked either way.
-function evaluatePillarFloat(floatInput, thresholdShares) {
+// Volume-consistency backstop (2026-09-04) — found live in a boot check:
+// BIAF (implied float 174,868 shares) and GRI (41,528) both PASSED the
+// <10M gate despite same-session volume 80x-263x their implied float, a
+// physically implausible turnover no real trading day produces (Ross's
+// own method targets extreme float-rotation days, but even those rarely
+// exceed low-single-digit multiples in a single session). The invariant
+// guard (impliedFloatShares <= sharesOutstanding) is ONE-SIDED — it can
+// only catch an OVER-estimate; an implausibly SMALL float (exactly what
+// makes a candidate qualify) sails through it cleanly, since a tiny
+// number is trivially less than shares outstanding too. Both BIAF and GRI
+// were also beyond the 180-day staleness bound added the same day (see
+// core/float-table.js), which independently would have caught them — this
+// is a backstop for values INSIDE that bound that are stale beyond
+// usefulness for some other reason (undisclosed dilution, a split the
+// filing doesn't yet reflect) staleness-by-filing-date alone can't detect.
+//
+// The 10x cutoff is DATA-DERIVED, not assumed: measured (recent daily
+// volume ÷ implied float) across all 3,032 usable entries in the live
+// float table (2026-09-04) — p50=0.013, p75=0.027, p90=0.076, p95=0.30,
+// p97≈1.0 (a full float rotation in a day — rare but real for genuine
+// extreme momentum), p99=11.3, p99.5=28.1, only 1.1% of the whole
+// population exceeds 10x. GRI's own live ratio (~10.5x) sits almost
+// exactly at that p99 mark; BIAF's (80x-263x depending on the day) sits
+// far past it. 10x lands right at the natural break between "extreme but
+// plausible" and "almost certainly a stale denominator."
+const VOLUME_TO_FLOAT_MULTIPLE_MAX = 10;
+
+function evaluatePillarFloat(floatInput, thresholdShares, todayVolume) {
   const threshold = `<${thresholdShares.toLocaleString()}`;
   if (floatInput && floatInput.fetchFailed) {
-    return _pillar('float', 'fetch-failed', null, threshold, { reason: 'float fetch failed (SEC EDGAR rate-limited or network error) — not confirmed absent, could not be measured this scan' });
+    return _pillar('float', 'fetch-failed', null, threshold, { reason: 'float fetch failed (SEC EDGAR rate-limited, network error, or the historical-price half of the derivation could not be completed) — not confirmed absent, could not be measured this scan' });
   }
-  if (!floatInput || floatInput.sharesOutstanding == null) {
-    return _pillar('float', 'not-checked', null, threshold, { reason: 'no EDGAR shares-outstanding data available for this symbol' });
+  if (!floatInput || floatInput.impliedFloatShares == null) {
+    // invalidReason (2026-09-03): set when core/edgar.js's own invariant
+    // guard caught a derivation whose implied float exceeded shares
+    // outstanding -- a specific, real reason, shown in place of the
+    // generic "no filing" one below which would otherwise misrepresent a
+    // found-but-invalid filing as a structural absence.
+    return _pillar('float', 'not-checked', null, threshold, { reason: (floatInput && floatInput.invalidReason) || 'no EntityPublicFloat filing available for this symbol' });
   }
-  const pass = floatInput.sharesOutstanding < thresholdShares;
-  return _pillar('float', pass ? 'pass' : 'fail', floatInput.sharesOutstanding, threshold, {
-    asOfDate: floatInput.asOfDate,
+  if (todayVolume != null && floatInput.impliedFloatShares > 0) {
+    const volumeMultiple = todayVolume / floatInput.impliedFloatShares;
+    if (volumeMultiple > VOLUME_TO_FLOAT_MULTIPLE_MAX) {
+      return _pillar('float', 'not-checked', null, threshold, {
+        reason: `today's volume (${Math.round(todayVolume).toLocaleString()}) is ${volumeMultiple.toFixed(1)}x the implied float (${Math.round(floatInput.impliedFloatShares).toLocaleString()}) — beyond what real trading can plausibly explain (${VOLUME_TO_FLOAT_MULTIPLE_MAX}x, data-derived), the estimate is likely stale regardless of its filing date`,
+      });
+    }
+  }
+  const pass = floatInput.impliedFloatShares < thresholdShares;
+  return _pillar('float', pass ? 'pass' : 'fail', floatInput.impliedFloatShares, threshold, {
+    asOfDate: floatInput.referenceDate,
     stalenessDays: floatInput.stalenessDays,
+    dilutionCorrected: floatInput.dilutionCorrected,
   });
 }
 
@@ -389,7 +449,7 @@ function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, preMarket
   // 14 days, so the cost case for a stricter skip is much weaker here
   // than it was written against.
   const pillarFloat = clearedFreePillars
-    ? evaluatePillarFloat(floatInput, floatThresholdShares ?? FLOAT_THRESHOLD_DEFAULT_SHARES)
+    ? evaluatePillarFloat(floatInput, floatThresholdShares ?? FLOAT_THRESHOLD_DEFAULT_SHARES, rvolInput && rvolInput.todayVolume)
     : skip('float', `<${(floatThresholdShares ?? FLOAT_THRESHOLD_DEFAULT_SHARES).toLocaleString()}`);
 
   const gateResult = {
@@ -397,6 +457,16 @@ function evaluateGate(candidate, { session, elapsedMinutes, rvolInput, preMarket
     pillars: [pillar1, pillar2, pillar3, pillarPreMarketRvol, pillar4, pillarFloat],
     haltStatus: 'unknown', // deferred — see spec's "Halt check" section
     dataTimestamp: now.toISOString(),
+    // app.js's VERSION const, as an ordinary cross-script global (same
+    // pattern this file already uses for getPT/getFloatDataForSymbols —
+    // see this file's header). Stamped onto every gate result so it's
+    // already present in whatever eventually becomes Phase 7's signal
+    // snapshot, rather than needing to be wired in retroactively — the
+    // forward test's value depends on knowing which build produced which
+    // morning's candidates (2026-09-03, non-negotiable before forward-
+    // testing starts). Defensive fallback for harnesses (tests, offline
+    // scripts) that never define VERSION at all.
+    buildVersion: typeof VERSION !== 'undefined' ? VERSION : null,
   };
   gateResult.tier = classifyGate(gateResult);
   gateResult.passed = gateResult.tier === 'QUALIFIED';
@@ -551,23 +621,32 @@ async function evaluateGateBatch(candidates, session) {
     newsFailedSymbolSet = new Set(state.newsFailedSymbols || []);
   }
 
-  // Float, Phase 6 (2026-09-04): same pillar12Survivors scoping as rvol/
+  // Float (revised 2026-09-04): same pillar12Survivors scoping as rvol/
   // news -- "apply last" per spec, but not narrowed further; see
-  // evaluateGate's own comment for why. core/edgar.js caches per-symbol
-  // for 14 days, so a repeat candidate across mornings costs zero
-  // additional requests here.
+  // evaluateGate's own comment for why. getFloatDataForSymbols now
+  // resolves to core/float-table.js's static-table lookup in the browser
+  // (core/edgar.js's live EDGAR fetch is CORS-blocked, confirmed live —
+  // see that file's header), fetched once per page load, so a repeat
+  // candidate across mornings costs zero additional requests same as
+  // before, just for a different reason (page-lifetime cache, not a
+  // 14-day one).
   let floatInputBySymbol = {};
+  let floatTableBuiltAt = null;
+  let floatTableStalenessDays = null;
   if (pillar12Survivors.length) {
     const symbols = pillar12Survivors.map(c => c.symbol);
-    const { sharesOutstandingBySymbol, requests: floatReq, failedSymbols: floatFailedSymbols } = await getFloatDataForSymbols(symbols);
+    const { floatBySymbol, requests: floatReq, failedSymbols: floatFailedSymbols, tableBuiltAt, tableStalenessDays } = await getFloatDataForSymbols(symbols);
     requests += floatReq;
+    floatTableBuiltAt = tableBuiltAt ?? null;
+    floatTableStalenessDays = tableStalenessDays ?? null;
     const floatFailedSymbolSet = new Set(floatFailedSymbols || []);
     for (const sym of symbols) {
-      const entry = sharesOutstandingBySymbol[sym];
+      const entry = floatBySymbol[sym];
       floatInputBySymbol[sym] = {
-        sharesOutstanding: entry ? entry.sharesOutstanding : null,
-        asOfDate: entry ? entry.asOfDate : null,
+        impliedFloatShares: entry ? entry.impliedFloatShares : null,
+        referenceDate: entry ? entry.referenceDate : null,
         stalenessDays: entry ? entry.stalenessDays : null,
+        invalidReason: entry ? entry.invalidReason : null,
         fetchFailed: floatFailedSymbolSet.has(sym),
       };
     }
@@ -590,7 +669,7 @@ async function evaluateGateBatch(candidates, session) {
     now,
   }));
 
-  return { results, requests, rvolCheckable };
+  return { results, requests, rvolCheckable, floatTableBuiltAt, floatTableStalenessDays };
 }
 
 // 'premarket-gap' is the only strategy meaningful before the open —

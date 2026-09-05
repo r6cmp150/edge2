@@ -1,0 +1,55 @@
+name: Build float table
+
+# See scripts/build-float-table.mjs's header comment for why this exists:
+# SEC's EDGAR API (data.sec.gov/www.sec.gov) sends no
+# Access-Control-Allow-Origin and 403s any CORS preflight -- a browser can
+# never call it directly. This job does the same derivation
+# core/edgar.js's getFloatDataForSymbols always did, from Node (where CORS
+# doesn't apply), for the whole instrument-eligible universe, and commits
+# the settled verdicts to data/float-table.json for the live app to read
+# same-origin. Same pattern as data/movers-snapshots/log.jsonl
+# (capture-movers-snapshot.yml).
+#
+# Weekly, not daily (2026-09-04 decision): EntityPublicFloat is an annual
+# figure, already 6-18 months stale by nature -- a week's table age is
+# noise against that. Sunday 08:00 UTC: well before Monday's market open,
+# low-traffic time for the commit, and gives the whole weekend as slack if
+# a re-run via workflow_dispatch is ever needed before Monday.
+on:
+  schedule:
+    - cron: '0 8 * * 0'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The full ~5,700-symbol universe at SEC's self-imposed ~8/s pace plus
+    # Alpaca historical-bar lookups measured around 20-45 minutes locally
+    # (scripts/build-float-table.mjs's own reported buildDurationSeconds) --
+    # generous headroom over the default 6h job timeout isn't needed, but
+    # an explicit ceiling here documents the expected order of magnitude
+    # rather than leaving a silent default.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build float table
+        env:
+          ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+        run: node scripts/build-float-table.mjs
+
+      - name: Commit and push
+        run: |
+          git config user.name "float-table-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/float-table.json
+          git diff --cached --quiet || git commit -m "Float table rebuild $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
