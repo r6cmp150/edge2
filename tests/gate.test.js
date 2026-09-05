@@ -313,9 +313,52 @@ async function testFloatVolumeConsistencySkippedWhenVolumeUnavailable() {
   // Pre-market/closed sessions have no real todayVolume (RVOL itself reads
   // not-checked then) -- the backstop must be skipped cleanly, not treated
   // as a failure, matching the guard's own "skip when data unavailable" rule.
+  // stalenessDays=10 is well under the fallback bound (180), so this case
+  // is unaffected by that bound either -- see the next two tests for what
+  // happens when staleness DOES cross it under this same no-volume
+  // condition.
   const gate = await loadGate();
   const result = gate.evaluatePillarFloat({ impliedFloatShares: 1_000_000, referenceDate: '2026-03-10', stalenessDays: 10 }, 10_000_000, undefined);
   assert.strictEqual(result.status, 'pass', 'missing todayVolume must not itself block an otherwise-valid float pass');
+}
+
+async function testStalenessFallbackBoundFiresOnlyWithoutVolumeData() {
+  // Found live 2026-09-05, in the Phase 7 signal logger's first real dry
+  // run: GPRO's float pillar had stalenessDays=432 and no todayVolume
+  // (CLOSED session -- RVOL, and therefore the volume-consistency check
+  // above, was never checkable), and evaluatePillarFloat had NO defense
+  // left at all -- the volume check can't fire without todayVolume, and
+  // the original 180-day bound had been dropped project-wide 2026-09-04.
+  // GPRO failed anyway (131M shares against a 10M gate) -- right by luck,
+  // not by construction. This is the exact BIAF/GRI shape (a small,
+  // stale-beyond-usefulness implied float PASSING the gate) with nothing
+  // left to catch it.
+  const gate = await loadGate();
+
+  // Beyond the 180-day bound, no todayVolume -> now 'not-checked', not a
+  // raw pass/fail on a number nothing has verified is still current.
+  const staleNoVolume = gate.evaluatePillarFloat(
+    { impliedFloatShares: 174_868, referenceDate: '2025-06-30', stalenessDays: 432 }, 10_000_000, undefined
+  );
+  assert.strictEqual(staleNoVolume.status, 'not-checked', 'beyond the fallback bound with no volume data to check instead, this must not silently pass or fail on a number nobody has verified is still current');
+  assert.strictEqual(staleNoVolume.stalenessDays, 432, 'staleness must still be visible on the pillar even when it blocks the check');
+
+  // Same staleness, but todayVolume IS available and plausible -- the
+  // volume-consistency check is the primary defense in this case and
+  // must be the one that decides, not the fallback bound. Confirms the
+  // fallback only fires in the specific gap it exists for.
+  const staleWithPlausibleVolume = gate.evaluatePillarFloat(
+    { impliedFloatShares: 174_868, referenceDate: '2025-06-30', stalenessDays: 432 }, 10_000_000, 500_000 // ~2.9x, well under VOLUME_TO_FLOAT_MULTIPLE_MAX
+  );
+  assert.strictEqual(staleWithPlausibleVolume.status, 'pass', 'with real, plausible volume data available, the volume-consistency check governs -- the fallback bound must not override a case the primary check already cleared');
+
+  // Under the fallback bound, no volume data -- must NOT be blocked; this
+  // is the coverage the 2026-09-04 drop decision was protecting, and the
+  // fallback must not re-gut it.
+  const notStaleNoVolume = gate.evaluatePillarFloat(
+    { impliedFloatShares: 1_000_000, referenceDate: '2026-06-01', stalenessDays: 90 }, 10_000_000, undefined
+  );
+  assert.strictEqual(notStaleNoVolume.status, 'pass', 'under the fallback bound, no volume data must not itself block an otherwise-valid pass');
 }
 
 async function testClassifyGateTreatsFloatAsSubstantiveAsOfPhase6() {
@@ -666,6 +709,7 @@ async function testDiagnoseGateCostShapeAndStrategySelection() {
   await run('gate: the volume-consistency backstop catches BIAF/GRI-shaped false passes', testFloatVolumeConsistencyBackstop);
   await run('gate: the volume-consistency backstop allows plausible extreme-momentum ratios', testFloatVolumeConsistencyAllowsPlausibleRatios);
   await run('gate: the volume-consistency backstop is skipped cleanly when todayVolume is unavailable', testFloatVolumeConsistencySkippedWhenVolumeUnavailable);
+  await run('gate: the 180-day staleness fallback bound fires only when volume data is unavailable', testStalenessFallbackBoundFiresOnlyWithoutVolumeData);
   await run('gate: classifyGate treats float as substantive as of Phase 6', testClassifyGateTreatsFloatAsSubstantiveAsOfPhase6);
   await run('gate: float is applied last but not further short-circuited by other stage-2 fails', testFloatAppliedLastNotFurtherShortCircuitedByOtherStage2Fails);
   await run('gate: evaluateGateBatch fetches float only for pillar12Survivors and reads the configured threshold', testEvaluateGateBatchFetchesFloatOnlyForPillar12SurvivorsAndReadsConfiguredThreshold);

@@ -294,6 +294,38 @@ function evaluatePillar4(candidate, newsItemsForSymbol, now, newsFetchFailed) {
 // plausible" and "almost certainly a stale denominator."
 const VOLUME_TO_FLOAT_MULTIPLE_MAX = 10;
 
+// STALENESS FALLBACK BOUND, re-added 2026-09-05 -- narrower than the
+// original 180-day bound this project added-then-dropped 2026-09-04, and
+// for a reason that decision didn't have in front of it yet: the
+// volume-consistency check above is the correct, data-validated primary
+// defense (p99=0.50x on the corrected population, only 0.28% implausible
+// -- see that check's own header), but it is STRUCTURALLY INERT whenever
+// `todayVolume` is unavailable, which is exactly whenever RVOL itself
+// isn't checkable (evaluateGateBatch only populates rvolInput when
+// session==='OPEN' and well past the open -- see rvolCheckable). Found
+// live, not theorized: the first real dry run of the Phase 7 signal
+// logger ran during a CLOSED session, GPRO's float pillar received
+// todayVolume=null, and the volume check silently never ran at all --
+// leaving a 432-day-old implied float to gate on a raw threshold
+// comparison with ZERO staleness defense, the exact BIAF/GRI shape
+// (implied float 174,868 against 13.9M shares traded) this whole
+// investigation exists to prevent. GPRO happened to fail anyway (131M
+// against the 10M gate) -- right by luck, not by construction -- and a
+// scheduled logger will routinely run in PRE/CLOSED/AH sessions where
+// this gap is live every time.
+//
+// Scoped as a FALLBACK, not a replacement: when todayVolume IS
+// available, the volume-consistency check remains the sole gate (it's
+// tighter and age-blind, catching dilution/splits a filing-date bound
+// can't see) -- this bound never fires in that case, preserving the
+// coverage the original 180-day-bound-dropped decision was protecting
+// (98.8%+ of usable entries sit beyond 180 days by filing reference date
+// even post-dilution-correction). It fires ONLY when todayVolume is
+// null/undefined -- i.e. only in exactly the gap the volume check can't
+// reach -- so a PRE/CLOSED-session scan gets SOME staleness defense
+// instead of none, without re-gutting OPEN-session coverage.
+const STALENESS_FALLBACK_BOUND_DAYS = 180;
+
 function evaluatePillarFloat(floatInput, thresholdShares, todayVolume) {
   const threshold = `<${thresholdShares.toLocaleString()}`;
   if (floatInput && floatInput.fetchFailed) {
@@ -314,6 +346,13 @@ function evaluatePillarFloat(floatInput, thresholdShares, todayVolume) {
         reason: `today's volume (${Math.round(todayVolume).toLocaleString()}) is ${volumeMultiple.toFixed(1)}x the implied float (${Math.round(floatInput.impliedFloatShares).toLocaleString()}) — beyond what real trading can plausibly explain (${VOLUME_TO_FLOAT_MULTIPLE_MAX}x, data-derived), the estimate is likely stale regardless of its filing date`,
       });
     }
+  } else if (floatInput.stalenessDays != null && floatInput.stalenessDays > STALENESS_FALLBACK_BOUND_DAYS) {
+    // Only reached when todayVolume is unavailable -- see header comment.
+    return _pillar('float', 'not-checked', null, threshold, {
+      reason: `filing is ${floatInput.stalenessDays} days old (reference date ${floatInput.referenceDate}), beyond the ${STALENESS_FALLBACK_BOUND_DAYS}-day fallback bound, and today's volume wasn't available this scan to check plausibility directly instead`,
+      asOfDate: floatInput.referenceDate,
+      stalenessDays: floatInput.stalenessDays,
+    });
   }
   const pass = floatInput.impliedFloatShares < thresholdShares;
   return _pillar('float', pass ? 'pass' : 'fail', floatInput.impliedFloatShares, threshold, {
