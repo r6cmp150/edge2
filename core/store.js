@@ -1,7 +1,7 @@
 // core/store.js — owned by neither engine. core/ never imports from engines/.
 // localStorage / Supabase persistence (Supabase client, portfolio + settings CRUD).
 // Moved from app.js verbatim (Phase 0 extraction). Left in app.js: writeTradeToSupabase,
-// mapSupabaseTradeToSoldShape, and other Sold/report-specific persistence — those are
+// mapTradesV2ToSoldShape, and other Sold/report-specific persistence — those are
 // tightly coupled to EDGE's trade-recording shape, not generic position/settings storage.
 
 // Client is named supabaseClient (not `supabase`) — the CDN bundle's UMD

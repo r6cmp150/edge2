@@ -1218,33 +1218,25 @@ async function resolveOneSellTiming(trade) {
   return true;
 }
 
-// Fire-and-forget like every other background Supabase write in this file
-// (writeTradeToSupabase, the renderPortfolioTab peak-price updates) — this
-// runs lazily on Sold tab open, not from a direct user action, so a failure
-// here shouldn't surface as an alert; it just retries next time the tab
-// opens since trade.sellTimingResolved was already set locally regardless
-// (state.sold is the source of truth for the Sold tab display either way).
-// Matches by trade.supabaseId when available (set by writeTradeToSupabase
-// for any trade sold after that capture was added); falls back to
-// ticker+buy_date+sell_date for trades sold before then.
+// DISABLED at the trades_v2 cutover (2026-09-05). This used to UPDATE
+// `trades` with the 5 sell-timing columns, fire-and-forget, on every Sold
+// tab open. Both possible targets are now closed to it: trades_v2 has no
+// anon UPDATE policy by design (same fail-closed posture as signal_log's
+// outcome columns — db/002_trades_v2.sql), and `trades` itself loses its
+// UPDATE grant at the same moment (db/004). Repointing this at trades_v2
+// instead of disabling it would mean every call fails permission-denied,
+// forever, on every Sold tab open — a permanent silent failure plus a
+// doomed network call plus a function that reads as working to the next
+// person who opens this file. Early-returning is the correct fix, not
+// repointing: this gets replaced by the deferred outcome-filling job
+// (its own narrowly-scoped credential, not yet built — see
+// db/002_trades_v2.sql's lifecycle note) rather than kept firing here.
+// resolveOneSellTiming's LOCAL computation (below, in
+// resolveSellTimingForSoldTrades) is untouched — it still populates
+// trade.bestExitPrice/etc. on state.sold for the current session's Sold
+// tab display; only the doomed remote write is disabled.
 async function writeSellTimingToSupabase(trade) {
-  const row = {
-    sell_timing_resolved: true,
-    best_exit_price: trade.bestExitPrice,
-    best_exit_date: trade.bestExitDate,
-    best_exit_timing: trade.bestExitTiming,
-    price_at_plus5_days: trade.priceAt5Days,
-  };
-  try {
-    let query = supabaseClient.from('trades').update(row);
-    query = trade.supabaseId != null
-      ? query.eq('id', trade.supabaseId)
-      : query.eq('ticker', trade.ticker).eq('buy_date', trade.buyDate).eq('sell_date', trade.sellDate);
-    const { error } = await query;
-    if (error) console.error('Supabase sell-timing update failed:', error.message);
-  } catch(e) {
-    console.error('Supabase sell-timing update failed:', e.message);
-  }
+  return; // see comment above — no longer attempts to write anywhere
 }
 
 // Lazy Resolution orchestrator — called (not awaited) when the Sold tab
@@ -4651,10 +4643,12 @@ function selectDecision(dec) {
 // Best-effort mirror of the sold trade into Supabase. Never blocks or
 // throws into the caller — localStorage (state.sold) remains the source
 // of truth; this is purely additive persistence for later analysis/export.
+// Writes to trades_v2, not trades (cutover, 2026-09-05) — trades is
+// SELECT-only for anon from this point on (db/004).
 async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
   try {
     const signalLabel = pos.scoreAtBuy >= 116 ? 'STRONG BUY' : pos.scoreAtBuy >= 73 ? 'SOFT BUY' : 'WATCH';
-    const { data, error } = await supabaseClient.from('trades').insert([{
+    const { data, error } = await supabaseClient.from('trades_v2').insert([{
       ticker: pos.ticker,
       company: pos.company,
       buy_date: pos.buyDate,
@@ -4680,6 +4674,25 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       catalyst_setup: !!pos.catalystSetup,
       sub10_adjustment: pos.subTenEntryAdjustment ?? 0,
       groq_at_purchase: pos.groqProbabilityAtBuy || null,
+      // Previously silently dropped on every Supabase round-trip (no
+      // column existed on the old `trades` table) — trades_v2 has real
+      // columns for all of these now, so they're written going forward
+      // instead of recreating the exact drift trades_v2 was built to fix.
+      news_at_buy: record.newsAtBuy || null,
+      signals_fired_at_buy: record.signalsFiredAtBuy || [],
+      vol_build_near_miss_consecutive_days: record.volBuildNearMiss?.consecutiveDays ?? null,
+      vol_build_near_miss_vol_ratio: record.volBuildNearMiss?.volRatio ?? null,
+      mean_reversion_near_miss_pct_below_ma: record.meanReversionNearMiss?.pctBelowMA ?? null,
+      mean_reversion_near_miss_rsi: record.meanReversionNearMiss?.rsi ?? null,
+      capped_by_at_buy: record.cappedByAtBuy || null,
+      raw_atr_at_buy: record.rawAtrAtBuy ?? null,
+      trimmed_atr_at_buy: record.trimmedAtrAtBuy ?? null,
+      threshold_at_buy: record.thresholdAtBuy ?? null,
+      target_drift_pct: record.targetDriftPct ?? null,
+      peak_price: record.peakPrice ?? null,
+      peak_price_date: record.peakPriceDate || null,
+      trailing_stop_triggered: !!record.trailingStopTriggered,
+      rsi_suspended_at_gain_pct: record.rsiSuspendedAtGainPct ?? null,
       distance_from_target: record.distanceFromTargetAtSale,
       momentum_protection: !!pos.momentumProtectionActivated,
       source: record.source,
@@ -5108,25 +5121,31 @@ ${correlationText}`;
 // deletePositionFromSupabase/loadSettingsFromSupabase/saveSettingsToSupabase
 // moved to core/store.js (Phase 0 extraction).
 
-// Normalizes a Supabase trades row (snake_case, ~30 columns) into the same
-// shape as a state.sold record (camelCase, ~40 fields) so the rest of
-// generateClaudeReport() below can run unmodified against either source.
-// Fields with no Supabase column (near-miss data, ATR, peak price, trailing
-// stop, RSI-suspended gain, news, signals-fired list, the retired sell-
-// warning enum) come back null/[] — every section already treats those as
-// "no data for this trade" rather than crashing, the same way it already
-// handles pre-update localStorage trades that predate a given field.
-function mapSupabaseTradeToSoldShape(row) {
+// mapSupabaseTradeToSoldShape (the `trades`-table version of the mapper
+// below) removed at the trades_v2 cutover (2026-09-05) -- nothing calls
+// it any more; every read site now goes through mapTradesV2ToSoldShape.
+// Full definition is in git history if the old `trades` shape is ever
+// needed for reference (e.g. writing a one-off audit query against the
+// now-frozen table).
+
+// trades_v2 equivalent of the removed mapSupabaseTradeToSoldShape, added at the
+// trades_v2 cutover (2026-09-05). Same sold-shape output, but reads the
+// previously-dropped fields (peakPrice, the ATR pair, cappedByAtBuy,
+// etc.) from their real trades_v2 columns instead of hardcoding null —
+// for every trade migrated from the old `trades` table those columns
+// ARE null (never captured, see db/002_trades_v2.sql's migration note),
+// so this produces identical output to the old mapper on migrated rows
+// (verified via the trades-vs-trades_v2 Claude Report diff before this
+// cutover shipped) — but unlike the old mapper, it will show real data
+// for every trade recorded from now on. sellWarningAtSale stays
+// hardcoded null: that field was never carried into trades_v2 at all
+// (retired enum, no live writer — see 002's migration note).
+function mapTradesV2ToSoldShape(row) {
   const daysHeld = (row.buy_date && row.sell_date)
     ? Math.floor((new Date(row.sell_date) - new Date(row.buy_date)) / 86400000)
     : null;
   return {
     id: String(row.id),
-    // Same field writeTradeToSupabase sets after a local sell's mirror
-    // write succeeds (app.js:4641) — populating it here too means every
-    // Supabase-sourced record can be matched precisely by
-    // writeSellTimingToSupabase's primary path (trade.supabaseId) instead
-    // of always falling back to its ticker+buy_date+sell_date match.
     supabaseId: row.id,
     ticker: row.ticker,
     company: row.company || row.ticker,
@@ -5143,25 +5162,31 @@ function mapSupabaseTradeToSoldShape(row) {
     rsiAtBuy: row.rsi_at_buy,
     volRatioAtBuy: row.volume_ratio_at_buy,
     riskAtBuy: row.risk_score,
-    newsAtBuy: null,
-    signalsFiredAtBuy: [],
-    volBuildNearMiss: null,
-    meanReversionNearMiss: null,
-    cappedByAtBuy: null,
-    rawAtrAtBuy: null,
-    trimmedAtrAtBuy: null,
+    newsAtBuy: row.news_at_buy,
+    signalsFiredAtBuy: row.signals_fired_at_buy || [],
+    volBuildNearMiss: (row.vol_build_near_miss_consecutive_days != null || row.vol_build_near_miss_vol_ratio != null)
+      ? { consecutiveDays: row.vol_build_near_miss_consecutive_days, volRatio: row.vol_build_near_miss_vol_ratio }
+      : null,
+    meanReversionNearMiss: (row.mean_reversion_near_miss_pct_below_ma != null || row.mean_reversion_near_miss_rsi != null)
+      ? { pctBelowMA: row.mean_reversion_near_miss_pct_below_ma, rsi: row.mean_reversion_near_miss_rsi }
+      : null,
+    cappedByAtBuy: row.capped_by_at_buy,
+    rawAtrAtBuy: row.raw_atr_at_buy,
+    trimmedAtrAtBuy: row.trimmed_atr_at_buy,
     macroConditionAtBuy: row.macro_condition,
-    thresholdAtBuy: null,
+    thresholdAtBuy: row.threshold_at_buy,
     catalystSetup: !!row.catalyst_setup,
     duration: row.duration_classification,
     priceRange: row.price_tier,
-    sellWarningAtSale: null,
-    targetDriftPct: null,
-    peakPrice: null,
-    peakPriceDate: null,
+    sellWarningAtSale: null, // retired field, never carried into trades_v2 — see 002's migration note
+    targetDriftPct: row.target_drift_pct,
+    peakPrice: row.peak_price,
+    peakPriceDate: row.peak_price_date,
     momentumProtectionActivated: !!row.momentum_protection,
-    trailingStopTriggered: false,
-    rsiSuspendedAtGainPct: null,
+    // NOT coerced with !! -- null must stay null (unknown), not collapse to
+    // false. See generateClaudeReport's momentumTrailingUnknown for why.
+    trailingStopTriggered: row.trailing_stop_triggered,
+    rsiSuspendedAtGainPct: row.rsi_suspended_at_gain_pct,
     sellTime: row.sell_time,
     sellDayOfWeek: row.sell_day_of_week,
     distanceFromTargetAtSale: row.distance_from_target,
@@ -5178,6 +5203,10 @@ function mapSupabaseTradeToSoldShape(row) {
     peakRiskScoreAtSale: row.peak_risk_score_at_sale,
     peakRsiDuringHold: row.peak_rsi_during_hold,
     topPeakRiskFactorsAtSale: row.top_peak_risk_factors_at_sale || [],
+    // sellTimingResolved/bestExit*/priceAt5Days: writeSellTimingToSupabase
+    // is disabled at this cutover (app.js:~1230), so these stay whatever
+    // trades_v2 actually holds — null for every trade until the deferred
+    // outcome-filling job exists, same as any other pending outcome.
     sellTimingResolved: !!row.sell_timing_resolved,
     bestExitPrice: row.best_exit_price,
     bestExitDate: row.best_exit_date,
@@ -5216,9 +5245,10 @@ function mapSupabaseTradeToSoldShape(row) {
 // it's a cache, not dead legacy storage, and self-heals to match Supabase
 // every time this succeeds.
 async function loadSoldFromSupabase() {
-  const { data, error } = await supabaseClient.from('trades').select('*').order('sell_date', { ascending: false });
+  // trades_v2, not trades (cutover, 2026-09-05) — see writeTradeToSupabase.
+  const { data, error } = await supabaseClient.from('trades_v2').select('*').order('sell_date', { ascending: false });
   if (error) throw error;
-  state.sold = (data || []).map(mapSupabaseTradeToSoldShape);
+  state.sold = (data || []).map(mapTradesV2ToSoldShape);
   persist('sold');
   // This runs after first paint (see runDataLoadAndInit), so if the user
   // is already sitting on the Sold tab (or switches to it before this
@@ -5587,14 +5617,21 @@ async function generateClaudeReport() {
       // identical either way), but "Trade #N" shifting between two reports of
       // the same trades wastes time later. Shipped as its own change, before
       // the trades_v2 cutover, so the cutover commit stays isolated.
-      supabaseClient.from('trades').select('*').order('buy_date', { ascending: true }).order('ticker', { ascending: true }),
+      // trades_v2, not trades (cutover, 2026-09-05) — see writeTradeToSupabase.
+      supabaseClient.from('trades_v2').select('*').order('buy_date', { ascending: true }).order('ticker', { ascending: true }),
       10000,
       'Supabase trades query timed out after 10s'
     );
     if (error) throw error;
     if (data && data.length) {
-      sold = data.map(mapSupabaseTradeToSoldShape);
-      dataSourceNote = `Data source: Supabase database (${sold.length} trades)\nNote: near-miss, ATR-trim, peak price, and some momentum-protection detail aren't tracked in Supabase — those sections will show limited data for this run.`;
+      sold = data.map(mapTradesV2ToSoldShape);
+      // "aren't tracked in Supabase" is no longer accurate for trades
+      // recorded after the trades_v2 cutover (2026-09-05) — those fields
+      // are real columns now. It's still true for every pre-cutover trade
+      // (never captured, unrecoverable — db/002_trades_v2.sql's migration
+      // note), which is most of the history at cutover time, so the note
+      // stays as a general caveat rather than being removed outright.
+      dataSourceNote = `Data source: Supabase database (${sold.length} trades)\nNote: near-miss, ATR-trim, peak price, and some momentum-protection detail are null for any trade sold before the trades_v2 migration (2026-09-05) — those sections will show limited data for this run's pre-migration trades.`;
     } else {
       sold = state.sold;
       dataSourceNote = `Data source: localStorage fallback (${sold.length} trades)`;
@@ -5703,7 +5740,15 @@ async function generateClaudeReport() {
   };
 
   const momentumActivatedTrades = sold.filter(s => s.momentumProtectionActivated);
-  const momentumTrailingTrades  = sold.filter(s => s.trailingStopTriggered);
+  // trailingStopTriggered is a real tri-state for trades_v2-sourced data
+  // (true/false/null), not true/false — every trade migrated ahead of the
+  // trades_v2 cutover has it null (never captured; see db/002's migration
+  // note), and `!!null` silently reads as "confirmed not triggered" rather
+  // than "unknown." Keeping the three states apart here rather than
+  // collapsing them at the mapper is what stops the denominator on the
+  // rate below from being wrong by exactly the size of that gap.
+  const momentumTrailingTrades  = sold.filter(s => s.trailingStopTriggered === true);
+  const momentumTrailingUnknown = sold.filter(s => s.trailingStopTriggered == null);
   const momentumRsiEarlyTrades  = sold.filter(s => s.rsiSuspendedAtGainPct != null);
 
   let report = `EDGE TRADE SIGNALS — CLAUDE ANALYSIS REPORT
@@ -6010,7 +6055,7 @@ Average distance from target at sale across all trades: ${avgDist!=null?`${avgDi
 
 Trades where Momentum Protection activated:     ${momentumActivatedTrades.length}
 Avg outcome on those trades:                    ${momentumActivatedTrades.length ? avg(momentumActivatedTrades, s=>s.pnlPct).toFixed(1) : '—'}%
-Trades where trailing stop triggered exit:      ${momentumTrailingTrades.length} | avg outcome ${momentumTrailingTrades.length ? avg(momentumTrailingTrades, s=>s.pnlPct).toFixed(1) : '—'}%
+Trades where trailing stop triggered exit:      ${momentumTrailingTrades.length} | avg outcome ${momentumTrailingTrades.length ? avg(momentumTrailingTrades, s=>s.pnlPct).toFixed(1) : '—'}%${momentumTrailingUnknown.length ? ` (${momentumTrailingUnknown.length} trade${momentumTrailingUnknown.length===1?'':'s'} excluded — trailing-stop status unknown, migrated before this field was captured)` : ''}
 Trades where RSI would have triggered early:    ${momentumRsiEarlyTrades.length} | avg gain at that
   point ${momentumRsiEarlyTrades.length ? avg(momentumRsiEarlyTrades, s=>s.rsiSuspendedAtGainPct).toFixed(1) : '—'}% (shows how much would have been left on the table)
 
@@ -6488,7 +6533,10 @@ async function loadDatabaseUsage() {
   try {
     const [snapRes, tradeRes] = await Promise.all([
       supabaseClient.from('rating_snapshots').select('*', { count: 'exact', head: true }),
-      supabaseClient.from('trades').select('*', { count: 'exact', head: true }),
+      // trades_v2, not trades (cutover, 2026-09-05) -- trades is frozen at
+      // 37 rows and won't grow further; trades_v2 is what actually
+      // consumes quota going forward.
+      supabaseClient.from('trades_v2').select('*', { count: 'exact', head: true }),
     ]);
     if (snapRes.error) throw snapRes.error;
     if (tradeRes.error) throw tradeRes.error;
@@ -6823,8 +6871,11 @@ ${snapTickers.length ? snapTickers.map(t => `  ${t.padEnd(8)} ${snapByTicker[t]}
 
 async function exportAndArchiveDatabase() {
   try {
+    // trades_v2, not trades (cutover, 2026-09-05) -- see writeTradeToSupabase.
+    // buildSupabaseArchiveReport reads raw snake_case columns directly; every
+    // column it uses keeps the same name in trades_v2, so no other change needed.
     const { data: trades, error: tradesErr } = await supabaseClient
-      .from('trades').select('*').order('buy_date', { ascending: true });
+      .from('trades_v2').select('*').order('buy_date', { ascending: true });
     if (tradesErr) throw tradesErr;
     if (!trades || !trades.length) { alert('No trades in Supabase to archive yet.'); return; }
 
@@ -7213,7 +7264,8 @@ async function exportAllData(btn) {
     const [portfolio, settings, tradesRes] = await Promise.all([
       loadPortfolioFromSupabase(),
       loadSettingsFromSupabase(),
-      supabaseClient.from('trades').select('*').order('buy_date', { ascending: true }),
+      // trades_v2, not trades (cutover, 2026-09-05) -- see writeTradeToSupabase.
+      supabaseClient.from('trades_v2').select('*').order('buy_date', { ascending: true }),
     ]);
     if (tradesRes.error) throw tradesRes.error;
 
@@ -7222,7 +7274,7 @@ async function exportAllData(btn) {
       exported: new Date().toISOString(),
       settings: { ...(settings || {}), alpacaKey:'[REDACTED]', alpacaSecret:'[REDACTED]', groqKey:'[REDACTED]' },
       portfolio,
-      sold: (tradesRes.data || []).map(mapSupabaseTradeToSoldShape),
+      sold: (tradesRes.data || []).map(mapTradesV2ToSoldShape),
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
