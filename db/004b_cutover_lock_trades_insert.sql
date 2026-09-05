@@ -1,0 +1,35 @@
+-- DO NOT RUN YET.
+--
+-- Drops the remaining write surface on `trades` -- the "anon insert"
+-- policy from 005 and its underlying grant -- landing `trades` at
+-- SELECT ONLY for anon (delete has been blocked by absence since 005;
+-- no delete policy has ever existed).
+--
+-- SPLIT FROM 004a DELIBERATELY (2026-09-05): 004a's UPDATE surface had
+-- zero legitimate callers left the moment writeSellTimingToSupabase was
+-- disabled, so it closed immediately. INSERT is different -- it is the
+-- ONLY thing that still makes a rollback to `trades` possible if
+-- trades_v2 turns out to be wrong under real use, and as of this file
+-- nothing has been written through trades_v2 in anger yet (only the
+-- disposable write-verification test row, already deleted). Closing
+-- INSERT now would remove the rollback path at exactly the moment it's
+-- most likely to still be needed.
+--
+-- THE SPECIFIC CONDITION THAT RELEASES THIS FILE, not a vague "later":
+-- run this once the first REAL trade (an actual sale through the running
+-- app, not a test insert) has landed in trades_v2 AND been confirmed to
+-- read back correctly through the Sold tab. That's the point where
+-- trades_v2 has been exercised by the real write path it will carry
+-- going forward, not just by schema/RLS verification -- confirmation
+-- that rolling back to `trades` is no longer the safer option.
+drop policy if exists "anon insert" on trades;
+revoke insert on trades from anon;
+
+-- VERIFICATION (by re-selecting, not by status code), once run:
+--   1. Attempt an anon INSERT into `trades` -- expect rejection naming
+--      the missing grant, not a filtered no-op.
+--   2. Attempt an anon SELECT against `trades` -- expect it still works,
+--      confirmed by real rows coming back.
+--   3. Confirm DELETE is still blocked (already true since 005) --
+--      re-confirmed here so the end state (SELECT ONLY) is verified in
+--      one pass, not assumed carried over from an earlier file.
