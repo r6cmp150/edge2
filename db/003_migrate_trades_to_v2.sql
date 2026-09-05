@@ -30,12 +30,26 @@
 -- report back before running the insert -- we'd decide whether to relax
 -- the constraint or fix the row.
 --
--- Every column with no source in `trades` is left NULL by omission
--- (peak_price, the ATR pair, capped_by_at_buy, threshold_at_buy,
--- target_drift_pct, trailing_stop_triggered, rsi_suspended_at_gain_pct,
+-- Every column with no source in `trades` and NO DEFAULT on trades_v2 is
+-- left NULL by omission (peak_price, the ATR pair, capped_by_at_buy,
+-- threshold_at_buy, target_drift_pct, rsi_suspended_at_gain_pct,
 -- signals_fired_at_buy, news_at_buy, and the four flattened near-miss
 -- columns) -- see db/002_trades_v2.sql's migration note: these were
 -- never captured for any pre-migration row and cannot be recovered.
+--
+-- trailing_stop_triggered is NOT in that list, and an earlier version of
+-- this comment wrongly included it -- caught 2026-09-05, empirically,
+-- after cutover, not by re-reading this file. trades_v2 declares it
+-- `boolean default false`; since this INSERT never lists the column,
+-- omitting it applies that DEFAULT instead of leaving it null. Every
+-- migrated row got a confirmed-false value for a field that was actually
+-- never captured -- see db/008_fix_trailing_stop_triggered_default.sql
+-- for the correction (reset to null, drop the default). Checked the rest
+-- of the "column carries a DEFAULT" family against this same failure
+-- mode (catalyst_setup, sub10_adjustment, momentum_protection,
+-- lock_in_profits_fired, sell_timing_resolved): trailing_stop_triggered
+-- is the only one of those six this INSERT omits, so it's the only one
+-- affected.
 --
 -- top_exit_factors_at_sale / top_hold_factors_at_sale /
 -- top_peak_risk_factors_at_sale are text[] in trades_v2 but may be jsonb
