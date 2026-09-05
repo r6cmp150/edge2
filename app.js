@@ -1848,9 +1848,12 @@ async function testGroqConnection() {
   } catch(e) { return false; }
 }
 
+// Was db_meta -- repointed to settings (2026-09-04) so this ping has zero
+// dependency on a table that may belong to another app sharing this
+// Supabase project. Same check, table this app actually owns.
 async function testSupabaseConnection() {
   try {
-    const { error } = await supabaseClient.from('db_meta').select('key').limit(1);
+    const { error } = await supabaseClient.from('settings').select('id').limit(1);
     return !error;
   } catch(e) { return false; }
 }
@@ -5576,7 +5579,15 @@ async function generateClaudeReport() {
   let sold, dataSourceNote;
   try {
     const { data, error } = await withTimeout(
-      supabaseClient.from('trades').select('*').order('buy_date', { ascending: true }),
+      // ticker added as a tie-breaker (2026-09-05): buy_date alone doesn't
+      // order same-day trades, and the trades-vs-trades_v2 migration acceptance
+      // diff found that two different tables give no guarantee those ties land
+      // in the same relative order -- 35 of 37 existing trades share a buy_date
+      // with at least one other. Cosmetic (every trade's own data was already
+      // identical either way), but "Trade #N" shifting between two reports of
+      // the same trades wastes time later. Shipped as its own change, before
+      // the trades_v2 cutover, so the cutover commit stays isolated.
+      supabaseClient.from('trades').select('*').order('buy_date', { ascending: true }).order('ticker', { ascending: true }),
       10000,
       'Supabase trades query timed out after 10s'
     );
