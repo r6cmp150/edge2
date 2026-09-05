@@ -62,5 +62,20 @@ jobs:
           git config user.name "log-signals-bot"
           git config user.email "actions@users.noreply.github.com"
           git add data/signal-log-dry-runs/ 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "Signal log dry run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          git diff --cached --quiet || git push
+          # BUG FOUND LIVE (2026-09-05, first real run): `git diff --cached
+          # --quiet || git push` looks like the same commit-guard pattern
+          # used one line above, but it isn't -- by the time this line
+          # runs, `git commit` has already cleared the staged diff, so
+          # `git diff --cached --quiet` reports "nothing staged" and the
+          # push after `||` never executes. The first dry run's commit
+          # landed locally in the runner and was never pushed -- lost when
+          # the runner was torn down, since nothing else ever points at
+          # that commit object. Fixed by tracking whether a commit
+          # actually happened instead of re-checking the (now-empty)
+          # staged diff.
+          if git diff --cached --quiet; then
+            echo "No dry-run artifact to commit."
+          else
+            git commit -m "Signal log dry run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push
+          fi
