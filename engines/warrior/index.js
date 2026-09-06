@@ -1006,15 +1006,63 @@ function renderSnapshot(signalSnapshot) {
   return `<div class="card-sub">Warrior signal detail not yet implemented (Phase 3+).</div>`;
 }
 
-// Generic conservative rule until Phase 6 supplies Warrior-specific exit
-// logic — stop breach only, matching the spec's stated fallback shape for
-// when a real evaluateExit isn't available yet.
+// warrior.sameday.tightstop, per warrior-engine-spec-v2.md's Phase 7 exit
+// rule table (line 1490-1499). Status vocabulary is 'SELL_NOW'/'SELL_SOON'/
+// 'HOLDING' (underscored, matching signal_log's tier-naming convention) --
+// found and fixed here, not left as discovered: the placeholder this
+// replaced used 'SELL'/'HOLD', which doesn't match the registry's own
+// declared type (shell/registry.js's evaluateExit comment) or what any
+// future caller would need to check against.
+//
+// Same-day discipline, not multi-day ATR trailing (EDGE's
+// 'edge.atr.multiday') -- checked in the table's own priority order, most
+// urgent first: a stop breach or the close deadline both mean SELL_NOW
+// regardless of where price sits relative to target; only once neither
+// applies do the softer SELL_SOON conditions get checked.
+//
+// UNVALIDATED, same standing as the Warrior tab's own qualification
+// labelling (_PHASE5_UNVALIDATED_LINE) -- the backtest found no edge for
+// these setups, and this function's own verdict must never look more
+// confident than that constant already says on every Warrior tab render.
+// Carried in `reasons[0]` rather than in the caller's rendering, so the
+// caveat travels with the verdict wherever it's displayed, not just in the
+// one call site this was designed against.
+const WARRIOR_EXIT_UNVALIDATED_CAVEAT = 'Unvalidated exit rule — backtest found no edge for this setup; this is a live forward test, not confirmed guidance.';
+
 function evaluateExit(position, liveData) {
   const price = liveData?.price;
-  if (typeof price === 'number' && typeof position?.stop === 'number' && price <= position.stop) {
-    return { status: 'SELL', reasons: ['Stop-loss breached'] };
+  const stop = position?.stop;
+  const buyPrice = position?.buyPrice;
+  const peakPrice = position?.peakPrice;
+
+  if (typeof price !== 'number' || typeof stop !== 'number' || typeof buyPrice !== 'number') {
+    return { status: 'HOLDING', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Insufficient live data to evaluate exit'] };
   }
-  return { status: 'HOLD', reasons: [] };
+
+  const nowPT = getPT();
+  const minutesFromMidnightPT = nowPT.getHours() * 60 + nowPT.getMinutes();
+
+  if (price <= stop) {
+    return { status: 'SELL_NOW', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Stop-loss hit'] };
+  }
+  if (minutesFromMidnightPT >= 12 * 60 + 30) {
+    return { status: 'SELL_NOW', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Same-day discipline — 30 minutes before close'] };
+  }
+
+  const risk = buyPrice - stop; // R, same-day tight-stop convention
+  if (risk > 0 && price >= buyPrice + 2 * risk) {
+    return { status: 'SELL_SOON', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Target reached (2R)'] };
+  }
+  if (minutesFromMidnightPT >= 8 * 60) {
+    return { status: 'SELL_SOON', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Past the high-momentum window (8:00am PT)'] };
+  }
+  if (typeof peakPrice === 'number' && peakPrice > buyPrice) {
+    const peakGain = peakPrice - buyPrice;
+    if (price <= buyPrice + peakGain * 0.5) {
+      return { status: 'SELL_SOON', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Gave back more than half its peak gain'] };
+    }
+  }
+  return { status: 'HOLDING', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT] };
 }
 
 function summarizeForReport(trades) {

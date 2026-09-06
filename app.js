@@ -3734,9 +3734,22 @@ async function renderPortfolioTab() {
     const days = Math.floor((Date.now() - new Date(p.buyDate).getTime()) / 86400000);
     const durLabel = durHoldLabel(p.duration);
 
-    const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
-    const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi }, currentSignal, state.macroContext, snap);
-    const portBanner = buildUnifiedPortfolioBanner(unifiedResult);
+    // Registry dispatch (Phase 7): getEngine(p.engineSource) is null for
+    // 'EDGE', legacy-null, or an unregistered/failed engine alike -- no
+    // `if (engineSource === 'WARRIOR')` here, the id is only ever used as a
+    // lookup key. EDGE's own calcUnifiedRecommendation is the shell's
+    // native fallback when nothing is registered for this position's
+    // engine, not a special case carved out for 'EDGE' specifically.
+    const dispatchedEngine = getEngine(p.engineSource);
+    let portBanner;
+    if (dispatchedEngine && dispatchedEngine.evaluateExit) {
+      const exitResult = dispatchedEngine.evaluateExit(p, { price: currentPrice });
+      portBanner = buildRegisteredEngineExitBanner(exitResult);
+    } else {
+      const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
+      const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi }, currentSignal, state.macroContext, snap);
+      portBanner = buildUnifiedPortfolioBanner(unifiedResult);
+    }
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
     const priceDiffPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
     const nowCls = priceFetchFailed ? 'pf-now-stale'
@@ -4295,6 +4308,27 @@ function buildUnifiedPortfolioBanner(result) {
   </div>`;
 }
 
+// Portfolio banner for a REGISTRY-DISPATCHED engine's evaluateExit result
+// (Phase 7) — generic across whatever engine produced it, never a hardcoded
+// 'WARRIOR' string here (see shell/registry.js's header on why: the
+// boundary check greps for stray engine references, and this function has
+// none). Status vocabulary ('SELL_NOW'/'SELL_SOON'/'HOLDING') is the
+// registry's own, distinct from EDGE's free-text `label` — reasons[] is
+// rendered verbatim, which is also how an engine's own validation-status
+// caveat (see engines/warrior/index.js's evaluateExit) reaches the screen:
+// this function doesn't know or care that one exists, it just prints
+// whatever the engine put in reasons[0].
+function buildRegisteredEngineExitBanner(exitResult) {
+  const cls = { SELL_NOW: 'ur-sell-now', SELL_SOON: 'ur-sell-soon', HOLDING: 'ur-hold' }[exitResult.status] || 'ur-hold-mixed';
+  const label = (exitResult.status || '').replace(/_/g, ' ');
+  return `<div class="port-banner ur-banner ${cls}">
+    <div class="ur-label"><strong>${label}</strong></div>
+    <div class="ur-factors">
+      ${(exitResult.reasons || []).map(r => `<div class="ur-factor">${r}</div>`).join('')}
+    </div>
+  </div>`;
+}
+
 // Modal RECOMMENDATION block — shows ALL factors (not just top 2-3), split
 // into hold vs sell groups, each sorted by descending magnitude.
 function buildUnifiedRecommendationModalBlock(result) {
@@ -4482,6 +4516,34 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
 // pos.rsiAtBuy rather than any live RSI since a sale is a point-in-time
 // event with no "current" bar fetch of its own at this point in the flow.
 function computeUnifiedSaleFields(pos, salePrice) {
+  // Registry dispatch (Phase 7) -- checked before EDGE's own math runs, not
+  // after: calcUnifiedRecommendation reads pos.duration internally
+  // (MAX_HOLD_DAYS[position.duration]), which is undefined for every
+  // Warrior position and silently disables that factor rather than
+  // throwing -- exactly the landmine warrior-engine-spec-v2.md's Phase 7
+  // section names (line ~1480). Guarding here means EDGE's function never
+  // runs against a Warrior position at all, not that its wrong answer gets
+  // caught afterward. EDGE-specific fields (composite, peak-risk score/
+  // factors) have no Warrior equivalent and stay null -- disclosed, not
+  // zero-filled -- since Warrior's evaluateExit returns only
+  // {status, reasons}, nothing resembling a composite score.
+  const dispatchedEngine = getEngine(pos.engineSource);
+  if (dispatchedEngine && dispatchedEngine.evaluateExit) {
+    const exitResult = dispatchedEngine.evaluateExit(pos, { price: salePrice });
+    const peakRsiDuringHold = state.ownedPeakRSI[pos.ticker] ?? pos.rsiAtBuy ?? null;
+    return {
+      unifiedRecommendationAtSale: (exitResult.status || '').replace(/_/g, ' '),
+      unifiedCompositeAtSale: null,
+      topExitFactorsAtSale: exitResult.status !== 'HOLDING' ? (exitResult.reasons || []).slice(1) : [],
+      topHoldFactorsAtSale: [],
+      lockInProfitsFired: false,
+      peakRiskScoreAtSale: null,
+      topPeakRiskFactorsAtSale: [],
+      peakRsiDuringHold,
+      fullUreFactorsAtSale: null,
+      fullPeakRiskFactorsAtSale: null,
+    };
+  }
   const currentSignal = state.signals.find(s => s.ticker === pos.ticker) || state.ownedScores[pos.ticker] || null;
   const ur = calcUnifiedRecommendation({ ...pos, currentPrice: salePrice, rsi: pos.rsiAtBuy }, currentSignal, state.macroContext);
   // Independent of composite/hardFloor — tracked across the whole hold by
@@ -7338,6 +7400,15 @@ function updateNavBadges() {
     if (isAfternoonMode()) {
       state.portfolio.forEach(p => {
         const price = state.portfolioPrices[p.ticker] || p.buyPrice;
+        // Same registry dispatch as renderPortfolioTab's banner (Phase 7) --
+        // kept in sync deliberately, not two independent implementations of
+        // "does this position warrant a warning."
+        const dispatchedEngine = getEngine(p.engineSource);
+        if (dispatchedEngine && dispatchedEngine.evaluateExit) {
+          const exitResult = dispatchedEngine.evaluateExit(p, { price });
+          if (exitResult.status === 'SELL_NOW' || exitResult.status === 'SELL_SOON') warnCount++;
+          return;
+        }
         const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
         const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy }, currentSignal, state.macroContext);
         if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(result.label)) warnCount++;
