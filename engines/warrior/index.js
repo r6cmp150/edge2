@@ -952,6 +952,34 @@ function renderTab() {
       <p><strong>${blocked.length} candidate${blocked.length === 1 ? '' : 's'} could not be verified this scan</strong> — a data source (RVOL, news, or float) failed to respond, not a quiet market. See COULD NOT VERIFY below.</p>
     </div>`
     : '';
+  // Coverage-notice fix (2026-09-08, explicit ask): the evidence-floor fix
+  // (MINIMUM_SUBSTANTIVE_PILLARS_CHECKED, see gate.js) can correctly zero
+  // out both QUALIFIED and NEAR MISS on a session where too little was
+  // checkable -- at which point this screen used to just say "No qualified
+  // candidates this scan" / "No near-miss candidates this scan", which is a
+  // claim about the market. It's actually a claim about our own coverage:
+  // notEvaluated.length candidates weren't judged, not "nothing looked
+  // promising". Same not-checked-wearing-a-costume failure as the outage
+  // notice above, rendered here instead -- fires only when the outage
+  // notice doesn't (a real fetch failure is the more specific, more
+  // actionable explanation when both are true). Deliberately narrow: only
+  // touches the QUALIFIED/NEAR MISS empty states, one section over from the
+  // pattern it borrows. The tail line (rejected/not-evaluated counts) is
+  // unchanged -- this surfaces the same count earlier, it doesn't replace it.
+  const coverageNotice = (qualified.length === 0 && nearMiss.length === 0 && notEvaluated.length > 0 && !outageNotice)
+    ? (() => {
+        const reasons = [];
+        if (!rvolCheckable) reasons.push('RVOL is not evaluated outside regular market hours');
+        if (notEvaluated.some(r => (r.pillars || []).some(p => p.id === 'float' && p.status === 'not-checked'))) {
+          reasons.push('float coverage was insufficient for most of them (no usable filing)');
+        }
+        const reasonText = reasons.length ? ` — ${reasons.join('; ')}` : '';
+        return `<div class="empty-state outage-notice">
+      <div class="empty-icon">⚠️</div>
+      <p><strong>0 qualified, 0 near miss</strong> — ${notEvaluated.length} of ${results.length} scanned had too little evidence to judge${reasonText}. Not a quiet market — see the count below.</p>
+    </div>`;
+      })()
+    : '';
   return `<div class="tab-header">
     <h1 class="tab-title">WARRIOR</h1>
   </div>
@@ -961,9 +989,10 @@ function renderTab() {
   ${preOpenConditionLine}
   <div class="section-label">QUALIFIED (${qualified.length})${rvolCaveat}</div>
   ${outageNotice}
-  ${qualified.length ? qualified.map(_renderCandidateCard).join('') : (outageNotice ? '' : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>')}
+  ${coverageNotice}
+  ${qualified.length ? qualified.map(_renderCandidateCard).join('') : (outageNotice || coverageNotice ? '' : '<div class="empty-state"><p>No qualified candidates this scan.</p></div>')}
   <div class="section-label mt12">NEAR MISS (${nearMiss.length})${rvolCaveat}</div>
-  ${nearMiss.length ? nearMiss.map(_renderCandidateCard).join('') : '<div class="empty-state"><p>No near-miss candidates this scan.</p></div>'}
+  ${nearMiss.length ? nearMiss.map(_renderCandidateCard).join('') : (coverageNotice ? '' : '<div class="empty-state"><p>No near-miss candidates this scan.</p></div>')}
   ${blocked.length ? `<div class="section-label mt12">COULD NOT VERIFY (${blocked.length})</div>${blocked.map(_renderCandidateCard).join('')}` : ''}
   <div class="tab-subtitle mt12">${rejected.length} rejected (failed price/change, or 2+ pillars) · ${notEvaluated.length} not evaluated (nothing substantive checkable)</div>
   ${replayPanel}`;
