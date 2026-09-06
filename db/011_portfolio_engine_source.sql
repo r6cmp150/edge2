@@ -19,9 +19,13 @@
 -- assumed: confirmAddPortfolio is reachable via exactly one path in the
 -- whole app (openStockModal's "+ Add to Portfolio" button, itself only
 -- rendered for a ticker in state.signals), and Warrior has no buy action
--- at all. NULL stays available for whatever legacy rows exist before this
--- migration runs, and for a future manual-entry or Warrior-buy path if one
--- is ever built.
+-- at all (2026-09-06, found while wiring this column: not a tagging gap,
+-- a product gap -- there is currently no way to record a Warrior trade,
+-- which makes the 30-Warrior-trade arm of the Phase 8 review point
+-- structurally unreachable until a Warrior buy path exists). NULL stays
+-- available for whatever legacy rows exist before this migration runs.
+-- The WARRIOR value isn't a hypothetical extension point -- it's a known
+-- prerequisite for the phase this column exists to serve, not a maybe.
 --
 -- No RLS change needed -- see NOTE_portfolio_rls_not_applied.sql, this
 -- table deliberately has none; adding a column doesn't touch that.
