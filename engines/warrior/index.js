@@ -15,7 +15,9 @@
 // (only this file's own top-level declarations are module-scoped) — so it
 // references registerEngine/state/showGlobalErrorToast/getMarketStatus/
 // getUniverse/renderWarriorTab/getRequestStats/diffRequestStats/
-// getAvailableBudget as ordinary globals. That's expected, not a boundary
+// getAvailableBudget/showModal/closeModal (Step 4, Phase 7 -- candidate
+// card tap opens the same shared modal shell every other detail view uses)
+// as ordinary globals. That's expected, not a boundary
 // leak: the rule this phase enforces is "nothing outside this file reaches
 // INTO Warrior code except through the registry," not "Warrior code can't
 // read the app's shared globals or call its shared utilities" — Phase 2
@@ -380,7 +382,7 @@ function _renderSetupsSection(gateResult) {
 }
 
 function _renderCandidateCard(gateResult) {
-  return `<div class="warrior-card">
+  return `<div class="warrior-card" onclick="warriorOpenCandidateModal('${gateResult.symbol.replace(/'/g, "\\'")}')">
     <div class="warrior-card-header">
       <span class="warrior-card-symbol">${gateResult.symbol}</span>
     </div>
@@ -388,6 +390,39 @@ function _renderCandidateCard(gateResult) {
     ${gateResult.pillars.map(_renderPillarRow).join('')}
     ${_renderSetupsSection(gateResult)}
   </div>`;
+}
+
+// Step 4 (Phase 7): candidate cards are tappable, same connection mechanism
+// as warriorRunReplay/warriorCancelRangeScan (a plain global register()
+// wires up, not a registry exception -- see register()'s own comment).
+// No buy action here -- Step 6 is explicitly last, gated until the exit
+// dispatch and everything before it is verified. This just makes the
+// detail view reachable; the footer has nothing to tap but Close.
+//
+// Looks the candidate up in the LIVE scan (_lastScanResults), not by
+// re-deriving it -- the same object _renderCandidateCard already rendered
+// from, so the modal shows exactly what the card showed, not a
+// re-evaluated (and possibly different, if a rescan landed in between)
+// version of it.
+function _openCandidateModal(symbol) {
+  const candidate = (_lastScanResults?.results || []).find(r => r.symbol === symbol);
+  if (!candidate) {
+    showModal(`<div class="modal-handle"></div>
+      <div class="modal-header">
+        <div class="modal-title">${symbol}</div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body"><div class="card-sub">This candidate is no longer in the current scan.</div></div>
+      <div class="modal-footer"><button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Close</button></div>`);
+    return;
+  }
+  showModal(`<div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">${symbol}</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">${renderSnapshot(candidate)}</div>
+    <div class="modal-footer"><button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Close</button></div>`);
 }
 
 // ── Phase 4: replay harness UI ──────────────────────────────────────────
@@ -1002,8 +1037,22 @@ function renderBadge(position) {
   return `<span class="badge" style="background:rgba(160,120,255,0.15);color:#a078ff;border:1px solid rgba(160,120,255,0.35)">WARRIOR</span>`;
 }
 
+// Step 3 (Phase 7): delegates to the same _renderCandidateCard the live
+// scan list already uses, rather than a second implementation of pillar/
+// setup rendering. Correct by the spec's own definition, not a shortcut --
+// warrior-engine-spec-v2.md line 1387 defines signalSnapshot as "the full
+// gate result (§3 output shape) plus the setups array, entry/target/stop,
+// and suggested shares," which is exactly _renderCandidateCard's existing
+// parameter shape. Works identically for a live, not-yet-owned candidate
+// (Step 4's card tap) and a persisted snapshot on an existing position
+// (Portfolio's "View signal") -- the halt-status caveat line is still
+// honest context in both cases, not something that becomes wrong once the
+// snapshot is historical.
 function renderSnapshot(signalSnapshot) {
-  return `<div class="card-sub">Warrior signal detail not yet implemented (Phase 3+).</div>`;
+  if (!signalSnapshot || !Array.isArray(signalSnapshot.pillars)) {
+    return `<div class="card-sub">Warrior signal detail unavailable — no snapshot recorded.</div>`;
+  }
+  return _renderCandidateCard(signalSnapshot);
 }
 
 // warrior.sameday.tightstop, per warrior-engine-spec-v2.md's Phase 7 exit
@@ -1086,6 +1135,7 @@ export function register() {
   if (typeof window !== 'undefined') {
     window.warriorRunReplay = _runReplayFromUI;
     window.warriorCancelRangeScan = _cancelRangeScanFromUI;
+    window.warriorOpenCandidateModal = _openCandidateModal;
     window.warriorUpdateReplayEstimate = _updateReplayEstimateDisplay;
     window.warriorToggleScanCell = _toggleScanCellFromUI;
     // Test-only escape hatch: the replay panel's own <input> values are

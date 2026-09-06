@@ -3430,6 +3430,43 @@ function confirmAction() {
   closeConfirm();
 }
 
+// Step 3 (Phase 7): "View signal" dispatch for an OWNED position. 'EDGE'/
+// falsy is the shell's native case (same reasoning as the exit dispatch --
+// EDGE has no engines/edge/ module, it was never going to be registered),
+// so it falls through to openStockModal's existing EDGE-shaped detail
+// view unchanged. Anything else calls the registered engine's own
+// renderSnapshot(signalSnapshot) instead of assuming EDGE's shape --
+// openStockModal's RSI/ATR/MA20 pipeline has no meaning for a Warrior gate
+// result, which is exactly the coupling Phase 2's registry interface
+// (renderSnapshot) was specified to avoid. Renders the POSITION's own
+// persisted signalSnapshot -- what the signal looked like at buy time --
+// not a live re-fetch, since this is "what did I act on," not "what does
+// it look like now."
+function openPositionSnapshotModal(ticker) {
+  const p = getOwnedPosition(ticker);
+  if (!p || !p.engineSource || p.engineSource === 'EDGE') {
+    openStockModal(ticker);
+    return;
+  }
+  const engine = getEngine(p.engineSource);
+  const bodyHtml = (engine && engine.renderSnapshot)
+    ? engine.renderSnapshot(p.signalSnapshot)
+    : `<div class="card-sub">Signal detail unavailable — ${p.engineSource} engine not loaded.</div>`;
+  showModal(`<div class="modal-handle"></div>
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">${ticker}</div>
+        <div style="font-size:12px;color:var(--muted)">${p.company || ticker}</div>
+      </div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">${bodyHtml}</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" style="flex:1" disabled>✓ In Portfolio</button>
+      <button class="btn btn-ghost" onclick="closeModal()">✕</button>
+    </div>`);
+}
+
 // ── 15. PORTFOLIO TAB ──────────────────────────────────────────────
 
 function openAddPortfolioModal(ticker) {
@@ -3604,10 +3641,12 @@ async function renderPortfolioTab() {
   }
 
   const weekendBanner = buildWeekendBanner();
+  const engineFilter = state.portfolioEngineFilter || 'ALL';
   container.innerHTML = `<div class="tab-header">
     <h1 class="tab-title">PORTFOLIO</h1>
     <button class="btn btn-sm btn-ghost" onclick="renderPortfolioTab()">↻</button>
   </div>
+  ${buildEngineFilterControl('portfolioEngineFilter', state.portfolio)}
   ${weekendBanner}
   <div id="pf-list"><div class="empty-state"><span class="spinner"></span></div></div>
   <div id="pf-summary"></div>`;
@@ -3648,15 +3687,33 @@ async function renderPortfolioTab() {
   // elapsed. Ratio >= 1.0 (at/past max duration) naturally sorts to the top
   // since it's just the largest values in a descending sort.
   const maxHoldDays = { DAY: 1, '3-DAY': 4, WEEK: 7 };
-  const sortedPortfolio = [...state.portfolio].sort((a, b) => {
-    const daysHeldA = Math.floor((Date.now() - new Date(a.buyDate).getTime()) / 86400000);
-    const daysHeldB = Math.floor((Date.now() - new Date(b.buyDate).getTime()) / 86400000);
-    const ratioA = daysHeldA / maxHoldDays[a.duration];
-    const ratioB = daysHeldB / maxHoldDays[b.duration];
-    return ratioB - ratioA;
-  });
+  // maxHoldDays[p.duration] is undefined for every Warrior position (no
+  // `duration` field -- same-day, not DAY/3-DAY/WEEK), which would produce
+  // NaN here and leave sort order unspecified rather than throwing. Not
+  // spec'd by warrior-engine-spec-v2.md (it settles the DISPLAY badge --
+  // "SAME DAY" -- but says nothing about sort order); this urgency measure
+  // for a Warrior position is my own addition, using the same close-
+  // discipline deadline evaluateExit already checks (12:30pm PT) so a
+  // near-close Warrior position sorts to the top the same way an
+  // at-max-duration EDGE position does, not a guess dressed as spec.
+  const portfolioUrgencyRatio = (p) => {
+    if (p.engineSource && p.engineSource !== 'EDGE') {
+      const nowPT = getPT();
+      return (nowPT.getHours() * 60 + nowPT.getMinutes()) / (12 * 60 + 30);
+    }
+    const daysHeld = Math.floor((Date.now() - new Date(p.buyDate).getTime()) / 86400000);
+    return daysHeld / (maxHoldDays[p.duration] || 1);
+  };
+  const sortedPortfolio = [...state.portfolio].sort((a, b) => portfolioUrgencyRatio(b) - portfolioUrgencyRatio(a));
 
   sortedPortfolio.forEach(p => {
+    // Filter check happens here, up front -- everything below (peakPrice
+    // tracking, exit dispatch, Supabase writes) still runs for a filtered-
+    // out position, same as before this control existed. Only the summary
+    // totals and the card's own HTML are gated on it (below), not the live
+    // tracking a same-day Warrior position depends on continuing to update
+    // in the background even while its card is hidden.
+    const matchesEngineFilter = filterByEngine([p], engineFilter).length > 0;
     const snap = snapshots[p.ticker];
     const bars = (allBars[p.ticker] || []).sort((a,b) => new Date(a.t)-new Date(b.t));
     const closes = bars.map(b => b.c);
@@ -3721,8 +3778,10 @@ async function renderPortfolioTab() {
 
     const cost  = p.shares * p.buyPrice;
     const value = p.shares * currentPrice;
-    totalCost  += cost;
-    totalValue += value;
+    if (matchesEngineFilter) {
+      totalCost  += cost;
+      totalValue += value;
+    }
 
     const pnlDollar = value - cost;
     const pnlPct    = ((currentPrice - p.buyPrice) / p.buyPrice * 100);
@@ -3826,10 +3885,32 @@ async function renderPortfolioTab() {
       : `<span class="pf-score-na">—</span>`;
 
     // Duration urgency — same maxHoldDays map used for the card sort order above.
-    const maxHold = maxHoldDays[p.duration];
-    const daysLeft = Math.max(0, maxHold - days);
-    const durationPct = Math.min(100, (days / maxHold) * 100);
-    const durationCls = daysLeft <= 0 ? 'pf-dur-red' : daysLeft === 1 ? 'pf-dur-orange' : 'pf-dur-blue';
+    // Guarded the same way as portfolioUrgencyRatio above: maxHoldDays[p.duration]
+    // is undefined for a Warrior position, which would produce NaN here and
+    // render as "Day 1 of est. 5-7 day trade" -- confidently wrong, not
+    // blank. Warrior positions render the spec's own answer instead (line
+    // 1501: "They get SAME DAY in the Warrior accent color. This is
+    // structural, not cosmetic") via durationBlockHtml below, so maxHold/
+    // daysLeft/durationPct/durationCls are only ever computed, and only
+    // ever read, on the EDGE branch.
+    const isDurationless = p.engineSource && p.engineSource !== 'EDGE';
+    const maxHold = isDurationless ? null : maxHoldDays[p.duration];
+    const daysLeft = isDurationless ? null : Math.max(0, maxHold - days);
+    const durationPct = isDurationless ? null : Math.min(100, (days / maxHold) * 100);
+    const durationCls = isDurationless ? null : (daysLeft <= 0 ? 'pf-dur-red' : daysLeft === 1 ? 'pf-dur-orange' : 'pf-dur-blue');
+    const durationBlockHtml = isDurationless
+      ? `<div class="pf-duration">
+        <div class="pf-duration-row">
+          <span style="color:#a078ff;font-weight:600;letter-spacing:0.5px">SAME DAY</span>
+        </div>
+      </div>`
+      : `<div class="pf-duration">
+        <div class="pf-duration-row">
+          <span>Day ${days+1} of ${durLabel} trade</span>
+          <span class="${durationCls}">${daysLeft} days left</span>
+        </div>
+        <div class="pf-duration-track"><div class="pf-duration-fill ${durationCls}" style="width:${durationPct}%"></div></div>
+      </div>`;
 
     // Single source of AI probability reads: the modal's "Should I Hold or
     // Sell?" button (loadAIAnalysis -> groqAnalyze) writing to state.aiCache.
@@ -3842,12 +3923,12 @@ async function renderPortfolioTab() {
       ? `<div class="pf-quick-read">${firstAiPair.label}: ${firstAiPair.pct}% likely</div>`
       : '';
 
-    html += `<div class="portfolio-card">
+    const cardHtml = `<div class="portfolio-card">
       ${portBanner}
       ${fridayFlag}
       <div class="pf-header">
         <div>
-          <div class="pf-ticker">${p.ticker}</div>
+          <div class="pf-ticker">${p.ticker} ${renderEngineBadge(p.engineSource)}</div>
           <div class="pf-company">${p.company}</div>
         </div>
         <div class="pf-header-pnl">
@@ -3896,19 +3977,14 @@ async function renderPortfolioTab() {
         </div>
       </div>
       ${aiReadHtml}
-      <div class="pf-duration">
-        <div class="pf-duration-row">
-          <span>Day ${days+1} of ${durLabel} trade</span>
-          <span class="${durationCls}">${daysLeft} days left</span>
-        </div>
-        <div class="pf-duration-track"><div class="pf-duration-fill ${durationCls}" style="width:${durationPct}%"></div></div>
-      </div>
+      ${durationBlockHtml}
       ${momentumBadge}
       <div class="pf-actions">
         <button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${currentPrice})">Mark as sold</button>
-        <button class="btn btn-ghost" onclick="openStockModal('${p.ticker}')">View signal</button>
+        <button class="btn btn-ghost" onclick="openPositionSnapshotModal('${p.ticker}')">View signal</button>
       </div>
     </div>`;
+    if (matchesEngineFilter) html += cardHtml;
   });
 
   const totalPnL    = totalValue - totalCost;
@@ -3924,7 +4000,7 @@ async function renderPortfolioTab() {
 
   const listEl = document.getElementById('pf-list');
   const sumEl  = document.getElementById('pf-summary');
-  if (listEl) listEl.innerHTML = staleBanner + html;
+  if (listEl) listEl.innerHTML = staleBanner + (html || `<div class="empty-state"><p>No ${engineFilter} positions.</p></div>`);
   if (sumEl)  sumEl.innerHTML  = sumHtml;
 }
 
@@ -4342,6 +4418,56 @@ function neutralEngineExitFallback(position, liveData) {
     return { status: 'SELL_NOW', reasons: ['Stop-loss hit (engine unavailable — generic fallback rule)'] };
   }
   return { status: 'HOLDING', reasons: ['Engine unavailable — generic conservative rule only'] };
+}
+
+// Step 5 (Phase 7): engine badge, spec line 1505 ("Portfolio and Sold
+// cards show an engine badge, rendered via getEngine(id).renderBadge() --
+// never via a shell-side branch") plus Phase 2's own neutral-fallback text
+// (line 368: "Badge -> the raw engineSource string in a muted pill") for
+// whatever getEngine() doesn't find. EDGE hits that fallback CORRECTLY,
+// not as a workaround -- EDGE has no engines/edge/ module and was never
+// going to be registered, so the plain-text pill IS its spec'd badge, not
+// a placeholder standing in for a richer one. No engineSource at all
+// (legacy positions predating db/011) renders no badge -- nothing to
+// label honestly.
+// Step 5 (Phase 7), spec line 1503-1505: "Segmented control on both
+// Portfolio and Sold: All / EDGE / Warrior, filtering visible cards by
+// engineSource." Labels are the spec's own literal wording, not a
+// registry-driven list -- the spec names exactly these two engines for
+// this UI, so writing them here is following what's written, not a
+// dispatch decision. stateKey is 'portfolioEngineFilter' or
+// 'soldEngineFilter' -- two independent controls, one per tab, matching
+// "on both" rather than one shared filter.
+function buildEngineFilterControl(stateKey, positions) {
+  const current = state[stateKey] || 'ALL';
+  const countAll = positions.length;
+  const countEdge = positions.filter(p => !p.engineSource || p.engineSource === 'EDGE').length;
+  const countWarrior = positions.filter(p => p.engineSource === 'WARRIOR').length;
+  const opt = (value, label, count) =>
+    `<div class="seg-btn ${current === value ? 'active' : ''}" onclick="setEngineFilter('${stateKey}', '${value}')">${label} (${count})</div>`;
+  return `<div class="segmented mt4">${opt('ALL', 'All', countAll)}${opt('EDGE', 'EDGE', countEdge)}${opt('WARRIOR', 'Warrior', countWarrior)}</div>`;
+}
+
+function setEngineFilter(stateKey, value) {
+  state[stateKey] = value;
+  if (stateKey === 'portfolioEngineFilter') renderPortfolioTab();
+  else if (stateKey === 'soldEngineFilter') renderSoldTab();
+}
+
+// EDGE's filter bucket includes legacy-null positions (pre-db/011) -- same
+// "undefined defaults to EDGE, never a silent third case" rule the spec's
+// backfill note states for engineSource generally (line 1471).
+function filterByEngine(positions, filterValue) {
+  if (!filterValue || filterValue === 'ALL') return positions;
+  if (filterValue === 'EDGE') return positions.filter(p => !p.engineSource || p.engineSource === 'EDGE');
+  return positions.filter(p => p.engineSource === filterValue);
+}
+
+function renderEngineBadge(engineSource) {
+  if (!engineSource) return '';
+  const engine = getEngine(engineSource);
+  if (engine && engine.renderBadge) return engine.renderBadge();
+  return `<span class="badge" style="background:rgba(255,255,255,0.08);color:var(--muted);border:1px solid rgba(255,255,255,0.15)">${engineSource}</span>`;
 }
 
 function buildRegisteredEngineExitBanner(exitResult) {
@@ -4787,19 +4913,23 @@ async function renderSoldTab() {
     if (anyResolved) renderSoldTab();
   });
 
-  const wins = state.sold.filter(s => s.pnlPct > 0);
-  const losses = state.sold.filter(s => s.pnlPct <= 0);
-  const winRate = state.sold.length ? (wins.length / state.sold.length * 100).toFixed(0) : 0;
-  const totalPnL = state.sold.reduce((sum, s) => sum + s.pnlDollar, 0);
+  const engineFilter = state.soldEngineFilter || 'ALL';
+  const filteredSold = filterByEngine(state.sold, engineFilter);
+  const wins = filteredSold.filter(s => s.pnlPct > 0);
+  const losses = filteredSold.filter(s => s.pnlPct <= 0);
+  const winRate = filteredSold.length ? (wins.length / filteredSold.length * 100).toFixed(0) : 0;
+  const totalPnL = filteredSold.reduce((sum, s) => sum + s.pnlDollar, 0);
 
   container.innerHTML = `
     <button id="report-btn" class="report-btn" onclick="generateClaudeReport()">📋 Generate Claude Report</button>
+
+    ${buildEngineFilterControl('soldEngineFilter', state.sold)}
 
     <div class="sold-summary">
       <div class="section-label" style="padding:0 0 8px 0">Trade Summary</div>
       <div class="sold-summary-grid">
         <div class="summary-cell">
-          <div class="summary-cell-val">${state.sold.length}</div>
+          <div class="summary-cell-val">${filteredSold.length}</div>
           <div class="summary-cell-label">Trades</div>
         </div>
         <div class="summary-cell">
@@ -4821,7 +4951,7 @@ async function renderSoldTab() {
   `;
 
   let html = '';
-  state.sold.forEach(s => {
+  filteredSold.forEach(s => {
     const pnlCls = s.pnlDollar >= 0 ? 'profit' : 'loss';
 
     html += `<div class="sold-card ${pnlCls}">
@@ -4829,6 +4959,7 @@ async function renderSoldTab() {
         <div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="ticker-sym">${s.ticker}</span>
+            ${renderEngineBadge(s.engineSource)}
             <span style="font-size:11px;color:var(--muted)">${s.source}</span>
           </div>
           <div class="company-name mt4">${s.company}</div>
@@ -4841,14 +4972,14 @@ async function renderSoldTab() {
         </div>
       </div>
       <div class="card-sub mt4">
-        Score ${s.scoreAtBuy}/100 · RSI ${s.rsiAtBuy?.toFixed(0)} · ${s.duration} · ${s.sellWarningAtSale?.replace('_',' ')||'HOLDING'} at sale
+        Score ${s.scoreAtBuy}/100 · RSI ${s.rsiAtBuy?.toFixed(0)} · ${s.duration || 'SAME DAY'} · ${s.sellWarningAtSale?.replace('_',' ')||'HOLDING'} at sale
       </div>
       ${buildSellTimingHtml(s)}
     </div>`;
   });
 
   const listEl = document.getElementById('sold-list');
-  if (listEl) listEl.innerHTML = html;
+  if (listEl) listEl.innerHTML = html || `<div class="empty-state"><p>No ${engineFilter} sold trades.</p></div>`;
 }
 
 // Rating snapshots have no localStorage equivalent at all — genuinely
