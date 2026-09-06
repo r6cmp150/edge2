@@ -14034,5 +14034,170 @@
     "volume_ratio": 1.5833585168274669,
     "price": 6.23,
     "macro_condition": "BROAD_RALLY"
+  },
+  {
+    "id": 1294,
+    "ticker": "GOGO",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 105,
+    "label": "SOFT BUY",
+    "rsi": 55.39033457249071,
+    "volume_ratio": 1.5137813730181322,
+    "price": 2.845,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1295,
+    "ticker": "LWLG",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 105,
+    "label": "SOFT BUY",
+    "rsi": 17.81250000000003,
+    "volume_ratio": 1.1661317094632428,
+    "price": 5.355,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1296,
+    "ticker": "AMC",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 100,
+    "label": "SOFT BUY",
+    "rsi": 59.03083700440528,
+    "volume_ratio": 1.9914370684883649,
+    "price": 2.65,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1297,
+    "ticker": "ASPI",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 85,
+    "label": "SOFT BUY",
+    "rsi": 55.09138381201045,
+    "volume_ratio": 0.7869234057651726,
+    "price": 4.195,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1298,
+    "ticker": "OPTU",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 85,
+    "label": "SOFT BUY",
+    "rsi": 63.33169854503842,
+    "volume_ratio": 1.44996042478695,
+    "price": 1.06,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1299,
+    "ticker": "METC",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 54.42918048318333,
+    "volume_ratio": 0.8227152980249796,
+    "price": 13.18,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1300,
+    "ticker": "NRGV",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 50.42918454935622,
+    "volume_ratio": 0.5712477638762947,
+    "price": 3.84,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1301,
+    "ticker": "PCG",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 33.12169312169313,
+    "volume_ratio": 0.5325494568785177,
+    "price": 14.315,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1302,
+    "ticker": "HUN",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 70,
+    "label": "WATCH",
+    "rsi": 35.67010309278349,
+    "volume_ratio": 0.7842005112524886,
+    "price": 9.615,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1303,
+    "ticker": "NWL",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 53.1400966183575,
+    "volume_ratio": 0.8691201307015809,
+    "price": 6.11,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1304,
+    "ticker": "STUB",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 35.816618911174785,
+    "volume_ratio": 0.9841364972023946,
+    "price": 6.615,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1305,
+    "ticker": "TTD",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 64.59802538787022,
+    "volume_ratio": 1.3530345291911128,
+    "price": 14.44,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1306,
+    "ticker": "CCO",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 66.66666666666666,
+    "volume_ratio": 1.3766292641033944,
+    "price": 2.39,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1307,
+    "ticker": "IE",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 44.13191076624636,
+    "volume_ratio": 1.0681932695655736,
+    "price": 9.99,
+    "macro_condition": "CHOPPY"
+  },
+  {
+    "id": 1308,
+    "ticker": "NXDR",
+    "captured_at": "2026-09-06T02:33:58.853+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 23.636363636363583,
+    "volume_ratio": 1.3425059395643917,
+    "price": 2.235,
+    "macro_condition": "CHOPPY"
   }
 ]
