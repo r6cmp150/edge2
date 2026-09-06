@@ -479,21 +479,38 @@ function _elapsedSessionMinutes() {
 // oldest failure mode, reintroduced by the very fix meant to close a
 // different instance of it.
 //
-// Measured directly from the two real CLOSED-session dry runs before
-// proposing a number (not picked by feel): every one of 23 candidates,
-// both runs, had at most 1 of 3 substantive pillars checked (rvol always
-// not-checked outside OPEN; float not-checked for all 23 post-fix, since
-// none had a sub-180-day filing). Zero CLOSED-session candidates in
-// either run reached 2+. A floor of "at least 2 of 3 substantive pillars
-// checked" (MINIMUM_SUBSTANTIVE_PILLARS_CHECKED below) therefore means,
-// as measured: CLOSED sessions cannot produce QUALIFIED or NEAR_MISS at
+// CORRECTED 2026-09-05: this comment originally claimed "two real
+// CLOSED-session dry runs" corroborated the floor. That overstated the
+// evidence. Two CLOSED-session dry runs exist, but only ONE (23
+// candidates, checked=0:13/checked=1:10/checked=2:0/checked=3:0)
+// reflects current code. The other predates this file's 180-day float
+// staleness fallback and scored float pass/fail off filings up to 2626
+// days stale with no staleness defense -- that run is a record of the
+// bug the staleness fix closed, not a second corroborating sample; using
+// it as supporting evidence would launder the old defect's output as
+// validation of the new logic. So the floor is measured from ONE real
+// CLOSED-session run under current code, not two.
+//
+// That one run: every one of 23 candidates had at most 1 of 3
+// substantive pillars checked (rvol always not-checked outside OPEN;
+// float not-checked for all 23, since none had a sub-180-day filing).
+// A floor of "at least 2 of 3 substantive pillars checked"
+// (MINIMUM_SUBSTANTIVE_PILLARS_CHECKED below) therefore means, as
+// measured: CLOSED sessions cannot produce QUALIFIED or NEAR_MISS at
 // all today -- not a bug to engineer around, the correct and honest
-// conclusion given what's actually checkable in that session. An
-// OPEN-session, RVOL-checkable scan clears the floor easily (rvol+news
-// at minimum, +float whenever a filing exists) -- untested against real
-// OPEN-session data as of this fix (market was closed both times this
-// was measured), flagged as the one gap in this evidence rather than
-// assumed clean by extrapolation.
+// conclusion given what's actually checkable in that session. This
+// specific observation (RVOL is structurally not-checked outside OPEN)
+// doesn't depend on sample size to trust; it follows from the session
+// gating itself, not from curve-fitting the dry run.
+//
+// ZERO OPEN-session dry-run data exists (market was closed every time
+// this was measured). The floor's behavior on the session it's meant to
+// leave functional -- an RVOL-checkable OPEN scan clearing rvol+news at
+// minimum, +float whenever a filing exists -- is argued from the
+// float-coverage percentage below, not observed. This is the real open
+// gap, not a second CLOSED run: get a real OPEN-session dry run before
+// trusting this floor's OPEN-session behavior, not just its CLOSED-session
+// behavior.
 //
 // 2, not 3: requiring ALL THREE would make QUALIFIED nearly unreachable
 // even in a healthy OPEN session, since only ~52% of gate-qualified
