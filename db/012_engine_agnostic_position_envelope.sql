@@ -34,6 +34,17 @@
 -- setup, uses the primary setup's trigger time -- the same one the card's
 -- own headline framing already treats as primary -- not an arbitrary
 -- first-in-array pick.
+--
+-- NULL, not zero, when the acted-upon candidate has no triggerTime to
+-- read at all -- a candidate that qualified on pillars without ever
+-- reaching an armed setup, or a stale scan whose setups array is empty by
+-- the time the buy happens. Zero minutes late (bought the instant it
+-- triggered) and unknown minutes late (nothing to measure from) are
+-- different facts, and this project has collapsed that exact distinction
+-- into a silent zero three separate times already this session
+-- (classifyGate's bare null, the float staleness gap, the QUALIFIED
+-- evidence floor) -- decided here, before Step 6 writes a single row,
+-- specifically so it isn't a fourth.
 alter table portfolio add column if not exists signal_snapshot jsonb;
 alter table portfolio add column if not exists exit_rule_id text
   check (exit_rule_id in ('edge.atr.multiday', 'warrior.sameday.tightstop'));
