@@ -1,0 +1,29 @@
+-- portfolio.engine_source: which engine's card, if any, Roman tapped to
+-- open this position. Added as its own migration (2026-09-06) rather than
+-- folded into a later one, because it's blocking: trades_v2.engine_source
+-- already exists but nothing in the live buy flow has ever written it (see
+-- app.js's confirmAddPortfolio/writeTradeToSupabase) -- every trade written
+-- since the trades_v2 cutover carries the same unrecoverable-null gap on
+-- this axis as the 37 pre-migration rows, and Phase 8's entire
+-- "Roman vs each engine" comparison depends on it.
+--
+-- Lives on `portfolio`, not just `trades_v2`: a position can sit open
+-- across a page reload before it's sold, round-tripping through
+-- core/store.js's mapPositionToSupabaseRow/mapSupabasePortfolioRowToPosition.
+-- Stamping the tag only at sell time would work for a buy-then-sell inside
+-- one browser session and silently drop it for anything that survives a
+-- reload in between -- an intermittent defect, not a clean one.
+--
+-- Nullable, same two-value CHECK as trades_v2.engine_source (EDGE/WARRIOR).
+-- Today it can only ever be 'EDGE' in practice -- checked directly, not
+-- assumed: confirmAddPortfolio is reachable via exactly one path in the
+-- whole app (openStockModal's "+ Add to Portfolio" button, itself only
+-- rendered for a ticker in state.signals), and Warrior has no buy action
+-- at all. NULL stays available for whatever legacy rows exist before this
+-- migration runs, and for a future manual-entry or Warrior-buy path if one
+-- is ever built.
+--
+-- No RLS change needed -- see NOTE_portfolio_rls_not_applied.sql, this
+-- table deliberately has none; adding a column doesn't touch that.
+alter table portfolio add column if not exists engine_source text
+  check (engine_source in ('EDGE', 'WARRIOR'));

@@ -3557,6 +3557,17 @@ async function confirmAddPortfolio(ticker, btn) {
       const firstPair = cached?.pairs?.[0];
       return firstPair ? `${firstPair.label}: ${firstPair.pct}% likely` : null;
     })(),
+    // Unconditional, not derived from `sig` (2026-09-06, Phase 8 prep):
+    // confirmAddPortfolio is reachable through exactly one path in this
+    // app -- openStockModal's "+ Add to Portfolio" button, itself only
+    // rendered for a ticker in state.signals -- and Warrior has no buy
+    // action at all. There is no tiebreak to make here: only one engine's
+    // UI can ever have led to this call, so it's stamped from the entry
+    // point, not looked up after the fact. Revisit if a second buy path
+    // (a Warrior action, or manual entry) is ever added -- at that point
+    // this needs to come from which button was actually tapped, still not
+    // from re-deriving "current signals" ambiently.
+    engineSource: 'EDGE',
   };
 
   // Supabase is now the source of truth for portfolio (Data Migration
@@ -4427,6 +4438,7 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       rsi_suspended_at_gain_pct: record.rsiSuspendedAtGainPct ?? null,
       distance_from_target: record.distanceFromTargetAtSale,
       momentum_protection: !!pos.momentumProtectionActivated,
+      engine_source: record.engineSource || null,
       source: record.source,
       unified_recommendation_at_sale: record.unifiedRecommendationAtSale,
       unified_composite_at_sale: record.unifiedCompositeAtSale,
@@ -4540,6 +4552,10 @@ async function confirmMarkSold(posId, btn) {
   const record = {
     id: Date.now().toString(),
     ticker: pos.ticker,
+    // Carried from the position, not re-derived (2026-09-06) -- `|| null`
+    // covers any position opened before this field existed rather than
+    // crashing or silently defaulting to a wrong engine.
+    engineSource: pos.engineSource || null,
     company: pos.company,
     shares: pos.shares,
     buyPrice: pos.buyPrice,
@@ -4890,6 +4906,7 @@ function mapTradesV2ToSoldShape(row) {
     pnlDollar: row.pnl_dollars,
     pnlPct: row.pnl_pct,
     source: row.source,
+    engineSource: row.engine_source,
     scoreAtBuy: row.signal_score,
     rsiAtBuy: row.rsi_at_buy,
     volRatioAtBuy: row.volume_ratio_at_buy,

@@ -150,6 +150,7 @@ function mapSupabasePortfolioRowToPosition(row) {
     macroAdjustmentPts: row.macro_adjustment_pts,
     maPctAtBuy: row.ma_pct_at_buy,
     rawScoreAtBuy: row.raw_score_at_buy,
+    engineSource: row.engine_source,
   };
 }
 
@@ -199,6 +200,7 @@ function mapPositionToSupabaseRow(position) {
     macro_adjustment_pts: position.macroAdjustmentPts,
     ma_pct_at_buy: position.maPctAtBuy,
     raw_score_at_buy: position.rawScoreAtBuy,
+    engine_source: position.engineSource || null,
     updated_at: new Date().toISOString(),
   };
 }
