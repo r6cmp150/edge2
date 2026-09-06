@@ -3734,16 +3734,21 @@ async function renderPortfolioTab() {
     const days = Math.floor((Date.now() - new Date(p.buyDate).getTime()) / 86400000);
     const durLabel = durHoldLabel(p.duration);
 
-    // Registry dispatch (Phase 7): getEngine(p.engineSource) is null for
-    // 'EDGE', legacy-null, or an unregistered/failed engine alike -- no
-    // `if (engineSource === 'WARRIOR')` here, the id is only ever used as a
-    // lookup key. EDGE's own calcUnifiedRecommendation is the shell's
-    // native fallback when nothing is registered for this position's
-    // engine, not a special case carved out for 'EDGE' specifically.
-    const dispatchedEngine = getEngine(p.engineSource);
+    // Registry dispatch (Phase 7). EDGE is never registered via
+    // registerEngine (it has no engines/edge/ module -- it IS the shell's
+    // own native code), so "engineSource is 'EDGE' or falsy" is the one
+    // condition that identifies the shell's native case, not a branch on a
+    // registered engine's id. Anything else names an engine that SHOULD be
+    // registered -- getEngine() finding nothing there means that engine
+    // failed to load, which must degrade to the neutral fallback, not
+    // silently borrow EDGE's math (see neutralEngineExitFallback's comment
+    // for the bug this avoids).
     let portBanner;
-    if (dispatchedEngine && dispatchedEngine.evaluateExit) {
-      const exitResult = dispatchedEngine.evaluateExit(p, { price: currentPrice });
+    if (p.engineSource && p.engineSource !== 'EDGE') {
+      const dispatchedEngine = getEngine(p.engineSource);
+      const exitResult = (dispatchedEngine && dispatchedEngine.evaluateExit)
+        ? dispatchedEngine.evaluateExit(p, { price: currentPrice })
+        : neutralEngineExitFallback(p, { price: currentPrice });
       portBanner = buildRegisteredEngineExitBanner(exitResult);
     } else {
       const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
@@ -4318,6 +4323,27 @@ function buildUnifiedPortfolioBanner(result) {
 // caveat (see engines/warrior/index.js's evaluateExit) reaches the screen:
 // this function doesn't know or care that one exists, it just prints
 // whatever the engine put in reasons[0].
+// Phase 2's documented neutral fallback (warrior-engine-spec-v2.md line
+// 370: "Exit -> a generic conservative rule (stop breach only)") for a
+// position whose engine_source names something OTHER than EDGE but isn't
+// currently registered (failed to load, or deleted) -- deliberately NOT
+// the same path as an EDGE/legacy-null position. Conflating the two was a
+// real bug caught before shipping: an earlier version of this dispatch
+// fell through to EDGE's calcUnifiedRecommendation whenever getEngine()
+// returned null, which is exactly wrong for a Warrior position with its
+// engine unavailable -- that function reads position.duration internally
+// (undefined for Warrior), the same landmine Phase 7 names. This function
+// is the actual spec'd fallback: stop breach only, nothing else, so
+// deleting engines/warrior/ with a Warrior position open degrades to a
+// generic rule instead of silently running EDGE's wrong one.
+function neutralEngineExitFallback(position, liveData) {
+  const price = liveData?.price;
+  if (typeof price === 'number' && typeof position?.stop === 'number' && price <= position.stop) {
+    return { status: 'SELL_NOW', reasons: ['Stop-loss hit (engine unavailable — generic fallback rule)'] };
+  }
+  return { status: 'HOLDING', reasons: ['Engine unavailable — generic conservative rule only'] };
+}
+
 function buildRegisteredEngineExitBanner(exitResult) {
   const cls = { SELL_NOW: 'ur-sell-now', SELL_SOON: 'ur-sell-soon', HOLDING: 'ur-hold' }[exitResult.status] || 'ur-hold-mixed';
   const label = (exitResult.status || '').replace(/_/g, ' ');
@@ -4527,9 +4553,11 @@ function computeUnifiedSaleFields(pos, salePrice) {
   // factors) have no Warrior equivalent and stay null -- disclosed, not
   // zero-filled -- since Warrior's evaluateExit returns only
   // {status, reasons}, nothing resembling a composite score.
-  const dispatchedEngine = getEngine(pos.engineSource);
-  if (dispatchedEngine && dispatchedEngine.evaluateExit) {
-    const exitResult = dispatchedEngine.evaluateExit(pos, { price: salePrice });
+  if (pos.engineSource && pos.engineSource !== 'EDGE') {
+    const dispatchedEngine = getEngine(pos.engineSource);
+    const exitResult = (dispatchedEngine && dispatchedEngine.evaluateExit)
+      ? dispatchedEngine.evaluateExit(pos, { price: salePrice })
+      : neutralEngineExitFallback(pos, { price: salePrice });
     const peakRsiDuringHold = state.ownedPeakRSI[pos.ticker] ?? pos.rsiAtBuy ?? null;
     return {
       unifiedRecommendationAtSale: (exitResult.status || '').replace(/_/g, ' '),
@@ -7400,12 +7428,16 @@ function updateNavBadges() {
     if (isAfternoonMode()) {
       state.portfolio.forEach(p => {
         const price = state.portfolioPrices[p.ticker] || p.buyPrice;
-        // Same registry dispatch as renderPortfolioTab's banner (Phase 7) --
+        // Same dispatch shape as renderPortfolioTab's banner (Phase 7) --
         // kept in sync deliberately, not two independent implementations of
-        // "does this position warrant a warning."
-        const dispatchedEngine = getEngine(p.engineSource);
-        if (dispatchedEngine && dispatchedEngine.evaluateExit) {
-          const exitResult = dispatchedEngine.evaluateExit(p, { price });
+        // "does this position warrant a warning." See that call site's
+        // comment for why 'EDGE'/falsy is the native case, not a branch on
+        // a registered engine's id.
+        if (p.engineSource && p.engineSource !== 'EDGE') {
+          const dispatchedEngine = getEngine(p.engineSource);
+          const exitResult = (dispatchedEngine && dispatchedEngine.evaluateExit)
+            ? dispatchedEngine.evaluateExit(p, { price })
+            : neutralEngineExitFallback(p, { price });
           if (exitResult.status === 'SELL_NOW' || exitResult.status === 'SELL_SOON') warnCount++;
           return;
         }
