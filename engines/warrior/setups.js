@@ -597,9 +597,20 @@ function computeEntryTargetStop(bars, triggerIndex, triggerPrice, config = SETUP
 // caught by a direct test (5.00/4.80/$10 risk must give 50, not 49).
 function _floorWithEpsilon(x) { return Math.floor(x + 1e-9); }
 
+// Explicit ask (2026-09-10): a caller with no valid riskPerTradeDollars --
+// the Node logger harness never wires state.settings.budget/riskPerTradePct
+// or getAvailableBudget, confirmed by grep -- must record an honest null
+// here, never a fabricated 0. `shares: 0` reads as "the math computed
+// zero," a real (if degenerate) answer; the true situation is "there was
+// no valid basis to size at all," which is a different fact. Explicitly
+// rejected: inventing a synthetic budget/risk value for the harness so
+// this always returns a number -- that would make a made-up figure look
+// like a real one, the same failure this project has already found and
+// fixed three other times (classifyGate's bare null, the float staleness
+// gap, the QUALIFIED evidence floor).
 function computeSuggestedShares(entry, stop, riskPerTradeDollars, availableBudget) {
   const risk = entry - stop;
-  if (!(risk > 0) || !(riskPerTradeDollars > 0)) return { shares: 0, constraint: null };
+  if (!(risk > 0) || !(riskPerTradeDollars > 0)) return { shares: null, constraint: null };
   const riskBasedShares = _floorWithEpsilon(riskPerTradeDollars / risk);
   const budgetBasedShares = availableBudget > 0 ? _floorWithEpsilon(availableBudget / entry) : 0;
   return riskBasedShares <= budgetBasedShares

@@ -349,11 +349,16 @@ function _renderEntryTargetStop(setup) {
   const ets = setup.entryTargetStop;
   if (!ets) return '<div class="warrior-ets-unavailable">Entry/target/stop not computable for this trigger.</div>';
   const constraintNote = setup.sizingConstraint === 'budget' ? ' (capped by available budget)' : setup.sizingConstraint === 'risk' ? ' (risk-based)' : '';
+  // suggestedShares is null (not 0) when there was no valid risk/budget
+  // basis to size against -- see computeSuggestedShares' own comment.
+  // Rendering the literal word "null" would be worse than the number it
+  // replaces; "not sized" says plainly that no figure was computed.
+  const sharesDisplay = setup.suggestedShares == null ? 'not sized' : setup.suggestedShares;
   return `<div class="warrior-ets">
     <span>Entry $${ets.entry.toFixed(2)}</span>
     <span>Stop $${ets.stop.toFixed(2)}</span>
     <span>Target $${ets.target.toFixed(2)}</span>
-    <span>Shares ${setup.suggestedShares}${constraintNote}</span>
+    <span>Shares ${sharesDisplay}${constraintNote}</span>
   </div>`;
 }
 
