@@ -445,6 +445,42 @@ function _openCandidateModal(symbol) {
 // its unvalidated standing must be visible on THIS screen, before the
 // confirm tap, not discovered later on the portfolio card -- same caveat
 // string evaluateExit uses, not a second, possibly-drifting copy of it.
+// Plain-language trigger age (2026-09-10, explicit ask): "LATE" as a small
+// card tag is something Roman can gloss over; a stated age on the decision
+// screen itself is not. Deliberately not gating buyability on this (that
+// would mean picking a threshold by feel -- LATE_THRESHOLD_MIN=20 is
+// itself arbitrary, and this project's discipline is to derive thresholds
+// from data, not choose them) -- minutes_late is already captured on the
+// trade (db/012), and once there are enough Warrior trades the report
+// answers empirically whether late entries do worse, the same pattern as
+// the QUALIFIED floor: build the thing that tells you the number, don't
+// guess the number now.
+function _formatTriggerAge(triggeredAt) {
+  const ms = Date.now() - new Date(triggeredAt).getTime();
+  const totalMinutes = Math.max(0, Math.round(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  return `${hours} hour${hours === 1 ? '' : 's'} ${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+}
+
+// Setup-specific, not generic (2026-09-10, explicit ask -- "say what's
+// known"): the 22-trigger validation run found hod-momentum specifically
+// positive at 5 minutes (4 of 5) and at 15 minutes (4 of 5), then negative
+// by the close -- a real, measured, decaying-and-reversing edge for THAT
+// setup. Citing it for gap-and-go/abcd/vwap-momentum/red-to-green would be
+// misattributing a finding to setups it was never measured against --
+// exactly the kind of overclaim this project keeps having to catch.
+// Those get an honest, general statement instead: staleness plausibly
+// matters for any same-day momentum setup, but we don't have a specific
+// number for this one yet.
+function _setupDecayNote(setupId) {
+  if (setupId === 'hod-momentum') {
+    return 'This setup\'s validated edge decays fast: positive at 5 minutes past trigger in 4 of 5 cases, still positive at 15 minutes in 4 of 5, negative by the close. A late entry is a different trade from a fresh one, not the same trade running behind schedule.';
+  }
+  return 'No setup-specific decay data exists for this trigger yet -- treat a late entry on any same-day momentum setup as plausibly a different trade from a fresh one, not confirmed identical.';
+}
+
 function _openAddPositionModal(symbol) {
   const candidate = (_lastScanResults?.results || []).find(r => r.symbol === symbol);
   const ets = candidate?.primarySetup?.entryTargetStop;
@@ -468,6 +504,7 @@ function _openAddPositionModal(symbol) {
       <div class="warrior-exit-disclosure">
         <div class="warrior-exit-disclosure-title">This position will be governed by warrior.sameday.tightstop</div>
         <div class="warrior-exit-disclosure-caveat">${WARRIOR_EXIT_UNVALIDATED_CAVEAT}</div>
+        <div class="warrior-exit-disclosure-caveat">This setup triggered ${_formatTriggerAge(candidate.primarySetup.triggeredAt)}. ${_setupDecayNote(candidate.primarySetup.id)}</div>
         <div class="warrior-exit-disclosure-conditions">Forward-test conditions: paper or minimum size only. Review point is 30 Warrior trades or 60 days, pre-committed before any results are read.</div>
       </div>
       <div class="form-group">
