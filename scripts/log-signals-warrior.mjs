@@ -34,6 +34,22 @@
 // signal_log rows and looks identical to a day where fewer candidates
 // existed -- exactly this project's signature failure mode, aimed at
 // the dataset the whole forward test depends on.
+//
+// WARNING FOR ANYONE QUERYING signal_log ACROSS BOTH ENGINES (2026-09-10,
+// found the first night both loggers had real output side by side):
+// QUALIFIED and EDGE's SHOWN are not the same question and their raw
+// counts must never be compared as "signals produced." QUALIFIED means
+// five pillars were evaluated and every checkable one passed -- a
+// structurally strict claim. SHOWN means a score cleared a display
+// threshold -- a different, looser one. The first real numbers from both
+// loggers the same night were Warrior 3 QUALIFIED of 28 vs. EDGE 42 SHOWN
+// of 48 -- reading that as "EDGE produces 14x the signals" is exactly the
+// wrong-comparison this warning exists to prevent. The engines can only
+// be compared on OUTCOMES of signals actually acted on, or on
+// like-for-like selectivity at a matched threshold -- never on raw tier
+// counts. Full treatment is a Phase 8 report-spec concern, not a logger
+// concern; this paragraph exists so whoever queries these tables first
+// reads the warning at the source, before publishing a number.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -262,6 +278,16 @@ async function main() {
     universe_source: universeSource,
     universe_snapshot_captured_at: universeSnapshotCapturedAt,
     universe_count: candidates.length,
+    // prefiltered_count (db/014): 0 for every Warrior row, including
+    // every one already written before this column existed (the default
+    // is correct, not just convenient) -- Warrior has no pre-filter stage
+    // between universe and gate evaluation, every universe candidate gets
+    // a real gate result. Explicit here so universe_count - prefiltered_count
+    // = evaluated_count is the same completeness identity both engines
+    // satisfy, rather than an implicit assumption that only holds for one
+    // of them. See db/014 and log-signals-edge.mjs for the EDGE side,
+    // where this is genuinely nonzero (the price/volume pre-filter).
+    prefiltered_count: 0,
     evaluated_count: evaluatedCount,
     fetch_failed_count: fetchFailedCount,
     aborted,

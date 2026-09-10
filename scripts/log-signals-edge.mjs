@@ -40,6 +40,22 @@
 // engines, and forcing them to would make a meaningless comparison look
 // meaningful.
 //
+// WARNING FOR ANYONE QUERYING signal_log ACROSS BOTH ENGINES (2026-09-10,
+// found the first night both loggers had real output side by side):
+// SHOWN and QUALIFIED are not the same question and their raw counts must
+// never be compared as "signals produced." SHOWN means a score cleared a
+// display threshold -- one number, one comparison. QUALIFIED means five
+// pillars were evaluated and every checkable one passed -- a
+// structurally different, stricter claim. The first real numbers from
+// both loggers the same night were EDGE 42 SHOWN of 48 scored vs. Warrior
+// 3 QUALIFIED of 28 -- reading that as "EDGE produces 14x the signals"
+// is exactly the wrong-comparison this warning exists to prevent. The
+// engines can only be compared on OUTCOMES of signals actually acted on,
+// or on like-for-like selectivity at a matched threshold -- never on raw
+// tier counts. Full treatment is a Phase 8 report-spec concern, not a
+// logger concern; this paragraph exists so whoever queries these tables
+// first reads the warning at the source, before publishing a number.
+//
 // KNOWN, FLAGGED GAP -- not hidden: macroContext defaults to null here
 // (no macro-condition adjustment), not fetched for real. fetchMacroContext/
 // classifyMacroCondition live in app.js's DOM-adjacent code, not a clean
@@ -160,7 +176,43 @@ async function main() {
 
   const marketStatus = global.getMarketStatus();
   const session = marketStatus.status;
-  console.log(`log-signals-edge: session=${session} (informational only -- EDGE's scoring has no session gate, checked directly, not assumed)`);
+  console.log(`log-signals-edge: session=${session}`);
+
+  // ── DST-safe schedule no-op check (2026-09-10) ──
+  // scoreStock ITSELF has no session gate (checked directly, confirmed
+  // again by tonight's real AH-session run completing cleanly) -- but
+  // entry/target/stop computed off an after-hours price is not a signal
+  // anyone could act on; the numbers would be real and the trade
+  // imaginary. So the SCHEDULE, not the scoring, is what should never
+  // manufacture that ambiguity: EDGE is scheduled to run only during real
+  // market hours, using the identical target-offset-plus-tolerance shape
+  // scripts/log-signals-warrior.mjs already uses for the same DST-safety
+  // reason (GitHub Actions cron is UTC-only; ET market hours shift a full
+  // hour in UTC terms at each DST transition). Reused rather than
+  // reinvented as a bare "is session OPEN" check specifically because a
+  // bare check would let both members of a DST-paired cron entry fire on
+  // the same real day whenever both happen to land inside market hours
+  // (an EST-shifted pair member can drift into real hours without being
+  // the INTENDED moment) -- narrow, named targets avoid that the same way
+  // they already do for Warrior.
+  //
+  // Applies ONLY to a real scheduled firing (GITHUB_EVENT_NAME==='schedule')
+  // -- a manual workflow_dispatch always runs, for testing/debugging.
+  if (process.env.GITHUB_EVENT_NAME === 'schedule') {
+    const TOLERANCE_MIN = 10;
+    const TARGET_MINUTES_AFTER_OPEN = [30, 140];
+    const TARGET_MINUTES_BEFORE_CLOSE = 45;
+    const pt = global.getPT();
+    const tMin = pt.getHours() * 60 + pt.getMinutes();
+    const minutesSinceOpen = tMin - 390; // 390 = 6:30am PT = 9:30am ET
+    const minutesToClose = 780 - tMin;   // 780 = 1:00pm PT = 4:00pm ET
+    const nearAnOpenOffset = TARGET_MINUTES_AFTER_OPEN.some(target => Math.abs(minutesSinceOpen - target) <= TOLERANCE_MIN);
+    const nearPreClose = Math.abs(minutesToClose - TARGET_MINUTES_BEFORE_CLOSE) <= TOLERANCE_MIN;
+    if (!nearAnOpenOffset && !nearPreClose) {
+      console.log(`log-signals-edge: scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of an intended target (open+30, open+140, close-45) -- this is the wrong-season half of a DST-paired cron entry. No-op: no scan_runs row written, no Alpaca request made. The Actions log is the record that the cron fired.`);
+      return;
+    }
+  }
 
   const scanRunId = randomUUID();
   const today = global.ptDateStr(global.getPT());
@@ -223,9 +275,21 @@ async function main() {
     session,
     scan_date: today,
     started_at: new Date().toISOString(),
-    universe_source: 'static-universe-list', // see header comment -- NOT yet an allowed value in db/010's CHECK constraint
+    universe_source: 'static-universe-list', // db/014 widens the CHECK constraint to allow this
     universe_snapshot_captured_at: null, // no live screener snapshot concept for EDGE's static list
+    // universe_detail (db/014): WHICH static list, not just that it's
+    // static -- currently STOCK_UNIVERSES.OTHER, a known open item that
+    // may change mid-test (e.g. widened to the full eligible set). If it
+    // ever does, rows before and after carry a different value here
+    // rather than being silently pooled as equivalent.
+    universe_detail: `STOCK_UNIVERSES.OTHER (${TICKERS.length} tickers)`,
     universe_count: TICKERS.length,
+    // prefiltered_count (db/014): explicit, not implied. universe_count -
+    // prefiltered_count = evaluated_count is the same completeness
+    // identity Warrior's rows satisfy with prefiltered_count=0 -- for
+    // EDGE it's the count the price/volume pre-filter excluded before
+    // scoreStock ever ran, a real structural fact, not a failure.
+    prefiltered_count: TICKERS.length - candidates.length,
     evaluated_count: scoredAll.length,
     fetch_failed_count: barsDroppedSymbols.length,
     aborted: false,
