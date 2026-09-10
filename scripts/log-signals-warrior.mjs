@@ -54,6 +54,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { assertColumnsExist } from './lib/schema-check.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -336,6 +337,19 @@ async function main() {
       triggered_at: r.primarySetup.triggeredAt,
       scan_session: scanRunId,
     }));
+
+  // schema-check (see scripts/lib/schema-check.mjs): runs on every
+  // dispatch, dry-run included -- the same gap on the EDGE side sat
+  // invisible through two successful dry runs because dry-run mode never
+  // contacts Supabase otherwise.
+  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'scan_runs', Object.keys(scanRun));
+  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'signal_log', [
+    'signal_date', 'symbol', 'engine_source', 'tier', 'first_shown_at',
+    'scan_session', 'build_version', 'signal_snapshot', 'reference_price',
+  ]);
+  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'setup_triggers', [
+    'signal_date', 'symbol', 'engine_source', 'setup_id', 'triggered_at', 'scan_session',
+  ]);
 
   if (!WRITE) {
     mkdirSync(path.join(REPO_ROOT, 'data', 'signal-log-dry-runs'), { recursive: true });

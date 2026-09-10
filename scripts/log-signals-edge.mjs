@@ -96,6 +96,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { assertColumnsExist } from './lib/schema-check.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -308,6 +309,16 @@ async function main() {
     signal_snapshot: r.signal || { ticker: r.ticker, tier: r.tier },
     reference_price: global.getLivePrice(snapshots[r.ticker]) ?? null,
   }));
+
+  // schema-check (see scripts/lib/schema-check.mjs): runs on every
+  // dispatch, dry-run included -- a dry run never contacts Supabase
+  // otherwise, which is exactly how db/014's gap sat invisible through two
+  // successful EDGE dry runs before the first real --write hit it.
+  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'scan_runs', Object.keys(scanRun));
+  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'signal_log', [
+    'signal_date', 'symbol', 'engine_source', 'tier', 'first_shown_at',
+    'scan_session', 'build_version', 'signal_snapshot', 'reference_price',
+  ]);
 
   if (!WRITE) {
     mkdirSync(path.join(REPO_ROOT, 'data', 'signal-log-dry-runs'), { recursive: true });

@@ -1,16 +1,62 @@
 name: Log EDGE signals
 
 # Phase 7's second engine -- see scripts/log-signals-edge.mjs's header for
-# the full design. workflow_dispatch ONLY for now, deliberately, same
-# bootstrap Warrior's own logger went through: no schedule until the
-# dry-run output has actually been reviewed and a request-cost-aware
-# schedule proposed and approved.
+# the full design.
 #
-# dry_run defaults to true. Same reasoning as log-signals-warrior.yml:
-# signal_log is insert-only for anon (no UPDATE, no DELETE), so a wrong
-# row has no cleanup path short of the SQL editor -- the default and the
-# safe path must be the same value.
+# SCHEDULED (2026-09-10, after dry-run review, db/014 landing on
+# production, and the schema-check helper proving it fails loudly on a
+# missing column rather than silently -- see scripts/lib/schema-check.mjs).
+# Six cron entries, same DST-paired shape as log-signals-warrior.yml and
+# for the same reason: GitHub Actions cron is UTC-only, the market's hours
+# are ET, and DST shifts the UTC offset a full hour twice a year. Each pair
+# covers both the EDT and EST offset for the same intended moment;
+# log-signals-edge.mjs's own DST no-op check (its header, and the
+# GITHUB_EVENT_NAME==='schedule' branch in main()) determines at run time
+# which half of each pair is real and lets the other stand down cleanly --
+# no scan_runs row, no Alpaca request.
+#
+# SCHEDULED DURING MARKET HOURS DESPITE NO SESSION DEPENDENCY: scoreStock
+# has no session gate (checked directly, not assumed -- see the header
+# note above), but entry/target/stop computed off an after-hours price
+# isn't an actionable trade even though the numbers would be real. Reusing
+# Warrior's open/close-relative targets keeps both engines' rows anchored
+# to the same kind of moment for comparison, not because EDGE needs the
+# timing for its own scoring.
+#
+# Intended moments (all approximate to +/-10 min, the tolerance the script
+# checks against): 30 min after open, 140 min after open, 45 min before
+# close. Open is 13:30 UTC (EDT) / 14:30 UTC (EST); close is 20:00 UTC
+# (EDT) / 21:00 UTC (EST).
+#
+#   14:00 / 15:05 UTC -- open+30   (EDT / EST)
+#   15:50 / 16:50 UTC -- open+140  (EDT / EST)
+#   19:15 / 20:15 UTC -- close-45  (EDT / EST)
+#
+# The EST open+30 slot is 15:05, not 15:00 -- 15:00 UTC is already
+# capture-movers-snapshot's EST slot, and no two scheduled jobs in this
+# repo share a minute against the one shared Alpaca rate-limit queue.
+# Combined worst case across Warrior (~8-12 req/run), EDGE (~11 req/run,
+# scales with filtered candidates not universe size), and
+# capture-movers-snapshot (2 req/run, 1 on a closed-market no-op) is
+# comfortably under the shared 200/min Basic ceiling even where slots fall
+# in the same UTC minute across workflows.
+#
+# dry_run input still defaults to true for a MANUAL workflow_dispatch --
+# unaffected by the schedule going live in --write mode below. A schedule-
+# triggered firing always runs with --write; dry_run is workflow_dispatch-
+# only and reads as empty on a schedule trigger, so the run step branches
+# on github.event_name, not just the input, to decide -- same asymmetry as
+# log-signals-warrior.yml and for the same reason: signal_log is
+# insert-only for anon, so a wrong row has no cleanup path short of the
+# SQL editor.
 on:
+  schedule:
+    - cron: '0 14 * * 1-5'
+    - cron: '5 15 * * 1-5'
+    - cron: '50 15 * * 1-5'
+    - cron: '50 16 * * 1-5'
+    - cron: '15 19 * * 1-5'
+    - cron: '15 20 * * 1-5'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -37,7 +83,7 @@ jobs:
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: |
           ARGS=""
-          if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+          if [ "${{ github.event.inputs.dry_run }}" = "false" ] || [ "${{ github.event_name }}" = "schedule" ]; then
             ARGS="--write"
           fi
           echo "Running: node scripts/log-signals-edge.mjs $ARGS"
