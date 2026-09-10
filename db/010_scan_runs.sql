@@ -35,6 +35,22 @@ create table if not exists scan_runs (
 
 create index if not exists scan_runs_engine_date_idx on scan_runs (engine_source, scan_date);
 
+-- armed_setup_id (explicit ask, 2026-09-10, folded in here rather than
+-- bolted on later -- signal_log is still empty, so this is the cheapest
+-- this column will ever be to add): the forward test's real actionable
+-- unit is QUALIFIED *and* a setup that actually triggered, not QUALIFIED
+-- alone -- Warrior can't buy a QUALIFIED candidate with no armed setup,
+-- there's no entry/target/stop to buy against (see the buy-button gating
+-- in engines/warrior/index.js's _openCandidateModal). Without this
+-- column, "how often does that intersection actually occur" -- and
+-- whether a specific setup like gap-and-go ever fires live at all, given
+-- it produced zero triggers in every backtest run -- requires a jsonb
+-- path query into signal_snapshot instead of a single column scan.
+-- Nullable and honestly so: null for every non-QUALIFIED row (setup
+-- detection never runs for those, not a fallback masking a real id) and
+-- for a QUALIFIED row where nothing actually triggered.
+alter table signal_log add column if not exists armed_setup_id text;
+
 -- The FK signal_log has been missing since 001: scan_session was typed
 -- `text` with no constraint tying it to anything, purely a join
 -- convenience. Enforcing it now, while signal_log is still empty of any

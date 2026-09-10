@@ -245,6 +245,19 @@ async function main() {
     build_version: r.buildVersion || global.VERSION,
     signal_snapshot: r,
     reference_price: candidatesBySymbol.get(r.symbol)?.price ?? null,
+    // Explicit ask (2026-09-10): the intersection of QUALIFIED and an
+    // actually-triggered setup is what the forward test can act on --
+    // QUALIFIED alone isn't. Already present inside signal_snapshot's
+    // jsonb blob (r.primarySetup), but buried there means "how often does
+    // a setup actually trigger" requires a jsonb path query instead of a
+    // single column scan -- pulled out as its own queryable field for
+    // exactly the same reason build_version/tier already are. `?? null`,
+    // not `|| null`: r.primarySetup is genuinely absent (never computed)
+    // for any non-QUALIFIED tier -- setup detection only runs for
+    // QUALIFIED candidates (see engines/warrior/index.js's own comment,
+    // "NEAR MISS gets no setups section") -- so null here is honest
+    // structural absence, not a fallback masking a real id.
+    armed_setup_id: r.primarySetup?.id ?? null,
   }));
 
   if (!WRITE) {
