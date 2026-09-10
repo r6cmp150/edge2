@@ -16,7 +16,12 @@
 // references registerEngine/state/showGlobalErrorToast/getMarketStatus/
 // getUniverse/renderWarriorTab/getRequestStats/diffRequestStats/
 // getAvailableBudget/showModal/closeModal (Step 4, Phase 7 -- candidate
-// card tap opens the same shared modal shell every other detail view uses)
+// card tap opens the same shared modal shell every other detail view uses)/
+// savePositionToSupabase/updateNavBadges/switchTab (Step 6, Phase 7 -- the
+// buy action writes through the same engine-agnostic core/store.js
+// mapper confirmAddPortfolio already uses, and hands off to the shell's
+// own post-add refresh exactly like confirmAddPortfolio does, rather than
+// a second implementation of "what happens after a position is added")
 // as ordinary globals. That's expected, not a boundary
 // leak: the rule this phase enforces is "nothing outside this file reaches
 // INTO Warrior code except through the registry," not "Warrior code can't
@@ -392,13 +397,6 @@ function _renderCandidateCard(gateResult) {
   </div>`;
 }
 
-// Step 4 (Phase 7): candidate cards are tappable, same connection mechanism
-// as warriorRunReplay/warriorCancelRangeScan (a plain global register()
-// wires up, not a registry exception -- see register()'s own comment).
-// No buy action here -- Step 6 is explicitly last, gated until the exit
-// dispatch and everything before it is verified. This just makes the
-// detail view reachable; the footer has nothing to tap but Close.
-//
 // Looks the candidate up in the LIVE scan (_lastScanResults), not by
 // re-deriving it -- the same object _renderCandidateCard already rendered
 // from, so the modal shows exactly what the card showed, not a
@@ -416,13 +414,142 @@ function _openCandidateModal(symbol) {
       <div class="modal-footer"><button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Close</button></div>`);
     return;
   }
+  // Step 6: buyable only when there's a real entry/target/stop to buy
+  // against, not a policy choice -- setup detection runs ONLY for
+  // QUALIFIED candidates (see the comment on r.setups/r.primarySetup
+  // above, "NEAR MISS gets no setups section -- those aren't actionable
+  // candidates"), so a NEAR_MISS/BLOCKED/REJECTED/NOT_EVALUATED candidate
+  // has no primarySetup.entryTargetStop by construction, not because this
+  // code decided to withhold it.
+  const buyable = candidate.tier === 'QUALIFIED' && candidate.primarySetup && candidate.primarySetup.entryTargetStop;
+  const buyBtn = buyable
+    ? `<button class="btn btn-success" style="flex:1" onclick="warriorOpenAddPositionModal('${symbol.replace(/'/g, "\\'")}')">+ Add to Portfolio</button>`
+    : '';
   showModal(`<div class="modal-handle"></div>
     <div class="modal-header">
       <div class="modal-title">${symbol}</div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">${renderSnapshot(candidate)}</div>
-    <div class="modal-footer"><button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Close</button></div>`);
+    <div class="modal-footer">${buyBtn}<button class="btn btn-ghost" ${buyable ? '' : 'style="flex:1"'} onclick="closeModal()">Close</button></div>`);
+}
+
+// Step 6 (Phase 7, last step, gated on 1-5 being verified -- confirmed in a
+// real browser with a synthetic position before this was written): the
+// buy action. Constraint 1 (explicit, non-negotiable): the exit rule and
+// its unvalidated standing must be visible on THIS screen, before the
+// confirm tap, not discovered later on the portfolio card -- same caveat
+// string evaluateExit uses, not a second, possibly-drifting copy of it.
+function _openAddPositionModal(symbol) {
+  const candidate = (_lastScanResults?.results || []).find(r => r.symbol === symbol);
+  const ets = candidate?.primarySetup?.entryTargetStop;
+  if (!candidate || !ets) {
+    showModal(`<div class="modal-handle"></div>
+      <div class="modal-header">
+        <div class="modal-title">${symbol}</div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body"><div class="card-sub">This candidate is no longer buyable -- the scan moved on.</div></div>
+      <div class="modal-footer"><button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Close</button></div>`);
+    return;
+  }
+  const today = new Date().toISOString().split('T')[0];
+  showModal(`<div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">Add ${symbol} to Portfolio</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="warrior-exit-disclosure">
+        <div class="warrior-exit-disclosure-title">This position will be governed by warrior.sameday.tightstop</div>
+        <div class="warrior-exit-disclosure-caveat">${WARRIOR_EXIT_UNVALIDATED_CAVEAT}</div>
+        <div class="warrior-exit-disclosure-conditions">Forward-test conditions: paper or minimum size only. Review point is 30 Warrior trades or 60 days, pre-committed before any results are read.</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Shares Purchased</label>
+        <input id="wf-shares" class="form-input" type="number" min="0.01" step="0.01" placeholder="${candidate.primarySetup.suggestedShares || ''}">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Price Paid per Share</label>
+          <input id="wf-price" class="form-input" type="number" step="0.01" value="${ets.entry.toFixed(2)}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Date Purchased</label>
+          <input id="wf-date" class="form-input" type="date" value="${today}">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-success" style="flex:1" onclick="warriorConfirmAddPosition('${symbol.replace(/'/g, "\\'")}', this)">+ Add Position</button>
+    </div>`);
+}
+
+async function _confirmAddPosition(symbol, btn) {
+  const shares = parseFloat(document.getElementById('wf-shares').value);
+  const price  = parseFloat(document.getElementById('wf-price').value);
+  const date   = document.getElementById('wf-date').value;
+  if (!shares || !price || isNaN(shares) || isNaN(price)) {
+    alert('Please enter shares and price.'); return;
+  }
+
+  const candidate = (_lastScanResults?.results || []).find(r => r.symbol === symbol);
+  const ets = candidate?.primarySetup?.entryTargetStop;
+  if (!candidate || !ets) {
+    alert('This candidate is no longer buyable -- the scan moved on.');
+    closeModal();
+    return;
+  }
+
+  // Constraint 3 (explicit, non-negotiable): NULL never becomes zero
+  // through this boundary. Ternary against a real absence check, not `||`
+  // -- `|| null` would be equally wrong in the other direction, silently
+  // turning a genuine 0-minutes-late buy (bought the instant it triggered)
+  // into a false unknown. Primary setup only, per db/012's own comment on
+  // minutes_late -- the same setup the disclosure/entry/target/stop above
+  // are already drawn from, not a second lookup that could disagree.
+  const triggeredAt = candidate.primarySetup.triggeredAt;
+  const minutesLate = (triggeredAt != null && !isNaN(new Date(triggeredAt).getTime()))
+    ? (Date.now() - new Date(triggeredAt).getTime()) / 60000
+    : null;
+
+  const position = {
+    id: Date.now().toString(),
+    ticker: symbol,
+    company: symbol, // Warrior has no company-name source (that's core/edge-scoring.js's COMPANY_NAMES, EDGE-only)
+    shares, buyPrice: price, buyDate: date,
+    target: ets.target,
+    stop: ets.stop,
+    peakPrice: price,
+    peakPriceDate: date,
+    momentumProtectionActivated: false,
+    rsiSuspendedAtGainPct: null,
+    buyTime: (() => {
+      const pt = getPT();
+      return `${String(pt.getHours()).padStart(2,'0')}:${String(pt.getMinutes()).padStart(2,'0')}`;
+    })(),
+    buyDayOfWeek: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][getPT().getDay()],
+    buySession: candidate.session || null,
+    engineSource: 'WARRIOR',
+    exitRuleId: 'warrior.sameday.tightstop',
+    signalSnapshot: candidate,
+    minutesLate,
+  };
+
+  if (btn) btn.disabled = true;
+  try {
+    await savePositionToSupabase(position);
+  } catch(e) {
+    alert('Could not save position to Supabase: ' + e.message);
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  state.portfolio.push(position);
+  closeModal();
+  updateNavBadges();
+  switchTab('portfolio');
 }
 
 // ── Phase 4: replay harness UI ──────────────────────────────────────────
@@ -1136,6 +1263,8 @@ export function register() {
     window.warriorRunReplay = _runReplayFromUI;
     window.warriorCancelRangeScan = _cancelRangeScanFromUI;
     window.warriorOpenCandidateModal = _openCandidateModal;
+    window.warriorOpenAddPositionModal = _openAddPositionModal;
+    window.warriorConfirmAddPosition = _confirmAddPosition;
     window.warriorUpdateReplayEstimate = _updateReplayEstimateDisplay;
     window.warriorToggleScanCell = _toggleScanCellFromUI;
     // Test-only escape hatch: the replay panel's own <input> values are
