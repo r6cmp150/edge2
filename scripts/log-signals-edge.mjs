@@ -142,7 +142,7 @@ async function main() {
   if (!versionMatch) throw new Error('Could not read VERSION from app.js -- refusing to log signals with no buildVersion.');
   global.VERSION = versionMatch[1];
 
-  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus']);
+  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
   loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT', 'fetchMultiBars', 'checkUnresolvedSymbols']);
   loadReal('core/news.js', ['fetchNewsForTickers']);
