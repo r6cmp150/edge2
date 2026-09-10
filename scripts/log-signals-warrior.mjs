@@ -92,9 +92,25 @@ async function main() {
   global.VERSION = versionMatch ? versionMatch[1] : null;
   if (!global.VERSION) throw new Error('Could not read VERSION from app.js -- refusing to log signals with no buildVersion.');
 
+  // assertPageNotSuspiciouslyFull/HISTORICAL_BAR_ADJUSTMENT (2026-09-10,
+  // found live on the first real OPEN-session run): both were added to
+  // their files on 2026-09-01, before this script existed, and core/
+  // universe.js's RVOL fetchers (_getSip30DayAvgVolume,
+  // _fetchCumulativeMinuteVolume's minute-bar path) reference them as bare
+  // ambient globals, matching the real browser's shared-script-scope
+  // behavior -- but loadReal's exposure is per-name, per-file, not
+  // automatic, so a name genuinely used cross-file has to be listed
+  // explicitly at BOTH the defining file's loadReal call, same as anything
+  // else this harness exposes. Invisible until now because RVOL is
+  // session-gated (rvolCheckable requires session==='OPEN') and every dry
+  // run before this one was CLOSED or PRE -- the exact code path that uses
+  // these names had never actually run under this harness before. Same
+  // failure shape as core/edge-scoring.js's extraction verification and
+  // the EDGAR CORS gap: a Node harness proves the code it exercises, not
+  // the code it doesn't reach.
   loadReal('core/clock.js', ['getPT', 'ptDateStr', 'ptWallClockToInstant', 'getMarketStatus', 'hoursSincePreviousClose']);
-  loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient']);
-  loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice']);
+  loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
+  loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT']);
   loadReal('core/universe.js', [
     '_getAssetIndex', '_assetIndexBySymbol', '_inPriceRange', 'getUniverse',
     '_fetchCumulativeMinuteVolume', '_getSip30DayAvgVolume',
