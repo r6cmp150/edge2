@@ -186,10 +186,27 @@ async function main() {
   console.log(`log-signals-warrior: universe = ${candidates.length} candidates (source: ${universeSource})`);
 
   // ── evaluate ──
+  // This catch recording `aborted: true` and completing (exit 0) is
+  // correct ONLY for a genuine operational failure -- e.g. Alpaca fully
+  // unreachable -- which is exactly db/010's own design intent (record the
+  // abort as data, don't crash the job over something outside our
+  // control). It must NOT also catch a bug in our own code and complete
+  // quietly (found live 2026-09-10: two ReferenceErrors from missing
+  // Node-harness globals never even reached this far, since
+  // core/universe.js's per-batch catches degraded them into fetch-failed
+  // pillars first -- but if that inner guard were ever bypassed, or a
+  // future bug threw from somewhere else in evaluateGateBatch, this catch
+  // would silently absorb it exactly the same way and the job would still
+  // report success). Same rethrow rule as core/universe.js's
+  // _rethrowIfProgrammerError: ReferenceError/TypeError/SyntaxError are
+  // never a real Alpaca condition, so re-throwing them here can't
+  // misclassify a genuine outage -- it propagates to main().catch() below
+  // and exits 1, failing the job loudly instead of recording a quiet abort.
   let batchResult, aborted = false, abortReason = null;
   try {
     batchResult = await global.evaluateGateBatch(candidates, session);
   } catch (e) {
+    if (e instanceof ReferenceError || e instanceof TypeError || e instanceof SyntaxError) throw e;
     aborted = true;
     abortReason = e.message;
     console.error(`log-signals-warrior: evaluateGateBatch threw -- ${e.message}`);

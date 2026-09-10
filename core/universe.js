@@ -272,6 +272,35 @@ async function _getMoversUniverse(session, client = _coreClient) {
 const PRIOR_CLOSE_CHUNK_SIZE = 100;
 const SNAPSHOT_CHUNK_SIZE = 100;
 
+// Found live 2026-09-10: this file's per-batch fetch functions each wrap
+// their chunk in try/catch and degrade gracefully (log a warning, mark the
+// batch's symbols failed, keep going) -- correct behavior for a genuine
+// operational failure (Alpaca times out, rate-limits, or errors on one
+// chunk of 250 symbols; the other chunks and the scan as a whole shouldn't
+// die for it). But that same catch has no way to tell "Alpaca failed" from
+// "our own code has a bug" -- a ReferenceError from a missing global
+// (scripts/log-signals-warrior.mjs's Node harness never having exposed
+// HISTORICAL_BAR_ADJUSTMENT/assertPageNotSuspiciouslyFull) landed in
+// exactly these catches and came out the other side as 13 candidates
+// quietly marked fetch-failed -- a plausible-looking tier distribution,
+// the workflow reporting green, nothing in the exit code or the job status
+// hinting that two ReferenceErrors had fired. A logger that survives its
+// own ReferenceErrors and reports a clean distribution will do this again,
+// silently, on a day nobody is watching.
+//
+// The fix is not to remove the soft-degrade -- that's real, valuable
+// behavior for a real Alpaca outage -- it's to make sure a bug in OUR code
+// never qualifies for it. ReferenceError/TypeError/SyntaxError are JS's
+// own "this is a programmer error, not a runtime condition" classes.
+// alpacaGet's own real HTTP failures always throw a plain Error
+// (core/api-client.js:426, `Alpaca ${r.status}: ...`), never one of these
+// three, so re-throwing them here can never misclassify a genuine API
+// failure as a bug -- there is no real operational failure this could
+// wrongly escalate.
+function _rethrowIfProgrammerError(e) {
+  if (e instanceof ReferenceError || e instanceof TypeError || e instanceof SyntaxError) throw e;
+}
+
 // Prior closes are stable within a trading day (spec: cache daily) — this
 // is genuinely new fetching work, not free infrastructure that already
 // existed. Cost is real and one-time per calendar day: at ~5,714
@@ -320,6 +349,7 @@ async function _getPriorCloses(symbols, client = _coreClient) {
           if (bars && bars.length) cache.closes[sym] = bars[0].c;
         });
       } catch (e) {
+        _rethrowIfProgrammerError(e);
         console.warn(`_getPriorCloses: batch error for ${batch.length} symbols: ${e.message}`);
       }
     }
@@ -415,6 +445,7 @@ async function _fetchRawMinuteBars(symbols, start, end, chunkSize, windowLabel, 
       } while (pageToken);
       Object.assign(barsBySymbolAll, barsBySymbol);
     } catch (e) {
+      _rethrowIfProgrammerError(e);
       console.warn(`_fetchRawMinuteBars: batch error for ${batch.length} symbols (${windowLabel}): ${e.message}`);
       failedBatches.push({ batch, error: e });
     }
@@ -538,6 +569,7 @@ async function _getSip30DayAvgVolume(symbols, client = _coreClient) {
           }
         });
       } catch (e) {
+        _rethrowIfProgrammerError(e);
         console.warn(`_getSip30DayAvgVolume: batch error for ${batch.length} symbols: ${e.message}`);
         failedBatches.push(batch);
       }
@@ -674,6 +706,7 @@ async function _getPreMarketVolumeHistory(symbols, client = _coreClient) {
             // absent one).
           });
         } catch (e) {
+          _rethrowIfProgrammerError(e);
           console.warn(`_getPreMarketVolumeHistory: batch error for ${batch.length} symbols on ${dateStr}: ${e.message}`);
           failedBatches.push(...batch);
         }
@@ -917,6 +950,7 @@ async function _fetchHistoricalDailyBars(symbols, fetchStartDateStr, endDateStr,
         assertPageNotSuspiciouslyFull('_fetchHistoricalDailyBars', pageRowCount, params.limit, pageToken);
       } while (pageToken);
     } catch (e) {
+      _rethrowIfProgrammerError(e);
       console.warn(`_fetchHistoricalDailyBars: batch error for ${batch.length} symbols: ${e.message}`);
       failedBatches.push({ batch, error: e });
     }
