@@ -11,16 +11,35 @@ name: Capture movers/most-actives snapshot
 # better than none, but this data is unrecoverable once a day passes
 # uncaptured, so getting the timing right now matters more than it would
 # for something re-runnable. 13:45/14:30/15:00 UTC ~= 9:45/10:30/11:00 ET
-# (EDT) or 8:45/9:30/10:00 ET (EST, i.e. one hour before open -- that run
-# just logs a closed-market marker in winter, harmless) -- spans the
-# actual opening momentum window through mid-morning rather than a single
-# point past it. Weekdays only; a weekend/holiday firing just logs a
-# market-closed marker (see the script) rather than being skipped -- a
-# gap in the log should never be ambiguous between "didn't run" and
-# "market was shut."
+# (EDT) -- spans the actual opening momentum window through mid-morning
+# rather than a single point past it. Weekdays only; a weekend/holiday
+# firing just logs a market-closed marker (see the script) rather than
+# being skipped -- a gap in the log should never be ambiguous between
+# "didn't run" and "market was shut."
+#
+# EST TWIN ADDED (2026-09-10, checked against the actual script rather
+# than trusted from this comment's own prior claim): the earlier version
+# of this comment called the DST shift "harmless" because the script's
+# real /v2/clock check correctly logs a self-marked {marketOpen:false}
+# row instead of stale or misleading data -- that part is true and
+# verified. What it missed: during EST, 13:45 UTC becomes 8:45am ET,
+# genuinely pre-market, so that slot doesn't just drift, it's LOST
+# entirely for the ~4 EST months each year -- a real gap in exactly the
+# opening-momentum data this job exists to capture, not a cosmetic
+# timing shift. 14:45 UTC is 13:45 UTC's EST-calibrated twin (9:45am ET
+# under EST). On any given real day, whichever of the two isn't actually
+# near the open logs a harmless closed-market marker via the existing
+# /v2/clock check -- no script change needed, just the second cron entry.
+# The other two slots (14:30/15:00 UTC) don't get twins: during EST they
+# shift to 9:30am/10:00am ET, still inside real market hours, drifting
+# earlier than intended but never losing the day. No historical gap to
+# backfill either way -- this job started 2026-09-02 and the first DST
+# transition after that is this November, so this fix lands before it
+# would have bitten, not after.
 on:
   schedule:
     - cron: '45 13 * * 1-5'
+    - cron: '45 14 * * 1-5'
     - cron: '30 14 * * 1-5'
     - cron: '0 15 * * 1-5'
   workflow_dispatch: {}

@@ -144,6 +144,41 @@ async function main() {
   const session = marketStatus.status;
   console.log(`log-signals-warrior: session=${session}`);
 
+  // ── DST no-op check (2026-09-10, explicit ask) ──
+  // GitHub Actions cron is UTC-only; the schedule has six entries, two
+  // per intended market-relative moment (one calibrated for EDT, one for
+  // EST), because the open/close themselves don't move in UTC the way a
+  // single fixed cron time assumes. On any given real day only one
+  // offset per pair is correct -- this check is what tells the other one
+  // to stand down instead of running a real scan at the wrong moment and
+  // producing data that looks normal but isn't what that slot was for.
+  //
+  // Applies ONLY to a real scheduled firing (GITHUB_EVENT_NAME==='schedule')
+  // -- a manual workflow_dispatch (testing, or Roman/Claude checking
+  // something by hand) always runs regardless of clock time, same as
+  // --session= already bypasses session detection for exactly that reason.
+  //
+  // Tolerance is explicit, not implicit in an inequality: a firing counts
+  // as "on time" if it lands within TOLERANCE_MIN minutes of one of the
+  // three intended offsets from open, or the one intended offset before
+  // close. Targets: 20 min after open (opening momentum), 105 min after
+  // open (mid-morning), 60 min before close (late-session).
+  if (process.env.GITHUB_EVENT_NAME === 'schedule') {
+    const TOLERANCE_MIN = 10;
+    const TARGET_MINUTES_AFTER_OPEN = [20, 105];
+    const TARGET_MINUTES_BEFORE_CLOSE = 60;
+    const pt = global.getPT();
+    const tMin = pt.getHours() * 60 + pt.getMinutes();
+    const minutesSinceOpen = tMin - 390; // 390 = 6:30am PT = 9:30am ET, same convention as gate.js's _elapsedSessionMinutes
+    const minutesToClose = 780 - tMin;   // 780 = 1:00pm PT = 4:00pm ET
+    const nearAnOpenOffset = TARGET_MINUTES_AFTER_OPEN.some(target => Math.abs(minutesSinceOpen - target) <= TOLERANCE_MIN);
+    const nearPreClose = Math.abs(minutesToClose - TARGET_MINUTES_BEFORE_CLOSE) <= TOLERANCE_MIN;
+    if (!nearAnOpenOffset && !nearPreClose) {
+      console.log(`log-signals-warrior: scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of an intended target (open+20, open+105, close-60) -- this is the wrong-season half of a DST-paired cron entry. No-op: no scan_runs row written, no Alpaca request made. The Actions log is the record that the cron fired.`);
+      return;
+    }
+  }
+
   // ── universe: committed movers-snapshot preferred, self-fetch as a
   // named, stamped fallback ──
   const scanRunId = randomUUID();
@@ -245,26 +280,42 @@ async function main() {
     build_version: r.buildVersion || global.VERSION,
     signal_snapshot: r,
     reference_price: candidatesBySymbol.get(r.symbol)?.price ?? null,
-    // Explicit ask (2026-09-10): the intersection of QUALIFIED and an
-    // actually-triggered setup is what the forward test can act on --
-    // QUALIFIED alone isn't. Already present inside signal_snapshot's
-    // jsonb blob (r.primarySetup), but buried there means "how often does
-    // a setup actually trigger" requires a jsonb path query instead of a
-    // single column scan -- pulled out as its own queryable field for
-    // exactly the same reason build_version/tier already are. `?? null`,
-    // not `|| null`: r.primarySetup is genuinely absent (never computed)
-    // for any non-QUALIFIED tier -- setup detection only runs for
-    // QUALIFIED candidates (see engines/warrior/index.js's own comment,
-    // "NEAR MISS gets no setups section") -- so null here is honest
-    // structural absence, not a fallback masking a real id.
-    armed_setup_id: r.primarySetup?.id ?? null,
   }));
+
+  // setup_triggers (db/013, 2026-09-10): superseded armed_setup_id, which
+  // was dropped from signal_log the same day it was added -- that column
+  // could only ever record the FIRST sighting of a QUALIFIED symbol that
+  // day, and signal_log's dedup key (signal_date, symbol, engine_source,
+  // tier) discards every later insert for the same symbol/tier/day, so a
+  // setup that fired between two scans would never get recorded: the
+  // measurement could only drift pessimistic, silently, and forever.
+  //
+  // One row per real trigger EVENT, keyed (signal_date, symbol,
+  // engine_source, setup_id, triggered_at) -- triggered_at is the bar
+  // that fired (a fact about the market), scan_session is which run
+  // observed it (a fact about us). The gap between them is observation
+  // lag, and recording both is what lets a later query answer "is three
+  // scans a day enough" empirically instead of by argument. The dedup
+  // key's own correctness falls out for free: the SAME trigger seen by
+  // two different scans carries the same triggered_at and collides into
+  // one row; a genuine re-arm carries a new triggered_at and gets its
+  // own row -- no special-casing needed in this script.
+  const setupTriggerRows = results
+    .filter(r => r.primarySetup)
+    .map(r => ({
+      signal_date: today,
+      symbol: r.symbol,
+      engine_source: 'WARRIOR',
+      setup_id: r.primarySetup.id,
+      triggered_at: r.primarySetup.triggeredAt,
+      scan_session: scanRunId,
+    }));
 
   if (!WRITE) {
     mkdirSync(path.join(REPO_ROOT, 'data', 'signal-log-dry-runs'), { recursive: true });
     const outPath = path.join(REPO_ROOT, 'data', 'signal-log-dry-runs', `${scanRunId}.json`);
-    writeFileSync(outPath, JSON.stringify({ scanRun, signalRows }, null, 2));
-    console.log(`\nDRY RUN -- wrote ${signalRows.length} would-be signal_log rows + 1 scan_runs row to ${outPath}. Nothing sent to Supabase.`);
+    writeFileSync(outPath, JSON.stringify({ scanRun, signalRows, setupTriggerRows }, null, 2));
+    console.log(`\nDRY RUN -- wrote ${signalRows.length} would-be signal_log rows, ${setupTriggerRows.length} would-be setup_triggers rows, + 1 scan_runs row to ${outPath}. Nothing sent to Supabase.`);
     console.log(`\nTier breakdown: ${JSON.stringify(results.reduce((acc, r) => { acc[r.tier] = (acc[r.tier] || 0) + 1; return acc; }, {}))}`);
     return;
   }
@@ -307,6 +358,26 @@ async function main() {
     const verifyRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?scan_session=eq.${scanRunId}&select=symbol,tier`, { headers });
     const verifyBody = await verifyRes.json();
     console.log(`log-signals-warrior: re-selected ${verifyBody.length} row(s) actually present for scan_session=${scanRunId} (expected ${signalRows.length} minus any real same-day/same-tier duplicates).`);
+  }
+
+  if (setupTriggerRows.length) {
+    const triggerInsertRes = await fetch(`${SUPABASE_URL}/rest/v1/setup_triggers?on_conflict=signal_date,symbol,engine_source,setup_id,triggered_at`, {
+      method: 'POST',
+      headers: { ...headers, Prefer: 'return=representation,resolution=ignore-duplicates' },
+      body: JSON.stringify(setupTriggerRows),
+    });
+    const triggerInsertedBody = await triggerInsertRes.text();
+    if (triggerInsertRes.status >= 300) {
+      console.error(`log-signals-warrior: setup_triggers insert failed -- status ${triggerInsertRes.status}, body ${triggerInsertedBody}`);
+      process.exit(1);
+    }
+    let triggerInsertedCount = 0;
+    try { triggerInsertedCount = JSON.parse(triggerInsertedBody).length; } catch { /* ignore-duplicates can return an empty body on an all-dup batch */ }
+    console.log(`log-signals-warrior: setup_triggers insert returned status ${triggerInsertRes.status}, ${triggerInsertedCount} row(s) in the response body (a trigger already recorded under the same triggered_at returns no row, not an error).`);
+
+    const triggerVerifyRes = await fetch(`${SUPABASE_URL}/rest/v1/setup_triggers?scan_session=eq.${scanRunId}&select=symbol,setup_id,triggered_at`, { headers });
+    const triggerVerifyBody = await triggerVerifyRes.json();
+    console.log(`log-signals-warrior: re-selected ${triggerVerifyBody.length} setup_triggers row(s) actually present for scan_session=${scanRunId} (expected ${setupTriggerRows.length} minus any real same-day/same-setup/same-timestamp duplicates).`);
   }
 }
 

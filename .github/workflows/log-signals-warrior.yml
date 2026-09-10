@@ -4,19 +4,56 @@ name: Log Warrior signals
 # header for the full design (universe provenance, scan completeness,
 # dry-run-by-default).
 #
-# workflow_dispatch ONLY for now, deliberately -- no schedule yet. A
-# schedule means picking real cron times staggered against
-# capture-movers-snapshot.yml's three daily runs (constraint: never the
-# same minute, since these are separate processes with no shared
-# rate-limit queue), which is a decision for after the dry-run output has
-# actually been reviewed, not before. Manual trigger only until then.
+# SCHEDULED (2026-09-10, after extensive manual-dispatch dry-run
+# verification and one real --write run checked by re-selecting from
+# Supabase directly). Six cron entries, two per intended market-relative
+# moment, not three -- GitHub Actions cron is UTC-only and has no timezone
+# support, but the market's hours are defined in ET and DST shifts them a
+# full hour in UTC terms twice a year. A single fixed UTC time per moment
+# would silently drift onto the wrong session for roughly half the year
+# starting at the next DST transition -- certain, dated, and the kind of
+# thing that would show up as a mysterious drop in QUALIFIED counts months
+# later with nothing pointing at the cause. Each pair covers both the EDT
+# and EST offset for the same intended moment; scripts/log-signals-
+# warrior.mjs's own DST no-op check (see its header) determines at run
+# time which half of each pair is real and lets the other one stand down
+# cleanly -- no scan_runs row, no Alpaca request, nothing to interpret as
+# a partial or failed scan.
 #
-# dry_run input defaults to true. The workflow REFUSES to pass --write
-# unless dry_run is explicitly set to 'false' -- this is the one
-# workflow in this repo where the default and the safe path must be the
-# same value, since signal_log is insert-only for anon (no UPDATE, no
-# DELETE) and a wrong row has no cleanup path short of the SQL editor.
+# Intended moments (all approximate to +/-10 min, the tolerance the script
+# itself checks against): 20 min after open (opening momentum), 105 min
+# after open (mid-morning), 60 min before close (late-session). Open is
+# 13:30 UTC (EDT) / 14:30 UTC (EST); close is 20:00 UTC (EDT) / 21:00 UTC
+# (EST).
+#
+#   13:50 / 14:50 UTC -- open+20   (EDT / EST)
+#   15:15 / 16:15 UTC -- open+105  (EDT / EST)
+#   19:00 / 20:00 UTC -- close-60  (EDT / EST)
+#
+# Staggered against capture-movers-snapshot.yml's 13:45/14:30/15:00 UTC and
+# backup-tables.yml's 06:00 UTC -- never the same minute as another
+# scheduled job, since these are separate processes sharing one Alpaca
+# rate-limit queue with no coordination between them.
+#
+# dry_run input still defaults to true for a MANUAL workflow_dispatch --
+# unaffected by the schedule going live in --write mode below. A schedule-
+# triggered firing always runs with --write (that's the whole point of
+# scheduling instead of dispatching by hand); dry_run/session inputs are
+# workflow_dispatch-only and read as empty on a schedule trigger, so the
+# run step branches on github.event_name, not just the inputs, to decide.
+# The one workflow in this repo where the manual-trigger default and the
+# scheduled behavior deliberately differ -- signal_log is insert-only for
+# anon (no UPDATE, no DELETE), so a wrong row has no cleanup path short of
+# the SQL editor, which is exactly why manual runs still default to safe
+# and schedule runs don't get a dry-run option at all.
 on:
+  schedule:
+    - cron: '50 13 * * 1-5'
+    - cron: '50 14 * * 1-5'
+    - cron: '15 15 * * 1-5'
+    - cron: '15 16 * * 1-5'
+    - cron: '0 19 * * 1-5'
+    - cron: '0 20 * * 1-5'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -47,7 +84,7 @@ jobs:
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: |
           ARGS=""
-          if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+          if [ "${{ github.event.inputs.dry_run }}" = "false" ] || [ "${{ github.event_name }}" = "schedule" ]; then
             ARGS="--write"
           fi
           if [ -n "${{ github.event.inputs.session }}" ]; then
