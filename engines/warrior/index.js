@@ -1278,6 +1278,19 @@ export function register() {
     // exposing the existing _stopScanInterval lets a Playwright harness
     // eliminate the race deterministically instead of outrunning it by luck.
     window.warriorStopScanInterval = _stopScanInterval;
+    // Test-only escape hatch, same justification as warriorStopScanInterval
+    // above: _lastScanResults is module-private (a `let`, never exported),
+    // and the only thing that normally sets it is a real scan tick against
+    // live Alpaca data. Verifying the buy-confirmation disclosure screen
+    // (Phase 7 step 6) needs a QUALIFIED candidate with a real
+    // primarySetup.entryTargetStop on screen -- which setup detection only
+    // ever produces for a real QUALIFIED candidate during OPEN hours (see
+    // register()'s scan-tick comment elsewhere), an intersection narrow
+    // enough that waiting for it live isn't practical for a review that
+    // needs to happen regardless of market hours. No production caller
+    // needs this; it exists so a synthetic candidate can be seeded
+    // directly for exactly this kind of review.
+    window.warriorSetLastScanResultsForTesting = (v) => { _lastScanResults = v; };
   }
   _startScanInterval();
 }
