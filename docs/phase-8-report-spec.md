@@ -38,6 +38,21 @@ The third cut is what needs signal_log. Without a record of signals shown but NO
 
 5. THE STANDING VERDICT TRAVELS WITH ANY POSITIVE RESULT. The 18-month backtest was negative at every horizon, every float bucket, every cell of the stop/target grid. If forward results look good on a small sample, that's a reason to check the sample. The report says so in its own text so the caveat can't be separated from the numbers.
 
+## Exit-quality section (added 2026-09-10, Roman's request)
+
+Roman asked for a much better sell rule — specifically "the best real time to pull out so I can sell high always." Told him plainly: nobody can call the top in real time, anything claiming to is either curve-fitted or guessing, and the backtest already tested ~50 stop/target combinations with every one negative. What replaces it: a measurable question instead of an impossible one. For every closed trade, compare the actual exit against the best exit that was genuinely available, report the gap, and let the trend across his own trades — not a picked rule — be the answer.
+
+**The mechanism already exists, checked directly rather than assumed new:** `trades_v2.best_exit_price`/`best_exit_date`/`best_exit_timing`/`price_at_plus5_days` are real, already-defined columns (`db/002_trades_v2.sql`), and `computeSellTimingAnalysis` (`app.js:1125`) already computes them correctly — best price is the highest daily HIGH actually achieved in the window from buy through 5 trading days past the sell, not a close, and `bestExitTiming` (BEFORE/ON/AFTER) says whether that peak came before, on, or after the day Roman actually sold. A trade isn't resolved (no data point yet) until 5 trading days have passed since the sale — `needsSellTimingResolution`/`sell_timing_resolved` already gate this correctly.
+
+**The gap, and why this section has nothing to read without the outcome-filling job:** `writeSellTimingToSupabase` (`app.js:1207`) has been a no-op since the 2026-09-05 trades_v2 cutover — `trades_v2` has no anon UPDATE policy (fail-closed by design, same posture as signal_log's outcome columns), so the computation still runs client-side into `state.sold` for the current session's Sold-tab display, but nothing has persisted it to Supabase since the cutover. The code's own comment at that line already names the successor: "this gets replaced by the deferred outcome-filling job (its own narrowly-scoped credential, not yet built)." That job was scoped, before this request, as filling `signal_log.ret_5m…ret_5d` only — it now ALSO needs to write `trades_v2`'s four sell-timing columns back, via the same scoped-UPDATE-credential design already tested this session (see the `outcome_filler` role work), not a second credential. Say which columns explicitly rather than leaving "outcome-filling" ambiguous about its own scope.
+
+**What the section reports**, once the job exists and has run long enough for real trades to clear the 5-day window:
+- The gap per trade: `(best_exit_price − sell_price) / sell_price`, sold-short of the available peak.
+- Average gap, split by engine_source (never pooled — same Rule 1 as everywhere else in this report).
+- Average gap, split by hold-duration bucket (DAY / 3-DAY / WEEK / SAME DAY).
+- Trend over time (e.g., gap by rolling window of N trades or by calendar month) — "is this improving," not just "what is it now."
+- n disclosed at every cut, including how many closed trades are still inside the 5-day window and therefore contribute no data point yet (Rule 3's "not enough data yet" applies here identically — a 3-trade exit-quality average is exactly as unearned as a 3-trade win-rate headline).
+
 ## What it must never do
 
 - Name a winner without an n beside it
@@ -48,7 +63,9 @@ The third cut is what needs signal_log. Without a record of signals shown but NO
 
 ## Build order — the report is LAST
 
-Can't be validated until there are outcomes to read, which needs: the QUALIFIED floor settled on OPEN data (Monday), db/010 and --write, the outcome-filling job, and EDGE's server-side logger (needs scoreStock extraction landed). Design now so Monday isn't the bottleneck; don't build before there's data to build against.
+Can't be validated until there are outcomes to read, which needs: the QUALIFIED floor settled on OPEN data, db/010 and --write, the outcome-filling job, and EDGE's server-side logger. Design now so this isn't the bottleneck; don't build before there's data to build against.
+
+**The outcome-filling job moved up in priority (2026-09-10):** it was already required to build the report's core three-way comparison (it fills signal_log's ret_*, and without shown-but-not-taken data the report just measures Roman's picking). It's now also the sole dependency of the exit-quality section above — without it, that section has literally nothing to read, not degraded data. Scope it explicitly to cover BOTH signal_log.ret_5m…ret_5d AND trades_v2's four sell-timing columns (best_exit_price/best_exit_date/best_exit_timing/price_at_plus5_days) — the second half already has working computation logic sitting dead since the trades_v2 cutover (see the exit-quality section above), it just needs the job's scoped UPDATE credential pointed at it too.
 
 ## Acceptance test
 
