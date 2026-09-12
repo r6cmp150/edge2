@@ -309,7 +309,10 @@ Cache the asset list for 24 hours. Cache prior closes daily.
 getUniverse({ session, strategy })
 // session  — from core/clock.js
 // strategy — 'movers' | 'premarket-gap' | 'full-filtered'
-// → [{ symbol, price, prevClose, changePct, volume, source: 'movers'|'actives'|'premarket-gap' }]
+// → [{ symbol, price, prevClose, changePct, volume, source: 'movers'|'actives'|'premarket-gap', rank }]
+// rank (added 2026-09-12, db/018): 1-based position in Alpaca's own
+// returned order (movers by % change, actives by volume) -- see the
+// universe-depth note below for why this was added instead of widening.
 ```
 
 An earlier draft showed this without `strategy`; the three-strategy form above is correct.
@@ -338,6 +341,27 @@ Two things this measurement corrected, both of which arithmetic got wrong:
 
 **Margin note:** 169 requests sits just under the 200-token bucket buffer. A larger universe or one more page per chunk pushes the cold path into throttling — correct behavior, but noticeably slower. Re-measure if the universe grows.
 - [ ] Validate against a known past gap day: the stocks you know ran that morning appear in the pre-market universe
+
+### Universe depth — investigated and rejected (2026-09-12)
+
+Question asked (Roman, after 8 QUALIFIED / 0 armed setups across the first two real sessions): would a wider `movers`/`most-actives` universe produce more tradeable setups? Investigated live rather than reasoned about; answer is no, and it's structural rather than a judgment call.
+
+**Alpaca's real caps, confirmed against the live endpoint, not the plan tier:**
+```
+movers top=50    -> 50 rows, no error
+movers top=100   -> {"message":"invalid top: should not be larger than 50"}
+most-actives top=100 -> 100 rows, no error
+most-actives top=200 -> {"message":"invalid top: should not be larger than 100"}
+```
+`movers` is already at its real ceiling — no headroom at all. `most-actives` has room (50 of 100), but it ranks by **volume**, not % change. Its deeper ranks skew toward mega-caps — more `F`, `NIO`, `AAL` — which are already what fills the REJECTED bucket today. The only available widening adds noise in the exact direction away from Warrior's low-float-momentum thesis. **Rejected — not a cost or effort tradeoff, the available room points the wrong way.**
+
+**The $1–$20 price band is Ross Cameron's own published criterion** (Pillar 1, §3, cited from [warriortrading.com/day-trading-scanners](https://www.warriortrading.com/day-trading-scanners/)) — thesis, not an implementation convenience. An earlier framing of this question treated it as the "cheap lever" to widen instead of depth; that framing was wrong and is corrected here so it isn't rediscovered. Widening the price band would compromise the thesis being tested more directly than widening depth would, not less.
+
+**Cost scales with pillar-2 survivors, not raw universe size** — worth recording so it isn't re-litigated every time someone proposes widening anything. `evaluateGateBatch` (Phase 3) scopes RVOL/news/float to `pillar12Survivors` (candidates clearing price *and* the ≥10% daily-change pillar), not the full universe. Measured live: 14 of 28 candidates survived pillars 1+2 that day. A wider pool's *additional* candidates, being weaker movers by construction, would plausibly fail pillar 2 immediately and add close to zero request cost — meaning cost was never the real constraint on depth, availability and thesis-fit were.
+
+**What this leaves, if setup scarcity turns out to be the binding constraint:** not a parameter change. The real option is scanning the broader eligible instrument universe directly (`full-filtered`, ~5,714 tradable instruments) rather than through the movers/actives screener — the same shape as `premarket-gap` above, whose real cost is already measured in this section's own table (~169 requests cold, ~53 warm). Recorded here as the identified alternative, not built, so the next time this question comes back nobody re-derives it from scratch.
+
+**Recorded instead: `universe_rank`** (db/018, `signal_log.universe_rank`, nullable). Free to add, answers a real question without widening anything: do QUALIFIED rows and armed setups cluster near rank 1, or spread evenly across the full 50? See `core/universe.js`'s own comment at the `rank` capture point for the mechanics (1-based, per-list, movers wins on overlap same as the rest of the row).
 
 ---
 

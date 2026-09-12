@@ -1,0 +1,31 @@
+-- universe_rank: 1-based position in Alpaca's own returned order for the
+-- movers/most-actives screener (movers ranked by % change, actives by
+-- volume; movers wins on overlap, same rule the rest of the row already
+-- follows) -- captured at the point core/universe.js and log-signals-
+-- warrior.mjs's own moversUniverseFromRaw build each candidate, threaded
+-- through unchanged, never recomputed.
+--
+-- WHY THIS EXISTS (2026-09-12, Roman's question about widening Warrior's
+-- universe): investigated widening depth (top-50 movers + top-50
+-- actives -> top-150) and rejected it -- movers is already at Alpaca's
+-- real 50-cap with no headroom, and the only available room (most-actives,
+-- 50 of a possible 100) ranks by VOLUME, so its deeper ranks skew toward
+-- mega-caps (more F, NIO, AAL -- already the REJECTED bucket's contents),
+-- the opposite of Warrior's low-float-momentum thesis. See
+-- warrior-engine-spec-v2.md's own note on this decision for the full
+-- reasoning, including why the price band ($1-$20) is Ross Cameron's own
+-- cited criterion and NOT the cheap lever it first looked like.
+--
+-- Widening was rejected; this column wasn't, because it answers a real
+-- question with the EXISTING top-50 alone, no widening required: do
+-- QUALIFIED rows and armed setups cluster near rank 1, or spread evenly
+-- across the full 50? Cheapest to add now, while signal_log is still
+-- small, than to reconstruct retroactively from signal_snapshot's raw
+-- data later (rank isn't captured in signal_snapshot either -- it was
+-- never captured anywhere before this migration).
+--
+-- Nullable: null for every EDGE row (this screener concept doesn't apply
+-- to EDGE's static-universe-list source) and for every Warrior row
+-- written before this column existed. Not defaulted to any rank value --
+-- a genuinely unknown rank is null, not a guess.
+alter table signal_log add column if not exists universe_rank integer;

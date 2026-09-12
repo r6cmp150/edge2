@@ -350,6 +350,12 @@ async function main() {
     build_version: r.buildVersion || global.VERSION,
     signal_snapshot: r,
     reference_price: candidatesBySymbol.get(r.symbol)?.price ?? null,
+    // universe_rank (db/018): 1-based position in Alpaca's own returned
+    // order (movers by % change, actives by volume; movers wins on
+    // overlap, same rule as the rest of the row) -- null only if this
+    // candidate's own rank was somehow never captured upstream, not a
+    // default standing in for "didn't check."
+    universe_rank: candidatesBySymbol.get(r.symbol)?.rank ?? null,
   }));
 
   // setup_triggers (db/013, 2026-09-10): superseded armed_setup_id, which
@@ -385,10 +391,18 @@ async function main() {
   // dispatch, dry-run included -- the same gap on the EDGE side sat
   // invisible through two successful dry runs because dry-run mode never
   // contacts Supabase otherwise.
+  // signal_log: derived from the real row shape (Object.keys(signalRows[0]))
+  // rather than a hardcoded list -- found live (2026-09-12, adding
+  // universe_rank): a hardcoded list here silently missed the new field
+  // entirely, so a --write attempt before db/018 landed would have
+  // reached PostgREST's own generic error instead of this check's named,
+  // actionable one. A hardcoded fallback list only matters on a quiet day
+  // with zero candidates, where there's no real row to derive from and
+  // nothing about to be inserted anyway.
   await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'scan_runs', Object.keys(scanRun));
-  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'signal_log', [
+  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'signal_log', signalRows.length ? Object.keys(signalRows[0]) : [
     'signal_date', 'symbol', 'engine_source', 'tier', 'first_shown_at',
-    'scan_session', 'build_version', 'signal_snapshot', 'reference_price',
+    'scan_session', 'build_version', 'signal_snapshot', 'reference_price', 'universe_rank',
   ]);
   await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'setup_triggers', [
     'signal_date', 'symbol', 'engine_source', 'setup_id', 'triggered_at', 'scan_session',
@@ -475,27 +489,34 @@ async function moversUniverseFromRaw(moversData, activesData) {
   const [assetIndex] = await Promise.all([global._getAssetIndex(global._coreClient)]);
   const assetsBySymbol = global._assetIndexBySymbol(assetIndex);
 
-  const gainers = (moversData?.gainers || []).map(g => ({
+  // rank: same reasoning as core/universe.js's _getMoversUniverse (this
+  // function is that one's parallel implementation for the committed-
+  // snapshot path, not a caller of it) -- 1-based position in Alpaca's own
+  // returned order, captured here because the raw committed entry still
+  // has it and the very next line used to throw it away regardless.
+  const gainers = (moversData?.gainers || []).map((g, i) => ({
     symbol: g.symbol, price: g.price,
     prevClose: (typeof g.price === 'number' && typeof g.change === 'number') ? g.price - g.change : null,
     changePct: typeof g.percent_change === 'number' ? g.percent_change : null,
-    volume: null, source: 'movers',
+    volume: null, source: 'movers', rank: i + 1,
   }));
 
   const activeRows = activesData?.most_actives || [];
   const activeSymbols = activeRows.map(a => a.symbol);
   const activeSnaps = activeSymbols.length ? await global.fetchSnapshots(activeSymbols, undefined, global._coreClient) : {};
-  const actives = activeRows.map(a => {
+  const actives = activeRows.map((a, i) => {
     const snap = activeSnaps[a.symbol];
     const price = global.getLivePrice(snap) || null;
     const prevClose = snap?.prevDailyBar?.c || null;
     return {
       symbol: a.symbol, price, prevClose,
       changePct: (prevClose && price) ? ((price - prevClose) / prevClose) * 100 : null,
-      volume: typeof a.volume === 'number' ? a.volume : null, source: 'actives',
+      volume: typeof a.volume === 'number' ? a.volume : null, source: 'actives', rank: i + 1,
     };
   });
 
+  // movers wins on overlap, same rule and same reason as core/universe.js
+  // -- rank follows for free, whichever object wins the merge.
   const merged = {};
   actives.forEach(a => { merged[a.symbol] = a; });
   gainers.forEach(g => { merged[g.symbol] = g; });
@@ -508,7 +529,13 @@ async function moversUniverseFromRaw(moversData, activesData) {
   });
 
   console.log(`log-signals-warrior: (from committed snapshot) ${gainers.length} movers + ${actives.length} actives -> ${combined.length} after dedupe -> ${priceFiltered.length} in $1-$20 -> ${instrumentFiltered.length} eligible instrument`);
-  return instrumentFiltered.map(c => ({ symbol: c.symbol, price: c.price, changePct: c.changePct }));
+  // FOUND LIVE (2026-09-12, adding rank): this final map already threw
+  // away everything except symbol/price/changePct once before -- rank
+  // would have been silently lost here even after being captured above if
+  // this line weren't also fixed. Whatever the row-building step actually
+  // needs from a candidate belongs in this object; check here first
+  // before assuming an upstream capture survives to the caller.
+  return instrumentFiltered.map(c => ({ symbol: c.symbol, price: c.price, changePct: c.changePct, rank: c.rank }));
 }
 
 main().catch(e => { console.error('log-signals-warrior: FAILED', e.message, e.stack); process.exit(1); });

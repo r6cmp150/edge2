@@ -195,7 +195,16 @@ async function _getMoversUniverse(session, client = _coreClient) {
   ]);
   const assetsBySymbol = _assetIndexBySymbol(assetIndex);
 
-  const gainers = (moversData.gainers || []).map(g => ({
+  // rank: 1-based position in Alpaca's OWN returned order (movers sorted
+  // by % change, actives by volume) -- captured here because it's free
+  // (the index is already in hand at .map() time) and because it's
+  // discarded for good the moment these become plain per-symbol objects.
+  // Answers a real question later without needing to widen anything:
+  // do QUALIFIED/armed-setup rows cluster near rank 1, or spread evenly
+  // across the full 50? (2026-09-12, Roman's question about universe
+  // depth -- see warrior-engine-spec-v2.md's own note on why widening was
+  // rejected but rank recording wasn't.)
+  const gainers = (moversData.gainers || []).map((g, i) => ({
     symbol: g.symbol,
     price: g.price,
     // prevClose isn't returned directly, but is recoverable exactly from
@@ -204,12 +213,13 @@ async function _getMoversUniverse(session, client = _coreClient) {
     changePct: typeof g.percent_change === 'number' ? g.percent_change : null,
     volume: null, // movers doesn't provide volume
     source: 'movers',
+    rank: i + 1,
   }));
 
   const activeRows = activesData.most_actives || [];
   const activeSymbols = activeRows.map(a => a.symbol);
   const activeSnaps = activeSymbols.length ? await fetchSnapshots(activeSymbols, undefined, client) : {};
-  const actives = activeRows.map(a => {
+  const actives = activeRows.map((a, i) => {
     const snap = activeSnaps[a.symbol];
     const price = getLivePrice(snap) || null;
     const prevClose = snap?.prevDailyBar?.c || null;
@@ -220,6 +230,7 @@ async function _getMoversUniverse(session, client = _coreClient) {
       changePct: (prevClose && price) ? ((price - prevClose) / prevClose) * 100 : null,
       volume: typeof a.volume === 'number' ? a.volume : null,
       source: 'actives',
+      rank: i + 1,
     };
   });
 
@@ -228,7 +239,13 @@ async function _getMoversUniverse(session, client = _coreClient) {
 
   // Union + dedupe by symbol. movers wins on overlap — it already carries a
   // real percent_change; actives' price/prevClose/changePct were all
-  // derived from a snapshot rather than given directly.
+  // derived from a snapshot rather than given directly. `rank` follows the
+  // same rule with no separate decision needed: whichever object wins the
+  // merge carries its own rank field along, so a symbol in both lists is
+  // recorded under its movers rank, never its actives one. Recording both
+  // ranks was considered and rejected (2026-09-12) -- it would add a
+  // column for a case (which rank wins) that resolves the same way every
+  // time, for the same reason movers already wins the rest of the row.
   const merged = {};
   actives.forEach(a => { merged[a.symbol] = a; });
   gainers.forEach(g => { merged[g.symbol] = g; });
@@ -251,8 +268,16 @@ async function _getMoversUniverse(session, client = _coreClient) {
   // There is no way to tell those two apart from this endpoint alone.
   console.log(`getUniverse('movers'): ${rawGainersCount} movers + ${rawActivesCount} actives (top=50 cap each) -> ${combined.length} after dedupe -> ${priceFiltered.length} in $1-$20 -> ${instrumentFiltered.length} eligible instrument`);
 
+  // FOUND LIVE (2026-09-12, adding rank): this final map already narrows
+  // to a fixed field list once -- rank was captured above and would have
+  // been silently lost right here, same mistake as
+  // moversUniverseFromRaw's own final map in log-signals-warrior.mjs (that
+  // function's parallel implementation for the committed-snapshot path
+  // had the identical defect, found and fixed in the same pass). Whatever
+  // a caller needs from a candidate has to survive THIS line, not just
+  // whatever created it upstream.
   return instrumentFiltered.map(c => ({
-    symbol: c.symbol, price: c.price, prevClose: c.prevClose, changePct: c.changePct, volume: c.volume, source: c.source,
+    symbol: c.symbol, price: c.price, prevClose: c.prevClose, changePct: c.changePct, volume: c.volume, source: c.source, rank: c.rank,
   }));
 }
 
