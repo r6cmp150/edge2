@@ -4,36 +4,50 @@ name: Log Warrior signals
 # header for the full design (universe provenance, scan completeness,
 # dry-run-by-default).
 #
-# SCHEDULED (2026-09-10, after extensive manual-dispatch dry-run
-# verification and one real --write run checked by re-selecting from
-# Supabase directly). Six cron entries, two per intended market-relative
-# moment, not three -- GitHub Actions cron is UTC-only and has no timezone
-# support, but the market's hours are defined in ET and DST shifts them a
-# full hour in UTC terms twice a year. A single fixed UTC time per moment
-# would silently drift onto the wrong session for roughly half the year
-# starting at the next DST transition -- certain, dated, and the kind of
-# thing that would show up as a mysterious drop in QUALIFIED counts months
-# later with nothing pointing at the cause. Each pair covers both the EDT
-# and EST offset for the same intended moment; scripts/log-signals-
-# warrior.mjs's own DST no-op check (see its header) determines at run
-# time which half of each pair is real and lets the other one stand down
-# cleanly -- no scan_runs row, no Alpaca request, nothing to interpret as
-# a partial or failed scan.
+# SCHEDULED (2026-09-10, six paired cron entries; REPLACED 2026-09-11
+# after the first real unattended day showed the pairing's own assumption
+# was wrong). Original design: two cron entries per intended
+# market-relative moment (one for EDT, one for EST), with scripts/log-
+# signals-warrior.mjs's own tolerance check picking whichever offset was
+# real that day. That correctly handles DST -- but it assumes GitHub
+# fires a scheduled cron close to its stated time, and on 2026-09-11 it
+# didn't: all six firings landed hours late and clustered together
+# (13:50 fired at 17:17 UTC, 20:00 fired at 22:24 UTC), collapsing three
+# intended distinct moments into a window where only ONE happened to land
+# inside the +/-10min tolerance by chance. The tolerance check itself did
+# exactly its job -- five firings correctly refused to write rather than
+# stamp a scan taken at open+227 as if it were open+20 -- but the design
+# only budgeted one real chance per moment, and GitHub didn't deliver even
+# that reliably.
 #
-# Intended moments (all approximate to +/-10 min, the tolerance the script
-# itself checks against): 20 min after open (opening momentum), 105 min
-# after open (mid-morning), 60 min before close (late-session). Open is
-# 13:30 UTC (EDT) / 14:30 UTC (EST); close is 20:00 UTC (EDT) / 21:00 UTC
-# (EST).
+# FIX: stop trying to fire at the right moment; fire often and let the
+# SAME unchanged tolerance check select which firings do real work. A
+# firing that misses every target no-ops in ~10 seconds (measured: every
+# no-op run today completed in 8-11s) and makes zero Alpaca requests --
+# this repo is public, so GitHub Actions minutes are free and unlimited
+# regardless of density. Same move as sipSafeEndParams (core/api-
+# client.js): when the unreliable thing is GitHub's delivery time, stop
+# depending on knowing it in advance -- need many chances, not a few exact
+# ones.
 #
-#   13:50 / 14:50 UTC -- open+20   (EDT / EST)
-#   15:15 / 16:15 UTC -- open+105  (EDT / EST)
-#   19:00 / 20:00 UTC -- close-60  (EDT / EST)
+# `10,25,40,55 13-20 * * 1-5` -- every 15 minutes, 13:10 through 20:55 UTC,
+# weekdays. Covers both EDT and EST offsets of all three targets (open+20,
+# open+105, close-60; tolerance +/-10min, unchanged in the script) with at
+# least two firings landing inside every one of the six DST-offset
+# windows -- verified by direct computation, not assumed. A DENSE schedule
+# introduces a new requirement the sparse one never needed: a target can
+# now be satisfied more than once (two 15-minute-apart firings, or
+# GitHub's own delay, could both land inside one +/-10min window) --
+# scripts/log-signals-warrior.mjs's no-op check now also queries today's
+# existing scan_runs before proceeding, so only the FIRST firing to reach
+# a given target actually scans; every later one inside the same window
+# no-ops too, having recognized the target as already satisfied.
 #
-# Staggered against capture-movers-snapshot.yml's 13:45/14:30/15:00 UTC and
-# backup-tables.yml's 06:00 UTC -- never the same minute as another
-# scheduled job, since these are separate processes sharing one Alpaca
-# rate-limit queue with no coordination between them.
+# Staggered against capture-movers-snapshot.yml's 13:45/14:30/15:00 UTC,
+# log-signals-edge.yml's :00/:05/:15/:50 UTC slots, and backup-tables.yml's
+# 06:00 UTC -- this schedule's :10/:25/:40/:55 minutes never land on any
+# of those, so no two scheduled jobs in this repo share a minute against
+# the one shared Alpaca rate-limit queue.
 #
 # dry_run input still defaults to true for a MANUAL workflow_dispatch --
 # unaffected by the schedule going live in --write mode below. A schedule-
@@ -48,12 +62,7 @@ name: Log Warrior signals
 # and schedule runs don't get a dry-run option at all.
 on:
   schedule:
-    - cron: '50 13 * * 1-5'
-    - cron: '50 14 * * 1-5'
-    - cron: '15 15 * * 1-5'
-    - cron: '15 16 * * 1-5'
-    - cron: '0 19 * * 1-5'
-    - cron: '0 20 * * 1-5'
+    - cron: '10,25,40,55 13-20 * * 1-5'
   workflow_dispatch:
     inputs:
       dry_run:

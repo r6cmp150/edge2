@@ -1,0 +1,53 @@
+-- ONE-TIME CORRECTION, not a migration -- no schema change, just data.
+-- Run once, by hand, via the SQL editor. Not re-runnable safely after the
+-- fixed fill-outcomes.mjs has refilled these rows (it would null real,
+-- correct values a second time) -- run it exactly once, now, before the
+-- corrected dry run.
+--
+-- WHY: the 33 real signal_log rows from 2026-09-10 (engine_source=WARRIOR)
+-- were all first_shown_at 20:26:48 UTC, 26 minutes after that day's 20:00
+-- UTC close. The pre-fix fill-outcomes.mjs computed ret_close/ret_5m/
+-- ret_15m/ret_30m for them anyway, comparing a POST-close snapshot against
+-- a price from BEFORE it (or, for thin names with zero after-hours
+-- trades, against itself) -- backwards from what these columns claim to
+-- measure, not a genuine same-day forward return. 17 of the 33 show
+-- ret_close exactly 0.00 (illiquid AH, no trade since the close -- the
+-- "live" price and the close price happen to be identical); the other 16
+-- show small nonzero after-hours drift. Both are the same defect; the
+-- exact zeros just make it visible.
+--
+-- WHICH COLUMNS, AND WHY ONLY THESE: ret_5m, ret_15m, ret_30m, ret_close.
+-- ret_1d/ret_3d/ret_5d are untouched -- confirmed already null on all 33
+-- (not enough calendar time has elapsed since a 2026-09-10 signal), and
+-- unaffected by the post-close defect in the first place (a multi-day
+-- forward window is real regardless of what time the signal fired).
+-- taken_resolution/matched_trade_id are untouched -- unaffected, separate
+-- defect. outcomes_filled_at is untouched -- already null on all 33
+-- (never fires until every ret_* is non-null, which was never true here).
+--
+-- After this runs, these 33 rows go back to looking exactly like any
+-- other pending row -- the corrected fill-outcomes.mjs will refill
+-- ret_1d/3d/5d normally when their windows elapse, and will now correctly
+-- leave ret_5m/15m/30m/close permanently null for these specific rows
+-- (first_shown_at outside regular hours -- no same-day window ever
+-- existed, not a gap waiting to be filled).
+update signal_log
+set ret_5m = null, ret_15m = null, ret_30m = null, ret_close = null
+where signal_date = '2026-09-10' and engine_source = 'WARRIOR';
+
+-- VERIFICATION -- run this SEPARATELY after the update above and paste
+-- the result back. Expect: 33 rows, all four columns null, ret_1d/3d/5d/
+-- taken_resolution exactly as they were before (i.e. still null/
+-- 'unresolved' as applicable -- this statement doesn't touch them, this
+-- select just confirms nothing else moved).
+--
+-- select signal_date, engine_source, count(*) as row_count,
+--        count(ret_5m) as ret_5m_non_null, count(ret_15m) as ret_15m_non_null,
+--        count(ret_30m) as ret_30m_non_null, count(ret_close) as ret_close_non_null,
+--        count(ret_1d) as ret_1d_non_null, count(ret_3d) as ret_3d_non_null,
+--        count(ret_5d) as ret_5d_non_null
+-- from signal_log
+-- where signal_date = '2026-09-10' and engine_source = 'WARRIOR'
+-- group by signal_date, engine_source;
+--
+-- Expect: row_count=33, every *_non_null column = 0.

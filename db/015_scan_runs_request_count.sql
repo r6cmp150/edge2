@@ -1,0 +1,18 @@
+-- scan_runs.request_count: a value evaluateGateBatch already computes and
+-- log-signals-warrior.mjs already discards. gate.js returns
+-- { results, requests } (gate.js:828); the logger destructures only
+-- `results` (log-signals-warrior.mjs, pre-fix) and the real Alpaca request
+-- count for the run -- volume/avg-volume fetches, pre-market variants,
+-- news chunks, float-table lookups -- is thrown away instead of recorded.
+-- Warrior's own request cost has never been logged; it was only ever
+-- estimated (8-12/run) from known chunk sizes, unlike EDGE's, which was
+-- measured directly (11/run) while costing its schedule (db/014).
+--
+-- Nullable, no default -- NOT 0. EDGE has no equivalent accounting yet
+-- (its own request cost was hand-counted for the schedule proposal, not
+-- computed by the script), so every EDGE row leaves this null: a real,
+-- stated gap, not a false "zero requests" for an engine that made 11.
+-- Collapsing "not measured" into 0 is exactly the mistake this project
+-- has already caught three times elsewhere -- no reason to reintroduce it
+-- here for the sake of a default value.
+alter table scan_runs add column if not exists request_count integer;

@@ -1,0 +1,40 @@
+-- FOUND LIVE (2026-09-11, constructing taken_resolution test rows): an
+-- unset shell variable (a missing python3 on the machine, silently
+-- producing an empty $SCAN_ID rather than erroring) sent id='' into a
+-- POST against scan_runs. It was accepted. `id text primary key` plus
+-- `not null` blocks a missing value; neither blocks an empty STRING,
+-- which is a different thing wearing the same costume -- exactly the
+-- family this project has already caught several times this week
+-- (defaulted-zero-instead-of-null, an engine tag nothing validated, a
+-- migration referenced before it ran): a value that satisfies every
+-- constraint's letter while failing what the constraint was actually for.
+--
+-- NOT FIXED TONIGHT -- recorded so it isn't rediscovered instead of
+-- silently living with it. Two things worth doing in a real pass:
+--
+-- 1. `alter table scan_runs add constraint scan_runs_id_not_empty
+--    check (id <> '');` -- the direct fix at the actual bug site.
+--
+-- 2. AUDIT EVERY OTHER TEXT-TYPED KEY/FK COLUMN for the same gap, not
+--    just this one -- grepped, not assumed, and this is what turned up:
+--      - signal_log.scan_session (text not null, FK -> scan_runs.id,
+--        db/010) -- directly exposed via the FK: as of tonight, '' is a
+--        value the FK will happily accept, because a real scan_runs row
+--        with id='' currently exists (see cleanup). Fixing #1 above
+--        closes this one transitively, once the bad row is gone and the
+--        constraint is in place -- but that's a reason to actually land
+--        #1, not a reason to skip checking this column too.
+--      - setup_triggers.scan_session (text not null, FK -> scan_runs.id,
+--        db/013) -- same exposure, same transitive fix.
+--      - setup_triggers.setup_id (text not null, db/013) -- not a key or
+--        FK, but still an identifier value from Warrior's own setup
+--        detection; worth a look at whether an empty string is a value
+--        setups.js could ever actually produce, or whether this is purely
+--        theoretical for this one.
+--    Not found in this grep: any OTHER standalone `id text primary key`
+--    besides scan_runs.id (signal_log/trades_v2/setup_triggers all use
+--    `uuid primary key default gen_random_uuid()`, which can't produce
+--    this shape of bug -- there's no way to hand gen_random_uuid() an
+--    empty string instead of generating one).
+--
+-- No SQL runs from this file. It's a record, not a migration.

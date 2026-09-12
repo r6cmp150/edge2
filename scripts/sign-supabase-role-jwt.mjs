@@ -15,11 +15,19 @@
 // share THAT with whatever verification step needs it, not the secret.
 //
 // Usage:
-//   SUPABASE_JWT_SECRET='...' node scripts/sign-supabase-role-jwt.mjs outcome_filler_test [days]
+//   SUPABASE_JWT_SECRET='...' node scripts/sign-supabase-role-jwt.mjs <role> <days>
 //
-// [days] (default 3650, ~10 years): token lifetime. Long-lived by design
-// for a credential meant to sit in a GitHub Actions secret like the
-// Alpaca keys already do -- rotate by re-running this script and
+// <days> is REQUIRED, no default -- found live 2026-09-10: this used to
+// default to 3650 (~10 years) when omitted, and the outcome_filler
+// production token's first minting did exactly that, silently, because
+// the argument was left off. A decade-long bearer token with UPDATE
+// rights over the forward test's own results is not a reasonable
+// default for anyone to hit by omission -- the fix is not a shorter
+// default, it's no default: lifetime has to be a choice the caller
+// states every time, not a number that falls out of forgetting an
+// argument. Pick a lifetime proportionate to what the role can do and
+// how it'll be rotated (see db/017's header for the reasoning behind
+// outcome_filler's own choice) -- rotate by re-running this script and
 // updating the Actions secret, not by re-authenticating.
 import { createHmac } from 'node:crypto';
 
@@ -42,11 +50,17 @@ function signJwt(payload, secret) {
 }
 
 const role = process.argv[2];
-const days = Number(process.argv[3] || 3650);
+const daysArg = process.argv[3];
+const days = Number(daysArg);
 const secret = process.env.SUPABASE_JWT_SECRET;
 
-if (!role) {
-  console.error('usage: SUPABASE_JWT_SECRET=... node scripts/sign-supabase-role-jwt.mjs <role> [days]');
+if (!role || !daysArg) {
+  console.error('usage: SUPABASE_JWT_SECRET=... node scripts/sign-supabase-role-jwt.mjs <role> <days>');
+  console.error('<days> is required -- no default. State the lifetime deliberately; see this file\'s header for why.');
+  process.exit(1);
+}
+if (!Number.isFinite(days) || days <= 0) {
+  console.error(`<days> must be a positive number, got "${daysArg}".`);
   process.exit(1);
 }
 if (!secret) {

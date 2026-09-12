@@ -61,6 +61,44 @@ function sanitizeTickerBatch(tickers) {
   return tickers.filter(t => /^[A-Z0-9]+$/.test(t));
 }
 
+// sipSafeEndParams -- the third time a caller got this SIP-recency embargo
+// wrong is the argument for a shared helper rather than a fourth
+// independent guess (2026-09-11, scripts/fill-outcomes.mjs). This
+// account's plan rejects a bars request whenever its `end` reaches too
+// close to "now" ("subscription does not permit querying recent SIP
+// data") -- but HOW close depends on data type in a way that's already
+// been gotten wrong once: core/universe.js's PREMARKET_BAR_DELAY_MIN
+// (16min) is correct for minute-bar/snapshot data; fill-outcomes.mjs
+// borrowed that same 16min constant for a DAILY-bar request and it still
+// 403'd, because a direct empirical test the same night had already found
+// the real daily-bar boundary is more like 2-3 CALENDAR DAYS, not minutes
+// -- a fact that existed and simply wasn't applied.
+//
+// Rather than pin down and maintain a separate precise threshold per data
+// type (the thing that's now been gotten wrong twice), this sidesteps
+// needing to know it at all: if the desired `end` falls within a
+// generous safety margin of real "now", OMIT `end` from the request
+// entirely instead of trying to compute a safe value for it. Confirmed
+// live (2026-09-11): omitting `end` never triggers this embargo, for any
+// granularity tested, because Alpaca applies its own safe default rather
+// than defaulting to literal "now" the way an explicit but-too-recent
+// `end` does. SIP_RECENT_SAFETY_DAYS (4) is comfortably over the
+// measured ~2-3 day daily-bar boundary; if a future data type needs a
+// wider margin, widen this one constant, not a fourth call site's own
+// guess.
+//
+// Returns a params FRAGMENT to spread into a request's params object --
+// `{ end: '...' }` when the desired end is safely old, or `{}` (the key
+// absent, not merely empty) when it isn't. Callers still choose their own
+// `start`/`limit`/`feed`/etc.; this only ever decides the one field that
+// has burned three call sites so far.
+const SIP_RECENT_SAFETY_DAYS = 4;
+function sipSafeEndParams(desiredEndDateStr) {
+  const desiredEndOfDay = new Date(desiredEndDateStr + 'T23:59:59Z');
+  const safetyBoundary = new Date(Date.now() - SIP_RECENT_SAFETY_DAYS * 24 * 60 * 60 * 1000);
+  return desiredEndOfDay < safetyBoundary ? { end: desiredEndDateStr } : {};
+}
+
 // ── Phase 0.5: shared rate-limit queue ──────────────────────────────────
 // Single, shared arbiter for every Alpaca request from either engine.
 // Replaces today's uncoordinated concurrent awaits: each caller's own loop
@@ -240,9 +278,24 @@ function _refillTokens() {
   _lastRefill = now;
 }
 
+// Self-initializing, matching _requestStats.byEngine's existing safe
+// pattern -- found live testing the enqueue() guard above: every OTHER
+// direct _engineTimestamps[engine] access (_pruneEngineWindow,
+// _activeEngineCount, _nextEligibleIndex) runs BEFORE any per-item
+// try/catch in _drainWorker (they scan/prune the whole queue, not one
+// item, so there's no single item's reject to call anyway) -- enqueue()
+// closes the real-world path (nothing can reach these with an
+// unvalidated tag today), but this is the data structure itself refusing
+// to be a hazard a second way, regardless of how something might reach
+// it in the future. Belt and suspenders was the right instinct; the belt
+// alone (enqueue's guard) turned out not to reach every buckle.
+function _engineWindow(engine) {
+  return _engineTimestamps[engine] || (_engineTimestamps[engine] = []);
+}
+
 function _pruneEngineWindow(engine) {
   const cutoff = Date.now() - WINDOW_MS;
-  const arr = _engineTimestamps[engine];
+  const arr = _engineWindow(engine);
   while (arr.length && arr[0] < cutoff) arr.shift();
 }
 
@@ -256,6 +309,11 @@ function _pruneEngineWindow(engine) {
 // per-item filter in _nextEligibleIndex — CORE-tagged work is never
 // throttled by this cap, whether or not it's active.
 const REAL_ENGINES = ['EDGE', 'WARRIOR'];
+
+// KNOWN_ENGINES: the closed set _engineTimestamps is actually keyed on.
+// enqueue() validates against this — see its own comment for why an
+// unrecognized tag must never reach the queue at all.
+const KNOWN_ENGINES = ['CORE', ...REAL_ENGINES];
 
 // Number of real engines with at least one send in the current rolling
 // window — the per-engine cap only applies once this is >= 2 (see header
@@ -285,7 +343,7 @@ function _nextEligibleIndex() {
   for (let i = 0; i < _queue.length; i++) {
     const item = _queue[i];
     _pruneEngineWindow(item.engine);
-    if (capApplies && item.engine !== 'CORE' && _engineTimestamps[item.engine].length >= PER_ENGINE_CAP) continue;
+    if (capApplies && item.engine !== 'CORE' && _engineWindow(item.engine).length >= PER_ENGINE_CAP) continue;
     if (bestIdx === -1) { bestIdx = i; continue; }
     if (item.priority === 'foreground' && _queue[bestIdx].priority === 'background') bestIdx = i;
   }
@@ -339,15 +397,28 @@ async function _drainWorker() {
         continue;
       }
       const [item] = _queue.splice(idx, 1);
-      _tokens -= 1;
-      _engineTimestamps[item.engine].push(Date.now());
-      _recordRequest(item.engine, 'issued');
+      // Everything from here through resolve() is now inside ONE
+      // try/catch, not just item.run() -- found live (see enqueue's
+      // comment): _engineTimestamps[item.engine].push used to sit OUTSIDE
+      // this block, so a throw there (bad engine tag) skipped item.reject
+      // entirely and left the promise permanently unsettled. enqueue()
+      // now rejects an unknown engine before it ever reaches here, but
+      // this widening is the second, independent half of the fix --
+      // guaranteeing item.reject() fires no matter WHAT throws during this
+      // item's turn, not only if it's ever bookkeeping again. _recordRequest
+      // itself is wrapped separately in the catch because it is NOT
+      // guaranteed engine-safe the way _engineTimestamps now is (it
+      // self-initializes for any string) -- but "guaranteed" is a claim
+      // worth re-verifying with code, not trusting a second time.
       try {
+        _tokens -= 1;
+        _engineWindow(item.engine).push(Date.now());
+        _recordRequest(item.engine, 'issued');
         const result = await item.run();
         _recordRequest(item.engine, 'succeeded');
         item.resolve(result);
       } catch (e) {
-        _recordRequest(item.engine, 'failed');
+        try { _recordRequest(item.engine, 'failed'); } catch { /* never let bookkeeping block the reject below */ }
         item.reject(e);
       }
     }
@@ -379,7 +450,37 @@ function _drain() {
 // honestly unattributed, not silently assumed to be EDGE's. Every real
 // caller today (_alpacaGetImpl below) always passes engine explicitly;
 // this default only matters for some future direct caller that doesn't.
+//
+// THIRD DEFECT IN THIS SHARED COMPONENT, found live 2026-09-11 (scripts/
+// fill-outcomes.mjs, tagged a client 'OUTCOME_FILLER' -- not in
+// _engineTimestamps' fixed {EDGE, WARRIOR, CORE} keys). Same family as
+// the retired _countRequests monkey-patch (a shared binding two
+// overlapping scoped counts could permanently corrupt) and the retired
+// _ambientPriority/withBackgroundPriority (shared mutable state a
+// concurrent await could mistag) -- all three are the shared queue
+// trusting something it never validated. This one was the worst of the
+// three: _engineTimestamps[item.engine].push(...) inside _drainWorker
+// throws for an unknown tag OUTSIDE that item's own try/catch, so the
+// item's promise never resolves or rejects -- not an error, a permanent
+// hang, with nothing to notify on. The caller sat there long enough to
+// run the process out of 4GB of heap rather than failing in any visible
+// way. Every fail-loud mechanism this project has (main().catch, exit 1,
+// GitHub notifications, the schema-check assertion) is downstream of the
+// process actually failing -- a hang routes around all of them.
+//
+// Fixed at the one true choke point every request passes through,
+// regardless of how its engine tag was set: reject synchronously, before
+// anything is ever pushed to _queue, if the tag isn't one _engineTimestamps
+// actually has a bucket for. An unknown engine now fails loudly and
+// immediately at the call site that created it, not silently inside a
+// worker three layers away. (_drainWorker's own per-item handling is
+// separately hardened below to guarantee a settled promise even if
+// something else throws there in the future -- belt and suspenders, not
+// a substitute for this check.)
 function enqueue(request, { engine = 'CORE', priority = 'foreground' } = {}) {
+  if (!KNOWN_ENGINES.includes(engine)) {
+    throw new Error(`enqueue: unknown engine "${engine}" -- must be one of ${KNOWN_ENGINES.join(', ')}. An unrecognized tag would otherwise reach _drainWorker and hang forever instead of failing (see this function's header comment).`);
+  }
   return new Promise((resolve, reject) => {
     _queue.push({ run: request, resolve, reject, engine, priority });
     _drain();

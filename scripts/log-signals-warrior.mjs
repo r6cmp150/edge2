@@ -161,14 +161,17 @@ async function main() {
   const session = marketStatus.status;
   console.log(`log-signals-warrior: session=${session}`);
 
-  // ── DST no-op check (2026-09-10, explicit ask) ──
-  // GitHub Actions cron is UTC-only; the schedule has six entries, two
-  // per intended market-relative moment (one calibrated for EDT, one for
-  // EST), because the open/close themselves don't move in UTC the way a
-  // single fixed cron time assumes. On any given real day only one
-  // offset per pair is correct -- this check is what tells the other one
-  // to stand down instead of running a real scan at the wrong moment and
-  // producing data that looks normal but isn't what that slot was for.
+  // ── DST no-op check + once-per-target dedup ──
+  // (2026-09-10, explicit ask; EXTENDED 2026-09-11 after the six-entry
+  // paired schedule's own assumption broke live -- GitHub delivered every
+  // scheduled firing hours late and clustered together, collapsing three
+  // intended moments into a window where only one landed inside tolerance
+  // by chance. See .github/workflows/log-signals-warrior.yml's header for
+  // the full incident and the fix: a dense schedule (every 15 min across
+  // the whole trading window) replaces trying to fire at the right
+  // moment, and this same tolerance check now also has to guard against
+  // the new possibility that DENSITY introduces -- more than one firing
+  // landing inside the same target's window.
   //
   // Applies ONLY to a real scheduled firing (GITHUB_EVENT_NAME==='schedule')
   // -- a manual workflow_dispatch (testing, or Roman/Claude checking
@@ -182,18 +185,50 @@ async function main() {
   // open (mid-morning), 60 min before close (late-session).
   if (process.env.GITHUB_EVENT_NAME === 'schedule') {
     const TOLERANCE_MIN = 10;
-    const TARGET_MINUTES_AFTER_OPEN = [20, 105];
-    const TARGET_MINUTES_BEFORE_CLOSE = 60;
+    const TARGETS = [
+      { name: 'open+20', kind: 'afterOpen', offset: 20 },
+      { name: 'open+105', kind: 'afterOpen', offset: 105 },
+      { name: 'close-60', kind: 'beforeClose', offset: 60 },
+    ];
+    function minutesFromTarget(target, sinceOpen, toClose) {
+      return target.kind === 'afterOpen' ? sinceOpen - target.offset : toClose - target.offset;
+    }
     const pt = global.getPT();
     const tMin = pt.getHours() * 60 + pt.getMinutes();
     const minutesSinceOpen = tMin - 390; // 390 = 6:30am PT = 9:30am ET, same convention as gate.js's _elapsedSessionMinutes
     const minutesToClose = 780 - tMin;   // 780 = 1:00pm PT = 4:00pm ET
-    const nearAnOpenOffset = TARGET_MINUTES_AFTER_OPEN.some(target => Math.abs(minutesSinceOpen - target) <= TOLERANCE_MIN);
-    const nearPreClose = Math.abs(minutesToClose - TARGET_MINUTES_BEFORE_CLOSE) <= TOLERANCE_MIN;
-    if (!nearAnOpenOffset && !nearPreClose) {
-      console.log(`log-signals-warrior: scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of an intended target (open+20, open+105, close-60) -- this is the wrong-season half of a DST-paired cron entry. No-op: no scan_runs row written, no Alpaca request made. The Actions log is the record that the cron fired.`);
+
+    const matched = TARGETS.find(t => Math.abs(minutesFromTarget(t, minutesSinceOpen, minutesToClose)) <= TOLERANCE_MIN);
+    if (!matched) {
+      console.log(`log-signals-warrior: scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of any intended target (open+20, open+105, close-60). No-op: no scan_runs row written, no Alpaca request made.`);
       return;
     }
+
+    // Once-per-target dedup -- new requirement a dense schedule
+    // introduces that three widely-spaced entries never needed. Recompute
+    // each EXISTING row's own minutesSinceOpen/minutesToClose from ITS
+    // OWN started_at (never "now") -- an earlier run's own delay doesn't
+    // matter here, only where IT actually landed relative to open/close
+    // on its own clock. This is a Supabase read, not an Alpaca request --
+    // still zero cost against the rate-limit queue, and only reached at
+    // all once a target has already matched (the common no-match no-op
+    // above returns before this, unchanged).
+    const todayStr = global.ptDateStr(pt);
+    const existingRes = await fetch(`${SUPABASE_URL}/rest/v1/scan_runs?engine_source=eq.WARRIOR&scan_date=eq.${todayStr}&select=started_at`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    });
+    if (existingRes.status >= 300) throw new Error(`log-signals-warrior: dedup check failed -- could not read today's existing scan_runs: ${existingRes.status} ${await existingRes.text()}`);
+    const existingRuns = await existingRes.json();
+    const alreadySatisfied = existingRuns.some(row => {
+      const rowPt = global.getPT(new Date(row.started_at));
+      const rowMin = rowPt.getHours() * 60 + rowPt.getMinutes();
+      return Math.abs(minutesFromTarget(matched, rowMin - 390, 780 - rowMin)) <= TOLERANCE_MIN;
+    });
+    if (alreadySatisfied) {
+      console.log(`log-signals-warrior: target ${matched.name} was already satisfied by an earlier scan_runs row today -- no-op, no duplicate scan, no Alpaca request made.`);
+      return;
+    }
+    console.log(`log-signals-warrior: scheduled firing matched target ${matched.name} (minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose}), not yet satisfied today -- proceeding with a real scan.`);
   }
 
   // ── universe: committed movers-snapshot preferred, self-fetch as a
@@ -262,9 +297,13 @@ async function main() {
     aborted = true;
     abortReason = e.message;
     console.error(`log-signals-warrior: evaluateGateBatch threw -- ${e.message}`);
-    batchResult = { results: [], requests: 0, rvolCheckable: false, floatTableBuiltAt: null, floatTableStalenessDays: null };
+    // requests: null, not 0 -- evaluateGateBatch threw before returning
+    // its own count, so the real number of requests made before the
+    // throw is genuinely unknown, not zero. Same rule as request_count's
+    // own column comment (db/015): unmeasured is null, not a default.
+    batchResult = { results: [], requests: null, rvolCheckable: false, floatTableBuiltAt: null, floatTableStalenessDays: null };
   }
-  const { results } = batchResult;
+  const { results, requests } = batchResult;
   const evaluatedCount = results.length;
   const fetchFailedCount = results.filter(r => r.pillars.some(p => p.status === 'fetch-failed')).length;
 
@@ -291,6 +330,10 @@ async function main() {
     prefiltered_count: 0,
     evaluated_count: evaluatedCount,
     fetch_failed_count: fetchFailedCount,
+    // request_count (db/015): the real Alpaca request cost of this run,
+    // previously computed by evaluateGateBatch and discarded here. Null
+    // on an aborted run (see the batchResult fallback above), not 0.
+    request_count: requests,
     aborted,
     abort_reason: abortReason,
     build_version: global.VERSION,
