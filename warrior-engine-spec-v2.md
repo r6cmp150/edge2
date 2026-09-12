@@ -1494,6 +1494,19 @@ Add `engineSource`, `signalSnapshot` (jsonb), `exitRuleId`, and `minutesLate` to
 
 **Backfill:** existing positions and sold records predate the field. Default them to `'EDGE'`, never `undefined`. The v1 doc's "always populated, no third case" is true going forward and false for the 11 trades already in history — and an `undefined` makes every engine-filtered statistic silently undercount.
 
+### A value present in memory is not a value that persists (2026-09-12)
+
+Four independent occurrences in this project. Every one was computed correctly, looked correct in the code that produced it, and was invisible in normal operation — code review, UI render, and a passing 211/211 test suite all missed every single one. Each was found only by re-selecting the actual row from the database:
+
+- `engine_source` — computed correctly at buy time; had no write path to Supabase at all.
+- `universe_rank` — computed correctly; narrowed away at two separate universe-construction `return` statements, each hardcoding its own output field list.
+- `request_count` — computed correctly; destructured away at the call site before it reached its destination.
+- `signal_snapshot` / `exit_rule_id` / `minutes_late` — computed correctly in `_confirmAddPosition`; dropped independently by two separate mappers (`mapPositionToSupabaseRow` and `writeTradeToSupabase`), neither of which had a key for them.
+
+**So: whenever a new field is added to a record, the acceptance test is a real round trip, re-selected from the database — never a code read, never a UI display, never a status code.** Drive the actual function that writes the value, then query the actual row back with a fresh, independent `SELECT`. Nothing short of that has caught this pattern yet.
+
+**Mitigation that exists today, and exactly where it stops:** `scripts/lib/schema-check.mjs`'s `assertColumnsExist` now derives its expected-column list from `Object.keys()` of the row a script is actually about to write, rather than a hardcoded list — this catches a script trying to write a column the table doesn't have yet (the missing-migration half of this failure class, db/011/012/014). It does **not** catch a mapper that never puts the key on the object in the first place — that row inserts cleanly, Supabase raises no error, there is no schema mismatch to see. The check only ever sees the keys it was offered; it has no way to notice a key that should have been offered and wasn't. Do not trust it past that boundary.
+
 ### Sell warnings — who owns them
 
 **Confirmed:** there is exactly one entry point today — `calcUnifiedRecommendation(position, currentSignal, macroContext, snap)` at `app.js:4369`, called unconditionally for every position from `renderPortfolioTab()` (`app.js:4009`). There is no per-engine dispatch.
@@ -1585,6 +1598,7 @@ Each engine produces its own stats block via `summarizeForReport(trades)` from t
 
 - **Chart X-axis labels render in browser-local time, not PT** (`app.js:3503-3510`). Every other timestamp in the app is PT; this is the one place that isn't. Found during the 2026-08-26 timezone sweep (prompted by two real getPT()/local-time-mixing bugs found the same day — see CLAUDE.md's rule on `.setHours()`/`.setDate()` on a `getPT()`-derived Date). Not fixed: it's a display-only inconsistency, not a wrong-answer bug like the other two, and no phase currently touches that code path. Revisit if a phase ends up in `app.js`'s charting code anyway, or if it's reported as confusing.
 - **`state.settings.showWatch` is functionally dead.** Found during the 2026-08-28 settings-schema sweep (prompted by `developerTools` silently failing to persist — see that finding elsewhere in this doc). Unlike `developerTools`, this one has full Supabase plumbing: the `show_watch` column exists, both `loadSettingsFromSupabase` and `saveSettingsToSupabase` wire it correctly. But nothing in the app ever *sets* it to anything but its `true` default — no checkbox, no `savePref('showWatch', ...)` call anywhere. It's only ever read once, in the Claude Report's configuration block (`Show WATCH signals: ...`), where it's presented as a live setting despite never having varied. Same category as `developerTools`/`riskPerTradePct` ("a `state.settings` field that isn't trustworthy"), but it fails by never varying rather than by never saving. Not fixed here — recorded so a future reading of that report doesn't reason about this value as if it reflects a real user choice.
+- **`trades_v2.signal_log_id` is null-by-design, not half-wired — leave it that way.** Confirmed 2026-09-12 during the post-cutover sweep: the browser's live scan pipeline (`_scanTick` for Warrior, the signals-tab screener for EDGE) never queries `signal_log` at all — that table is written only by the separate scheduled scripts (`scripts/log-signals-*.mjs`), so there is nothing already in memory at buy time to stamp onto the position. Populating it would mean issuing a fresh Supabase `SELECT` against `signal_log` on the buy path, filtered by ticker/date/engine, plus real tie-breaking logic for a symbol that appears in more than one scan run the same day — a network call and non-trivial matching logic sitting between the user and recording a trade, for a link `scripts/fill-outcomes.mjs`'s fallback matching already reconstructs after the fact from ticker+date. Not worth the buy-path latency or failure surface it would add. Leave the column null; the outcome job is the intended source of truth for this link, not the buy flow.
 
 ---
 

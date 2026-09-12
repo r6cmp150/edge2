@@ -151,6 +151,9 @@ function mapSupabasePortfolioRowToPosition(row) {
     maPctAtBuy: row.ma_pct_at_buy,
     rawScoreAtBuy: row.raw_score_at_buy,
     engineSource: row.engine_source,
+    signalSnapshot: row.signal_snapshot,
+    exitRuleId: row.exit_rule_id,
+    minutesLate: row.minutes_late,
   };
 }
 
@@ -201,6 +204,9 @@ function mapPositionToSupabaseRow(position) {
     ma_pct_at_buy: position.maPctAtBuy,
     raw_score_at_buy: position.rawScoreAtBuy,
     engine_source: position.engineSource || null,
+    signal_snapshot: position.signalSnapshot ?? null,
+    exit_rule_id: position.exitRuleId ?? null,
+    minutes_late: position.minutesLate ?? null,
     updated_at: new Date().toISOString(),
   };
 }
