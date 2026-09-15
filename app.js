@@ -3140,7 +3140,7 @@ async function openStockModal(ticker) {
     let intradayPanelHtml = '';
     if (ownedPos && !modalPriceUnavailable) {
       const { bars: intradayBars, failed: intradayFailed } = await fetchIntradaySipBars(ticker, ownedPos.buyDate);
-      const intradayPanel = computeIntradayPanel({
+      let intradayPanel = computeIntradayPanel({
         buyPrice: ownedPos.buyPrice,
         buyDateStr: ownedPos.buyDate,
         bars: intradayBars,
@@ -3149,6 +3149,18 @@ async function openStockModal(ticker) {
         maxLossPct: state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT,
         todayOnly: false,
       });
+      // NO_DATA -> INACTIVE upgrade (Phase 9 §7 review, 2026-09-15): only
+      // checked in the rare NO_DATA case, not on every render — a real
+      // fetch failure already reads as FAILED, and there's nothing to
+      // upgrade when real bars came back. Stays NO_DATA (the honest,
+      // unresolved case) if the asset-status check itself can't be
+      // confirmed either way.
+      if (intradayPanel.state === 'NO_DATA') {
+        const assetStatus = await fetchAssetStatus(ticker);
+        if (!assetStatus.failed && (assetStatus.tradable === false || assetStatus.status === 'inactive')) {
+          intradayPanel = { state: 'INACTIVE' };
+        }
+      }
       intradayPanelHtml = renderIntradayPanelModal(intradayPanel);
     }
 
@@ -3744,6 +3756,29 @@ async function renderPortfolioTab() {
     console.error('Portfolio intraday-panel fetch failed:', e.message);
   }
 
+  // NO_DATA -> INACTIVE upgrade (Phase 9 §7 review, 2026-09-15) — same
+  // asset-status distinction as the modal (a fetch that found nothing vs.
+  // a symbol Alpaca has independently marked inactive/untradable while
+  // still sitting in the portfolio). Batched here, once per ticker,
+  // rather than inside sortedPortfolio.forEach below — that loop is a
+  // plain synchronous forEach and can't await per card.
+  const intradayAssetStatusByTicker = {};
+  if (!priceFetchFailed) {
+    const noDataTickers = state.portfolio.filter(p => {
+      const cp = getLivePrice(snapshots[p.ticker]) || p.buyPrice;
+      const panel = computeIntradayPanel({
+        buyPrice: p.buyPrice, buyDateStr: p.buyDate,
+        bars: intradayBarsBySymbol[p.ticker] || [], failed: intradayFailedSymbols.includes(p.ticker),
+        nowPrice: cp, maxLossPct: state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT, todayOnly: true,
+      });
+      return panel.state === 'NO_DATA';
+    }).map(p => p.ticker);
+    if (noDataTickers.length) {
+      const statuses = await Promise.all(noDataTickers.map(t => fetchAssetStatus(t)));
+      noDataTickers.forEach((t, i) => { intradayAssetStatusByTicker[t] = statuses[i]; });
+    }
+  }
+
   // Shared with updateNavBadges (Phase 9 §3.4 review, 2026-09-15): that
   // function reuses state.portfolioPrices independently of this render and
   // had no way to know those cached prices came from this same failure --
@@ -3803,7 +3838,7 @@ async function renderPortfolioTab() {
     // showing "Up 0.0% today" off a fabricated flat price, the same
     // fabricated-zero the file-level priceFetchFailed flag already exists
     // to prevent everywhere else on this card.
-    const intradayPanel = priceFetchFailed
+    let intradayPanel = priceFetchFailed
       ? { state: 'FAILED' }
       : computeIntradayPanel({
           buyPrice: p.buyPrice,
@@ -3814,6 +3849,12 @@ async function renderPortfolioTab() {
           maxLossPct: state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT,
           todayOnly: true,
         });
+    if (intradayPanel.state === 'NO_DATA') {
+      const assetStatus = intradayAssetStatusByTicker[p.ticker];
+      if (assetStatus && !assetStatus.failed && (assetStatus.tradable === false || assetStatus.status === 'inactive')) {
+        intradayPanel = { state: 'INACTIVE' };
+      }
+    }
     const intradayLineHtml = renderIntradayLineCard(intradayPanel);
 
     // Snapshot the prior render's RSI before overwriting — calcPeakRiskScore
@@ -4722,6 +4763,23 @@ function buildUnifiedRecommendationModalBlock(result) {
 //   headline here — the banner above it already states that; repeating it
 //   would be redundant with, not additive to, what's on screen.
 
+// Regular-session-only, defined once (Phase 9 §7 review of the first real
+// render, 2026-09-15): every high/low this panel shows is meant to answer
+// "what could Roman have realistically sold into" — a print during thin
+// pre-/after-hours trading isn't that, so every high/low below is
+// computed over REGULAR-session bars only, never silently mixed with
+// extended-hours prints. Uses the same four-state classifySession()
+// (core/clock.js) this project already relies on for this exact
+// question, not a new definition invented here. `nowPct`/`nowPrice`
+// themselves are NOT filtered this way — Roman's current standing is
+// real regardless of session, only the highs/lows he could have acted on
+// are held to the regular-session bar.
+function isRegularHoursBar(bar) {
+  const pt = getPT(new Date(bar.t));
+  const hhmm = `${String(pt.getHours()).padStart(2, '0')}:${String(pt.getMinutes()).padStart(2, '0')}`;
+  return classifySession(ptDateStr(pt), hhmm) === 'REGULAR';
+}
+
 // bars: ascending SIP 1-min bars from fetchIntradaySipBars, spanning
 // [buyDateStr, ~now minus whatever SIP's embargo left out]. todayOnly:
 // true for the Portfolio card's lighter one-liner (no since-entry/volume
@@ -4734,8 +4792,10 @@ function computeIntradayPanel({ buyPrice, buyDateStr, bars, failed, nowPrice, ma
   const pctFromBuy = (p) => ((p - buyPrice) / buyPrice) * 100;
   const nowPct = pctFromBuy(nowPrice);
 
+  const regularBars = bars.filter(isRegularHoursBar);
+
   const todayStr = new Date().toISOString().slice(0, 10);
-  const todaysBars = bars.filter(b => b.t.slice(0, 10) === todayStr);
+  const todaysBars = regularBars.filter(b => b.t.slice(0, 10) === todayStr);
   const sameDay = buyDateStr.slice(0, 10) === todayStr;
 
   function highOf(list) {
@@ -4759,7 +4819,7 @@ function computeIntradayPanel({ buyPrice, buyDateStr, bars, failed, nowPrice, ma
   // design omits the redundant second line entirely rather than repeat it.
   let sinceEntryHigh = null, sinceEntryHighDayOfHold = null, currentDayOfHold = null;
   if (!todayOnly && !sameDay) {
-    sinceEntryHigh = highOf(bars);
+    sinceEntryHigh = highOf(regularBars);
     const buyMidnight = new Date(buyDateStr.slice(0, 10) + 'T00:00:00Z');
     const todayMidnight = new Date(todayStr + 'T00:00:00Z');
     currentDayOfHold = Math.floor((todayMidnight - buyMidnight) / 86400000) + 1;
@@ -4769,24 +4829,35 @@ function computeIntradayPanel({ buyPrice, buyDateStr, bars, failed, nowPrice, ma
     }
   }
 
-  // Volume ratio: last 30 min of TODAY's bars vs the 30 min before that.
-  // Omitted (not zero-filled) without a full 60 minutes of today's bars to
-  // compare — an omitted line, unlike a fabricated 0x or 1x, states nothing
-  // false.
+  // Volume ratio: last 30 min of TODAY's REGULAR-session bars vs the 30
+  // min before that — and only computed at all when "now" is itself
+  // inside the regular session. Found live 2026-09-15: an 18:41 ET render
+  // (after the 4pm close) reported "4.1x the prior 30 min" — correct
+  // arithmetic, but both windows were thin after-hours prints, so the
+  // ratio of two near-zero numbers is noise with a decimal point, not a
+  // signal. Same move as dropping the last-15-min IEX figure: don't show
+  // a weaker number in the same slot as a stronger one.
   let volRatio = null;
-  if (!todayOnly && todaysBars.length) {
-    const lastBarMs = new Date(todaysBars[todaysBars.length - 1].t).getTime();
-    const last30 = todaysBars.filter(b => lastBarMs - new Date(b.t).getTime() < 30 * 60000);
-    const prior30 = todaysBars.filter(b => {
-      const age = lastBarMs - new Date(b.t).getTime();
-      return age >= 30 * 60000 && age < 60 * 60000;
-    });
-    if (last30.length && prior30.length) {
-      const priorVol = prior30.reduce((s, b) => s + b.v, 0);
-      if (priorVol > 0) volRatio = last30.reduce((s, b) => s + b.v, 0) / priorVol;
+  if (!todayOnly) {
+    const pt = getPT();
+    const nowHHMM = `${String(pt.getHours()).padStart(2, '0')}:${String(pt.getMinutes()).padStart(2, '0')}`;
+    if (classifySession(ptDateStr(pt), nowHHMM) === 'REGULAR' && todaysBars.length) {
+      const lastBarMs = new Date(todaysBars[todaysBars.length - 1].t).getTime();
+      const last30 = todaysBars.filter(b => lastBarMs - new Date(b.t).getTime() < 30 * 60000);
+      const prior30 = todaysBars.filter(b => {
+        const age = lastBarMs - new Date(b.t).getTime();
+        return age >= 30 * 60000 && age < 60 * 60000;
+      });
+      if (last30.length && prior30.length) {
+        const priorVol = prior30.reduce((s, b) => s + b.v, 0);
+        if (priorVol > 0) volRatio = last30.reduce((s, b) => s + b.v, 0) / priorVol;
+      }
     }
   }
 
+  // Unfiltered (all sessions) — this is a data-freshness disclosure (how
+  // recent is the newest bar this panel has at all), not a price Roman
+  // could have sold into, so it isn't held to the regular-hours bar above.
   const lastBar = bars[bars.length - 1];
   const lastBarTime = new Date(lastBar.t);
   const gapMin = (Date.now() - lastBarTime.getTime()) / 60000;
@@ -4816,12 +4887,32 @@ function renderIntradayPanelModal(panel) {
   if (panel.state === 'FAILED') {
     return `<div class="intraday-panel intraday-panel-failed">Couldn't load today's price history (connection issue). Current price above is live — the high/low path isn't available right now.</div>`;
   }
+  // INACTIVE is a distinct state from NO_DATA (Phase 9 §7 review,
+  // 2026-09-15), not a sub-case folded into it — checked live against
+  // /v2/assets/{ticker} at the call site: "the fetch found nothing" and
+  // "this symbol has stopped trading entirely" are different facts, and
+  // the second is urgent for a position still open. NO_DATA below is now
+  // only the routine case (the check ran and found the asset still
+  // tradable, or the check itself couldn't be confirmed either way).
+  if (panel.state === 'INACTIVE') {
+    return `<div class="intraday-panel intraday-panel-inactive">This symbol has stopped trading (Alpaca reports it inactive/not tradable). There's no price history because there's nothing to fetch — a different problem than a connection issue.</div>`;
+  }
   if (panel.state === 'NO_DATA') {
     return `<div class="intraday-panel intraday-panel-nodata">No minute-by-minute price history yet for today.</div>`;
   }
 
   const lines = [];
   const up = panel.nowPct >= 0;
+  // Distance from today's high is always relative to `now`, never to the
+  // low — kept as one function so every call site states that
+  // relationship the same way instead of drifting (found live 2026-09-15:
+  // an earlier version attached this exact figure to a sentence about the
+  // low, misattributing a now-vs-high number as if it described the
+  // low-vs-high gap).
+  const nowOffHighLine = () => {
+    const offHigh = (panel.todayHigh.pct - panel.nowPct).toFixed(1);
+    return `Now ${offHigh}pp off today's high of ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}`;
+  };
 
   if (!panel.maxLossReached) {
     lines.push(`${up ? 'Up' : 'Down'} ${Math.abs(panel.nowPct).toFixed(1)}% ${panel.sameDay ? 'now' : 'today'}`);
@@ -4840,25 +4931,30 @@ function renderIntradayPanelModal(panel) {
         const delta = panel.nowPct - panel.todayLow.pct;
         if (delta > 0.05) lines.push(`Up ${delta.toFixed(1)}pp from that low`);
       } else if (panel.todayHigh) {
-        const offHigh = (panel.todayHigh.pct - panel.nowPct).toFixed(1);
-        lines.push(`${offHigh}pp off today's high of ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}`);
+        lines.push(nowOffHighLine());
       }
     }
   } else {
     if (panel.sinceEntryHigh) {
-      lines.push(`Since you bought (day ${panel.currentDayOfHold}): high of ${intradayFmtPct(panel.sinceEntryHigh.pct)} on day ${panel.sinceEntryHighDayOfHold}, now ${intradayFmtPct(panel.nowPct)}`);
+      // "high of +0.0% on day 1" is technically correct and unreadable —
+      // it means the position has never traded above what Roman paid.
+      // Say that plainly instead of a number a glance will misread as
+      // rounding noise (found live 2026-09-15's real PLUG render).
+      const neverAboveBuy = Math.abs(panel.sinceEntryHigh.pct) < 0.05;
+      const highClause = neverAboveBuy
+        ? `never above your buy price`
+        : `high of ${intradayFmtPct(panel.sinceEntryHigh.pct)} on day ${panel.sinceEntryHighDayOfHold}`;
+      lines.push(`Since you bought (day ${panel.currentDayOfHold}): ${highClause}, now ${intradayFmtPct(panel.nowPct)}`);
     }
     if (up && panel.todayHigh) {
       lines.push(`Today's high: ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}`);
     } else if (!up && panel.todayLow) {
+      lines.push(`Today's low: ${intradayFmtPct(panel.todayLow.pct)} at ${intradayFmtTime(panel.todayLow.time)}`);
       if (panel.maxLossReached) {
         const delta = panel.nowPct - panel.todayLow.pct;
-        lines.push(`Today's low: ${intradayFmtPct(panel.todayLow.pct)} at ${intradayFmtTime(panel.todayLow.time)}${delta > 0.05 ? ` (up ${delta.toFixed(1)}pp from there)` : ''}`);
+        if (delta > 0.05) lines.push(`Up ${delta.toFixed(1)}pp from that low`);
       } else if (panel.todayHigh) {
-        const offHigh = (panel.todayHigh.pct - panel.nowPct).toFixed(1);
-        lines.push(`Today's low: ${intradayFmtPct(panel.todayLow.pct)} at ${intradayFmtTime(panel.todayLow.time)} — ${offHigh}pp off today's high of ${intradayFmtPct(panel.todayHigh.pct)}`);
-      } else {
-        lines.push(`Today's low: ${intradayFmtPct(panel.todayLow.pct)} at ${intradayFmtTime(panel.todayLow.time)}`);
+        lines.push(nowOffHighLine());
       }
     }
   }
@@ -4882,6 +4978,9 @@ function renderIntradayLineCard(panel) {
   if (panel.state === 'FAILED') {
     return `<div class="pf-intraday pf-intraday-failed">Today's price history unavailable — current price above is still live</div>`;
   }
+  if (panel.state === 'INACTIVE') {
+    return `<div class="pf-intraday pf-intraday-inactive">No longer trading (Alpaca: inactive)</div>`;
+  }
   if (panel.state === 'NO_DATA') {
     return `<div class="pf-intraday pf-intraday-nodata">No price history yet today</div>`;
   }
@@ -4890,7 +4989,10 @@ function renderIntradayLineCard(panel) {
     const highPart = panel.todayHigh ? `, high of ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}` : '';
     return `<div class="pf-intraday">Up ${panel.nowPct.toFixed(1)}% today${highPart}</div>`;
   }
-  const offHighPart = panel.todayHigh ? ` (${(panel.todayHigh.pct - panel.nowPct).toFixed(1)}pp off today's high)` : '';
+  // "now X pp off high" — same now-vs-high figure as the modal's
+  // nowOffHighLine, same reason it's explicitly "off today's high" rather
+  // than left to read as a property of anything else on this short line.
+  const offHighPart = panel.todayHigh ? ` (now ${(panel.todayHigh.pct - panel.nowPct).toFixed(1)}pp off today's high)` : '';
   return `<div class="pf-intraday">Down ${Math.abs(panel.nowPct).toFixed(1)}% today${offHighPart}</div>`;
 }
 

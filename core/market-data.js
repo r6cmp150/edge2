@@ -350,3 +350,35 @@ async function fetchTodaySipBarsMulti(tickers) {
   }
   return { barsBySymbol, failedSymbols };
 }
+
+// Phase 9 §7 correction (2026-09-15, after the first real intraday-panel
+// render): NO_DATA was folding two different facts into one label — "the
+// window Alpaca has data for just happens to be empty" and "this symbol
+// has stopped trading entirely" — and the second is urgent for a
+// position still open, the first routine. Confirmed live the same day:
+// TWO (held in the real portfolio) returns zero bars from EVERY bar
+// fetch, and separately, GET /v2/assets/TWO reports
+// `{status: 'inactive', tradable: false}` — Alpaca has independently
+// delisted/deactivated it while it's still sitting in the portfolio.
+//
+// /v2/assets/{symbol} lives on Alpaca's TRADING api, not the market-data
+// api (data.alpaca.markets) every other fetcher in this file hits.
+// ALPACA_TRADING_BASE is core/universe.js's global const, NOT redeclared
+// here -- this file and universe.js are classic scripts sharing one
+// global scope (see index.html's own comment on load order/CLAUDE.md),
+// and a second top-level `const` of the same name threw
+// "Identifier 'ALPACA_TRADING_BASE' has already been declared" live the
+// first time this was tried, aborting the REST of whichever script tag
+// evaluated second — found via a real end-to-end run, not a review.
+// universe.js's constant has no trailing /v2 (its own call sites pass
+// '/v2/assets' as the path); matched here rather than adding a second,
+// differently-shaped constant for the same host.
+async function fetchAssetStatus(ticker) {
+  try {
+    const data = await alpacaGet(`/v2/assets/${ticker}`, {}, ALPACA_TRADING_BASE);
+    return { status: data.status, tradable: data.tradable, failed: false };
+  } catch(e) {
+    console.warn(`fetchAssetStatus(${ticker}): ${e.message}`);
+    return { status: null, tradable: null, failed: true };
+  }
+}

@@ -983,6 +983,16 @@ a { color: var(--blue); }
   color: var(--muted);
   font-style: italic;
 }
+/* Deliberately NOT italic/muted like FAILED/NO_DATA above — this is the
+   urgent case (a held position whose data source has independently
+   marked it inactive), and it must not read as just another routine
+   "couldn't load" variant. */
+.intraday-panel-inactive {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--yellow);
+  border-color: var(--yellow);
+}
 
 .pf-intraday {
   font-size: 11px;
@@ -993,6 +1003,10 @@ a { color: var(--blue); }
 .pf-intraday-nodata {
   color: var(--muted);
   font-style: italic;
+}
+.pf-intraday-inactive {
+  color: var(--yellow);
+  font-weight: 600;
 }
 
 /* ── Portfolio Card ── */

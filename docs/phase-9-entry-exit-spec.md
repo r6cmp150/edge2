@@ -1195,6 +1195,79 @@ positions, two different real outcomes:
   hasn't had the same kind of real-position, real-data pass this section
   just got for the stock modal.
 
+### 3.9.5 The real copy had a real bug (2026-09-15, same day)
+
+Getting the actual rendered text (§3.9.4) mattered exactly as much as
+predicted: reading it surfaced one correctness bug and three honesty
+gaps that constructed test data never would have, because they only show
+up against real timestamps and real session state.
+
+1. **A misattributed number.** The PLUG render read `Today's low: -5.6%
+   at 3:56 PM — 1.6pp off today's high of -2.8%`, one sentence carrying
+   two different reference points: the low, and 1.6pp, which is actually
+   `nowPct` vs. the high (-4.4% vs. -2.8%), not the low vs. the high
+   (which is 2.8pp). The code computed the right number and attached it
+   to the wrong clause. Fixed by splitting every such line into two —
+   one statement about the low, a separate `Now {X}pp off today's high`
+   statement — via one shared `nowOffHighLine()` helper so every call
+   site states the relationship the same way instead of drifting. The
+   same split was applied to the CUT-NOW branch's low→now recovery figure
+   too, for the same reason, even though that one was already correctly
+   attributed (it just used to ride along in the same sentence as the low).
+2. **"high of +0.0% on day 1"** is arithmetically correct and unreadable
+   — it means the position has never traded above what Roman paid. A
+   glance reads +0.0% as rounding noise, not as the significant fact it
+   is. Now rendered as `never above your buy price` whenever the high
+   rounds to zero (`|pct| < 0.05`), numeric phrasing otherwise.
+3. **Volume ratio suppressed outside the regular session.** The same
+   PLUG render (computed at 6:41pm ET, after the 4pm close) reported
+   `Volume last 30 min: 4.1x the prior 30 min` — correct arithmetic over
+   two real windows, both of them thin after-hours prints, so the ratio
+   of two near-zero numbers read as a signal it wasn't. `computeIntraday
+   Panel` now checks `classifySession()` (core/clock.js, the same
+   four-state PT-aware classifier `buySession` already uses) and only
+   computes this line when "now" is `REGULAR`. Same principle as
+   dropping the last-15-min IEX figure in §3.9.4: don't show a weaker
+   number in the same slot as a stronger one.
+4. **"Today" was implicit.** Nothing previously stopped a pre-/after-hours
+   print from setting "today's high" — a price Roman couldn't have
+   realistically sold into, on a panel that exists specifically to show
+   him prices he could sell into. Every high/low in the panel (today's,
+   and since-entry) is now computed over regular-session bars only
+   (`isRegularHoursBar`, same `classifySession` call per-bar); `nowPct`/
+   `nowPrice` are deliberately NOT filtered this way — his current
+   standing is real regardless of session, only the highs/lows he could
+   have acted on are held to the regular-session bar.
+5. **NO_DATA was two different facts wearing one label.** Added a real,
+   fourth state, `INACTIVE`, distinguished by checking
+   `GET /v2/assets/{ticker}` — Alpaca's TRADING api
+   (`https://paper-api.alpaca.markets`, a different host than every other
+   fetcher in this file; the existing `ALPACA_TRADING_BASE` global from
+   `core/universe.js` is reused, not redeclared — a first attempt
+   declared a second copy of that name and threw `Identifier
+   'ALPACA_TRADING_BASE' has already been declared` live, since classic
+   scripts here share one global scope; see the comment on
+   `fetchAssetStatus`). Checked only in the rare NO_DATA case, batched
+   once per ticker on the Portfolio tab (that render loop is a plain
+   synchronous `forEach` and can't await per card). Confirmed against the
+   real, still-inactive TWO directly (`fetchAssetStatus('TWO')` →
+   `{status: 'inactive', tradable: false}`, rendering `This symbol has
+   stopped trading (Alpaca reports it inactive/not tradable)...` in the
+   modal and `No longer trading (Alpaca: inactive)` on the card) — but
+   NOT through a live portfolio-card click, because between the first and
+   second verification passes the same evening, TWO left Roman's real
+   portfolio (he evidently sold or closed it; `state.portfolio` now holds
+   only PLUG). The upgrade logic and copy are verified against real data;
+   the specific "open the actual card for an inactive HELD position" path
+   is not, for the same reason this project doesn't fabricate portfolio
+   state to force a test.
+
+All four fixes plus the new state re-verified: full test suite still
+green, PLUG's real render re-captured post-fix (misattribution gone,
+"never above your buy price" phrasing, no volume-ratio line — real time
+of check was still after-hours — regular-session-only high/low), and a
+fresh 390px pass on the corrected modal, clean.
+
 ## 4. Entry
 
 ### 4.1 After-hours warning at the point of purchase
