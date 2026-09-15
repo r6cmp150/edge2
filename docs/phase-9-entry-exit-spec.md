@@ -568,6 +568,69 @@ subsequent session D = 1…7:
 - the eventual maximum close within the 7-session window, and which day
   it fell on
 
+### 3.1.1 The 1.28M rows are not 1.28M observations
+
+Added 2026-09-15, on reading the built dataset's shape: 1,282,479 rows,
+3,930 distinct symbols, 2024-10-14 → 2026-09-03 (~480 trading days).
+
+That is ~326 entry-days per symbol, i.e. an entry on very nearly every
+session. Consecutive entries for the same symbol carry **7-day forward
+windows that overlap by six of seven sessions**. Two rows one day apart
+are not two observations of anything; they are one price path counted
+twice, minus a day.
+
+Worse, symbols move together. A market-wide selloff generates thousands
+of rows landing in the same drawdown cell on the same three dates, all
+driven by one event.
+
+So the effective sample size is smaller than the row count by a large and
+unknown factor. A naive count of 412 rows in a cell could be 8 symbols
+across 3 dates during a single selloff — an honest n of roughly 3.
+
+**This matters because §3.7 promises the user a sample size.** "412
+similar cases" invites Roman to treat it as 412 independent pieces of
+evidence. If it isn't, the number is a lie told with a straight face —
+worse than showing nothing, because it manufactures confidence.
+
+**Rules:**
+
+1. Every cell stores `n_rows`, `n_symbols`, `n_dates` — all three.
+2. The minimum is on all three (§3.2): 100 rows, 30 symbols, 20 dates. A
+   cell failing any one is `NOT_EVALUATED`, however many rows it has.
+3. **The UI shows the distinct-symbol count, not the row count.** "31% of
+   the time, across 84 different stocks" is a claim that survives
+   scrutiny. "412 cases" is not.
+4. Report the per-cell concentration: if the top date contributes more
+   than ~20% of a cell's rows, that cell is one event wearing a
+   distribution's clothes, and it says so.
+
+### 3.1.2 Two validity questions the shape does not settle
+
+**Population mismatch.** The dataset is every symbol-day in the $1–$20
+band. Roman's trades are signals that survived EDGE/Warrior scoring — top
+movers with elevated RVOL, a small and heavily selected subset. The base
+rate for "a random $1–$20 stock, down 4%, day 2" is not obviously the
+base rate for "an EDGE-qualified momentum name, down 4%, day 2." They may
+differ in either direction.
+
+This is testable rather than arguable: build the tables twice, once on
+the full band and once on entry-days that pass a momentum precondition
+(entry-day volume ratio and price move resembling the live scan's own
+thresholds), and compare the cells. If they agree, the full-band version
+is fine and has more data. If they diverge, the full-band version is
+measuring the wrong population and would be confidently wrong.
+
+**Regime confounding.** Two years is one market. If the window contains a
+sustained rally, "recovers within 2 days" encodes that rally, and the
+model will keep asserting it after the regime changes.
+
+The honest check is free: **fit on 2024-10 → 2025-09, validate on
+2025-10 → 2026-09.** Compare `p_recover` per cell across the two halves.
+If a cell swings from 45% to 20%, that cell is measuring the market, not
+the setup, and must not ship as a stable probability. Out-of-sample
+agreement is the only evidence that any of this generalises, and it costs
+one extra pass over data already on disk.
+
 ### 3.2 Model A — "will it come back?" (Roman's 2b)
 
 **Question:** I am down X% on day D. Does it return to break-even within
@@ -581,7 +644,9 @@ Conditioning variables (coarse deliberately — cells must be populated):
 
 Each cell stores `{n, p_recover_2d, median_return_2d, p_worse_2d}`.
 
-**Minimum cell size: n ≥ 100.** Below that, fall back to the parent cell
+**Minimum cell size: n ≥ 100 rows AND ≥ 30 distinct symbols AND ≥ 20
+distinct dates** (revised 2026-09-15, see §3.1.1 — a raw row count is not
+a sample size in this dataset). Below that, fall back to the parent cell
 (drop the volume dimension, then RSI). If the parent is still thin, the
 cell returns `NOT_EVALUATED` and the UI says so. Three-state discipline:
 `pass` / `fail` / `not-checked`, and a thin cell is `not-checked`, never

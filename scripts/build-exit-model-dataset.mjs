@@ -152,25 +152,41 @@ async function main() {
       const entryClose = entry.c;
       if (entryClose == null || entryClose < PRICE_MIN || entryClose > PRICE_MAX) { skippedOutOfBand++; continue; }
 
-      const closesToEntry = bars.slice(0, i + 1).map(b => b.c);
-      const volumesToEntry = bars.slice(0, i + 1).map(b => b.v);
-      const rsi14 = global.calcRSI(closesToEntry);
-      const ma20 = global.calcMA(closesToEntry, 20);
+      const closesRunning = bars.slice(0, i + 1).map(b => b.c);
+      const volumesRunning = bars.slice(0, i + 1).map(b => b.v);
+      const rsi14 = global.calcRSI(closesRunning);
+      const ma20 = global.calcMA(closesRunning, 20);
       const pctFromMa20 = ma20 > 0 ? ((entryClose - ma20) / ma20) * 100 : null;
-      const avgVol20 = global.calcAvgVolume(volumesToEntry, 20);
+      const avgVol20 = global.calcAvgVolume(volumesRunning, 20);
       const volRatio = avgVol20 > 0 ? (entry.v / avgVol20) : null;
+      const prevEntryBar = i > 0 ? bars[i - 1] : null;
+      const entryDayOverDayPct = prevEntryBar && prevEntryBar.c ? ((entryClose - prevEntryBar.c) / prevEntryBar.c) * 100 : null;
 
+      // Phase 9 §3.1's own text ("for each subsequent session D... RSI(14),
+      // volume ratio... % from 20-day MA") asks for these recomputed AT
+      // EACH forward day, not just at entry -- Model A's conditioning state
+      // ("I am down X% on day D, RSI is Y, volume is Z") is evaluated AT
+      // day D of the hold, not at the day Roman bought. Missed on the first
+      // build; closesRunning/volumesRunning grow one bar per iteration
+      // rather than re-slicing from `bars` each time.
       const forward = {};
       let runningLow = null;
       let maxClose = null, maxCloseDay = null;
       for (let d = 1; d <= FORWARD_SESSIONS; d++) {
         const bar = bars[i + d];
         const prevBar = bars[i + d - 1];
+        closesRunning.push(bar.c);
+        volumesRunning.push(bar.v);
         runningLow = runningLow == null ? bar.l : Math.min(runningLow, bar.l);
         const ret = (bar.c - entryClose) / entryClose;
         const drawdown = (runningLow - entryClose) / entryClose;
         const lowerLow = prevBar.l != null && bar.l != null ? bar.l < prevBar.l : null;
-        forward[`d${d}`] = { ret, drawdown, lowerLow };
+        const rsi14AtD = global.calcRSI(closesRunning);
+        const ma20AtD = global.calcMA(closesRunning, 20);
+        const pctFromMa20AtD = ma20AtD > 0 ? ((bar.c - ma20AtD) / ma20AtD) * 100 : null;
+        const avgVol20AtD = global.calcAvgVolume(volumesRunning, 20);
+        const volRatioAtD = avgVol20AtD > 0 ? (bar.v / avgVol20AtD) : null;
+        forward[`d${d}`] = { ret, drawdown, lowerLow, rsi14: rsi14AtD, volRatio: volRatioAtD, pctFromMa20: pctFromMa20AtD };
         if (bar.c != null && (maxClose == null || bar.c > maxClose)) { maxClose = bar.c; maxCloseDay = d; }
       }
 
@@ -181,12 +197,33 @@ async function main() {
       rowCount++;
 
       out.write(JSON.stringify({
-        symbol, date, entryClose, rsi14, volRatio, pctFromMa20,
+        symbol, date, entryClose, rsi14, volRatio, pctFromMa20, entryDayOverDayPct,
         forward, maxClose, maxCloseDay,
       }) + '\n');
     }
   }
   await new Promise((resolve) => out.end(resolve));
+
+  // Roman's question: of the 1,040 inactive-with-data candidates, how many
+  // actually survived into the final rows -- if it's a small fraction of
+  // the ~2,750 symbols that dropped out between "any bar data" and "rows in
+  // the final set", the survivorship correction is decorative, not real.
+  //
+  // TICKER REUSE, found checking this: 92 symbols appear in BOTH the active
+  // and inactive Alpaca asset lists -- a delisted company's old ticker
+  // later reassigned to an unrelated, currently-active company (e.g. "S").
+  // /stocks/bars is keyed by symbol string, not asset id, so a bars request
+  // for one of these returns the CURRENTLY ACTIVE company's continuous
+  // history -- not the failed company's. Counting these toward "inactive
+  // contribution" would overstate how much real survivorship correction
+  // happened; split into pure-inactive (genuine delisted history) vs
+  // reused-ticker (contamination, not a failed stock this dataset has
+  // actually seen) so the two are never averaged together.
+  const inactiveCandidateSet = new Set(inactiveCandidates);
+  const activeSymbolsInRows = [...symbolsWithRows].filter(s => activeEligibleSet.has(s));
+  const inactiveSymbolsInRows = [...symbolsWithRows].filter(s => inactiveCandidateSet.has(s));
+  const pureInactiveSymbolsInRows = inactiveSymbolsInRows.filter(s => !activeEligibleSet.has(s));
+  const reusedTickerSymbolsInRows = inactiveSymbolsInRows.filter(s => activeEligibleSet.has(s));
 
   const summary = {
     builtAt: new Date().toISOString(),
@@ -200,6 +237,12 @@ async function main() {
     rowCount,
     dateCoverage: { min: minDate, max: maxDate },
     distinctSymbolCountInRows: symbolsWithRows.size,
+    activeSymbolsInFinalRows: activeSymbolsInRows.length,
+    inactiveSymbolsInFinalRows: inactiveSymbolsInRows.length,
+    pureInactiveSymbolsInFinalRows: pureInactiveSymbolsInRows.length,
+    reusedTickerSymbolsInFinalRows: reusedTickerSymbolsInRows.length,
+    pureInactiveSymbolsInFinalRowsSample: pureInactiveSymbolsInRows.slice(0, 30),
+    reusedTickerSymbolsInFinalRowsSample: reusedTickerSymbolsInRows.slice(0, 30),
     skippedOutOfPriceBand: skippedOutOfBand,
     rowsFile: 'artifacts/exit-model-dataset/rows.ndjson',
   };
