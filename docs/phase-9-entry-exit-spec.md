@@ -337,7 +337,102 @@ it is falling. "Will it come back in two days" requires knowing where it
 has been. Both need a price series that exists whether or not the browser
 is open.
 
-### 2.1 New table
+### 2.0 Superseded 2026-09-15: no capture needed, verified not reasoned
+
+The premise above — "the app has no record of what a held position's
+price did while Roman wasn't looking" — assumed the past is
+unrecoverable, so something had to be watching continuously. Checked
+directly rather than argued: if Alpaca's minute bars for an arbitrary
+past window are retrievable **on demand**, the app can compute a
+position's whole intraday path — peak, time of peak, volume profile,
+distance from high — **at render time**, from history alone plus the
+live snapshot for right now. Nothing needed to have been watching.
+
+**Verified, not assumed, 2026-09-15** (`scripts/probe-minute-bar-retention.mjs`):
+
+1. **60+ days back, retrievable.** BITO minute bars from 2026-07-17 (59
+   days before the test): 298 real bars on `feed=iex`, 513 on
+   `feed=sip` for the identical window — SIP is denser (the consolidated
+   tape vs. one venue), both retrievable.
+2. **Weekend/holiday boundary, correct.** A window spanning Fri
+   2026-09-04 → Mon 2026-09-07 (Labor Day) returned bars for Friday only
+   — zero for the entire holiday weekend, no error, no synthesized data.
+   **Thin volume, real gaps, never interpolated.** DAMD (real, active,
+   low-priced): 315/390 possible minutes filled (80.8%), largest gap 8
+   minutes. DJT: 386/390 (99.0%), largest gap 3 minutes. Absent minutes
+   are absent rows, exactly the discipline this project already applies
+   elsewhere (§3.1.1's day-of-hold gap, `scan_runs`' closed marker) —
+   just never needing a marker here, because a missing bar and a
+   missing capture look identical and neither needs distinguishing at
+   render time (there's nothing to distinguish a render-time query FROM).
+3. **Recency embargo, measured precisely.** `feed=sip`: 403 at 14
+   minutes old, 200 at 15 — an exact boundary, matching (and slightly
+   sharper than) `core/universe.js`'s existing `PREMARKET_BAR_DELAY_MIN`
+   constant (16, found live 2026-08-24, already carrying a 1-minute
+   buffer over this same line). `feed=iex`: **no embargo at all** — 200
+   even at 1 minute old. Render-time path: SIP for anything ≥15 minutes
+   old (denser), IEX for the last 15 minutes, the live snapshot for the
+   current instant.
+4. **Cost per render.** One multi-symbol request, 5 symbols: 1-day
+   window = 2,708 bars/183ms/1 page; 5-day = 5,304/176ms/1 page; 20-day
+   = 10,000 (hits the page ceiling, needs a 2nd page). Roman's real
+   holds are almost all 1–7 trading days (§3.9.1) — a real render costs
+   1–2 Alpaca requests per position, trivial against 200 req/min even
+   for a full portfolio tab.
+
+**A fifth finding, not asked for, that changes the calculus on what's
+lost by not storing:** `feed=sip` returns **zero** bars — daily or
+minute — for RSLS across its entire history, including dates it
+provably traded (the same dates `scripts/build-exit-model-dataset.mjs`
+pulled real SIP rows from, hours earlier the same day). `feed=iex`, on
+the identical symbol and dates, still returns 229 days of daily bars and
+real minute bars (12 in one session, low-volume but genuine). SIP access
+appears to depend on current listing status even for backdated queries;
+IEX's historical data does not. **Practical consequence: use IEX, not
+SIP, for anything that might later need to describe a delisted
+symbol's past** — the render-time path already does, for the recency
+reason above, so this falls out for free rather than needing a separate
+rule.
+
+**What's lost by not storing** (two named going in, a third found):
+
+1. **A record of what the app actually showed at a past moment.**
+   Real, unrecovered by this design. A render-time query answers "what
+   does Alpaca's history say now," which is usually but not provably
+   always identical to what an earlier render would have said — a
+   corrected or backfilled bar would silently change the answer on
+   replay. No dispute-resolution record exists either way without
+   storing.
+2. **Data for a symbol that later delists.** Weaker than assumed.
+   Finding 5 shows the data does not simply vanish — it becomes
+   unreachable via SIP specifically, while remaining reachable via IEX.
+   The residual risk is narrower: IEX's OWN retention limit past the
+   ~2-year window tested here is unverified, and this depends on the
+   render path consistently choosing IEX over SIP for this reason,
+   forever, not just today.
+3. **Resilience to Alpaca being unreachable at the exact moment Roman
+   opens the app.** Not raised by either named risk, but real: a stored
+   history means a live-fetch failure degrades to "showing the last
+   captured data" (the same posture `priceFetchFailed` already gives
+   current price); a pure render-time design has nothing to fall back to
+   for the whole peak/history feature in that window — the in-memory
+   cache is session-scoped and doesn't survive a fresh load during an
+   outage. Narrower blast radius than a scheduler drop (an outage is
+   rare and typically short), but not zero.
+
+**Decision: build the render-time derivation.** `position_bars` (§2.1),
+its writer (§2.2), the scoped write role, and the migration that would
+have created it (next free number, since `db/023` went to §2.7's
+`workflow_runs` this same session, not to this) are dropped, not
+deferred. §2.4's scheduler question stops blocking this track — nothing
+here depends on a cron firing. §2.7's instrumentation stays: the other
+five scheduled workflows still need it regardless of this decision.
+
+§2.1–2.3 below are kept as the superseded design, not deleted — the
+record of what was proposed and why it changed matters as much as the
+change itself.
+
+### 2.1 New table — SUPERSEDED by §2.0, kept for history
 
 ```sql
 create table if not exists position_bars (
@@ -361,7 +456,7 @@ create index if not exists position_bars_daily_idx
   on position_bars (ticker, captured_at) where is_daily_close;
 ```
 
-### 2.2 Writer
+### 2.2 Writer — SUPERSEDED by §2.0, kept for history
 
 A new scheduled workflow, `capture-position-bars.yml`, patterned on
 `capture-movers-snapshot.yml` — which already solved this exact set of
@@ -388,7 +483,7 @@ Alpaca free tier: 200 req/min, no documented daily cap. At five open
 positions and 26 firings a day this is ~130 requests/day. Well inside
 free.
 
-### 2.3 `peak_price` becomes derived
+### 2.3 `peak_price` becomes derived — SUPERSEDED by §2.0, kept for history
 
 Once `position_bars` exists, peak price for a position is
 `max(price)` over its bars, not a mutable field updated on render. Keep
@@ -400,6 +495,12 @@ average the two together.
 ---
 
 ### 2.4 The scheduler is now a Phase 9 blocker (added 2026-09-14)
+
+**No longer blocks position display — see §2.0 (2026-09-15).** The
+investigation below is unchanged and still governs the other five
+scheduled workflows (§2.7's instrumentation exists because of it); it
+stopped being a gate for THIS track specifically once §2.0 established
+that position history doesn't need a cron to have fired at all.
 
 On 2026-09-14 the signal-logging pipeline produced **nothing** — zero
 `scan_runs` rows for the entire trading day. Both workflows reported
@@ -475,7 +576,12 @@ effect of testing.
 
 ## 2.6 Build order correction: Section 3 does not depend on Section 2
 
-Added 2026-09-15, after Section 1 closed.
+Added 2026-09-15, after Section 1 closed. **Superseded twice since:**
+§3.9 rejected both models this section was arguing for build order on;
+§2.0 found the position-history primitive itself doesn't need
+`position_bars` or a scheduler at all. Kept for the reasoning shape
+(build order follows data dependency, not document order), not for its
+conclusions about what to build.
 
 The original plan read as a sequence: Section 1, then 2, then 3. §2.4's
 scheduler problem therefore looked like it blocked everything. It does
