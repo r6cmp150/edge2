@@ -5643,19 +5643,94 @@ async function generateClaudeReport() {
   const now = new Date();
   const dateStr = now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
 
-  const wins   = sold.filter(s => s.pnlPct > 0);
-  const losses = sold.filter(s => s.pnlPct <= 0);
+  // Shared win/loss/breakeven classification (2026-09-14): one definition,
+  // read by every section below that splits wins from losses, instead of
+  // ~30 inline `pnlPct > 0` copies that can silently drift out of agreement
+  // with each other. Found live: a $0.00 breakeven trade (CCRN) was being
+  // counted as a "loss" everywhere under the old `pnlPct <= 0` test —
+  // understating win rate and dragging the average loss toward zero by
+  // averaging in a $0 "loss." Based on pnlDollar, not pnlPct (sign of the
+  // two always agrees; dollar amount is what "breakeven" actually means),
+  // compared against a small epsilon rather than exact 0 so a float that
+  // *displays* as $0.00 but isn't quite can't silently land in the wrong
+  // bucket.
+  const PNL_EPSILON = 1e-9;
+  const isWin = (s) => s.pnlDollar > PNL_EPSILON;
+  const isLoss = (s) => s.pnlDollar < -PNL_EPSILON;
+  const isBreakeven = (s) => Math.abs(s.pnlDollar) <= PNL_EPSILON;
+  // Win rate over DECIDED trades in t — breakeven excluded from the
+  // denominator everywhere, same rule as the headline win rate below.
+  // null (not 0) when t has no decided trades, so callers can tell
+  // "no data" apart from "0% win rate."
+  const winRatePct = (t) => {
+    const decided = t.length - t.filter(isBreakeven).length;
+    return decided ? (t.filter(isWin).length / decided * 100) : null;
+  };
+
+  const wins      = sold.filter(isWin);
+  const losses    = sold.filter(isLoss);
+  const breakeven = sold.filter(isBreakeven);
   const apps   = sold.filter(s => s.source === 'App Signal');
   const owns   = sold.filter(s => s.source === 'Own Decision');
-  const appWins = apps.filter(s => s.pnlPct > 0);
-  const ownWins = owns.filter(s => s.pnlPct > 0);
+  const appWins = apps.filter(isWin);
+  const ownWins = owns.filter(isWin);
   const totalPnL = sold.reduce((s,t) => s + t.pnlDollar, 0);
 
   const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : 0;
   const avgWinPnL = avg(wins, s => s.pnlDollar).toFixed(2);
   const avgLossPnL = avg(losses, s => s.pnlDollar).toFixed(2);
-  const best  = sold.reduce((a,b) => b.pnlPct > a.pnlPct ? b : a, sold[0]);
-  const worst = sold.reduce((a,b) => b.pnlPct < a.pnlPct ? b : a, sold[0]);
+  // Two independent measures, kept as two variables on purpose — a single
+  // `best`/`worst` picked by one measure but printed with the other's
+  // number was the exact bug found in this report (2026-09-12): BBAI was
+  // best by %, CPRI was best by $, and the report printed BBAI's ticker
+  // next to CPRI's-rank dollar figure.
+  const bestByDollar  = sold.reduce((a,b) => b.pnlDollar > a.pnlDollar ? b : a, sold[0]);
+  const worstByDollar = sold.reduce((a,b) => b.pnlDollar < a.pnlDollar ? b : a, sold[0]);
+  const bestByPct     = sold.reduce((a,b) => b.pnlPct > a.pnlPct ? b : a, sold[0]);
+  const worstByPct    = sold.reduce((a,b) => b.pnlPct < a.pnlPct ? b : a, sold[0]);
+
+  // Net result block (2026-09-12): SUMMARY STATISTICS previously gave every
+  // component of P&L (win rate, avg win, avg loss) but never summed them —
+  // a losing system could read as a winning one off win rate alone. Same
+  // wins/losses arrays as "Overall win rate" above, so this can't disagree
+  // with that line's classification of a breakeven trade.
+  const pnlOnWins = wins.reduce((s,t) => s + t.pnlDollar, 0);
+  const pnlOnLosses = losses.reduce((s,t) => s + t.pnlDollar, 0);
+  const avgWinAbs = Math.abs(parseFloat(avgWinPnL));
+  const avgLossAbs = Math.abs(parseFloat(avgLossPnL));
+  const winLossRatio = avgLossAbs > 0 ? (avgWinAbs / avgLossAbs) : null;
+  const breakEvenWinRatePct = (avgWinAbs + avgLossAbs) > 0 ? (avgLossAbs / (avgWinAbs + avgLossAbs) * 100) : null;
+  const actualWinRatePct = winRatePct(sold) ?? 0;
+  const pctOfBudget = state.settings.budget ? (totalPnL / state.settings.budget * 100) : null;
+
+  const netResultBlock = `=== NET RESULT ===
+Total P&L:            ${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)}
+As % of budget:       ${pctOfBudget!=null?`${pctOfBudget>=0?'+':''}${pctOfBudget.toFixed(1)}%  (budget $${state.settings.budget})`:'N/A'}
+Expectancy per trade: ${sold.length?`${(totalPnL/sold.length)>=0?'+':''}$${(totalPnL/sold.length).toFixed(2)}`:'N/A'}
+Total P&L on wins:    +$${pnlOnWins.toFixed(2)} across ${wins.length} trades
+Total P&L on losses:  $${pnlOnLosses.toFixed(2)} across ${losses.length} trades
+Win/loss size ratio:  ${winLossRatio!=null?winLossRatio.toFixed(2):'N/A'}  (avg win $${avgWinAbs.toFixed(2)} vs avg loss $${avgLossAbs.toFixed(2)})
+Break-even win rate at this ratio: ${breakEvenWinRatePct!=null?breakEvenWinRatePct.toFixed(0)+'%':'N/A'}  — actual ${actualWinRatePct.toFixed(0)}%`;
+
+  const cumulativePnlSection = (() => {
+    const bySellDate = [...sold].sort((a,b) => new Date(a.sellDate) - new Date(b.sellDate) || a.ticker.localeCompare(b.ticker));
+    let running = 0;
+    // peak/trough start unset rather than at a synthetic $0 pre-trade
+    // baseline -- a series that's negative from trade #1 must not report
+    // a "peak" of +$0.00 on a null date.
+    let peak = null, trough = null;
+    const lines = bySellDate.map(s => {
+      running += s.pnlDollar;
+      if (!peak || running >= peak.running) peak = { running, sellDate: s.sellDate };
+      if (!trough || running <= trough.running) trough = { running, sellDate: s.sellDate };
+      const pnlStr = `${s.pnlDollar>=0?'+':''}$${s.pnlDollar.toFixed(2)}`;
+      const runStr = `${running>=0?'+':''}$${running.toFixed(2)}`;
+      return `  ${s.sellDate}  ${s.ticker.padEnd(6)} ${pnlStr.padStart(9)}   running: ${runStr}`;
+    });
+    const drawdown = peak.running - trough.running;
+    const summary = `Peak ${peak.running>=0?'+':''}$${peak.running.toFixed(2)} on ${peak.sellDate}, trough ${trough.running>=0?'+':''}$${trough.running.toFixed(2)} on ${trough.sellDate}, drawdown -$${drawdown.toFixed(2)}`;
+    return `=== CUMULATIVE P&L BY SELL DATE ===\n\n${summary}\n\n${lines.join('\n')}`;
+  })();
 
   const sellNowCount  = sold.filter(s => s.sellWarningAtSale === 'SELL_NOW').length;
   const sellSoonCount = sold.filter(s => s.sellWarningAtSale === 'SELL_SOON').length;
@@ -5666,50 +5741,42 @@ async function generateClaudeReport() {
       const p = s.sellPrice;
       return p >= min && p <= max;
     });
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
 
   const durStats = (dur, label) => {
     const t = sold.filter(s => s.duration === dur);
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
 
   const scoreStats = (lo, hi) => {
     const t = sold.filter(s => s.scoreAtBuy >= lo && s.scoreAtBuy <= hi);
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `Score ${lo}–${hi}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate`;
+    return `Score ${lo}–${hi}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate`;
   };
 
   const rsiBucket = (lo, hi, label) => {
     const t = sold.filter(s => (s.rsiAtBuy||0) >= lo && (s.rsiAtBuy||0) < hi);
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
 
   const volBucket = (lo, hi, label) => {
     const t = sold.filter(s => (s.volRatioAtBuy||0) >= lo && (s.volRatioAtBuy||0) < hi);
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
 
   const macroCondStats = (condition, label) => {
     const t = sold.filter(s => s.macroConditionAtBuy === condition);
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
 
   const macroSectorWeaknessStats = (label) => {
     const t = sold.filter(s => (s.macroConditionAtBuy||'').startsWith('SECTOR_WEAKNESS'));
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
 
   const thresholdBucket = (predicate, label) => {
     const t = sold.filter(predicate);
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `  ${label} ${t.length} | win rate ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}%`;
+    return `  ${label} ${t.length} | win rate ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}%`;
   };
 
   const momentumActivatedTrades = sold.filter(s => s.momentumProtectionActivated);
@@ -5776,14 +5843,19 @@ Total completed trades: ${sold.length}
   - App signal trades: ${apps.length} (${sold.length?(apps.length/sold.length*100).toFixed(0):0}% of total)
   - Own decision trades: ${owns.length} (${sold.length?(owns.length/sold.length*100).toFixed(0):0}% of total)
 
-Overall win rate: ${sold.length?((wins.length/sold.length*100).toFixed(0)):0}%
-  - App signal win rate: ${apps.length?((appWins.length/apps.length*100).toFixed(0)):0}%
-  - Own decision win rate: ${owns.length?((ownWins.length/owns.length*100).toFixed(0)):0}%
+${netResultBlock}
+
+Wins ${wins.length} | Losses ${losses.length} | Breakeven ${breakeven.length}${breakeven.length?` (${breakeven.map(s=>s.ticker).join(', ')})`:''}
+Win rate: ${winRatePct(sold)!=null?winRatePct(sold).toFixed(0)+'%':'N/A'} (${wins.length} of ${sold.length-breakeven.length} completed; breakeven excluded from the ratio)
+  - App signal win rate: ${winRatePct(apps)!=null?winRatePct(apps).toFixed(0)+'%':'N/A'}
+  - Own decision win rate: ${winRatePct(owns)!=null?winRatePct(owns).toFixed(0)+'%':'N/A'}
 
 Average profit on wins: +$${avgWinPnL} (${avg(wins,s=>s.pnlPct).toFixed(1)}%)
 Average loss on losses: $${avgLossPnL} (${avg(losses,s=>s.pnlPct).toFixed(1)}%)
-Best trade: ${best.ticker} +$${best.pnlDollar.toFixed(2)} (+${best.pnlPct.toFixed(1)}%)
-Worst trade: ${worst.ticker} $${worst.pnlDollar.toFixed(2)} (${worst.pnlPct.toFixed(1)}%)
+Best trade by $:   ${bestByDollar.ticker} ${bestByDollar.pnlDollar>=0?'+':''}$${bestByDollar.pnlDollar.toFixed(2)} (${bestByDollar.pnlPct>=0?'+':''}${bestByDollar.pnlPct.toFixed(1)}%)
+Best trade by %:   ${bestByPct.ticker} ${bestByPct.pnlPct>=0?'+':''}${bestByPct.pnlPct.toFixed(1)}% (${bestByPct.pnlDollar>=0?'+':''}$${bestByPct.pnlDollar.toFixed(2)})
+Worst trade by $:  ${worstByDollar.ticker} $${worstByDollar.pnlDollar.toFixed(2)} (${worstByDollar.pnlPct.toFixed(1)}%)
+Worst trade by %:  ${worstByPct.ticker} ${worstByPct.pnlPct.toFixed(1)}% ($${worstByPct.pnlDollar.toFixed(2)})
 
 Signal data at purchase — wins vs losses:
   Avg RSI:          wins ${avg(wins,s=>s.rsiAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.rsiAtBuy||0).toFixed(1)}
@@ -5812,13 +5884,13 @@ Sell warning compliance:
 Performance by signal type at purchase:
   VOL BUILD signal fired:
     Trades: ${sold.filter(s=>(s.signalsFiredAtBuy||[]).includes('VOL_BUILD')).length}
-    Win rate: ${(()=>{const t=sold.filter(s=>(s.signalsFiredAtBuy||[]).includes('VOL_BUILD'));return t.length?((t.filter(s=>s.pnlPct>0).length/t.length*100).toFixed(0)+'%'):'N/A';})()}
+    Win rate: ${(()=>{const t=sold.filter(s=>(s.signalsFiredAtBuy||[]).includes('VOL_BUILD'));const wr=winRatePct(t);return wr!=null?wr.toFixed(0)+'%':'N/A';})()}
   MEAN REVERSION signal fired:
     Trades: ${sold.filter(s=>(s.signalsFiredAtBuy||[]).includes('MEAN_REVERSION')).length}
-    Win rate: ${(()=>{const t=sold.filter(s=>(s.signalsFiredAtBuy||[]).includes('MEAN_REVERSION'));return t.length?((t.filter(s=>s.pnlPct>0).length/t.length*100).toFixed(0)+'%'):'N/A';})()}
+    Win rate: ${(()=>{const t=sold.filter(s=>(s.signalsFiredAtBuy||[]).includes('MEAN_REVERSION'));const wr=winRatePct(t);return wr!=null?wr.toFixed(0)+'%':'N/A';})()}
   Neither special signal:
     Trades: ${sold.filter(s=>!(s.signalsFiredAtBuy||[]).length).length}
-    Win rate: ${(()=>{const t=sold.filter(s=>!(s.signalsFiredAtBuy||[]).length);return t.length?((t.filter(s=>s.pnlPct>0).length/t.length*100).toFixed(0)+'%'):'N/A';})()}
+    Win rate: ${(()=>{const t=sold.filter(s=>!(s.signalsFiredAtBuy||[]).length);const wr=winRatePct(t);return wr!=null?wr.toFixed(0)+'%':'N/A';})()}
 
 Performance by price tier:
   ${tierStats(1,3,'$1–$3')}
@@ -5835,6 +5907,8 @@ Performance by signal score at purchase:
   ${scoreStats(73,115)}
   ${scoreStats(116,Infinity)}
 
+${cumulativePnlSection}
+
 === NEAR-MISS SIGNAL ANALYSIS ===
 
 VOL_BUILD near-misses (signal didn't fire, but close):
@@ -5842,50 +5916,39 @@ ${(()=>{
   // Change 10 (Scoring Formula v2): near-miss threshold shifted from 2 to 1
   // consecutive day, matching VOL_BUILD's firing threshold moving from 3 to 2 days.
   const t2 = sold.filter(s=>s.volBuildNearMiss && s.volBuildNearMiss.consecutiveDays===1);
-  const t2w = t2.filter(s=>s.pnlPct>0);
   const tr = sold.filter(s=>s.volBuildNearMiss && s.volBuildNearMiss.volRatio>=1.0 && s.volBuildNearMiss.volRatio<1.3);
-  const trw = tr.filter(s=>s.pnlPct>0);
-  return `  Trades where consecutive days was 1 (needed 2): ${t2.length} | win rate ${t2.length?((t2w.length/t2.length*100).toFixed(0)):'—'}%
-  Trades where vol ratio was 1.0–1.3x (needed 1.3x+): ${tr.length} | win rate ${tr.length?((trw.length/tr.length*100).toFixed(0)):'—'}%`;
+  return `  Trades where consecutive days was 1 (needed 2): ${t2.length} | win rate ${winRatePct(t2)!=null?winRatePct(t2).toFixed(0):'—'}%
+  Trades where vol ratio was 1.0–1.3x (needed 1.3x+): ${tr.length} | win rate ${winRatePct(tr)!=null?winRatePct(tr).toFixed(0):'—'}%`;
 })()}
 
 MEAN_REVERSION near-misses:
 ${(()=>{
   const t48 = sold.filter(s=>s.meanReversionNearMiss && s.meanReversionNearMiss.pctBelowMA<=-4 && s.meanReversionNearMiss.pctBelowMA>-8);
-  const t48w = t48.filter(s=>s.pnlPct>0);
   const tr = sold.filter(s=>s.meanReversionNearMiss && s.meanReversionNearMiss.rsi>=45 && s.meanReversionNearMiss.rsi<50);
-  const trw = tr.filter(s=>s.pnlPct>0);
-  return `  Trades where price was 4–8% below MA (needed 8–15%): ${t48.length} | win rate ${t48.length?((t48w.length/t48.length*100).toFixed(0)):'—'}%
-  Trades where RSI was 45–50 (needed <45): ${tr.length} | win rate ${tr.length?((trw.length/tr.length*100).toFixed(0)):'—'}%`;
+  return `  Trades where price was 4–8% below MA (needed 8–15%): ${t48.length} | win rate ${winRatePct(t48)!=null?winRatePct(t48).toFixed(0):'—'}%
+  Trades where RSI was 45–50 (needed <45): ${tr.length} | win rate ${winRatePct(tr)!=null?winRatePct(tr).toFixed(0):'—'}%`;
 })()}
 
 Target drift at time of sale:
 ${(()=>{
   const higher = sold.filter(s=>s.targetDriftPct!=null && s.targetDriftPct>5);
-  const higherW = higher.filter(s=>s.pnlPct>0);
   const lower = sold.filter(s=>s.targetDriftPct!=null && s.targetDriftPct<-5);
-  const lowerW = lower.filter(s=>s.pnlPct>0);
   const within = sold.filter(s=>s.targetDriftPct!=null && Math.abs(s.targetDriftPct)<=5);
-  const withinW = within.filter(s=>s.pnlPct>0);
-  return `  Trades where live target was >5% higher than original:  ${higher.length} | win rate ${higher.length?((higherW.length/higher.length*100).toFixed(0)):'—'}%
-  Trades where live target was >5% lower than original:   ${lower.length} | win rate ${lower.length?((lowerW.length/lower.length*100).toFixed(0)):'—'}%
-  Trades where live target was within 5% of original:     ${within.length} | win rate ${within.length?((withinW.length/within.length*100).toFixed(0)):'—'}%`;
+  return `  Trades where live target was >5% higher than original:  ${higher.length} | win rate ${winRatePct(higher)!=null?winRatePct(higher).toFixed(0):'—'}%
+  Trades where live target was >5% lower than original:   ${lower.length} | win rate ${winRatePct(lower)!=null?winRatePct(lower).toFixed(0):'—'}%
+  Trades where live target was within 5% of original:     ${within.length} | win rate ${winRatePct(within)!=null?winRatePct(within).toFixed(0):'—'}%`;
 })()}
 
 Target capping at time of purchase:
 ${(()=>{
   const cap52 = sold.filter(s=>s.cappedByAtBuy==='52-week high');
-  const cap52w = cap52.filter(s=>s.pnlPct>0);
   const capSwing = sold.filter(s=>s.cappedByAtBuy==='recent swing high');
-  const capSwingW = capSwing.filter(s=>s.pnlPct>0);
   const capMA = sold.filter(s=>s.cappedByAtBuy==='20-day MA');
-  const capMAW = capMA.filter(s=>s.pnlPct>0);
   const uncapped = sold.filter(s=>!s.cappedByAtBuy);
-  const uncappedW = uncapped.filter(s=>s.pnlPct>0);
-  return `  Trades where target was capped by 52-week high:    ${cap52.length} | win rate ${cap52.length?((cap52w.length/cap52.length*100).toFixed(0)):'—'}%
-  Trades where target was capped by swing high:      ${capSwing.length} | win rate ${capSwing.length?((capSwingW.length/capSwing.length*100).toFixed(0)):'—'}%
-  Trades where target was capped by 20-day MA:       ${capMA.length} | win rate ${capMA.length?((capMAW.length/capMA.length*100).toFixed(0)):'—'}%
-  Trades where target was NOT capped (ATR ruled):    ${uncapped.length} | win rate ${uncapped.length?((uncappedW.length/uncapped.length*100).toFixed(0)):'—'}%`;
+  return `  Trades where target was capped by 52-week high:    ${cap52.length} | win rate ${winRatePct(cap52)!=null?winRatePct(cap52).toFixed(0):'—'}%
+  Trades where target was capped by swing high:      ${capSwing.length} | win rate ${winRatePct(capSwing)!=null?winRatePct(capSwing).toFixed(0):'—'}%
+  Trades where target was capped by 20-day MA:       ${capMA.length} | win rate ${winRatePct(capMA)!=null?winRatePct(capMA).toFixed(0):'—'}%
+  Trades where target was NOT capped (ATR ruled):    ${uncapped.length} | win rate ${winRatePct(uncapped)!=null?winRatePct(uncapped).toFixed(0):'—'}%`;
 })()}
 
 ATR trimming impact at time of purchase:
@@ -5924,13 +5987,11 @@ ${(()=>{
 
   const sessionStats = (session, label) => {
     const t = sold.filter(s => s.buySession === session);
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `  ${(label+':').padEnd(25)}${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${(label+':').padEnd(25)}${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
   const dayOfWeekStats = (day) => {
     const t = sold.filter(s => s.buyDayOfWeek === day);
-    const tw = t.filter(s => s.pnlPct > 0);
-    return `  ${(day+':').padEnd(11)}${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${(day+':').padEnd(11)}${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
 
   const entryTiming = `=== ENTRY TIMING ANALYSIS ===
@@ -5951,8 +6012,7 @@ ${dayOfWeekStats('Friday')}`;
   const subTenPenalty= withSubTen.filter(s => s.subTenEntryAdjustment < 0);
   const subTenNone   = withSubTen.filter(s => s.subTenEntryAdjustment === 0);
   const subTenBucketStats = (arr) => {
-    const w = arr.filter(s => s.pnlPct > 0);
-    return `  Total: ${arr.length} | win rate ${arr.length?((w.length/arr.length*100).toFixed(0)):'—'}% | avg outcome ${arr.length?avg(arr,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  Total: ${arr.length} | win rate ${winRatePct(arr)!=null?winRatePct(arr).toFixed(0):'—'}% | avg outcome ${arr.length?avg(arr,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
   const avgSubTenBonus   = subTenBonus.length   ? avg(subTenBonus, s=>s.subTenEntryAdjustment).toFixed(1) : null;
   const avgSubTenPenalty = subTenPenalty.length ? Math.abs(avg(subTenPenalty, s=>s.subTenEntryAdjustment)).toFixed(1) : null;
@@ -5980,8 +6040,7 @@ ${subTenBucketStats(subTenNone)}`;
   const groqRunTrades = sold.filter(s => s.groqProbabilityAtBuy);
   const groqNotRunTrades = sold.filter(s => !s.groqProbabilityAtBuy);
   const groqBucketStats = (arr) => {
-    const w = arr.filter(s => s.pnlPct > 0);
-    return `Win rate: ${arr.length?((w.length/arr.length*100).toFixed(0)):'—'}% | avg outcome ${arr.length?avg(arr,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `Win rate: ${winRatePct(arr)!=null?winRatePct(arr).toFixed(0):'—'}% | avg outcome ${arr.length?avg(arr,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
 
   let groqSection;
@@ -6040,11 +6099,10 @@ ${(()=>{
   const nonFlagged = sold.filter(s => !s.catalystSetup);
   if (!flagged.length) return `  Total flagged trades: 0
   No completed trades with the CATALYST_SETUP flag yet.`;
-  const flaggedW = flagged.filter(s => s.pnlPct > 0);
   const best = flagged.reduce((a,b) => b.pnlPct > a.pnlPct ? b : a);
   const worst = flagged.reduce((a,b) => b.pnlPct < a.pnlPct ? b : a);
   return `  Total flagged trades: ${flagged.length}
-  Win rate on flagged trades: ${(flaggedW.length/flagged.length*100).toFixed(0)}%
+  Win rate on flagged trades: ${winRatePct(flagged)!=null?winRatePct(flagged).toFixed(0):'—'}%
   Avg outcome on flagged trades: ${avg(flagged, s=>s.pnlPct).toFixed(1)}%
   Avg outcome on non-flagged trades: ${nonFlagged.length ? avg(nonFlagged, s=>s.pnlPct).toFixed(1) : '—'}%
   Best flagged trade: ${best.ticker} ${best.pnlPct >= 0 ? '+' : ''}${best.pnlPct.toFixed(1)}%
