@@ -15,19 +15,25 @@
 //   alone describes him. Two complete, separate tables are built: one
 //   from momentum-qualified entries only, one from the rest.
 // - Three-part minimum (n_rows>=100, n_symbols>=30, n_dates>=20) stays as
-//   a guard (§3.1.3 found it currently non-binding across all 216
-//   populated cells -- zero cells fail on symbols/dates alone -- but it
-//   is not removed).
+//   a guard.
 // - Fallback hierarchy (§3.2's own text): a thin cell drops the volume
-//   dimension first, then RSI too. Day-of-hold and drawdown band are
-//   NEVER dropped -- those are the two dimensions the floor/cut-loss
-//   question is actually about.
+//   dimension first, then RSI too. Day-of-hold and the loss/gain band are
+//   NEVER dropped.
 //
-// Reads the same rows.ndjson build-exit-model-dataset.mjs produces
-// (streamed, never materialized as one array). Writes
-// data/exit-model-a.json and data/exit-model-b.json -- small, committed,
-// same pattern as data/float-table.json (NOT the raw dataset, which stays
-// in gitignored artifacts/).
+// CORRECTED 2026-09-15 (caught before any UI wiring, replaying real trades
+// exposed it): the first build keyed BOTH models on `drawdown` -- the
+// CUMULATIVE WORST excursion from entry through day D -- not `return`, the
+// point-in-time value at day D. Model A's own spec example ("TENX, down
+// 6.2%, day 2") and the live app's pnlPct are both point-in-time returns,
+// and Model B is about a CURRENTLY WINNING position ("I am up X% on day
+// D") -- keying it on a cumulative DRAWDOWN (always <=0) meant a position
+// that's up overall but dipped once, ever, during the hold was the only
+// way into Model B's table at all, and a straight ascent never entered it.
+// Fixed: `return` at day D is the single signed axis. ret<0 -> a loss band
+// (-2/-4/-6/-8/-10/worse) feeds Model A. ret>0 -> a gain band
+// (+2/+4/+6/+8/+10/better) feeds Model B. ret===0 exactly feeds neither
+// (breakeven is not "down" or "up" and is vanishingly rare with real
+// float prices). One partition, no overlap, no double-counting.
 import { createReadStream, writeFileSync, mkdirSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
@@ -37,26 +43,33 @@ const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const ROWS_PATH = path.join(REPO_ROOT, 'artifacts', 'exit-model-dataset', 'rows.ndjson');
 
 const MIN_ROWS = 100, MIN_SYMBOLS = 30, MIN_DATES = 20;
-const FIRST_HALF_END = '2025-09-30'; // matches §3.1.2/§3.1.3's fit/validate split
+const FIRST_HALF_END = '2025-09-30';
 const MOMENTUM_VOL_RATIO_MIN = 1.0;
 const MOMENTUM_DAYOVERDAY_MIN = 2.0;
 
-const DD_BANDS = ['-2', '-4', '-6', '-8', '-10', 'worse'];
-const DAY_BUCKETS = ['0', '1', '2', '3+']; // '0' never populated -- see header
+const LOSS_BANDS = ['-2', '-4', '-6', '-8', '-10', 'worse'];
+const GAIN_BANDS = ['+2', '+4', '+6', '+8', '+10', 'better'];
+const DAY_BUCKETS = ['0', '1', '2', '3+']; // '0' never populated -- see §3.1.3
 const RSI_BANDS = ['<30', '30-45', '45-60', '>60'];
 const VOL_BANDS = ['<0.75', '0.75-1.5', '>1.5'];
 const BRANCHES = ['momentum', 'non_momentum'];
 const PERIODS = ['full', 'first_half', 'second_half'];
 
-function drawdownBand(dd) {
-  const pct = dd * 100;
-  if (pct > 0) return null;
-  if (pct > -2) return '-2';
-  if (pct > -4) return '-4';
-  if (pct > -6) return '-6';
-  if (pct > -8) return '-8';
-  if (pct > -10) return '-10';
+function lossBand(retPct) { // retPct < 0 only
+  if (retPct > -2) return '-2';
+  if (retPct > -4) return '-4';
+  if (retPct > -6) return '-6';
+  if (retPct > -8) return '-8';
+  if (retPct > -10) return '-10';
   return 'worse';
+}
+function gainBand(retPct) { // retPct > 0 only
+  if (retPct < 2) return '+2';
+  if (retPct < 4) return '+4';
+  if (retPct < 6) return '+6';
+  if (retPct < 8) return '+8';
+  if (retPct < 10) return '+10';
+  return 'better';
 }
 function rsiBand(rsi) {
   if (rsi == null) return null;
@@ -73,11 +86,11 @@ function volBand(v) {
 }
 function dayBucket(d) { return d === 1 ? '1' : d === 2 ? '2' : '3+'; }
 
-// Histogram-bucketed median (0.1 percentage-point resolution) -- avoids
-// holding raw arrays of up to ~1.28M x 7 values in memory across 2
-// branches x 3 periods x 3 fallback levels. +/-0.05pp of true median.
+// Histogram-bucketed median (0.1pp resolution) -- avoids holding raw
+// arrays of up to ~1.28M x 7 values in memory across 2 models x 2
+// branches x 3 periods x 3 fallback levels.
 function histAdd(hist, value) {
-  const bucket = Math.round(value * 1000); // 0.1pp buckets, value is a fraction
+  const bucket = Math.round(value * 1000);
   hist.set(bucket, (hist.get(bucket) || 0) + 1);
 }
 function histMedian(hist) {
@@ -87,73 +100,62 @@ function histMedian(hist) {
   const keys = [...hist.keys()].sort((a, b) => a - b);
   let cum = 0;
   const half = total / 2;
-  for (const k of keys) {
-    cum += hist.get(k);
-    if (cum >= half) return k / 1000;
-  }
+  for (const k of keys) { cum += hist.get(k); if (cum >= half) return k / 1000; }
   return null;
 }
 
-function newAgg() {
-  return {
-    rowCount: 0, symbols: new Set(), dates: new Set(),
-    // Model A (D<=5 only -- needs D+2 to exist within the 7-day window)
-    a_recoverable: 0, a_recovered: 0, a_worse: 0, a_returnHist: new Map(),
-    // Model B
-    b_peakTotal: 0, b_peakIn: 0,           // any D in 1..7
-    b_higherTotal: 0, b_higher: 0,          // D<=6 (needs D+1)
-    b_gainHist: new Map(),                  // D<=6
-    b_givebackHist: new Map(),              // D<=6
-  };
-}
-function recordState(agg, symbol, date, row, d, forwardD) {
+function newAggA() { return { rowCount: 0, symbols: new Set(), dates: new Set(), recoverable: 0, recovered: 0, worse: 0, returnHist: new Map() }; }
+function newAggB() { return { rowCount: 0, symbols: new Set(), dates: new Set(), peakTotal: 0, peakIn: 0, higherTotal: 0, higher: 0, gainHist: new Map(), givebackHist: new Map() }; }
+
+function recordA(agg, symbol, date, row, d, forwardD) {
   agg.rowCount++; agg.symbols.add(symbol); agg.dates.add(date);
-  if (d <= 5) {
-    const f1 = row.forward[`d${d + 1}`], f2 = row.forward[`d${d + 2}`];
-    const recovered = (f1 && f1.ret >= 0) || (f2 && f2.ret >= 0);
-    agg.a_recoverable++;
-    if (recovered) agg.a_recovered++;
-    if (f2) {
-      if (f2.ret < forwardD.ret) agg.a_worse++;
-      histAdd(agg.a_returnHist, f2.ret);
-    }
+  if (d > 5) return; // needs D+2 to exist within the 7-session window
+  const f1 = row.forward[`d${d + 1}`], f2 = row.forward[`d${d + 2}`];
+  const recovered = (f1 && f1.ret >= 0) || (f2 && f2.ret >= 0);
+  agg.recoverable++;
+  if (recovered) agg.recovered++;
+  if (f2) {
+    if (f2.ret < forwardD.ret) agg.worse++;
+    histAdd(agg.returnHist, f2.ret);
   }
-  // Model B: remaining-window peak check, any D in 1..7.
-  const closeAtD = 1 + forwardD.ret; // relative to entryClose=1
+}
+function recordB(agg, symbol, date, row, d, forwardD) {
+  agg.rowCount++; agg.symbols.add(symbol); agg.dates.add(date);
+  const closeAtD = 1 + forwardD.ret;
   let remainingMax = closeAtD;
   for (let k = d + 1; k <= 7; k++) {
     const fk = row.forward[`d${k}`];
     if (fk) remainingMax = Math.max(remainingMax, 1 + fk.ret);
   }
-  agg.b_peakTotal++;
-  if (closeAtD >= remainingMax) agg.b_peakIn++;
-  if (d <= 6) {
-    const fNext = row.forward[`d${d + 1}`];
-    const f7 = row.forward.d7;
-    if (fNext) {
-      agg.b_higherTotal++;
-      const closeNext = 1 + fNext.ret;
-      if (closeNext > closeAtD) agg.b_higher++;
-      histAdd(agg.b_gainHist, (closeNext - closeAtD) / closeAtD);
-    }
-    if (f7) {
-      const close7 = 1 + f7.ret;
-      histAdd(agg.b_givebackHist, (close7 - closeAtD) / closeAtD);
-    }
+  agg.peakTotal++;
+  if (closeAtD >= remainingMax) agg.peakIn++;
+  if (d > 6) return; // needs D+1 to exist
+  const fNext = row.forward[`d${d + 1}`];
+  const f7 = row.forward.d7;
+  if (fNext) {
+    agg.higherTotal++;
+    const closeNext = 1 + fNext.ret;
+    if (closeNext > closeAtD) agg.higher++;
+    histAdd(agg.gainHist, (closeNext - closeAtD) / closeAtD);
+  }
+  if (f7) {
+    const close7 = 1 + f7.ret;
+    histAdd(agg.givebackHist, (close7 - closeAtD) / closeAtD);
   }
 }
 
-function cellKey(dd, day, rsi, vol) { return `${dd}|${day}|${rsi}|${vol}`; }
-function level1Key(dd, day, rsi) { return `${dd}|${day}|${rsi}`; }
-function level2Key(dd, day) { return `${dd}|${day}`; }
+function cellKey(band, day, rsi, vol) { return `${band}|${day}|${rsi}|${vol}`; }
+function level1Key(band, day, rsi) { return `${band}|${day}|${rsi}`; }
+function level2Key(band, day) { return `${band}|${day}`; }
 
 async function main() {
-  // maps[period][branch][level] -> Map<key, agg>
-  const maps = {};
+  // mapsA/mapsB[period][branch][level] -> Map<key, agg>
+  const mapsA = {}, mapsB = {};
   for (const period of PERIODS) {
-    maps[period] = {};
+    mapsA[period] = {}; mapsB[period] = {};
     for (const branch of BRANCHES) {
-      maps[period][branch] = { l0: new Map(), l1: new Map(), l2: new Map() };
+      mapsA[period][branch] = { l0: new Map(), l1: new Map(), l2: new Map() };
+      mapsB[period][branch] = { l0: new Map(), l1: new Map(), l2: new Map() };
     }
   }
 
@@ -171,21 +173,26 @@ async function main() {
     for (let d = 1; d <= 7; d++) {
       const f = row.forward[`d${d}`];
       if (!f) continue;
-      const dd = drawdownBand(f.drawdown);
-      if (dd == null) continue;
+      const retPct = f.ret * 100;
+      if (retPct === 0) continue; // exact breakeven -- neither model's domain
+      const isLoss = retPct < 0;
+      const band = isLoss ? lossBand(retPct) : gainBand(retPct);
       const rb = rsiBand(f.rsi14), vb = volBand(f.volRatio);
       if (rb == null || vb == null) continue;
       const day = dayBucket(d);
-      const k0 = cellKey(dd, day, rb, vb), k1 = level1Key(dd, day, rb), k2 = level2Key(dd, day);
+      const k0 = cellKey(band, day, rb, vb), k1 = level1Key(band, day, rb), k2 = level2Key(band, day);
+      const maps = isLoss ? mapsA : mapsB;
+      const newAgg = isLoss ? newAggA : newAggB;
+      const record = isLoss ? recordA : recordB;
 
       for (const period of periodsForRow) {
         const m = maps[period][branch];
         let a0 = m.l0.get(k0); if (!a0) { a0 = newAgg(); m.l0.set(k0, a0); }
         let a1 = m.l1.get(k1); if (!a1) { a1 = newAgg(); m.l1.set(k1, a1); }
         let a2 = m.l2.get(k2); if (!a2) { a2 = newAgg(); m.l2.set(k2, a2); }
-        recordState(a0, row.symbol, row.date, row, d, f);
-        recordState(a1, row.symbol, row.date, row, d, f);
-        recordState(a2, row.symbol, row.date, row, d, f);
+        record(a0, row.symbol, row.date, row, d, f);
+        record(a1, row.symbol, row.date, row, d, f);
+        record(a2, row.symbol, row.date, row, d, f);
       }
     }
     if (linesRead % 300000 === 0) console.error(`[tables] ...${linesRead} rows`);
@@ -193,100 +200,99 @@ async function main() {
   console.error(`[tables] streamed ${linesRead} rows total`);
 
   function passes(a) { return !!a && a.rowCount >= MIN_ROWS && a.symbols.size >= MIN_SYMBOLS && a.dates.size >= MIN_DATES; }
-
-  function modelAStats(a) {
+  function statsA(a) {
     return {
       n: a.rowCount, n_symbols: a.symbols.size, n_dates: a.dates.size,
-      p_recover_2d: a.a_recoverable > 0 ? +((a.a_recovered / a.a_recoverable) * 100).toFixed(1) : null,
-      median_return_2d: histMedian(a.a_returnHist),
-      p_worse_2d: a.a_recoverable > 0 ? +((a.a_worse / a.a_recoverable) * 100).toFixed(1) : null,
+      p_recover_2d: a.recoverable > 0 ? +((a.recovered / a.recoverable) * 100).toFixed(1) : null,
+      median_return_2d: histMedian(a.returnHist),
+      p_worse_2d: a.recoverable > 0 ? +((a.worse / a.recoverable) * 100).toFixed(1) : null,
     };
   }
-  function modelBStats(a) {
+  function statsB(a) {
     return {
       n: a.rowCount, n_symbols: a.symbols.size, n_dates: a.dates.size,
-      p_peak_already_in: a.b_peakTotal > 0 ? +((a.b_peakIn / a.b_peakTotal) * 100).toFixed(1) : null,
-      p_higher_close_tomorrow: a.b_higherTotal > 0 ? +((a.b_higher / a.b_higherTotal) * 100).toFixed(1) : null,
-      median_additional_gain_1d: histMedian(a.b_gainHist),
-      median_giveback_to_day7: histMedian(a.b_givebackHist),
+      p_peak_already_in: a.peakTotal > 0 ? +((a.peakIn / a.peakTotal) * 100).toFixed(1) : null,
+      p_higher_close_tomorrow: a.higherTotal > 0 ? +((a.higher / a.higherTotal) * 100).toFixed(1) : null,
+      median_additional_gain_1d: histMedian(a.gainHist),
+      median_giveback_to_day7: histMedian(a.givebackHist),
     };
   }
 
-  // Resolve one nominal cell through the 3-level fallback for one
-  // (period, branch), returning {resolvedLevel, statsA, statsB} or
-  // {resolvedLevel:'NOT_EVALUATED'}. Day '0' short-circuits immediately --
-  // no fallback lookup even attempted, per §3.1.3.
-  function resolveCell(period, branch, dd, day, rb, vb) {
+  function resolveCell(maps, statsFn, period, branch, band, day, rb, vb) {
     if (day === '0') return { resolvedLevel: 'NOT_EVALUATED', reason: 'day_0_structural' };
     const m = maps[period][branch];
-    const a0 = m.l0.get(cellKey(dd, day, rb, vb));
-    if (passes(a0)) return { resolvedLevel: 'level0', statsA: modelAStats(a0), statsB: modelBStats(a0) };
-    const a1 = m.l1.get(level1Key(dd, day, rb));
-    if (passes(a1)) return { resolvedLevel: 'level1_drop_volume', statsA: modelAStats(a1), statsB: modelBStats(a1) };
-    const a2 = m.l2.get(level2Key(dd, day));
-    if (passes(a2)) return { resolvedLevel: 'level2_drop_volume_rsi', statsA: modelAStats(a2), statsB: modelBStats(a2) };
+    const a0 = m.l0.get(cellKey(band, day, rb, vb));
+    if (passes(a0)) return { resolvedLevel: 'level0', stats: statsFn(a0) };
+    const a1 = m.l1.get(level1Key(band, day, rb));
+    if (passes(a1)) return { resolvedLevel: 'level1_drop_volume', stats: statsFn(a1) };
+    const a2 = m.l2.get(level2Key(band, day));
+    if (passes(a2)) return { resolvedLevel: 'level2_drop_volume_rsi', stats: statsFn(a2) };
     return { resolvedLevel: 'NOT_EVALUATED', reason: 'thin_at_every_level' };
   }
 
-  function buildBranchTable(period, branch) {
+  function buildBranchTable(maps, statsFn, bands, period, branch) {
     const cells = {};
     const counts = { level0: 0, level1_drop_volume: 0, level2_drop_volume_rsi: 0, NOT_EVALUATED: 0, NOT_EVALUATED_day0: 0 };
-    for (const dd of DD_BANDS) for (const day of DAY_BUCKETS) for (const rb of RSI_BANDS) for (const vb of VOL_BANDS) {
-      const key = cellKey(dd, day, rb, vb);
-      const r = resolveCell(period, branch, dd, day, rb, vb);
+    for (const band of bands) for (const day of DAY_BUCKETS) for (const rb of RSI_BANDS) for (const vb of VOL_BANDS) {
+      const key = cellKey(band, day, rb, vb);
+      const r = resolveCell(maps, statsFn, period, branch, band, day, rb, vb);
       cells[key] = r;
       if (r.resolvedLevel === 'NOT_EVALUATED') {
         counts.NOT_EVALUATED++;
         if (r.reason === 'day_0_structural') counts.NOT_EVALUATED_day0++;
       } else counts[r.resolvedLevel]++;
     }
-    return { cells, counts, total: DD_BANDS.length * DAY_BUCKETS.length * RSI_BANDS.length * VOL_BANDS.length };
+    return { cells, counts, total: bands.length * DAY_BUCKETS.length * RSI_BANDS.length * VOL_BANDS.length };
   }
 
-  const production = {};
-  const shapeReport = {};
+  const prodA = {}, prodB = {};
+  const shapeReport = { modelA: {}, modelB: {} };
   for (const branch of BRANCHES) {
-    production[branch] = buildBranchTable('full', branch);
-    shapeReport[branch] = production[branch].counts;
-    shapeReport[branch].total = production[branch].total;
+    prodA[branch] = buildBranchTable(mapsA, statsA, LOSS_BANDS, 'full', branch);
+    prodB[branch] = buildBranchTable(mapsB, statsB, GAIN_BANDS, 'full', branch);
+    shapeReport.modelA[branch] = { ...prodA[branch].counts, total: prodA[branch].total };
+    shapeReport.modelB[branch] = { ...prodB[branch].counts, total: prodB[branch].total };
   }
 
-  // ── Out-of-sample: resolve first_half and second_half tables the SAME
-  // way (full fallback hierarchy, not raw level-0 only), then compare
-  // p_recover_2d on cells that resolve (pass, not NOT_EVALUATED) in BOTH
-  // halves for the SAME branch. This is the production table's own OOS
-  // stability, not a re-run of the earlier task-3 level-0-only check.
-  const oosDiffs = { momentum: [], non_momentum: [] };
-  for (const branch of BRANCHES) {
-    const firstTable = buildBranchTable('first_half', branch);
-    const secondTable = buildBranchTable('second_half', branch);
-    for (const key of Object.keys(firstTable.cells)) {
-      const c1 = firstTable.cells[key], c2 = secondTable.cells[key];
-      if (c1.resolvedLevel === 'NOT_EVALUATED' || c2.resolvedLevel === 'NOT_EVALUATED') continue;
-      if (c1.statsA.p_recover_2d == null || c2.statsA.p_recover_2d == null) continue;
-      oosDiffs[branch].push({
-        key, p_recover_first_half: c1.statsA.p_recover_2d, p_recover_second_half: c2.statsA.p_recover_2d,
-        diff_pct_points: +(c2.statsA.p_recover_2d - c1.statsA.p_recover_2d).toFixed(1),
-      });
+  // ── Out-of-sample on the production (post-fallback) tables ──
+  function oosForModel(maps, statsFn, bands, metricKey) {
+    const out = {};
+    for (const branch of BRANCHES) {
+      const t1 = buildBranchTable(maps, statsFn, bands, 'first_half', branch);
+      const t2 = buildBranchTable(maps, statsFn, bands, 'second_half', branch);
+      const diffs = [];
+      for (const key of Object.keys(t1.cells)) {
+        const c1 = t1.cells[key], c2 = t2.cells[key];
+        if (c1.resolvedLevel === 'NOT_EVALUATED' || c2.resolvedLevel === 'NOT_EVALUATED') continue;
+        const v1 = c1.stats[metricKey], v2 = c2.stats[metricKey];
+        if (v1 == null || v2 == null) continue;
+        diffs.push({ key, first_half: v1, second_half: v2, diff_pct_points: +(v2 - v1).toFixed(1) });
+      }
+      diffs.sort((a, b) => Math.abs(b.diff_pct_points) - Math.abs(a.diff_pct_points));
+      out[branch] = diffs;
     }
-    oosDiffs[branch].sort((a, b) => Math.abs(b.diff_pct_points) - Math.abs(a.diff_pct_points));
+    return out;
   }
+  const oosA = oosForModel(mapsA, statsA, LOSS_BANDS, 'p_recover_2d');
+  const oosB = oosForModel(mapsB, statsB, GAIN_BANDS, 'p_peak_already_in');
 
-  // ── Write production tables (small, committed) ──
+  // ── Write production tables ──
   const dataDir = path.join(REPO_ROOT, 'data');
   mkdirSync(dataDir, { recursive: true });
-  const modelA = { builtAt: new Date().toISOString(), minRows: MIN_ROWS, minSymbols: MIN_SYMBOLS, minDates: MIN_DATES, branches: {} };
-  const modelB = { builtAt: new Date().toISOString(), minRows: MIN_ROWS, minSymbols: MIN_SYMBOLS, minDates: MIN_DATES, branches: {} };
+  const modelA = { builtAt: new Date().toISOString(), minRows: MIN_ROWS, minSymbols: MIN_SYMBOLS, minDates: MIN_DATES, bands: LOSS_BANDS, branches: {} };
+  const modelB = { builtAt: new Date().toISOString(), minRows: MIN_ROWS, minSymbols: MIN_SYMBOLS, minDates: MIN_DATES, bands: GAIN_BANDS, branches: {} };
   for (const branch of BRANCHES) {
     modelA.branches[branch] = {};
     modelB.branches[branch] = {};
-    for (const [key, r] of Object.entries(production[branch].cells)) {
+    for (const [key, r] of Object.entries(prodA[branch].cells)) {
       modelA.branches[branch][key] = r.resolvedLevel === 'NOT_EVALUATED'
         ? { status: 'NOT_EVALUATED', reason: r.reason }
-        : { status: 'evaluated', resolvedLevel: r.resolvedLevel, ...r.statsA };
+        : { status: 'evaluated', resolvedLevel: r.resolvedLevel, ...r.stats };
+    }
+    for (const [key, r] of Object.entries(prodB[branch].cells)) {
       modelB.branches[branch][key] = r.resolvedLevel === 'NOT_EVALUATED'
         ? { status: 'NOT_EVALUATED', reason: r.reason }
-        : { status: 'evaluated', resolvedLevel: r.resolvedLevel, ...r.statsB };
+        : { status: 'evaluated', resolvedLevel: r.resolvedLevel, ...r.stats };
     }
   }
   writeFileSync(path.join(dataDir, 'exit-model-a.json'), JSON.stringify(modelA, null, 2));
@@ -294,11 +300,10 @@ async function main() {
 
   console.log('\n[tables] === SHAPE REPORT ===');
   console.log(JSON.stringify(shapeReport, null, 2));
-  console.log('\n[tables] === OOS: 5 worst swings per branch (production tables, post-fallback) ===');
-  for (const branch of BRANCHES) {
-    console.log(`\n-- ${branch} (${oosDiffs[branch].length} cells resolvable in both halves) --`);
-    console.log(JSON.stringify(oosDiffs[branch].slice(0, 5), null, 2));
-  }
+  console.log('\n[tables] === OOS Model A (p_recover_2d), 5 worst per branch ===');
+  for (const branch of BRANCHES) console.log(`-- ${branch} (${oosA[branch].length} comparable) --\n`, JSON.stringify(oosA[branch].slice(0, 5), null, 2));
+  console.log('\n[tables] === OOS Model B (p_peak_already_in), 5 worst per branch ===');
+  for (const branch of BRANCHES) console.log(`-- ${branch} (${oosB[branch].length} comparable) --\n`, JSON.stringify(oosB[branch].slice(0, 5), null, 2));
 }
 
 main().catch((err) => { console.error('[tables] FAILED —', err.message, err.stack); process.exit(1); });
