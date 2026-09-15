@@ -15464,5 +15464,159 @@
     "volume_ratio": 0.9369032805350427,
     "price": 5.015,
     "macro_condition": "BROAD_RALLY"
+  },
+  {
+    "id": 1424,
+    "ticker": "OCTV",
+    "captured_at": "2026-09-14T16:11:25.575+00:00",
+    "score": 85,
+    "label": "SOFT BUY",
+    "rsi": 52.736318407960205,
+    "volume_ratio": 1.108549704034126,
+    "price": 18.76,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1425,
+    "ticker": "ASAN",
+    "captured_at": "2026-09-14T16:11:25.575+00:00",
+    "score": 80,
+    "label": "SOFT BUY",
+    "rsi": 48.16650148662041,
+    "volume_ratio": 0.2918910376674547,
+    "price": 9.565,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1426,
+    "ticker": "SAIL",
+    "captured_at": "2026-09-14T16:11:25.575+00:00",
+    "score": 80,
+    "label": "SOFT BUY",
+    "rsi": 56.62847790507365,
+    "volume_ratio": 0.766006929453375,
+    "price": 19.73,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1427,
+    "ticker": "SOUN",
+    "captured_at": "2026-09-14T16:11:25.575+00:00",
+    "score": 80,
+    "label": "SOFT BUY",
+    "rsi": 38.02816901408451,
+    "volume_ratio": 0.622719363279962,
+    "price": 6.58,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1428,
+    "ticker": "AI",
+    "captured_at": "2026-09-14T16:11:25.575+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 63.1710362047441,
+    "volume_ratio": 0.308106164080914,
+    "price": 11.175,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1429,
+    "ticker": "KD",
+    "captured_at": "2026-09-14T16:11:25.575+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 58.93536121673004,
+    "volume_ratio": 0.5623022957186257,
+    "price": 13.46,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1430,
+    "ticker": "GERN",
+    "captured_at": "2026-09-14T16:11:30.995+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 38.75968992248063,
+    "volume_ratio": 0.42560200145939747,
+    "price": 1.38,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1431,
+    "ticker": "STIM",
+    "captured_at": "2026-09-14T16:11:30.995+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 66.12021857923499,
+    "volume_ratio": 1.7868355682314787,
+    "price": 3.18,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1432,
+    "ticker": "BCRX",
+    "captured_at": "2026-09-14T16:11:30.995+00:00",
+    "score": 70,
+    "label": "WATCH",
+    "rsi": 29.127725856697808,
+    "volume_ratio": 0.4347336284880643,
+    "price": 8.335,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1433,
+    "ticker": "CABA",
+    "captured_at": "2026-09-14T16:11:30.995+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 48.45132743362832,
+    "volume_ratio": 0.2764252824745728,
+    "price": 3.02,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1434,
+    "ticker": "IOVA",
+    "captured_at": "2026-09-14T16:11:30.995+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 64.78873239436618,
+    "volume_ratio": 0.2695908583463938,
+    "price": 9.1,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1435,
+    "ticker": "RXRX",
+    "captured_at": "2026-09-14T16:11:30.995+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 53.06748466257669,
+    "volume_ratio": 0.3865614555495347,
+    "price": 3.345,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1436,
+    "ticker": "ABUS",
+    "captured_at": "2026-09-14T16:11:30.995+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 38.8059701492537,
+    "volume_ratio": 0.5237345249743091,
+    "price": 5.125,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
+  },
+  {
+    "id": 1437,
+    "ticker": "ATAI",
+    "captured_at": "2026-09-14T16:11:30.995+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 45.87155963302752,
+    "volume_ratio": 0.677157836253249,
+    "price": 7.35,
+    "macro_condition": "SECTOR_WEAKNESS_TECH"
   }
 ]

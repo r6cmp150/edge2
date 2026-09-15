@@ -28,6 +28,13 @@
 //
 //   trades           -- append-only, no delete call site anywhere in the
 //                        app. Any shrink at all means something is wrong.
+//   trades_v2        -- Phase 9 §1.5 (2026-09-15): same append-only
+//                        posture as `trades` -- this is its Phase 7
+//                        replacement, everything writes here now, and it
+//                        was unbacked from cutover until this change.
+//   signal_log       -- Phase 9 §1.5 (2026-09-15): append-only, same
+//                        posture as `trades`/`trades_v2`. Unbacked since
+//                        it was created.
 //   settings         -- single-row table. A drop below 1 row means
 //                        something is wrong.
 //   portfolio        -- shrinks constantly and legitimately
@@ -44,8 +51,8 @@
 // PER-TABLE OUTCOMES, NOT ALL-OR-NOTHING: a table that fails its own rule
 // has its write skipped -- its last committed file is left untouched --
 // but every OTHER table that passes still gets written and committed.
-// The four files are independent; a legitimately-shrinking portfolio
-// must never cost the trades backup.
+// The six files are independent; a legitimately-shrinking portfolio must
+// never cost the trades (or trades_v2, or signal_log) backup.
 //
 // THE RUN STILL FAILS LOUDLY, THOUGH: if any table failed its rule, this
 // script exits non-zero AFTER writing every table that passed, so
@@ -75,6 +82,22 @@ const TABLE_RULES = {
   trades(fresh, prior) {
     if (fresh < prior) {
       return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- trades is append-only with no delete call site anywhere in the app; any shrink means something is wrong, not normal usage` };
+    }
+    return { ok: true };
+  },
+  // trades_v2/signal_log (Phase 9 §1.5, 2026-09-15): the two tables Phase 7
+  // created and everything now writes to -- unbacked until this change.
+  // Same never-shrink posture as `trades` above, same reason: both are
+  // append-only with no delete call site anywhere in the app.
+  trades_v2(fresh, prior) {
+    if (fresh < prior) {
+      return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- trades_v2 is append-only with no delete call site anywhere in the app; any shrink means something is wrong, not normal usage` };
+    }
+    return { ok: true };
+  },
+  signal_log(fresh, prior) {
+    if (fresh < prior) {
+      return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- signal_log is append-only with no delete call site anywhere in the app; any shrink means something is wrong, not normal usage` };
     }
     return { ok: true };
   },

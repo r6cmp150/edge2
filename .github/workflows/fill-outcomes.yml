@@ -1,0 +1,86 @@
+name: Fill outcomes
+
+# scripts/fill-outcomes.mjs had no production run path at all until this
+# file (phase-9-entry-exit-spec.md §2.5, found 2026-09-15): the 33
+# signal_log rows carrying ret_1d were filled by a hand-run, and
+# OUTCOME_FILLER_JWT existed only as a value someone had to paste into a
+# local shell. This workflow is that path -- workflow_dispatch (used to
+# run every one-off verification step in §1/§2.5 rather than handing the
+# token to a local shell) plus a daily schedule.
+#
+# NOT TIME-SENSITIVE THE WAY log-signals-edge/warrior ARE: this job's own
+# per-row/per-column gating (tradingDayHasClosed, the array-position
+# "not enough real sessions yet" checks in fill-outcomes.mjs and
+# scripts/lib/sell-timing.mjs) makes it CORRECT to run at any time of day,
+# any day late -- there is no "wrong season" concept here, unlike the
+# DST-paired intraday loggers. Three modestly-spaced cron entries, not a
+# dense every-15-minute schedule: 2026-09-14's investigation
+# (phase-9-entry-exit-spec.md §2.4) found GitHub Actions dropped ~94% of a
+# dense (every-15-min) cron outright, while a sparser 6-times-daily
+# schedule delivered all six, just badly late. Given this job tolerates
+# lateness fine and doesn't need multiple daily samples, a small number of
+# spaced firings plus a real /v2/clock check (not a bare cron-time
+# assumption -- see --scheduled in fill-outcomes.mjs) is the appropriate
+# amount of defense for a job where a day's delay is low-stakes, not the
+# dense oversampling position_bars will need once §2.4's scheduler
+# question is settled.
+#
+# --scheduled is passed ONLY on the cron trigger, never workflow_dispatch
+# -- same asymmetry as log-signals-edge.yml's --write branch, and for the
+# same reason: a human dispatching this manually has already decided it's
+# the right moment; a cron firing hasn't, and 2026-09-14 is exactly why
+# that decision now goes through a live /v2/clock check instead of trust
+# in the declared time.
+on:
+  schedule:
+    - cron: '30 20 * * 1-5' # ~20-30 min after EDT close (20:00 UTC); the /v2/clock check inside the script is the real gate, this is just roughly the right neighborhood
+    - cron: '30 21 * * 1-5' # ~30 min after EST close (21:00 UTC) -- covers the other DST half and serves as a retry if the first firing was late/dropped
+    - cron: '0 23 * * 1-5'  # final same-day retry, well past either close
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true = compute and log only, write nothing to Supabase. Must be explicitly set to false to write for real."
+        required: true
+        default: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  fill-outcomes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run filler
+        env:
+          ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          OUTCOME_FILLER_JWT: ${{ secrets.OUTCOME_FILLER_JWT }}
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            ARGS="--write --scheduled"
+          elif [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+            ARGS="--write"
+          else
+            ARGS=""
+          fi
+          echo "Running: node scripts/fill-outcomes.mjs $ARGS"
+          node scripts/fill-outcomes.mjs $ARGS
+
+      - name: Commit dry-run artifact, if one was written
+        if: always()
+        run: |
+          git config user.name "fill-outcomes-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/outcome-fill-dry-runs/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No dry-run artifact to commit."
+          else
+            git commit -m "Fill-outcomes dry run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push
+          fi

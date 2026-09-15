@@ -3569,7 +3569,18 @@ async function confirmAddPortfolio(ticker, btn) {
       return `${String(pt.getHours()).padStart(2,'0')}:${String(pt.getMinutes()).padStart(2,'0')}`;
     })(),
     buyDayOfWeek: DAY_NAMES[getPT().getDay()],
-    buySession: isPreMarketHours() ? 'PRE_MARKET' : 'REGULAR',
+    // classifySession (core/clock.js): four values (PRE_MARKET/REGULAR/
+    // AFTER_HOURS/CLOSED), not the old isPreMarketHours() ? ... : 'REGULAR'
+    // two-value guess that had no AFTER_HOURS branch at all -- see
+    // phase-9-entry-exit-spec.md §1.3. `date` is the position's own
+    // buyDate (the date-picker value above), not necessarily "today", and
+    // buyTime is a fresh getPT() read here since the IIFE above doesn't
+    // expose its own -- both are already PT wall-clock values, matching
+    // what classifySession expects.
+    buySession: classifySession(date, (() => {
+      const pt = getPT();
+      return `${String(pt.getHours()).padStart(2,'0')}:${String(pt.getMinutes()).padStart(2,'0')}`;
+    })()),
     subTenEntryAdjustment: sig?.sub10Pts ?? 0,
     // Buy-time score breakdown capture (data capture only). scoreStock() no
     // longer normalizes (Change 1, raw-score project) — sig.score IS the raw
@@ -5372,6 +5383,14 @@ ${ranked.map(([name, n], i) => `  ${i+1}. ${name}: fired in ${n} of ${lockInTrad
   })();
 
   return `=== WINNER EXIT TIMING ANALYSIS ===
+Caveat: peak_price is currently sampled only when the portfolio tab
+renders (whatever the price happened to be the last time the app was
+open), not a continuous series -- a position that moved and reversed
+between two app opens has a peak that reflects browsing habits, not the
+stock's real high. Every peak-derived figure below (gain preserved,
+peak-RSI buckets, peak risk factors) inherits that limitation until
+Phase 9 §2's position_bars job replaces it with a real price history.
+Treat these as directional, not exact.
 
 ${lockInBlock}
 

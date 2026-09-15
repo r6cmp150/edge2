@@ -1,16 +1,21 @@
 #!/usr/bin/env node
-// Outcome-filling job -- Phase 8, signal_log slice only (this pass).
-// Fills signal_log.ret_5m..ret_5d (from reference_price/first_shown_at,
-// per db/016's column comments) and signal_log.taken_resolution/
-// matched_trade_id (per db/016's five-state design). trades_v2's
-// sell-timing columns are a deferred second pass -- see db/017's header.
+// Outcome-filling job -- Phase 8's signal_log slice, plus Phase 9 §1.2's
+// trades_v2 sell-timing slice (added 2026-09-15; was a deferred second
+// pass, see db/017's header -- now built as Pass 3 below). Fills
+// signal_log.ret_5m..ret_5d (from reference_price/first_shown_at, per
+// db/016's column comments), signal_log.taken_resolution/matched_trade_id
+// (per db/016's five-state design), and trades_v2.sell_timing_resolved/
+// best_exit_price/best_exit_date/best_exit_timing/price_at_plus5_days
+// (per phase-9-entry-exit-spec.md §1.1-1.2, via scripts/lib/sell-timing.mjs).
 //
 // CREDENTIAL: reads via the public anon key (signal_log/trades_v2 are
 // both anon-selectable); writes via the outcome_filler role's JWT
 // (OUTCOME_FILLER_JWT), verified end-to-end against production in
 // scripts/test-outcome-filler-role-production.mjs before this script
 // was written. Dry-run mode needs no write credential at all -- it never
-// contacts anything but the anon-key read paths and Alpaca.
+// contacts anything but the anon-key read paths and Alpaca. The trades_v2
+// PATCH additionally requires db/019's widened grant to be applied before
+// --write can succeed against it -- dry-run works today regardless.
 //
 // NULL, NOT ZERO, THROUGHOUT: a return/price is only ever written when a
 // real bar was found for the target moment. If a column's window hasn't
@@ -20,12 +25,31 @@
 // state. There is no code path that computes a return from a missing
 // price and defaults it to 0.
 //
-// IDEMPOTENT BY CONSTRUCTION: only rows with at least one null ret_*
-// column or taken_resolution='unresolved' are ever queried (reusing
-// signal_log_pending_outcomes_idx / signal_log_unresolved_taken_idx from
-// db/001 and db/016), and a PATCH only ever includes columns that are
-// CURRENTLY null and newly computable this run. A column already filled
-// is never re-selected as a candidate, let alone rewritten.
+// IDEMPOTENT BY CONSTRUCTION for signal_log (Passes 1-2): only rows with
+// at least one null ret_* column or taken_resolution='unresolved' are
+// ever queried (reusing signal_log_pending_outcomes_idx /
+// signal_log_unresolved_taken_idx from db/001 and db/016), and a PATCH
+// only ever includes columns that are CURRENTLY null and newly computable
+// this run. A column already filled is never re-selected as a candidate,
+// let alone rewritten.
+//
+// trades_v2 sell-timing (Pass 3) is DELIBERATELY NOT null-gated the same
+// way: every row with sell_date <= today is recomputed every run,
+// regardless of its current sell_timing_resolved value. This is the fix
+// for MSTU (phase-9-entry-exit-spec.md §1.1) -- that row was already
+// sell_timing_resolved=true with a corrupted value, migrated from the old
+// `trades` table before the split-detection guard existed, and a
+// null-only filter would never touch it again. The result is deterministic
+// given the same bar data (a closed historical window doesn't change), so
+// recomputing is a safe no-op once a row is correctly resolved -- and
+// means any FUTURE corruption of this same shape self-heals on the next
+// scheduled run instead of needing another manual audit. Trade-off stated
+// plainly: this re-fetches bars for every closed trade on every run
+// (2 Alpaca calls/trade -- adjustment=all and adjustment=raw, see
+// scripts/lib/sell-timing.mjs), which is negligible at this app's scale
+// (45 trades as of this writing) and comfortably inside Alpaca's free-tier
+// rate limit, but would need the null-gate reinstated if trades_v2 ever
+// grows into the thousands.
 //
 // FAILS LOUD: ReferenceError/TypeError/SyntaxError propagate to
 // main().catch() and exit 1, same rethrow discipline as both loggers --
@@ -35,6 +59,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertColumnsExist } from './lib/schema-check.mjs';
+import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -131,6 +156,34 @@ async function main() {
   // anyway: this traffic isn't attributable to either live engine's
   // real-time scanning.
   const fillerClient = global.createApiClient('CORE');
+
+  // --scheduled: passed only by fill-outcomes.yml's cron-triggered runs
+  // (github.event_name === 'schedule'), never by workflow_dispatch -- same
+  // asymmetry log-signals-edge.yml already uses for --write, and for the
+  // same reason: a human dispatching this manually (including every
+  // verification run in phase-9-entry-exit-spec.md §2.5) has already
+  // decided it's the right moment; a cron firing hasn't. This job's own
+  // per-row/per-column gating (tradingDayHasClosed, the array-position
+  // "not enough real sessions yet" checks) already makes it CORRECT to run
+  // at any time of day -- this check exists so a scheduled firing that
+  // lands mid-session (2026-09-14's demonstrated GH Actions lateness/drop
+  // problem, phase-9-entry-exit-spec.md §2.4) doesn't burn an Alpaca-heavy
+  // run mostly no-oping on incomplete same-day data, and so the decision
+  // is made from a REAL /v2/clock check -- not a bare cron-time assumption
+  // that today's own investigation just showed cannot be trusted.
+  if (process.argv.includes('--scheduled')) {
+    const clockRes = await fetch('https://paper-api.alpaca.markets/v2/clock', {
+      headers: { 'APCA-API-KEY-ID': ALPACA_KEY_ID, 'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY },
+    });
+    if (!clockRes.ok) throw new Error(`v2/clock check failed: HTTP ${clockRes.status} ${await clockRes.text()}`);
+    const clock = await clockRes.json();
+    if (clock.is_open) {
+      console.log(`fill-outcomes: market still open at ${new Date().toISOString()} (next close ${clock.next_close}) -- this scheduled firing landed before close, standing down. A later firing in the same day's schedule will pick this up once the market is confirmed closed. The Actions log is the record that the cron fired.`);
+      return;
+    }
+    console.log(`fill-outcomes: market confirmed closed at ${new Date().toISOString()} (next open ${clock.next_open}) -- proceeding.`);
+  }
+
   const todayPT = global.ptDateStr(global.getPT());
   const pt = global.getPT();
   const minutesSinceMidnightPT = pt.getHours() * 60 + pt.getMinutes();
@@ -206,7 +259,7 @@ async function main() {
   // null-column shape those indexes were built for.
   const cutoff = (() => { const d = new Date(todayPT + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 12); return d.toISOString().split('T')[0]; })();
   const anonHeaders = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' };
-  const selectCols = 'id,signal_date,symbol,engine_source,tier,first_shown_at,reference_price,ret_5m,ret_15m,ret_30m,ret_close,ret_1d,ret_3d,ret_5d,outcomes_filled_at,taken_resolution';
+  const selectCols = 'id,signal_date,symbol,engine_source,tier,first_shown_at,reference_price,ret_5m,ret_15m,ret_30m,ret_close,ret_1d,ret_3d,ret_5d,ret_close_split_in_window,ret_1d_split_in_window,ret_3d_split_in_window,ret_5d_split_in_window,outcomes_filled_at,taken_resolution';
   const orFilter = 'or=(ret_5m.is.null,ret_15m.is.null,ret_30m.is.null,ret_close.is.null,ret_1d.is.null,ret_3d.is.null,ret_5d.is.null,taken_resolution.eq.unresolved)';
   const rowsRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?select=${selectCols}&signal_date=gte.${cutoff}&${orFilter}`, { headers: anonHeaders });
   if (rowsRes.status >= 300) throw new Error(`signal_log pending-rows query failed: ${rowsRes.status} ${await rowsRes.text()}`);
@@ -243,9 +296,16 @@ async function main() {
   // whether it's worth fetching at all. ret_1d/3d/5d have no
   // regular-hours requirement (see shownDuringRegularHours's own
   // comment); ret_close does.
+  // !r.ret_Nd_split_in_window on each clause: a column that's already
+  // been refused (null + flagged) is settled, not pending -- without this,
+  // a split-flagged row would match ret_5d.is.null in the top-level
+  // orFilter forever and get re-fetched (redundant Alpaca calls, same
+  // flag re-set each time) on every future run.
   const needDaily = rows.filter(r =>
-    (r.ret_close == null && shownDuringRegularHours(r.first_shown_at) && tradingDayHasClosed(r.signal_date)) ||
-    r.ret_1d == null || r.ret_3d == null || r.ret_5d == null
+    (r.ret_close == null && !r.ret_close_split_in_window && shownDuringRegularHours(r.first_shown_at) && tradingDayHasClosed(r.signal_date)) ||
+    (r.ret_1d == null && !r.ret_1d_split_in_window) ||
+    (r.ret_3d == null && !r.ret_3d_split_in_window) ||
+    (r.ret_5d == null && !r.ret_5d_split_in_window)
   );
 
   const intradayBySymbolDate = new Map(); // `${symbol}|${date}` -> bars[]
@@ -272,7 +332,18 @@ async function main() {
     intradayBySymbolDate.set(key, bars);
   }
 
+  // dailyBySymbolDate: adjustment='all', the series ret_close/1d/3d/5d are
+  // actually computed from. rawDailyBySymbolDate: adjustment='raw', fetched
+  // in parallel purely to feed detectSplitInWindow below -- same units-
+  // mismatch class as trades_v2's MSTU row (§1.1): reference_price is a
+  // raw live quote, `all` retroactively rescales the whole returned series
+  // relative to whatever's happened between each bar's date and THIS
+  // fetch's own moment, so the exposure is signal_date-to-fill-time, not
+  // bounded to any one horizon -- see scripts/lib/sell-timing.mjs's header
+  // for the full mechanism (same function, reused here rather than a
+  // second copy, per the fix this comment documents).
   const dailyBySymbolDate = new Map(); // `${symbol}|${signal_date}` -> bars[] spanning signal_date..~signal_date+12 calendar days
+  const rawDailyBySymbolDate = new Map();
   for (const r of needDaily) {
     const key = `${r.symbol}|${r.signal_date}`;
     if (dailyBySymbolDate.has(key)) continue;
@@ -284,24 +355,30 @@ async function main() {
     // slack over what 12 calendar days can ever actually contain (~9
     // trading days worst case), same exemption shape as core/market-
     // data.js's fetchNextDayClose. Pagination followed anyway regardless.
-    let bars = [];
-    try {
+    async function fetchDaily(adjustment) {
+      let bars = [];
       let pageToken;
       do {
         const params = {
-          timeframe: '1Day', start: r.signal_date, limit: 20, sort: 'asc', feed: 'sip', adjustment: global.HISTORICAL_BAR_ADJUSTMENT,
+          timeframe: '1Day', start: r.signal_date, limit: 20, sort: 'asc', feed: 'sip', adjustment,
           ...global.sipSafeEndParams(addCalendarDays(r.signal_date, 12)),
         };
         if (pageToken) params.page_token = pageToken;
         const data = await fillerClient.alpacaGet(`/stocks/${r.symbol}/bars`, params);
         bars = bars.concat(data.bars || []);
         pageToken = data.next_page_token || null;
-        global.assertPageNotSuspiciouslyFull(`fill-outcomes daily bars(${r.symbol})`, (data.bars || []).length, params.limit, pageToken);
+        global.assertPageNotSuspiciouslyFull(`fill-outcomes daily bars(${r.symbol},${adjustment})`, (data.bars || []).length, params.limit, pageToken);
       } while (pageToken);
+      return bars;
+    }
+    let bars = [], rawBars = [];
+    try {
+      [bars, rawBars] = await Promise.all([fetchDaily(global.HISTORICAL_BAR_ADJUSTMENT), fetchDaily('raw')]);
     } catch (e) {
       console.warn(`fill-outcomes: daily-bars fetch failed for ${r.symbol}/${r.signal_date}: ${e.message}`);
     }
     dailyBySymbolDate.set(key, bars);
+    rawDailyBySymbolDate.set(key, rawBars);
   }
 
   function priceAtOrAfter(bars, targetIso) {
@@ -325,6 +402,7 @@ async function main() {
     const minToClose = minutesFromShownToClose(r.first_shown_at);
     const intraday = intradayBySymbolDate.get(`${r.symbol}|${r.signal_date}`);
     const daily = dailyBySymbolDate.get(`${r.symbol}|${r.signal_date}`);
+    const rawDaily = rawDailyBySymbolDate.get(`${r.symbol}|${r.signal_date}`);
 
     // Each of 5m/15m/30m gated on ITS OWN window fitting before close
     // (minToClose >= N), not just on the signal having fired during
@@ -357,35 +435,57 @@ async function main() {
     // it can never occupy a position). "Not enough real sessions have
     // happened yet" and "there's a gap in the data" are now the same,
     // correct condition: daily[anchorIdx + N] doesn't exist.
-    if (daily && daily.length) {
+    if (daily && daily.length && rawDaily && rawDaily.length) {
       const anchorIdx = daily.findIndex(b => (b.t || '').split('T')[0] === r.signal_date);
       if (anchorIdx !== -1) {
-        if (r.ret_close == null && regularHours) {
-          const v = ret(base, daily[anchorIdx].c);
-          if (v != null) { p.ret_close = v; returnsFilledCount++; }
+        // Each column checked at ITS OWN offset, not one blanket verdict
+        // for the row -- a split landing between day 3 and day 5 corrupts
+        // ret_5d while leaving ret_close/1d/3d clean (see db/021's header).
+        // detectSplitInWindow needs both series to reach the checked
+        // index; a column whose offset isn't covered by rawDaily yet
+        // simply isn't computed this run, same as the existing
+        // daily[anchorIdx+N] existence check below it.
+        const splitBefore = (offset) => {
+          const lastIdx = anchorIdx + offset;
+          return daily.length > lastIdx && rawDaily.length > lastIdx && detectSplitInWindow(daily, rawDaily, lastIdx);
+        };
+        if (r.ret_close == null && !r.ret_close_split_in_window && regularHours) {
+          if (splitBefore(0)) { p.ret_close_split_in_window = true; }
+          else { const v = ret(base, daily[anchorIdx].c); if (v != null) { p.ret_close = v; returnsFilledCount++; } }
         }
-        if (r.ret_1d == null && daily[anchorIdx + 1]) {
-          const v = ret(base, daily[anchorIdx + 1].c);
-          if (v != null) { p.ret_1d = v; returnsFilledCount++; }
+        if (r.ret_1d == null && !r.ret_1d_split_in_window && daily[anchorIdx + 1]) {
+          if (splitBefore(1)) { p.ret_1d_split_in_window = true; }
+          else { const v = ret(base, daily[anchorIdx + 1].c); if (v != null) { p.ret_1d = v; returnsFilledCount++; } }
         }
-        if (r.ret_3d == null && daily[anchorIdx + 3]) {
-          const v = ret(base, daily[anchorIdx + 3].c);
-          if (v != null) { p.ret_3d = v; returnsFilledCount++; }
+        if (r.ret_3d == null && !r.ret_3d_split_in_window && daily[anchorIdx + 3]) {
+          if (splitBefore(3)) { p.ret_3d_split_in_window = true; }
+          else { const v = ret(base, daily[anchorIdx + 3].c); if (v != null) { p.ret_3d = v; returnsFilledCount++; } }
         }
-        if (r.ret_5d == null && daily[anchorIdx + 5]) {
-          const v = ret(base, daily[anchorIdx + 5].c);
-          if (v != null) { p.ret_5d = v; returnsFilledCount++; }
+        if (r.ret_5d == null && !r.ret_5d_split_in_window && daily[anchorIdx + 5]) {
+          if (splitBefore(5)) { p.ret_5d_split_in_window = true; }
+          else { const v = ret(base, daily[anchorIdx + 5].c); if (v != null) { p.ret_5d = v; returnsFilledCount++; } }
         }
       }
     }
 
-    // outcomes_filled_at: only once every ret_* is non-null accounting for
-    // both this run's new values AND whatever was already there.
-    const merged = {
-      ret_5m: p.ret_5m ?? r.ret_5m, ret_15m: p.ret_15m ?? r.ret_15m, ret_30m: p.ret_30m ?? r.ret_30m,
-      ret_close: p.ret_close ?? r.ret_close, ret_1d: p.ret_1d ?? r.ret_1d, ret_3d: p.ret_3d ?? r.ret_3d, ret_5d: p.ret_5d ?? r.ret_5d,
-    };
-    if (r.outcomes_filled_at == null && Object.values(merged).every(v => v != null)) {
+    // outcomes_filled_at: once every ret_* column is SETTLED -- either a
+    // real value (accounting for both this run's new values and whatever
+    // was already there) or, for the four split-checked columns,
+    // explicitly refused via its split flag. A permanently-null,
+    // permanently-flagged ret_5d must not keep this row "pending"
+    // forever; refused is a completed state, not an open one. ret_5m/15m/
+    // 30m have no split flag at all (can't be corrupted -- see db/021's
+    // header) so non-null is their only settled state, unchanged from
+    // before this fix.
+    const settled = (val, flagKey) => val != null || (p[flagKey] ?? r[flagKey]) === true;
+    const noSplitCheckCols = { ret_5m: p.ret_5m ?? r.ret_5m, ret_15m: p.ret_15m ?? r.ret_15m, ret_30m: p.ret_30m ?? r.ret_30m };
+    const everySettled =
+      Object.values(noSplitCheckCols).every(v => v != null) &&
+      settled(p.ret_close ?? r.ret_close, 'ret_close_split_in_window') &&
+      settled(p.ret_1d ?? r.ret_1d, 'ret_1d_split_in_window') &&
+      settled(p.ret_3d ?? r.ret_3d, 'ret_3d_split_in_window') &&
+      settled(p.ret_5d ?? r.ret_5d, 'ret_5d_split_in_window');
+    if (r.outcomes_filled_at == null && everySettled) {
       p.outcomes_filled_at = new Date().toISOString();
     }
   }
@@ -453,6 +553,78 @@ async function main() {
     // else: no candidate yet and window still open -- leave unresolved, no write.
   }
 
+  // ── Pass 3: trades_v2 sell-timing (phase-9-entry-exit-spec.md §1.1/§1.2) ──
+  // Candidates: every closed trade (sell_date <= today), NOT gated on the
+  // current sell_timing_resolved value -- see this file's header for why
+  // (MSTU's corruption class needs recomputation, not just first-fill).
+  const tradesSelectCols = 'id,ticker,buy_date,sell_date,buy_price,sell_timing_resolved,best_exit_price,best_exit_timing';
+  const tradesRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/trades_v2?select=${tradesSelectCols}&sell_date=lte.${todayPT}&order=sell_date.asc`,
+    { headers: anonHeaders }
+  );
+  if (tradesRes.status >= 300) throw new Error(`trades_v2 sell-timing candidate query failed: ${tradesRes.status} ${await tradesRes.text()}`);
+  const tradesRows = await tradesRes.json();
+  console.log(`\nfill-outcomes: ${tradesRows.length} trades_v2 row(s) with sell_date <= ${todayPT}, considered for sell-timing (recomputed every run).`);
+
+  // Two daily-bar fetches per trade -- adjustment=all and adjustment=raw --
+  // spanning [buy_date, sell_date + 12 calendar days] (generous slack over
+  // the +5-trading-day tail this needs, same margin the daily-bars pass
+  // above uses). Array-position based, same as Pass 1's ret_1d/3d/5d --
+  // see scripts/lib/sell-timing.mjs for why (the holiday-arithmetic bug
+  // this file already fixed once for signal_log).
+  async function fetchDailyBothAdjustments(ticker, buyDate, sellDate) {
+    const spanDays = Math.ceil((new Date(sellDate + 'T00:00:00Z') - new Date(buyDate + 'T00:00:00Z')) / 86400000) + 12;
+    const limit = Math.max(spanDays + 5, 20);
+    async function fetchOne(adjustment) {
+      let bars = [];
+      let pageToken;
+      do {
+        const params = {
+          timeframe: '1Day', start: buyDate, limit, sort: 'asc', feed: 'sip', adjustment,
+          ...global.sipSafeEndParams(addCalendarDays(sellDate, 12)),
+        };
+        if (pageToken) params.page_token = pageToken;
+        const data = await fillerClient.alpacaGet(`/stocks/${ticker}/bars`, params);
+        bars = bars.concat(data.bars || []);
+        pageToken = data.next_page_token || null;
+        global.assertPageNotSuspiciouslyFull(`fill-outcomes sell-timing bars(${ticker},${adjustment})`, (data.bars || []).length, params.limit, pageToken);
+      } while (pageToken);
+      return bars;
+    }
+    const [allBars, rawBars] = await Promise.all([fetchOne('all'), fetchOne('raw')]);
+    return { allBars, rawBars };
+  }
+
+  const sellTimingPatches = new Map();
+  let sellTimingResolvedCount = 0, sellTimingSplitCount = 0, sellTimingErrorCount = 0, sellTimingSkippedCount = 0;
+  for (const row of tradesRows) {
+    let allBars, rawBars;
+    try {
+      ({ allBars, rawBars } = await fetchDailyBothAdjustments(row.ticker, row.buy_date, row.sell_date));
+    } catch (e) {
+      console.warn(`fill-outcomes: sell-timing bars fetch failed for ${row.ticker}: ${e.message}`);
+      sellTimingSkippedCount++;
+      continue;
+    }
+    const result = resolveSellTiming({
+      buyDate: row.buy_date, sellDate: row.sell_date, buyPrice: Number(row.buy_price), allBars, rawBars,
+    });
+    if (!result.resolved) { sellTimingSkippedCount++; continue; } // window not closed yet, or sellDate bar missing this run
+    sellTimingPatches.set(row.id, {
+      sell_timing_resolved: true,
+      best_exit_price: result.bestExitPrice,
+      best_exit_date: result.bestExitDate,
+      best_exit_timing: result.bestExitTiming,
+      price_at_plus5_days: result.priceAt5Days,
+    });
+    sellTimingResolvedCount++;
+    if (result.bestExitTiming === 'SPLIT_IN_WINDOW') sellTimingSplitCount++;
+    if (result.bestExitTiming === 'DATA_ERROR') sellTimingErrorCount++;
+  }
+  const sellTimingToWrite = [...sellTimingPatches.entries()];
+  console.log(`fill-outcomes: sell-timing resolved ${sellTimingResolvedCount}/${tradesRows.length} row(s) (${sellTimingSplitCount} SPLIT_IN_WINDOW, ${sellTimingErrorCount} DATA_ERROR, ${sellTimingSkippedCount} skipped -- window not closed or fetch failed this run).`);
+  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'trades_v2', ['sell_timing_resolved', 'best_exit_price', 'best_exit_date', 'best_exit_timing', 'price_at_plus5_days']);
+
   const toWrite = [...patches.entries()].filter(([, p]) => Object.keys(p).length > 0);
   console.log(`fill-outcomes: ${returnsFilledCount} return value(s) computed, ${takenResolvedCount} taken_resolution transition(s), across ${toWrite.length} row(s) with at least one new column to write.`);
 
@@ -469,6 +641,13 @@ async function main() {
     writeFileSync(outPath, JSON.stringify(toWrite, null, 2));
     console.log(`\nDRY RUN -- wrote ${toWrite.length} would-be signal_log PATCH(es) to ${outPath}. Nothing sent to Supabase.`);
     for (const [id, p] of toWrite) {
+      console.log(`  ${id}: ${JSON.stringify(p)}`);
+    }
+
+    const sellTimingOutPath = path.join(REPO_ROOT, 'data', 'outcome-fill-dry-runs', `${new Date().toISOString().replace(/[:.]/g, '-')}-sell-timing.json`);
+    writeFileSync(sellTimingOutPath, JSON.stringify(sellTimingToWrite, null, 2));
+    console.log(`\nDRY RUN -- wrote ${sellTimingToWrite.length} would-be trades_v2 sell-timing PATCH(es) to ${sellTimingOutPath}. Nothing sent to Supabase.`);
+    for (const [id, p] of sellTimingToWrite) {
       console.log(`  ${id}: ${JSON.stringify(p)}`);
     }
     return;
@@ -493,6 +672,27 @@ async function main() {
     const verifyRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=in.(${touchedIds.join(',')})&select=${selectCols}`, { headers: anonHeaders });
     const verifyBody = await verifyRes.json();
     console.log(`fill-outcomes: re-selected ${verifyBody.length}/${touchedIds.length} touched row(s) via anon key:`);
+    for (const row of verifyBody) console.log(`  ${row.id}: ${JSON.stringify(row)}`);
+  }
+
+  console.log('\n--write passed -- patching trades_v2 sell-timing for real. Requires db/019 (outcome_filler UPDATE grant) applied first -- a permission-denied here means it has not been yet.');
+  const touchedTradeIds = [];
+  for (const [id, p] of sellTimingToWrite) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/trades_v2?id=eq.${id}`, {
+      method: 'PATCH', headers: roleHeaders, body: JSON.stringify(p),
+    });
+    if (res.status >= 300) {
+      console.error(`fill-outcomes: trades_v2 PATCH failed for ${id}: ${res.status} ${await res.text()}`);
+      continue;
+    }
+    touchedTradeIds.push(id);
+  }
+  console.log(`fill-outcomes: ${touchedTradeIds.length}/${sellTimingToWrite.length} trades_v2 PATCH(es) succeeded.`);
+
+  if (touchedTradeIds.length) {
+    const verifyRes = await fetch(`${SUPABASE_URL}/rest/v1/trades_v2?id=in.(${touchedTradeIds.join(',')})&select=${tradesSelectCols}`, { headers: anonHeaders });
+    const verifyBody = await verifyRes.json();
+    console.log(`fill-outcomes: re-selected ${verifyBody.length}/${touchedTradeIds.length} touched trades_v2 row(s) via anon key:`);
     for (const row of verifyBody) console.log(`  ${row.id}: ${JSON.stringify(row)}`);
   }
 }

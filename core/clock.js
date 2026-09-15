@@ -181,6 +181,66 @@ function hoursSincePreviousClose(now = new Date()) {
   return null; // no trading day found in the last 10 days — shouldn't happen
 }
 
+// EARLY_CLOSES: date -> regular-session close time, minutes since
+// midnight PT. Both 2026 entries close at 1:00pm ET = 10:00am PT (day
+// after Thanksgiving, Christmas Eve) -- the two Wall Street early closes
+// that land in this app's operating window before the next HOLIDAYS-style
+// table update is due. AFTER_HOURS still runs its normal 4-hour extended
+// session AFTER whichever close applies that day -- it's the regular
+// session that shrinks on an early-close day, not the extended one, so
+// AFTER_HOURS is computed as [closeMin, closeMin+240) rather than a fixed
+// window.
+//
+// db/020_backfill_buy_session.sql's SQL twin does NOT implement this --
+// that migration is a one-time backfill, already approved and run
+// against data with no early-close trades in it (2026-08-17 forward,
+// before either 2026 date above). Adding EARLY_CLOSES here is correct for
+// classifySession() going forward but makes 020's SQL a snapshot of this
+// function as it stood before this comment, not a living twin of it --
+// the duplication this file's classifySession() comment warns about
+// ended here. A future backfill that needs to be early-close-aware is a
+// NEW migration against 020's already-applied state, not an edit to 020.
+const EARLY_CLOSES = {
+  '2026-11-27': 600, // day after Thanksgiving
+  '2026-12-24': 600, // Christmas Eve
+};
+
+// classifySession -- the four-value session classifier (phase-9-entry-
+// exit-spec.md §1.3). Takes an already-PT wall-clock date+time (a
+// 'YYYY-MM-DD' string and an 'HH:MM' 24h string), NOT an absolute
+// instant -- both the live call site (buy_time is captured via getPT()
+// at the moment of purchase, already Pacific) and the historical backfill
+// (buy_date/buy_time pulled straight from trades_v2) already have PT wall-
+// clock values in hand, so no getPT()-instant conversion is needed either
+// way; see CLAUDE.md's rule on why mutating/converting a getPT()-derived
+// Date into an absolute instant is unsafe, and why this function sidesteps
+// the whole class by never doing that conversion at all.
+//
+// Same time windows as getMarketStatus() (OPEN/PRE/AH/CLOSED), restated
+// here because getMarketStatus() only ever answers for "right now" via a
+// bare getPT() call with no override -- it cannot classify a historical
+// buy_time. Whichever of these changes, the other must change with it or
+// "now" and "backfilled" will silently disagree.
+//
+// db/020_backfill_buy_session.sql reimplements this SAME logic in SQL to
+// backfill existing rows in one UPDATE -- the two must produce identical
+// answers on every row (verified by the backfill migration's own
+// verification query) or one of them is wrong and it will not be obvious
+// which.
+function classifySession(dateStr, hhmm) {
+  const d = new Date(dateStr + 'T12:00:00'); // noon, local-parsed -- date-of-week only, see businessDaysBetween's own comment on this exact pattern
+  const dow = d.getDay();
+  if (dow === 0 || dow === 6 || HOLIDAYS.has(dateStr)) return 'CLOSED';
+
+  const [h, m] = hhmm.split(':').map(Number);
+  const tMin = h * 60 + m;
+  const closeMin = EARLY_CLOSES[dateStr] ?? 780; // 1:00pm PT normally, 10:00am PT on an early close
+  if (tMin >= 390 && tMin < closeMin) return 'REGULAR';                   // 6:30am-close
+  if (tMin >= 60 && tMin < 390) return 'PRE_MARKET';                      // 1:00am-6:30am PT
+  if (tMin >= closeMin && tMin < closeMin + 240) return 'AFTER_HOURS';    // close-(close+4h)
+  return 'CLOSED';
+}
+
 function businessDaysBetween(startDateStr, endDateStr) {
   // T12:00:00 (no zone -> parsed as local time), not T00:00:00, is
   // deliberate: noon gives ~12h of slack on either side before a
