@@ -99,7 +99,7 @@ async function db021checkA() {
   console.log(`Using real signal_log row id=${id} -- toggling ret_5d_split_in_window true then back to false, re-selecting after each write`);
 
   const setTrue = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}`, {
-    method: 'PATCH', headers: roleHeaders, body: JSON.stringify({ ret_5d_split_in_window: true }),
+    method: 'PATCH', headers: { ...roleHeaders, Prefer: 'return=representation' }, body: JSON.stringify({ ret_5d_split_in_window: true }),
   });
   await dump('db/021 CHECK A: PATCH ret_5d_split_in_window=true', setTrue, {
     ok: 'role switch happened AND ret_5d_split_in_window is genuinely writable by this role',
@@ -116,7 +116,7 @@ async function db021checkA() {
   }
 
   const setFalse = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}`, {
-    method: 'PATCH', headers: roleHeaders, body: JSON.stringify({ ret_5d_split_in_window: false }),
+    method: 'PATCH', headers: { ...roleHeaders, Prefer: 'return=representation' }, body: JSON.stringify({ ret_5d_split_in_window: false }),
   });
   await dump('db/021 CHECK A: restore PATCH ret_5d_split_in_window=false', setFalse, {
     ok: 'restore write accepted',
