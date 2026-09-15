@@ -255,7 +255,11 @@ async function main() {
   }
 
   // ── Out-of-sample on the production (post-fallback) tables ──
-  function oosForModel(maps, statsFn, bands, metricKey) {
+  // full_value: the PRODUCTION (whole-period) cell's own value -- the
+  // number that would actually ship -- included alongside first/second
+  // half so a later pass can filter "which shipped cells are low-p" using
+  // the value Roman would actually see, not either half in isolation.
+  function oosForModel(maps, statsFn, bands, metricKey, prodTables) {
     const out = {};
     for (const branch of BRANCHES) {
       const t1 = buildBranchTable(maps, statsFn, bands, 'first_half', branch);
@@ -266,15 +270,17 @@ async function main() {
         if (c1.resolvedLevel === 'NOT_EVALUATED' || c2.resolvedLevel === 'NOT_EVALUATED') continue;
         const v1 = c1.stats[metricKey], v2 = c2.stats[metricKey];
         if (v1 == null || v2 == null) continue;
-        diffs.push({ key, first_half: v1, second_half: v2, diff_pct_points: +(v2 - v1).toFixed(1) });
+        const cFull = prodTables[branch].cells[key];
+        const vFull = cFull && cFull.resolvedLevel !== 'NOT_EVALUATED' ? cFull.stats[metricKey] : null;
+        diffs.push({ key, first_half: v1, second_half: v2, full: vFull, diff_pct_points: +(v2 - v1).toFixed(1) });
       }
       diffs.sort((a, b) => Math.abs(b.diff_pct_points) - Math.abs(a.diff_pct_points));
       out[branch] = diffs;
     }
     return out;
   }
-  const oosA = oosForModel(mapsA, statsA, LOSS_BANDS, 'p_recover_2d');
-  const oosB = oosForModel(mapsB, statsB, GAIN_BANDS, 'p_peak_already_in');
+  const oosA = oosForModel(mapsA, statsA, LOSS_BANDS, 'p_recover_2d', prodA);
+  const oosB = oosForModel(mapsB, statsB, GAIN_BANDS, 'p_peak_already_in', prodB);
 
   // ── Write production tables ──
   const dataDir = path.join(REPO_ROOT, 'data');
@@ -297,6 +303,13 @@ async function main() {
   }
   writeFileSync(path.join(dataDir, 'exit-model-a.json'), JSON.stringify(modelA, null, 2));
   writeFileSync(path.join(dataDir, 'exit-model-b.json'), JSON.stringify(modelB, null, 2));
+
+  // Full OOS diff arrays (not just the top-5 printed below) -- gitignored
+  // artifact, for the relative-change-at-low-p re-report (task 3, not
+  // needed by the shipped tables themselves).
+  const artifactsDir = path.join(REPO_ROOT, 'artifacts', 'exit-model-dataset');
+  mkdirSync(artifactsDir, { recursive: true });
+  writeFileSync(path.join(artifactsDir, 'oos-diffs.json'), JSON.stringify({ modelA: oosA, modelB: oosB }, null, 2));
 
   console.log('\n[tables] === SHAPE REPORT ===');
   console.log(JSON.stringify(shapeReport, null, 2));
