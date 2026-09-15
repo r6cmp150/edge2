@@ -60,6 +60,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
+import { reportNoop } from './lib/workflow-instrumentation.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -197,7 +198,9 @@ async function main() {
     if (!clockRes.ok) throw new Error(`v2/clock check failed: HTTP ${clockRes.status} ${await clockRes.text()}`);
     const clock = await clockRes.json();
     if (clock.is_open) {
-      console.log(`fill-outcomes: market still open at ${new Date().toISOString()} (next close ${clock.next_close}) -- this scheduled firing landed before close, standing down. A later firing in the same day's schedule will pick this up once the market is confirmed closed. The Actions log is the record that the cron fired.`);
+      const reason = `market still open at ${new Date().toISOString()} (next close ${clock.next_close}) -- this scheduled firing landed before close, standing down`;
+      console.log(`fill-outcomes: ${reason}. A later firing in the same day's schedule will pick this up once the market is confirmed closed. The Actions log is the record that the cron fired.`);
+      reportNoop(reason);
       return;
     }
     console.log(`fill-outcomes: market confirmed closed at ${new Date().toISOString()} (next open ${clock.next_open}) -- proceeding.`);

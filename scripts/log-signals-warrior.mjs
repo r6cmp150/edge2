@@ -55,6 +55,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
+import { reportNoop } from './lib/workflow-instrumentation.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -200,7 +201,9 @@ async function main() {
 
     const matched = TARGETS.find(t => Math.abs(minutesFromTarget(t, minutesSinceOpen, minutesToClose)) <= TOLERANCE_MIN);
     if (!matched) {
-      console.log(`log-signals-warrior: scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of any intended target (open+20, open+105, close-60). No-op: no scan_runs row written, no Alpaca request made.`);
+      const reason = `scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of any intended target (open+20, open+105, close-60)`;
+      console.log(`log-signals-warrior: ${reason}. No-op: no scan_runs row written, no Alpaca request made.`);
+      reportNoop(reason);
       return;
     }
 
@@ -225,7 +228,9 @@ async function main() {
       return Math.abs(minutesFromTarget(matched, rowMin - 390, 780 - rowMin)) <= TOLERANCE_MIN;
     });
     if (alreadySatisfied) {
-      console.log(`log-signals-warrior: target ${matched.name} was already satisfied by an earlier scan_runs row today -- no-op, no duplicate scan, no Alpaca request made.`);
+      const reason = `target ${matched.name} was already satisfied by an earlier scan_runs row today`;
+      console.log(`log-signals-warrior: ${reason} -- no-op, no duplicate scan, no Alpaca request made.`);
+      reportNoop(reason);
       return;
     }
     console.log(`log-signals-warrior: scheduled firing matched target ${matched.name} (minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose}), not yet satisfied today -- proceeding with a real scan.`);

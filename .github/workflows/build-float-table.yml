@@ -34,6 +34,17 @@ jobs:
     # rather than leaving a silent default.
     timeout-minutes: 90
     steps:
+      - name: Log workflow firing (Phase 9 §2.7 scheduler instrumentation)
+        id: log_fired
+        run: |
+          ROW=$(curl -s -X POST "https://kbjqxaukyawcmcyjoiey.supabase.co/rest/v1/workflow_runs" \
+            -H "apikey: sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=representation" \
+            -d "{\"workflow_name\": \"${{ github.workflow }}\", \"trigger\": \"${{ github.event_name }}\", \"declared_cron\": \"${{ github.event.schedule }}\", \"actual_fired_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"run_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}")
+          echo "$ROW"
+          echo "id=$(echo "$ROW" | jq -r 'if type=="array" then (.[0].id // empty) else empty end' 2>/dev/null || echo)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -45,6 +56,18 @@ jobs:
           ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: node scripts/build-float-table.mjs
+
+      - name: Log workflow outcome (Phase 9 §2.7)
+        if: always()
+        run: |
+          ID="${{ steps.log_fired.outputs.id }}"
+          if [ -z "$ID" ]; then echo "no workflow_runs id captured, skipping outcome log"; exit 0; fi
+          REASON_JSON=$(node -e "console.log(JSON.stringify(process.env.WORKFLOW_NOOP_REASON || null))")
+          curl -s -X PATCH "https://kbjqxaukyawcmcyjoiey.supabase.co/rest/v1/workflow_runs?id=eq.$ID" \
+            -H "apikey: sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl" \
+            -H "Content-Type: application/json" \
+            -d "{\"completed_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"job_status\": \"${{ job.status }}\", \"is_noop\": ${WORKFLOW_IS_NOOP:-false}, \"noop_reason\": $REASON_JSON}" \
+            -o /dev/null
 
       - name: Commit and push
         run: |

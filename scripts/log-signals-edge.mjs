@@ -97,6 +97,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
+import { reportNoop } from './lib/workflow-instrumentation.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -210,7 +211,9 @@ async function main() {
     const nearAnOpenOffset = TARGET_MINUTES_AFTER_OPEN.some(target => Math.abs(minutesSinceOpen - target) <= TOLERANCE_MIN);
     const nearPreClose = Math.abs(minutesToClose - TARGET_MINUTES_BEFORE_CLOSE) <= TOLERANCE_MIN;
     if (!nearAnOpenOffset && !nearPreClose) {
-      console.log(`log-signals-edge: scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of an intended target (open+30, open+140, close-45) -- this is the wrong-season half of a DST-paired cron entry. No-op: no scan_runs row written, no Alpaca request made. The Actions log is the record that the cron fired.`);
+      const reason = `scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of an intended target (open+30, open+140, close-45) -- wrong-season half of a DST-paired cron entry`;
+      console.log(`log-signals-edge: ${reason}. No-op: no scan_runs row written, no Alpaca request made. The Actions log is the record that the cron fired.`);
+      reportNoop(reason);
       return;
     }
   }

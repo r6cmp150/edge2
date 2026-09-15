@@ -26,6 +26,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { reportNoop } from './lib/workflow-instrumentation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -64,7 +65,9 @@ async function main() {
   let row;
   if (!clock.is_open) {
     row = { capturedAt, marketOpen: false, movers: null, mostActives: null };
-    console.log(`capture-movers-snapshot: market closed at ${capturedAt} (next open ${clock.next_open}) -- logging a closed marker, no screener call made.`);
+    const reason = `market closed at ${capturedAt} (next open ${clock.next_open})`;
+    console.log(`capture-movers-snapshot: ${reason} -- logging a closed marker, no screener call made.`);
+    reportNoop(reason);
   } else {
     const [movers, mostActives] = await Promise.all([
       alpacaGet(ALPACA_SCREENER_BASE, '/screener/stocks/movers', { top: 50 }),
