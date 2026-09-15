@@ -473,27 +473,64 @@ stays where it belongs, the verification runs in the exact environment
 production will use, and the missing production path gets built as a side
 effect of testing.
 
-**Done:** `.github/workflows/fill-outcomes.yml` now exists (see its own
-header). `OUTCOME_FILLER_JWT` was confirmed missing via `gh secret list`
-earlier 2026-09-15, then added the same day (confirmed via a second `gh
-secret list` and a real dispatch that used it successfully — see §6 test
-3/4 results and the 019/021 grant checks below). Current token: minted
-2026-09-15, expires **2027-09-15T17:27:14Z**. Renew by that date: re-run
-`SUPABASE_JWT_SECRET=... node scripts/sign-supabase-role-jwt.mjs outcome_filler 365`
-and update the secret.
+## 2.6 Build order correction: Section 3 does not depend on Section 2
 
-Two older tokens are also still valid, neither is in the secret anymore:
-db/017's original 365-day mint (2026-09-10, expires 2027-09-11) was
-superseded by the 2026-09-15 one above, and before that, outcome_filler's
-very first mint (also 2026-09-10) got the pre-fix
-`sign-supabase-role-jwt.mjs` default of 3650 days by accident. Neither
-can be revoked short of rotating the underlying Supabase project JWT
-secret, which is not planned (see the standing JWT-exposure decision for
-this project) — so if a copy of either survives anywhere, it remains a
-valid `outcome_filler` bearer credential with UPDATE rights until its own
-expiry (2027-09-11, or roughly 2036-09-07 for the accidental one), not
-whichever token is in this workflow's secret today. Live risk, not
-history.
+Added 2026-09-15, after Section 1 closed.
+
+The original plan read as a sequence: Section 1, then 2, then 3. §2.4's
+scheduler problem therefore looked like it blocked everything. It does
+not, and the distinction is worth stating precisely because it decides
+what gets built next.
+
+**`position_bars` is needed to render a live exit call.** It answers
+"what is this position doing right now, while Roman isn't looking."
+
+**The models in §3.1–§3.3 are built offline from historical daily bars.**
+They need two years of Alpaca history for the eligible universe and no
+scheduler at all. A backtest harness already exists in
+`scripts/replay-scan.mjs` and `scripts/run-symbol-day-scan.mjs`.
+
+So the dependency is one-directional and late: the models can be built,
+validated and committed as lookup tables **before** `position_bars`
+exists. What they cannot do without it is fire on a live position
+between sessions.
+
+**Revised order:**
+
+1. §3.1 dataset + §3.2/§3.3 model tables — starts now, blocked on
+   nothing. This is the work Roman actually asked for.
+2. §3.4's hard −6% floor — also starts now. It needs only the current
+   price the app already fetches on render, and it is the single
+   highest-leverage change in Phase 9 (§0.3).
+3. Scheduler instrumentation (below) — in parallel, cheap.
+4. §2 `position_bars` — once the scheduler question has an evidence-based
+   answer.
+
+### 2.7 Instrument the scheduler before replacing it
+
+2026-09-14 is one day of evidence. It is a bad day, but switching
+platforms on a single observation is the same mistake as tuning entry
+scoring on 37 trades.
+
+There is already a signal in that one day worth testing: the **dense**
+every-15-minute cron lost ~94% of its firings, while the **sparse**
+six-times-daily cron delivered all six, merely late. If GitHub
+deprioritises dense schedules, the fix may be schedule shape rather than
+a new platform — which would cost nothing.
+
+**Log every firing, including no-ops.** Today a workflow that fires and
+correctly declines to act leaves no trace, so delivery rate is
+unmeasurable. A `workflow_runs` row per firing — workflow name, declared
+cron time, actual fire time, delivered-vs-dropped inferred from the gaps,
+and the no-op reason — turns "GitHub is unreliable" from an impression
+into a number.
+
+After a week there is a real delivery rate per schedule density, and the
+platform question answers itself. Candidates if the answer is bad:
+Cloudflare Workers cron (free, runs the existing JS, reliable delivery)
+or Supabase `pg_cron` + `pg_net` (free, already in the stack, but a poor
+fit for anything needing indicator computation — PL/pgSQL is the wrong
+tool for RSI).
 
 ## 3. Exit engine v3
 

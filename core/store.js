@@ -44,6 +44,7 @@ function persistLocalOnlySettings() {
       developerTools: state.settings.developerTools,
       riskPerTradePct: state.settings.riskPerTradePct,
       floatThresholdShares: state.settings.floatThresholdShares, // Phase 6 (2026-09-04) — same no-Supabase-column gap as the two above, not a reversion of the Data Migration decision
+      maxLossPct: state.settings.maxLossPct, // Phase 9 §3.4 (2026-09-15) — same gap, no settings-table column for it yet
     }));
   } catch(e) {}
 }

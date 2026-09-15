@@ -862,7 +862,7 @@ function loadState() {
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
-    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false, riskPerTradePct: 2, floatThresholdShares: 10000000
+    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false, riskPerTradePct: 2, floatThresholdShares: 10000000, maxLossPct: DEFAULT_MAX_LOSS_PCT
   }, state.settings);
   // API keys live in their own localStorage key, edge_apiKeys — authoritative
   // once present. If it doesn't exist yet but the legacy edge_settings blob
@@ -3822,7 +3822,7 @@ async function renderPortfolioTab() {
       portBanner = buildRegisteredEngineExitBanner(exitResult);
     } else {
       const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
-      const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi }, currentSignal, state.macroContext, snap);
+      const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed }, currentSignal, state.macroContext, snap);
       portBanner = buildUnifiedPortfolioBanner(unifiedResult);
     }
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
@@ -4058,6 +4058,13 @@ function buildFridayFlag(p, currentPrice, pnlPct) {
 // evaluation and was retired once it was found to be equivalent-or-better.
 
 const MAX_HOLD_DAYS = { DAY: 1, '3-DAY': 4, WEEK: 7 };
+// Phase 9 §3.4/§0.3: hard cut-loss floor, evaluated before any factor
+// scoring and before the stop-loss check, unconditional. Replayed against
+// all 37 closed trades: -3% -> +$32.23, -4% -> +$17.63, -5% -> +$5.81,
+// -6% (Roman's choice) -> -$3.16, -8% -> -$18.89, -10% -> -$28.68, no cap
+// (actual) -> -$73.73. Settings-visible (state.settings.maxLossPct) so it
+// can move without a code change; this is only the default.
+const DEFAULT_MAX_LOSS_PCT = 6;
 const MACRO_TAILWIND_CONDITIONS = ['BROAD_RALLY', 'MOMENTUM_DAY'];
 const DURATION_WINDOW_LABEL = { DAY: 'exit-today', '3-DAY': '2-4 day', WEEK: '5-7 day' };
 
@@ -4080,11 +4087,53 @@ const DURATION_WINDOW_LABEL = { DAY: 'exit-today', '3-DAY': '2-4 day', WEEK: '5-
 // pressure/up-arrow). composite is null when hardFloor is true, since the
 // hard floor bypasses composite scoring entirely per spec.
 function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) {
+  // ── CANNOT EVALUATE — checked before anything else, including both hard
+  // floors below. Phase 9 §3.4 review (2026-09-15): position.priceFetchFailed
+  // is an explicit signal, set only by call sites that know their currentPrice
+  // is a fallback (renderPortfolioTab's buyPrice substitution on a failed
+  // fetch), not a real observation. Today that fallback happens to compute
+  // pnlPct as exactly 0, which happens not to cross either floor below — but
+  // that is an accident of the fallback's chosen value, not a guarantee this
+  // function itself makes, and the whole point of an unconditional, no-vote
+  // hard floor is that nothing downstream should have to reason about why a
+  // fabricated price didn't happen to trip it. Three-state, not two: fires /
+  // doesn't fire / cannot evaluate, and a missing price is the third state,
+  // stated as such, never silently scored as a real 0%.
+  if (position.priceFetchFailed) {
+    const factor = { name: 'Live price unavailable this render — cannot evaluate exit', points: null };
+    return {
+      label: 'CANNOT EVALUATE — price unavailable',
+      composite: null,
+      factors: [factor],
+      topFactors: [factor],
+      hardFloor: false,
+      cannotEvaluate: true,
+    };
+  }
+
   const price = position.currentPrice;
   const rsi = position.rsi;
+  const pnlPct = ((price - position.buyPrice) / position.buyPrice) * 100;
 
-  // ── HARD FLOOR — must be the very first thing evaluated, before any
-  // factor scoring, and bypasses the composite entirely.
+  // ── HARD FLOOR — must be the very first thing evaluated after the
+  // cannot-evaluate check above, before any factor scoring, and bypasses
+  // the composite entirely. Two independent triggers, either one
+  // unconditional; order matches Phase 9 §3.4.
+  const maxLossPct = state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT;
+  // 1e-9 epsilon: found live testing this change — a position at exactly
+  // -6.00% can compute to -5.9999999999999964 from ordinary float
+  // division (e.g. buyPrice 10.00, price 9.40), missing a bare <=
+  // comparison by binary rounding noise, not by any real cent of price.
+  if (pnlPct <= -maxLossPct + 1e-9) {
+    const factor = { name: `Down ${Math.abs(pnlPct).toFixed(1)}% — past the ${maxLossPct}% max-loss floor`, points: null };
+    return {
+      label: 'CUT NOW — Max-loss floor',
+      composite: null,
+      factors: [factor],
+      topFactors: [factor],
+      hardFloor: true,
+    };
+  }
   if (price <= position.stop) {
     const factor = { name: 'Stop-loss breach', points: null };
     return {
@@ -4099,14 +4148,11 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
   const factors = [];
   const add = (name, points) => factors.push({ name, points });
 
-  const pnlPct = ((price - position.buyPrice) / position.buyPrice) * 100;
   const days = Math.floor((Date.now() - new Date(position.buyDate).getTime()) / 86400000);
   const maxHold = MAX_HOLD_DAYS[position.duration];
   const inProtection = !!position.momentumProtectionActivated;
 
-  // ── Loss % vs trailing-stop — mutually exclusive per spec note: trailing
-  // stop factors replace the standard loss % factors while protection is
-  // active, never both.
+  // ── Trailing stop while momentum protection is active.
   if (inProtection) {
     const pullbackPct = ((position.peakPrice - price) / position.peakPrice) * 100;
     if (pullbackPct >= 20) {
@@ -4116,13 +4162,11 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
     } else {
       add('Momentum protection active — above trailing stop', 30);
     }
-  } else {
-    if (pnlPct <= -20) {
-      add(`Down ${Math.abs(pnlPct).toFixed(0)}% from purchase`, -60);
-    } else if (pnlPct <= -8) {
-      add(`Down ${Math.abs(pnlPct).toFixed(0)}% from purchase`, -30);
-    }
   }
+  // Non-protection loss-from-purchase ladder (-8%/-20%) deleted, Phase 9
+  // §3.4: the MAX_LOSS_PCT hard floor above already returns before this
+  // point for anything at or past -6%, so -8%/-20% could never fire again
+  // -- leaving them would be two loss mechanisms silently disagreeing.
 
   // ── Duration
   if (maxHold != null) {
@@ -4340,10 +4384,15 @@ function calcPeakRiskScore(position, currentSignal, snap) {
   return { score, factors, topFactors };
 }
 
-// label -> CSS class per the Step 3 color mapping. Hard-floor label is
-// 'SELL NOW — Stop-loss hit', hence the startsWith check.
+// label -> CSS class per the Step 3 color mapping. Hard-floor labels are
+// 'SELL NOW — Stop-loss hit' and (Phase 9 §3.4) 'CUT NOW — Max-loss
+// floor', hence the startsWith checks rather than an exact match.
+// 'CANNOT EVALUATE — price unavailable' deliberately does NOT map to the
+// sell-now class — it is not an urgency signal, it is the app admitting it
+// doesn't know, and must not visually read as an instruction to sell.
 function getUnifiedBannerClass(label) {
-  if (label.startsWith('SELL NOW')) return 'ur-sell-now';
+  if (label.startsWith('SELL NOW') || label.startsWith('CUT NOW')) return 'ur-sell-now';
+  if (label.startsWith('CANNOT EVALUATE')) return 'ur-hold-mixed';
   return {
     'SELL SOON':        'ur-sell-soon',
     'CONSIDER SELLING': 'ur-consider-selling',
@@ -4374,7 +4423,7 @@ function unifiedFactorLine(f, cssClass) {
 // is null and there's nothing to break down beyond the stop-loss hit itself).
 function buildUnifiedPortfolioBanner(result) {
   const cls = getUnifiedBannerClass(result.label);
-  if (result.hardFloor) {
+  if (result.hardFloor || result.cannotEvaluate) {
     return `<div class="port-banner ur-banner ${cls}"><strong>${result.label}</strong></div>`;
   }
   if (result.label === 'LOCK IN PROFITS') {
@@ -4496,7 +4545,7 @@ function buildRegisteredEngineExitBanner(exitResult) {
 // into hold vs sell groups, each sorted by descending magnitude.
 function buildUnifiedRecommendationModalBlock(result) {
   const cls = getUnifiedBannerClass(result.label);
-  if (result.hardFloor) {
+  if (result.hardFloor || result.cannotEvaluate) {
     return `<div class="ur-modal-block">
       <div class="ur-modal-title">UNIFIED RECOMMENDATION</div>
       <div class="ur-modal-headline ${cls}">${result.label}</div>
@@ -6376,6 +6425,17 @@ function renderSettingsTab() {
       <div class="settings-row">
         <button class="btn btn-primary btn-sm" onclick="saveFloatThreshold()">Save Float Threshold</button>
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Max Loss Floor</div>
+          <div class="settings-hint">Hard cut-loss %, evaluated before every other exit factor — the model doesn't get a vote past this line. Replayed against all 37 closed trades: -3% would have netted +$32.23, -4% +$17.63, -5% +$5.81, -6% (default) -$3.16, -8% -$18.89, -10% -$28.68, no cap (what actually happened) -$73.73. Backward-looking, assumes a fill at the cap — not a promise, a tradeoff to weigh.</div>
+        </div>
+        <input id="set-max-loss-pct" class="settings-number" type="number"
+          min="0" max="100" step="0.5" value="${s.maxLossPct ?? 6}">
+      </div>
+      <div class="settings-row">
+        <button class="btn btn-primary btn-sm" onclick="saveMaxLossPct()">Save Max Loss Floor</button>
+      </div>
     </div>
 
     <div class="settings-section mt12">
@@ -7008,6 +7068,12 @@ function saveFloatThreshold() {
   state.settings.floatThresholdShares = parseFloat(document.getElementById('set-float-threshold')?.value) || 10000000;
   persistLocalOnlySettings();
   alert('Float threshold saved.');
+}
+
+function saveMaxLossPct() {
+  state.settings.maxLossPct = parseFloat(document.getElementById('set-max-loss-pct')?.value) || DEFAULT_MAX_LOSS_PCT;
+  persistLocalOnlySettings();
+  alert('Max loss floor saved.');
 }
 
 async function savePref(key, val) {

@@ -185,6 +185,9 @@ async function main() {
 
   if (!patches.length) {
     console.log('audit-signal-log-splits: no corruption found. Nothing to write.');
+    if (WRITE) {
+      console.log('audit-signal-log-splits: CAVEAT -- this was a --write run, but zero corrupt rows means the PATCH path above (the actual correction, not the detection) was never exercised. "0 corrupt rows" proves detectSplitInWindow is working, not that the write-a-correction path works. Do not read a clean --write run as evidence the write path itself has been tested until at least one real PATCH has gone through it.');
+    }
     return;
   }
 
