@@ -77,7 +77,7 @@ async function main() {
   global.persist = () => {};
 
   const apiClientSrc = readFileSync(path.join(REPO_ROOT, 'core', 'api-client.js'), 'utf8');
-  eval(apiClientSrc + '\nglobal.alpacaGet = alpacaGet; global._coreClient = _coreClient; global.chunk = chunk; global.assertPageNotSuspiciouslyFull = assertPageNotSuspiciouslyFull;');
+  eval(apiClientSrc + '\nglobal.alpacaGet = alpacaGet; global._coreClient = _coreClient; global.chunk = chunk; global.assertPageNotSuspiciouslyFull = assertPageNotSuspiciouslyFull; global.sipSafeEndParams = sipSafeEndParams;');
 
   const clockSrc = readFileSync(path.join(REPO_ROOT, 'core', 'clock.js'), 'utf8');
   eval(clockSrc + '\nglobal.getPT = getPT; global.ptDateStr = ptDateStr;');

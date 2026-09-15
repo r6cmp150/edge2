@@ -27,7 +27,7 @@ async function main() {
   global.state = { settings: { alpacaKey: 'test', alpacaSecret: 'test' } };
   global.persist = () => {};
   const apiClientSrc = readFileSync(path.join(REPO_ROOT, 'core', 'api-client.js'), 'utf8');
-  eval(apiClientSrc + '\nglobal.chunk = chunk; global.assertPageNotSuspiciouslyFull = assertPageNotSuspiciouslyFull; global._coreClient = _coreClient;');
+  eval(apiClientSrc + '\nglobal.chunk = chunk; global.assertPageNotSuspiciouslyFull = assertPageNotSuspiciouslyFull; global._coreClient = _coreClient; global.sipSafeEndParams = sipSafeEndParams;');
   const clockSrc = readFileSync(path.join(REPO_ROOT, 'core', 'clock.js'), 'utf8');
   eval(clockSrc + '\nglobal.getPT = getPT; global.ptDateStr = ptDateStr; global.ptWallClockToInstant = ptWallClockToInstant; global.isTradingDay = isTradingDay;');
   const universeSrc = readFileSync(path.join(REPO_ROOT, 'core', 'universe.js'), 'utf8');

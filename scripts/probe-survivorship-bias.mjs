@@ -54,7 +54,7 @@ async function main() {
   // produced this probe's first two (discarded) runs: the inactive-symbol
   // bar fetch got rate-limited into returning zero data, silently.
   const apiClientSrc = readFileSync(path.join(REPO_ROOT, 'core', 'api-client.js'), 'utf8');
-  eval(apiClientSrc + '\nglobal.chunk = chunk; global.alpacaGet = alpacaGet; global._coreClient = _coreClient; global.assertPageNotSuspiciouslyFull = assertPageNotSuspiciouslyFull; global.createApiClient = createApiClient; global.sanitizeTickerBatch = sanitizeTickerBatch;');
+  eval(apiClientSrc + '\nglobal.chunk = chunk; global.alpacaGet = alpacaGet; global._coreClient = _coreClient; global.assertPageNotSuspiciouslyFull = assertPageNotSuspiciouslyFull; global.createApiClient = createApiClient; global.sanitizeTickerBatch = sanitizeTickerBatch; global.sipSafeEndParams = sipSafeEndParams;');
 
   const clockSrc = readFileSync(path.join(REPO_ROOT, 'core', 'clock.js'), 'utf8');
   eval(clockSrc + '\nglobal.getPT = getPT; global.ptWallClockToInstant = ptWallClockToInstant;');

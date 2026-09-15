@@ -935,7 +935,18 @@ async function _fetchHistoricalDailyBars(symbols, fetchStartDateStr, endDateStr,
           symbols: batch.join(','),
           timeframe: '1Day',
           start: `${fetchStartDateStr}T00:00:00Z`,
-          end: `${endDateStr}T23:59:59Z`,
+          // sipSafeEndParams (core/api-client.js), not a literal `end`:
+          // found live 2026-09-15 building scripts/build-exit-model-
+          // dataset.mjs, the first caller of this function to ever request
+          // through today rather than a date already safely in the past.
+          // Every existing caller's endDateStr happened to be old enough
+          // that this was silently never exercised -- the exact "gotten
+          // wrong until a caller finally hits it" shape that helper's own
+          // header warns about. Omits `end` entirely (letting Alpaca
+          // return up to whatever it actually allows) only when the
+          // desired end falls inside the SIP recency embargo; unchanged
+          // for every caller whose endDateStr is already older than that.
+          ...sipSafeEndParams(endDateStr),
           limit: 10000,
           feed: 'sip',
           // adjustment:'all' (2026-09-01, found live): Alpaca's daily-bar
