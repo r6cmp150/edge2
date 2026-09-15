@@ -711,6 +711,79 @@ This is the same rule this project keeps rediscovering: when two things
 differ, model them separately rather than collapsing them and picking a
 winner. `engine_source` vs `source` was the same call.
 
+### 3.1.5 Both models validated against real trades, before wiring. Neither shipped as-is.
+
+Results in 2026-09-15, replaying all 37 of Roman's real trades
+(`data/backups/trades.json`) day-by-day through both built tables. n=37
+is illustrative, not validation — none of his trades trained the tables
+— but it is the only test against the thing actually at stake, and both
+findings below are real enough to change what gets built.
+
+**Model A (cut-loss recommender): rejected.** Across the 12 losing
+trades, the model gave genuine early warning — a reading strictly before
+the −6% floor fired — in exactly **1 case** (PGEN, one trading day
+early). In the other 11: 4 were pure same-day trades (no evaluable day
+exists at all), 3 had the floor and the model's first reading land on the
+identical day, and 4 never crossed the floor at all during the hold. The
+cause is structural, not a tuning problem: **Roman's losers move on day 0
+or day 1, and day 0 is unrepresentable in a daily-bar dataset** (§3.1.3).
+The floor gets there first almost every time because there is nothing
+earlier for the model to read. Wiring Model A as a CUT recommender would
+add a confident-looking probability on top of a decision the floor has
+already made — that is worse than saying nothing, because it dresses up
+a coincidence as agreement. **Do not wire it.**
+
+**`p_higher_close_tomorrow`: dropped.** Distribution across all 432
+evaluated cells (both models, both branches): IQR roughly 42–46%, dead
+centered on a coin flip regardless of drawdown, RSI, volume, or hold day.
+A field with no separation borrows credibility from the fields next to
+it that do separate. Removed from consideration entirely, not carried as
+a de-emphasized data point.
+
+**Model B (hold-winners advisor): also does not clear the bar, on the
+test that matters.** The relevant question is not "would it have made
+him sell a winner early" (0/25 — but 9/25 winners were same-day, so this
+undersells the true silence). It is the inverse: on the trades he
+already sold small, was the model's read "peak not in" — correct hold
+advice he didn't have?
+
+Checked against `trades_v2`'s `price_at_plus1_day` / `plus2_days` /
+`plus5_days` / `best_exit_price` (populated 2026-09-15). Of 25 winners,
+only **10 had an evaluable read on the actual sell day** — 9 were
+same-day (day-0 blind, as above), and a further 6 dropped out because
+the sell day's *daily close* wasn't actually up even though Roman's real
+intraday fill was (his exit and the day's close disagree — another face
+of the same daily-bar granularity limit, not a new problem). Of the 10
+evaluable, **all 10 read "hold"** (`p_peak_already_in` ≤ 50 in every
+case — consistent with its universe-wide median of ~31%, this threshold
+essentially never says "sell"). Of the 9 with a determinate outcome
+(one, MSTU, is a split-corrupted `best_exit_price` and excluded): **3
+were right** (the stock kept running — +25.4 percentage points of
+already-real upside the model would have correctly flagged as still
+available, summed across those 3) and **6 were wrong** (the peak was
+already in; holding five more sessions would have given back a summed
+27.4 points of already-banked gain). Three correct against six wrong,
+on a signal that fires "hold" indiscriminately, is not evidence the
+model discriminates — it is close to what an always-hold default would
+produce on this sample, and the sample is far too small to call it
+better than that default. **Do not wire it either, on this evidence.**
+Re-evaluate once real `exit_calls` data accumulates (§3.6) rather than
+re-running this same 37-trade replay expecting a different answer.
+
+**The finding underneath both rejections is the same finding.** Roman's
+holds are short — 13 of 37 same-day, most of the rest one or two
+sessions — and the state that matters (drawdown or gain *right now*) is
+unrepresentable for day 0 in any dataset built from daily bars, no
+matter how much daily history is added. **This is not a data-volume
+problem. Two years of daily bars or twenty behave identically at day 0,
+because the missing dimension is intraday, not historical depth.**
+Answering Roman's 2(b) ("tell me when to cut") for the case that
+dominates his actual trading — the same-day and next-day loss — would
+require intraday bars, a different and more expensive data source, not
+more of what §3.1 already built. Recorded here so this is a decision
+made once, not rediscovered the next time someone reaches for more
+daily history as the fix.
+
 ### 3.2 Model A — "will it come back?" (Roman's 2b)
 
 **Question:** I am down X% on day D. Does it return to break-even within
