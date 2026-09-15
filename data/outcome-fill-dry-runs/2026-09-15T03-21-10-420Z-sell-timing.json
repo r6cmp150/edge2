@@ -1,0 +1,372 @@
+[
+  [
+    "b4d885cd-6da2-4e1b-8c38-7ddb16271f5d",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 12.45,
+      "best_exit_date": "2026-08-21",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 11.77
+    }
+  ],
+  [
+    "4b2a43fa-06c6-47a2-bfca-fe5f733639cf",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 10.79,
+      "best_exit_date": "2026-08-24",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 10.62
+    }
+  ],
+  [
+    "f16b8589-c32c-46dc-9feb-134de3c3dccf",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 3.92,
+      "best_exit_date": "2026-08-17",
+      "best_exit_timing": "BEFORE",
+      "price_at_plus5_days": 3.51
+    }
+  ],
+  [
+    "e1b76ab7-45b4-443f-8c41-3c33916decbc",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 3.24,
+      "best_exit_date": "2026-08-21",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 3.2
+    }
+  ],
+  [
+    "354ac17e-a389-46d7-a037-5aca7084d078",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 11.79,
+      "best_exit_date": "2026-08-21",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 11.29
+    }
+  ],
+  [
+    "98fb534b-86ad-422f-9916-60a97771ffef",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 5.29,
+      "best_exit_date": "2026-08-21",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 5.06
+    }
+  ],
+  [
+    "f6613641-212b-40be-9a30-a07bbee20de0",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 2.76,
+      "best_exit_date": "2026-08-24",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 2.61
+    }
+  ],
+  [
+    "c41afc1b-421c-456f-826f-57fd8ede8a9a",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": null,
+      "best_exit_date": null,
+      "best_exit_timing": "SPLIT_IN_WINDOW",
+      "price_at_plus5_days": null
+    }
+  ],
+  [
+    "ba45d624-4c18-4740-a2e0-07c0907572e1",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 10.51,
+      "best_exit_date": "2026-08-26",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 10.41
+    }
+  ],
+  [
+    "e544c741-f88e-44e1-b49b-6d013ccaf074",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 3.24,
+      "best_exit_date": "2026-08-21",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 3.15
+    }
+  ],
+  [
+    "7314e723-2d60-4299-a787-c090d1245d65",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 7.58,
+      "best_exit_date": "2026-08-19",
+      "best_exit_timing": "ON",
+      "price_at_plus5_days": 6.96
+    }
+  ],
+  [
+    "57203319-af7b-421b-8b60-06437e244e46",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 14.12,
+      "best_exit_date": "2026-08-21",
+      "best_exit_timing": "ON",
+      "price_at_plus5_days": 13.54
+    }
+  ],
+  [
+    "13400711-0316-402b-b1d9-88f1311ae36d",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 1.99,
+      "best_exit_date": "2026-08-25",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 1.83
+    }
+  ],
+  [
+    "6c8d55d0-738b-44e3-b714-4dcb98cc7327",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 5.29,
+      "best_exit_date": "2026-08-21",
+      "best_exit_timing": "ON",
+      "price_at_plus5_days": 5.06
+    }
+  ],
+  [
+    "f2a682da-1b08-41f9-b311-5faf52d373f1",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 3.28,
+      "best_exit_date": "2026-08-27",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 3.05
+    }
+  ],
+  [
+    "ca3e8343-bb29-4433-ac9d-5346cee0a012",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 5.385,
+      "best_exit_date": "2026-08-27",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 4.99
+    }
+  ],
+  [
+    "07afcb63-f124-42f7-b6b9-55fd847109ea",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 1.61,
+      "best_exit_date": "2026-08-26",
+      "best_exit_timing": "ON",
+      "price_at_plus5_days": 1.32
+    }
+  ],
+  [
+    "f0b5e228-8e5f-4dc1-9e25-83c690559e0a",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 1,
+      "best_exit_date": "2026-08-26",
+      "best_exit_timing": "ON",
+      "price_at_plus5_days": 0.6444
+    }
+  ],
+  [
+    "f71dc6ed-fac3-4d95-a981-a9ab825b09fa",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 6.455,
+      "best_exit_date": "2026-09-03",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 6.42
+    }
+  ],
+  [
+    "8987dcc7-da37-44a8-a521-2e3885de3a10",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 12.09,
+      "best_exit_date": "2026-09-03",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 11.91
+    }
+  ],
+  [
+    "36e61daf-2e40-4e05-b12c-8352931fc49d",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 13.86,
+      "best_exit_date": "2026-08-28",
+      "best_exit_timing": "ON",
+      "price_at_plus5_days": 12.18
+    }
+  ],
+  [
+    "695f9212-b9d8-47e5-b1dd-5ca67fe33cdd",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 6.85,
+      "best_exit_date": "2026-08-28",
+      "best_exit_timing": "BEFORE",
+      "price_at_plus5_days": 6.47
+    }
+  ],
+  [
+    "e73093e4-d606-4e42-8ac6-777f529f6e15",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 5.62,
+      "best_exit_date": "2026-09-08",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 5.44
+    }
+  ],
+  [
+    "24d65fb8-c468-4aa9-90b5-3cc5ec825a92",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 9.87,
+      "best_exit_date": "2026-08-31",
+      "best_exit_timing": "ON",
+      "price_at_plus5_days": 9.23
+    }
+  ],
+  [
+    "d5180472-bb44-4e76-8b0d-472b294a5859",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 10.8,
+      "best_exit_date": "2026-09-08",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 10.6
+    }
+  ],
+  [
+    "55a13c24-e899-4b63-bfa5-8452b34ab091",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 1.76,
+      "best_exit_date": "2026-09-08",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 1.66
+    }
+  ],
+  [
+    "993c07f7-e8b7-49ee-83ec-cb952828676a",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 2.81,
+      "best_exit_date": "2026-08-31",
+      "best_exit_timing": "BEFORE",
+      "price_at_plus5_days": 2.36
+    }
+  ],
+  [
+    "7251dc65-166f-4609-9801-6e8feb6ee0c3",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": null,
+      "best_exit_date": null,
+      "best_exit_timing": "SPLIT_IN_WINDOW",
+      "price_at_plus5_days": null
+    }
+  ],
+  [
+    "931ad95e-f838-4b6c-b9de-5d1da0b05161",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 7.715,
+      "best_exit_date": "2026-08-26",
+      "best_exit_timing": "BEFORE",
+      "price_at_plus5_days": 6.68
+    }
+  ],
+  [
+    "4d681f56-c155-49c1-84ef-05562a71160f",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 2.43,
+      "best_exit_date": "2026-08-25",
+      "best_exit_timing": "BEFORE",
+      "price_at_plus5_days": 1.86
+    }
+  ],
+  [
+    "7daa6064-fe26-49d5-bb9e-ee5440c155d2",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 12.36,
+      "best_exit_date": "2026-09-08",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 11.78
+    }
+  ],
+  [
+    "95bcb26f-1020-4949-a5ce-4722f90e6d7e",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 13.625,
+      "best_exit_date": "2026-08-31",
+      "best_exit_timing": "BEFORE",
+      "price_at_plus5_days": 13.05
+    }
+  ],
+  [
+    "bdb88bb8-8c67-4c14-9654-522401b24e07",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 6.25,
+      "best_exit_date": "2026-09-03",
+      "best_exit_timing": "ON",
+      "price_at_plus5_days": 4.6
+    }
+  ],
+  [
+    "814d7bcb-a6dc-41ff-825d-86005321bf42",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": null,
+      "best_exit_date": null,
+      "best_exit_timing": "SPLIT_IN_WINDOW",
+      "price_at_plus5_days": null
+    }
+  ],
+  [
+    "9035eefe-ea67-46bd-840a-d6c76d4e7189",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 14.185,
+      "best_exit_date": "2026-09-14",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 14.16
+    }
+  ],
+  [
+    "2a007575-f8c7-4bf9-b2fb-d3a8b15c5e05",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 3.55,
+      "best_exit_date": "2026-09-08",
+      "best_exit_timing": "AFTER",
+      "price_at_plus5_days": 3.02
+    }
+  ],
+  [
+    "2463993e-cc8a-4606-b67d-c74d8f1fadaa",
+    {
+      "sell_timing_resolved": true,
+      "best_exit_price": 7.03,
+      "best_exit_date": "2026-09-03",
+      "best_exit_timing": "BEFORE",
+      "price_at_plus5_days": 5.79
+    }
+  ]
+]
