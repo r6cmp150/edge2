@@ -8,6 +8,34 @@ name: Fill outcomes
 # run every one-off verification step in §1/§2.5 rather than handing the
 # token to a local shell) plus a daily schedule.
 #
+# OUTCOME_FILLER_JWT IS NOT CURRENTLY SET (confirmed via `gh secret list`,
+# 2026-09-15 -- this repo's Actions secrets are only ALPACA_KEY_ID and
+# ALPACA_SECRET_KEY). Every --write run of this workflow fails until it is
+# added. See db/017's header for the mint history: the token intended for
+# this role was minted 2026-09-10 and expires 2027-09-11 -- mint it (or,
+# if that 365-day token still exists somewhere safe, reuse it) and add it
+# as the OUTCOME_FILLER_JWT secret before relying on this workflow.
+# RENEW BY 2027-09-11 once set -- re-run
+#   SUPABASE_JWT_SECRET=... node scripts/sign-supabase-role-jwt.mjs outcome_filler 365
+# and update the secret. An expired or missing token fails this job loud
+# (401/403 -> assertNotAuthFailure in fill-outcomes.mjs -> exit 1 ->
+# GitHub Actions failure notification), not silent.
+#
+# A SEPARATE, OLDER TOKEN IS ALSO STILL VALID: outcome_filler's first
+# mint, also on 2026-09-10, omitted sign-supabase-role-jwt.mjs's `days`
+# argument and got that script's old default of 3650 days by accident
+# (see sign-supabase-role-jwt.mjs's own header -- the script no longer
+# has any default, for this exact reason). That accidental token was
+# superseded by the 365-day one above and is not the one in this
+# workflow's secret, but a JWT cannot be revoked short of rotating the
+# underlying Supabase project JWT secret -- so if a copy of that first
+# mint survives anywhere (a shell history, an old log, a chat), it
+# remains a valid outcome_filler bearer credential with UPDATE rights
+# until roughly 2036-09-07, regardless of what gets rotated here. Nobody
+# rotated the underlying secret over this, per the JWT-exposure decision
+# already on record for this project -- so treat that fact as live, not
+# historical.
+#
 # NOT TIME-SENSITIVE THE WAY log-signals-edge/warrior ARE: this job's own
 # per-row/per-column gating (tradingDayHasClosed, the array-position
 # "not enough real sessions yet" checks in fill-outcomes.mjs and
@@ -82,5 +110,6 @@ jobs:
             echo "No dry-run artifact to commit."
           else
             git commit -m "Fill-outcomes dry run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git pull --rebase
             git push
           fi

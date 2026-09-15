@@ -473,6 +473,27 @@ stays where it belongs, the verification runs in the exact environment
 production will use, and the missing production path gets built as a side
 effect of testing.
 
+**Partly done:** `.github/workflows/fill-outcomes.yml` now exists (see its
+own header) — but `OUTCOME_FILLER_JWT` is **not currently set** as a repo
+secret (confirmed via `gh secret list`, 2026-09-15: only `ALPACA_KEY_ID`
+and `ALPACA_SECRET_KEY` are present). Every `--write` run fails until it
+is added. The token intended for this role, per db/017's mint history,
+was minted 2026-09-10 and expires 2027-09-11 (365-day choice explained
+there); mint it (or reuse that one if it survives somewhere safe) and add
+it as the `OUTCOME_FILLER_JWT` secret. Renew by 2027-09-11 once set:
+re-run
+`SUPABASE_JWT_SECRET=... node scripts/sign-supabase-role-jwt.mjs outcome_filler 365`
+and update the secret.
+
+A separate, older token from that same 2026-09-10 mint session got the
+pre-fix `sign-supabase-role-jwt.mjs` default of 3650 days by accident,
+before being superseded by the 365-day one above. It cannot be revoked
+short of rotating the underlying Supabase project JWT secret, which is
+not planned (see the standing JWT-exposure decision for this project) —
+so if a copy of that first mint survives anywhere, it remains a valid
+`outcome_filler` bearer credential with UPDATE rights until roughly
+2036-09-07. Live risk, not history.
+
 ## 3. Exit engine v3
 
 Roman said this can be rewritten from scratch. It should be. The current

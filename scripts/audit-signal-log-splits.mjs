@@ -76,6 +76,16 @@ function loadReal(relPath, exposeNames) {
   eval(src + '\n' + exposeLine);
 }
 
+// Same reasoning as fill-outcomes.mjs's identical helper: a 401/403 means
+// the credential is broken for every remaining row, not a per-row
+// problem -- fail loud rather than log N identical errors and exit 0.
+async function assertNotAuthFailure(res, context) {
+  if (res.status === 401 || res.status === 403) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`${context}: HTTP ${res.status} (auth/permission failure, not a per-row data problem) -- most likely OUTCOME_FILLER_JWT has expired or lacks the needed grant. Check the expiry date recorded in .github/workflows/fill-outcomes.yml and docs/phase-9-entry-exit-spec.md §2.5. Body: ${body.slice(0, 300)}`);
+  }
+}
+
 function addCalendarDays(dateStr, n) {
   const d = new Date(dateStr + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + n);
@@ -192,6 +202,7 @@ async function main() {
     const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}`, {
       method: 'PATCH', headers: roleHeaders, body: JSON.stringify(p),
     });
+    await assertNotAuthFailure(patchRes, `signal_log PATCH for ${id}`);
     if (patchRes.status >= 300) {
       console.error(`audit-signal-log-splits: PATCH failed for ${id}: ${patchRes.status} ${await patchRes.text()}`);
       continue;

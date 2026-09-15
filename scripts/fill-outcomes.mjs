@@ -83,6 +83,25 @@ if (WRITE) {
   }
 }
 
+// A 401/403 on ANY --write PATCH means the credential itself is broken
+// (expired or wrong OUTCOME_FILLER_JWT, or a grant not yet applied) --
+// true for every remaining row in this run, not a per-row data problem.
+// Looping through the rest and logging N identical failures would both
+// waste calls and, worse, let main() reach its normal exit-0 end: a
+// scheduled run where every PATCH 401'd still reports "0/N succeeded" as
+// ordinary console output, not a failure -- the exact succeeded-and-did-
+// nothing shape 2026-09-14's dropped crons already demonstrated once
+// (phase-9-entry-exit-spec.md §2.4), just from a different cause. Thrown
+// here instead: propagates to main().catch(), exits 1, and GitHub Actions
+// reports the run as FAILED, not quietly empty -- the whole point of
+// building a production run path is that its failures are visible.
+async function assertNotAuthFailure(res, context) {
+  if (res.status === 401 || res.status === 403) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`${context}: HTTP ${res.status} (auth/permission failure, not a per-row data problem) -- most likely OUTCOME_FILLER_JWT has expired or lacks the needed grant. Check the expiry date recorded in this workflow's header and docs/phase-9-entry-exit-spec.md §2.5. Body: ${body.slice(0, 300)}`);
+  }
+}
+
 function stripExportSyntax(src) {
   return src
     .replace(/^export\s*\{[\s\S]*?\};?\s*$/m, '')
@@ -660,6 +679,7 @@ async function main() {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}`, {
       method: 'PATCH', headers: roleHeaders, body: JSON.stringify(p),
     });
+    await assertNotAuthFailure(res, `signal_log PATCH for ${id}`);
     if (res.status >= 300) {
       console.error(`fill-outcomes: PATCH failed for ${id}: ${res.status} ${await res.text()}`);
       continue;
@@ -681,6 +701,7 @@ async function main() {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/trades_v2?id=eq.${id}`, {
       method: 'PATCH', headers: roleHeaders, body: JSON.stringify(p),
     });
+    await assertNotAuthFailure(res, `trades_v2 PATCH for ${id}`);
     if (res.status >= 300) {
       console.error(`fill-outcomes: trades_v2 PATCH failed for ${id}: ${res.status} ${await res.text()}`);
       continue;
