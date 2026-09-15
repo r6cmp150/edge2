@@ -958,6 +958,43 @@ a { color: var(--blue); }
   color: #ffd166;
 }
 
+/* Intraday panel (Phase 9 §3.9.2/§7) — deliberately plain/neutral, not a
+   banner. This is "information, not prediction": it must never compete
+   visually with the CUT NOW / HOLD banner above it (no color-coded
+   pos/neg here, no border), since the facts read the same regardless of
+   which way the position is currently going. */
+.intraday-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--card);
+}
+.intraday-line {
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.intraday-panel-failed,
+.intraday-panel-nodata {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.pf-intraday {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.pf-intraday-failed,
+.pf-intraday-nodata {
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* ── Portfolio Card ── */
 .portfolio-card {
   background: var(--card);

@@ -224,7 +224,7 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.17.0'; // 2026-09-10. CORRECTED (this was the fourth comment-vs-code divergence found this project, and it was sitting on the version string itself): the 2026-09-04 dilution correction did NOT end up replacing the need for a 180-day staleness bound the way this comment used to claim -- found live 2026-09-05 that a CLOSED-session scan supplies no todayVolume, so the volume-consistency backstop this correction relies on never runs outside OPEN sessions, leaving zero staleness defense the rest of the time. The 180-day bound was re-added the same day (STALENESS_FALLBACK_BOUND_DAYS, engines/warrior/gate.js), scoped as a fallback that fires ONLY when todayVolume is unavailable -- not the blanket bound this comment previously described as dropped. Since v2.16.0 (2026-09-04): that staleness-fallback fix; classifyGate's bare-null tier fixed in both the live gate and the backtest classifier; the QUALIFIED/NEAR_MISS minimum-evidence floor (MINIMUM_SUBSTANTIVE_PILLARS_CHECKED=2, settled on real OPEN-session data 2026-09-10); the EDGE scoring extraction into core/edge-scoring.js; Phase 7's engine-agnostic position envelope, exit dispatch, and the Warrior buy action (engines/warrior/index.js); and the RVOL-fetch family's error-vs-programmer-bug distinction (core/universe.js). A version stamp that doesn't move with changes this size can't do the one job it exists for -- telling the forward test which build produced which morning's candidates.
+const VERSION = 'v2.18.0'; // 2026-09-15. Phase 9 §3.4's -6% max-loss hard floor (structurally unreachable by any future model, see calcUnifiedRecommendation's own comment on why); Models A/B (§3.2/§3.3) built, replayed against Roman's real 37 trades, and rejected — neither ships (§3.9); the render-time intraday position panel that replaces them (§3.9.2/§7): real bar-derived facts ("up 2.1% now, high of 3.4% at 10:42"), not a probability, shown on both the stock modal and the Portfolio card, with an explicit three-state failure mode (FAILED/NO_DATA never rendered as a plausible-looking number) and the SIP recency gap disclosed rather than filled with a weaker IEX figure in the same slot.
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 // Own tagged client (2026-08-30, engine-tagging fix) — app.js's one direct
 // alpacaGet call site (fetchSellTimingBars) uses this instead of the bare
@@ -3129,6 +3129,29 @@ async function openStockModal(ticker) {
         ))
       : '';
 
+    // Intraday panel (Phase 9 §3.9.2/§7) — its own fetch, not reused from
+    // the chart's fetchMinuteBars above: that one is feed:'iex'/4-day/
+    // fixed-lookback (this file's existing chart debt, untouched here);
+    // this panel needs feed:'sip' from the position's actual buy date,
+    // which can be well past 4 days ago (§7's multi-day "since you
+    // bought" line). modalPriceUnavailable already covers "no live price
+    // at all" via the unified block above — this can still legitimately
+    // fail (or return zero bars) even when the live price succeeded.
+    let intradayPanelHtml = '';
+    if (ownedPos && !modalPriceUnavailable) {
+      const { bars: intradayBars, failed: intradayFailed } = await fetchIntradaySipBars(ticker, ownedPos.buyDate);
+      const intradayPanel = computeIntradayPanel({
+        buyPrice: ownedPos.buyPrice,
+        buyDateStr: ownedPos.buyDate,
+        bars: intradayBars,
+        failed: intradayFailed,
+        nowPrice: _modalStock.livePrice,
+        maxLossPct: state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT,
+        todayOnly: false,
+      });
+      intradayPanelHtml = renderIntradayPanelModal(intradayPanel);
+    }
+
     document.getElementById('stock-modal-body').innerHTML = `
       ${daySuppressedBanner}
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
@@ -3186,6 +3209,7 @@ async function openStockModal(ticker) {
 
       <div class="section-label">Signal Breakdown</div>
       ${unifiedModalBlock}
+      ${intradayPanelHtml}
       <div class="signal-row">
         <span class="signal-key">RSI (14-day)</span>
         <span class="signal-val">${stock.rsi.toFixed(1)} — ${rsiLabel}</span>
@@ -3700,6 +3724,26 @@ async function renderPortfolioTab() {
     priceFetchFailed = true;
     console.error('Portfolio live price fetch failed, falling back to buy price:', e.message);
   }
+
+  // Intraday one-liner data (Phase 9 §7) — deliberately its OWN try/catch,
+  // not folded into the Promise.all above: a SIP outage here is a real,
+  // separate failure mode from the snapshot/daily-bar fetch, and must not
+  // blank out prices/P&L for the whole tab just because this one extra
+  // line couldn't load. failedSymbols (not a caught exception) drives the
+  // per-card FAILED state below — see fetchTodaySipBarsMulti's header.
+  let intradayBarsBySymbol = {};
+  let intradayFailedSymbols = [];
+  try {
+    if (state.settings.alpacaKey) {
+      const r = await fetchTodaySipBarsMulti(tickers);
+      intradayBarsBySymbol = r.barsBySymbol;
+      intradayFailedSymbols = r.failedSymbols;
+    }
+  } catch(e) {
+    intradayFailedSymbols = tickers.slice();
+    console.error('Portfolio intraday-panel fetch failed:', e.message);
+  }
+
   // Shared with updateNavBadges (Phase 9 §3.4 review, 2026-09-15): that
   // function reuses state.portfolioPrices independently of this render and
   // had no way to know those cached prices came from this same failure --
@@ -3752,6 +3796,25 @@ async function renderPortfolioTab() {
     const currentPrice = getLivePrice(snap) || p.buyPrice;
     const rsi = closes.length >= 15 ? calcRSI(closes) : p.rsiAtBuy;
     const trimmedAtr = bars.length >= 15 ? calcTrimmedATR(bars) : 0;
+
+    // Intraday one-liner (Phase 9 §7) — priceFetchFailed (global) means
+    // currentPrice above is the buyPrice fallback, not a real observation;
+    // treating that as this panel's own FAILED state too keeps it from
+    // showing "Up 0.0% today" off a fabricated flat price, the same
+    // fabricated-zero the file-level priceFetchFailed flag already exists
+    // to prevent everywhere else on this card.
+    const intradayPanel = priceFetchFailed
+      ? { state: 'FAILED' }
+      : computeIntradayPanel({
+          buyPrice: p.buyPrice,
+          buyDateStr: p.buyDate,
+          bars: intradayBarsBySymbol[p.ticker] || [],
+          failed: intradayFailedSymbols.includes(p.ticker),
+          nowPrice: currentPrice,
+          maxLossPct: state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT,
+          todayOnly: true,
+        });
+    const intradayLineHtml = renderIntradayLineCard(intradayPanel);
 
     // Snapshot the prior render's RSI before overwriting — calcPeakRiskScore
     // needs this to detect "declining from peak" (RSI was >70, now lower).
@@ -3989,6 +4052,7 @@ async function renderPortfolioTab() {
           <div class="pf-price-val pf-red">$${p.stop.toFixed(2)}</div>
         </div>
       </div>
+      ${intradayLineHtml}
       <div class="pf-grid">
         <div class="pf-grid-cell">
           <div class="pf-grid-label">Purchased On</div>
@@ -4630,6 +4694,204 @@ function buildUnifiedRecommendationModalBlock(result) {
       ${sellFactors.map(f => unifiedFactorLine(f, 'ur-modal-factor')).join('')}
     ` : ''}
   </div>`;
+}
+
+// ── 16.5 INTRADAY PANEL (Phase 9 §3.9.2/§7, 2026-09-15) ────────────
+// "Information, not prediction" (§3.9.2): after both exit-probability
+// models were built and rejected on real data (§3.9), this replaces them —
+// not a call, a set of measured facts about what the position has actually
+// done, so Roman can decide himself. Every design choice below traces to a
+// specific review point in phase-9-entry-exit-spec.md §2.0-§2.0.2/§7:
+//
+// - Every figure is a bar-derived measurement with a timestamp, never a
+//   trend word standing in for one. "Volume fading since 11:15" was
+//   rejected in review for exactly this reason — replaced with a real
+//   ratio (last-30-min volume vs the prior 30 min).
+// - The most recent ~15 minutes (SIP's recency embargo) are never filled
+//   with a weaker IEX-derived number sitting in the same visual slot as
+//   the SIP-derived ones — measured specifically (not assumed) that IEX
+//   undershoots SIP's last-15-min high by up to 0.57% (n=7, real thin
+//   $1-$20 names) and consistently in the understating direction, small
+//   but real and n=7 doesn't bound the tail. The gap is disclosed as a
+//   gap (`showRecencyGap`), not papered over.
+// - Three states, not a fourth that looks like one of the first two:
+//   FAILED (the fetch itself broke) is never rendered the same as
+//   NO_DATA (fetch succeeded, genuinely zero bars) — collapsing these
+//   would be exactly the quiet substitution §3.7/§2.0.2 forbid.
+// - A position at or past the max-loss floor gets no separate "down X%"
+//   headline here — the banner above it already states that; repeating it
+//   would be redundant with, not additive to, what's on screen.
+
+// bars: ascending SIP 1-min bars from fetchIntradaySipBars, spanning
+// [buyDateStr, ~now minus whatever SIP's embargo left out]. todayOnly:
+// true for the Portfolio card's lighter one-liner (no since-entry/volume
+// lines — see fetchTodaySipBarsMulti's header for why that fetch can't
+// give each ticker its own start date).
+function computeIntradayPanel({ buyPrice, buyDateStr, bars, failed, nowPrice, maxLossPct, todayOnly }) {
+  if (failed) return { state: 'FAILED' };
+  if (!bars || !bars.length) return { state: 'NO_DATA' };
+
+  const pctFromBuy = (p) => ((p - buyPrice) / buyPrice) * 100;
+  const nowPct = pctFromBuy(nowPrice);
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todaysBars = bars.filter(b => b.t.slice(0, 10) === todayStr);
+  const sameDay = buyDateStr.slice(0, 10) === todayStr;
+
+  function highOf(list) {
+    if (!list.length) return null;
+    let best = list[0];
+    for (const b of list) if (b.h > best.h) best = b;
+    return { pct: pctFromBuy(best.h), time: new Date(best.t) };
+  }
+  function lowOf(list) {
+    if (!list.length) return null;
+    let best = list[0];
+    for (const b of list) if (b.l < best.l) best = b;
+    return { pct: pctFromBuy(best.l), time: new Date(best.t) };
+  }
+
+  const todayHigh = highOf(todaysBars);
+  const todayLow = lowOf(todaysBars);
+
+  // "Since you bought" only adds information on a multi-day hold — on a
+  // same-day hold it's identical to today's own high, so the approved
+  // design omits the redundant second line entirely rather than repeat it.
+  let sinceEntryHigh = null, sinceEntryHighDayOfHold = null, currentDayOfHold = null;
+  if (!todayOnly && !sameDay) {
+    sinceEntryHigh = highOf(bars);
+    const buyMidnight = new Date(buyDateStr.slice(0, 10) + 'T00:00:00Z');
+    const todayMidnight = new Date(todayStr + 'T00:00:00Z');
+    currentDayOfHold = Math.floor((todayMidnight - buyMidnight) / 86400000) + 1;
+    if (sinceEntryHigh) {
+      const highMidnight = new Date(sinceEntryHigh.time.toISOString().slice(0, 10) + 'T00:00:00Z');
+      sinceEntryHighDayOfHold = Math.floor((highMidnight - buyMidnight) / 86400000) + 1;
+    }
+  }
+
+  // Volume ratio: last 30 min of TODAY's bars vs the 30 min before that.
+  // Omitted (not zero-filled) without a full 60 minutes of today's bars to
+  // compare — an omitted line, unlike a fabricated 0x or 1x, states nothing
+  // false.
+  let volRatio = null;
+  if (!todayOnly && todaysBars.length) {
+    const lastBarMs = new Date(todaysBars[todaysBars.length - 1].t).getTime();
+    const last30 = todaysBars.filter(b => lastBarMs - new Date(b.t).getTime() < 30 * 60000);
+    const prior30 = todaysBars.filter(b => {
+      const age = lastBarMs - new Date(b.t).getTime();
+      return age >= 30 * 60000 && age < 60 * 60000;
+    });
+    if (last30.length && prior30.length) {
+      const priorVol = prior30.reduce((s, b) => s + b.v, 0);
+      if (priorVol > 0) volRatio = last30.reduce((s, b) => s + b.v, 0) / priorVol;
+    }
+  }
+
+  const lastBar = bars[bars.length - 1];
+  const lastBarTime = new Date(lastBar.t);
+  const gapMin = (Date.now() - lastBarTime.getTime()) / 60000;
+  // Disclose the recency gap only in the range the SIP embargo actually
+  // produces (~15 min) — a much larger gap (market closed, symbol halted)
+  // is a different fact this panel doesn't attempt to describe here.
+  const showRecencyGap = !todayOnly && gapMin >= 1 && gapMin <= 30;
+
+  const maxLossReached = nowPct <= -maxLossPct + 1e-9;
+
+  return {
+    state: 'OK', sameDay, todayOnly, nowPct, todayHigh, todayLow,
+    sinceEntryHigh, sinceEntryHighDayOfHold, currentDayOfHold, volRatio,
+    lastBarTime, showRecencyGap, maxLossReached,
+  };
+}
+
+function intradayFmtPct(pct) { return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`; }
+function intradayFmtTime(d) {
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
+}
+
+// Full panel for the stock detail modal — every state from §7's approved
+// design. Rendered only for an owned position, directly below the unified
+// recommendation block, never replacing or restyling it.
+function renderIntradayPanelModal(panel) {
+  if (panel.state === 'FAILED') {
+    return `<div class="intraday-panel intraday-panel-failed">Couldn't load today's price history (connection issue). Current price above is live — the high/low path isn't available right now.</div>`;
+  }
+  if (panel.state === 'NO_DATA') {
+    return `<div class="intraday-panel intraday-panel-nodata">No minute-by-minute price history yet for today.</div>`;
+  }
+
+  const lines = [];
+  const up = panel.nowPct >= 0;
+
+  if (!panel.maxLossReached) {
+    lines.push(`${up ? 'Up' : 'Down'} ${Math.abs(panel.nowPct).toFixed(1)}% ${panel.sameDay ? 'now' : 'today'}`);
+  }
+
+  if (panel.sameDay) {
+    if (up && panel.todayHigh) {
+      lines.push(`High of ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}`);
+    } else if (!up && panel.todayLow) {
+      lines.push(`Low of ${intradayFmtPct(panel.todayLow.pct)} at ${intradayFmtTime(panel.todayLow.time)}`);
+      if (panel.maxLossReached) {
+        // Recovery expressed as a measured delta off the recorded low, not
+        // a trend word ("recovering since...") — only shown when `now` is
+        // strictly above that low; if it isn't, there's nothing true to
+        // add beyond what the low line above already says.
+        const delta = panel.nowPct - panel.todayLow.pct;
+        if (delta > 0.05) lines.push(`Up ${delta.toFixed(1)}pp from that low`);
+      } else if (panel.todayHigh) {
+        const offHigh = (panel.todayHigh.pct - panel.nowPct).toFixed(1);
+        lines.push(`${offHigh}pp off today's high of ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}`);
+      }
+    }
+  } else {
+    if (panel.sinceEntryHigh) {
+      lines.push(`Since you bought (day ${panel.currentDayOfHold}): high of ${intradayFmtPct(panel.sinceEntryHigh.pct)} on day ${panel.sinceEntryHighDayOfHold}, now ${intradayFmtPct(panel.nowPct)}`);
+    }
+    if (up && panel.todayHigh) {
+      lines.push(`Today's high: ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}`);
+    } else if (!up && panel.todayLow) {
+      if (panel.maxLossReached) {
+        const delta = panel.nowPct - panel.todayLow.pct;
+        lines.push(`Today's low: ${intradayFmtPct(panel.todayLow.pct)} at ${intradayFmtTime(panel.todayLow.time)}${delta > 0.05 ? ` (up ${delta.toFixed(1)}pp from there)` : ''}`);
+      } else if (panel.todayHigh) {
+        const offHigh = (panel.todayHigh.pct - panel.nowPct).toFixed(1);
+        lines.push(`Today's low: ${intradayFmtPct(panel.todayLow.pct)} at ${intradayFmtTime(panel.todayLow.time)} — ${offHigh}pp off today's high of ${intradayFmtPct(panel.todayHigh.pct)}`);
+      } else {
+        lines.push(`Today's low: ${intradayFmtPct(panel.todayLow.pct)} at ${intradayFmtTime(panel.todayLow.time)}`);
+      }
+    }
+  }
+
+  if (panel.volRatio != null) {
+    lines.push(`Volume last 30 min: ${panel.volRatio.toFixed(1)}x the prior 30 min`);
+  }
+  if (panel.showRecencyGap) {
+    lines.push(`Path shown through ${intradayFmtTime(panel.lastBarTime)} — the last few minutes aren't available yet`);
+  }
+
+  if (!lines.length) return '';
+  return `<div class="intraday-panel">${lines.map(l => `<div class="intraday-line">${l}</div>`).join('')}</div>`;
+}
+
+// One-line card summary — today only (see fetchTodaySipBarsMulti header
+// for why), never silently omitted even in the failure/no-data states
+// (§7 review: "a card that silently omits the line when data is missing is
+// the same quiet absence we keep designing against").
+function renderIntradayLineCard(panel) {
+  if (panel.state === 'FAILED') {
+    return `<div class="pf-intraday pf-intraday-failed">Today's price history unavailable — current price above is still live</div>`;
+  }
+  if (panel.state === 'NO_DATA') {
+    return `<div class="pf-intraday pf-intraday-nodata">No price history yet today</div>`;
+  }
+  const up = panel.nowPct >= 0;
+  if (up) {
+    const highPart = panel.todayHigh ? `, high of ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}` : '';
+    return `<div class="pf-intraday">Up ${panel.nowPct.toFixed(1)}% today${highPart}</div>`;
+  }
+  const offHighPart = panel.todayHigh ? ` (${(panel.todayHigh.pct - panel.nowPct).toFixed(1)}pp off today's high)` : '';
+  return `<div class="pf-intraday">Down ${Math.abs(panel.nowPct).toFixed(1)}% today${offHighPart}</div>`;
 }
 
 // ── 17. MARK AS SOLD ──────────────────────────────────────────────

@@ -1056,24 +1056,144 @@ deferred in §2.6. **It is now the deliverable itself**, and it requires
 intraday capture — which makes §2.4's scheduler question the real gate
 again, this time for a reason that earns it.
 
-Revised remaining plan:
+**Superseded by §2.0, same day.** This section (written earlier the same
+session) still assumed the display needs a captured `position_bars`
+table and therefore the scheduler. §2.0's later, verified-not-assumed
+finding — Alpaca's minute bars are retrievable for an arbitrary past
+window on demand — removed that dependency entirely: the display below
+(§3.9.4) is a render-time derivation, nothing was captured ahead of time,
+and the scheduler question never blocked it. Kept for history, not
+deleted, same as §2.1-2.3.
 
-1. **Settle the scheduler** (§2.7 instrumentation, then choose). Blocking.
-2. **`position_bars` at intraday resolution** — the live picture of a
-   held position, filled whether or not the app is open.
-3. **A peak/give-back display**, not a recommendation: today's high, the
-   distance from it, where volume went. The one number from the model
-   work worth keeping is `median_giveback_to_day7`, shown as history
-   rather than forecast.
+Revised remaining plan (superseded parts struck through in spirit, not
+retyped — see §3.9.4 for what actually shipped):
+
+1. ~~Settle the scheduler.~~ Not a dependency of this feature.
+2. ~~`position_bars` at intraday resolution.~~ Dropped per §2.0.
+3. **A peak/give-back display**, not a recommendation — this part held
+   up and is what §3.9.4 built.
 4. **Let the counterfactual columns accumulate.** `price_at_plus1_day` /
    `plus2_days` / `plus5_days` are now being filled for every trade.
    Within a few months they answer "does Roman sell too early" from his
    own live trades, at a resolution no universe backtest could reach.
 
-**Intraday modelling is not ruled out** — Alpaca's free IEX minute bars
+**Intraday modelling is not ruled out** — Alpaca's free minute bars
 could represent day 0 — but it is a much larger build, and it should not
 start until the position display has shown whether sight alone closes
-the gap. That is the cheaper experiment and it runs first.
+the gap. That is the cheaper experiment and it runs first, and it is
+the one built below.
+
+### 3.9.4 The display — built (2026-09-15)
+
+The copy design was shown before any UI code, reviewed, corrected, then
+built — in that order, per standing practice on this project. Four
+corrections came out of review, each worth recording since the reasoning
+generalizes past this one panel:
+
+1. **No interpretive word stands in for a number.** The first draft said
+   "volume fading since 11:15" — flagged in review as the one line in the
+   whole design that wasn't a measurement, closest to being advice.
+   Replaced with a real ratio: last-30-min volume vs. the prior 30 min
+   (e.g. "Volume last 30 min: 0.6x the prior 30 min"), omitted entirely
+   (not zero-filled) without a full 60 minutes of today's bars to compare.
+2. **The last-15-minute IEX figure was re-measured on the actual claim at
+   stake, not the adjacent one.** §2.0.1's whole-session IEX-vs-SIP
+   divergence (mean 0.32%, max 1.60% on DAMD) was the wrong measurement
+   for this specific question — it doesn't isolate the one window
+   (SIP's last ~15 min) where the render path would actually use IEX.
+   Re-measured directly (`scripts/probe-iex-vs-sip-last15min.mjs`,
+   backtesting the final 15 minutes of 7 real closed sessions once SIP
+   for that window is no longer embargoed): max 0.57%, mean 0.19%, IEX
+   understating in 6/7 cases. Tighter than the whole-session number, but
+   n=7 doesn't bound the tail, and the reviewed principle stood regardless
+   of magnitude: one source with one accuracy shouldn't sit in the same
+   visual slot as a stronger one. **Decision: option (b).** The last-15-
+   min IEX figure was dropped, not qualified — the panel shows the SIP
+   path through wherever SIP's own embargo stops (naturally, no separate
+   IEX fetch needed at all) and discloses the gap as a gap: "Path shown
+   through {time} — the last few minutes aren't available yet."
+3. **A fourth state was missing: down, but above the floor.** The
+   original five states jumped from "up" straight to "past the floor."
+   Added with the same descriptive posture and explicitly no language
+   about whether it will come back: current price, the day's low and
+   when, distance from today's high in percentage points.
+4. **The Portfolio card gets its own copy for every state, including
+   failure/fallback — never a silently omitted line.** Scoped lighter
+   than the modal (today's facts only, no since-entry high, no volume
+   ratio — a single shared-start multi-symbol request can't give each
+   held ticker its own buy-date start the way the modal's one-ticker
+   fetch can), but FAILED and NO_DATA render their own explicit text on
+   the card exactly like the modal, never a blank space where the line
+   would otherwise be.
+
+**Built:** `computeIntradayPanel`/`renderIntradayPanelModal`/
+`renderIntradayLineCard` (app.js), `fetchIntradaySipBars`/
+`fetchTodaySipBarsMulti` (core/market-data.js, feed:`sip` — the one
+fetcher family in that file that isn't `iex`, per §2.0.1). Modal panel
+renders below the existing unified recommendation block, never replacing
+it.
+
+**First verification pass was incomplete, and the reason mattered.** The
+first attempt at end-to-end verification reported "no owned position
+priced" and the stock-modal 390px check as NOT COVERED — reported
+honestly, but the diagnosis attached to it ("production's Alpaca key
+wasn't available this run") was wrong, and left standing would have
+been an excuse to reach for on every future attempt. The real cause:
+`core/store.js` deliberately keeps API keys **out of Supabase entirely**
+("API keys... never sent to Supabase," see `persistApiKeys`'s comment) —
+they live only in the browser's own `localStorage`, so a fresh Playwright
+profile can never inherit them from the real account no matter how real
+the Supabase-backed portfolio it loads is. `.env.local` carries the real
+keys and always did; the harness just never fed them to the browser.
+Already solved once in this repo — `scripts/replay-scan.mjs` seeds
+`edge_apiKeys` via `page.addInitScript()` before the app's own boot code
+runs — and `scripts/verify-mobile-viewport.mjs` now does the same,
+reused rather than re-derived.
+
+**Real end-to-end render obtained after the fix**, against Roman's actual
+open positions, 390px viewport, 2026-09-15 ~18:58 ET (after the 4:00pm
+regular close, inside the after-hours window — SIP was still posting
+trades a few minutes prior, so this is the after-hours case, not the
+fully-quiet overnight one; that one remains unobserved). Two real
+positions, two different real outcomes:
+
+- **TWO: a real NO_DATA render, for a real and previously-unknown reason.**
+  Checked directly rather than assumed: `GET /v2/assets/TWO` returns
+  `"status": "inactive", "tradable": false`. TWO stopped trading on
+  Alpaca at some point after 2026-08-24 (its snapshot's `dailyBar`/
+  `latestTrade` are both frozen at that date) while still sitting in
+  Roman's live portfolio, bought 2026-09-11. Every fetch this panel
+  makes for TWO — SIP, IEX, daily, minute — genuinely returns zero data;
+  the NO_DATA state fired correctly, not because of a harness gap. A
+  real position can go dark on the data provider while still open in the
+  portfolio, and this is what the panel is supposed to do when that
+  happens: say so, not guess.
+- **PLUG: the real OK-state render**, literal text, unedited:
+  ```
+  Down 4.4% today
+  Since you bought (day 5): high of +0.0% on day 1, now -4.4%
+  Today's low: -5.6% at 3:56 PM — 1.6pp off today's high of -2.8%
+  Volume last 30 min: 4.1x the prior 30 min
+  Path shown through 6:41 PM — the last few minutes aren't available yet
+  ```
+  Portfolio-card one-liner for the same position: `Down 4.4% today
+  (1.6pp off today's high)`. Real trade, real number: bought 2.15 on
+  2026-09-11, now 2.06 — a position that has done nothing but decline
+  since day 1 (peak across the whole hold: +0.0%), still worse by the
+  time the last SIP bar landed than it was earlier the same day. This is
+  the actual copy Roman would have read at that moment, not a
+  description of it. 390px clipping check on this exact render: clean
+  (`pageOverflow: false`, zero clipped elements).
+
+**Still genuinely open, not resolved by the above:**
+- The fully-quiet overnight case (hours after all trading stops, no
+  after-hours prints at all) has not been observed — tonight's run
+  landed inside the after-hours window, not past it.
+- Two unrelated items flagged the same day, unchanged by this work:
+  `audit-signal-log-splits`'s `--write` path remains unexercised, and
+  Warrior/Sold's 390px coverage (already in this script's TABS loop)
+  hasn't had the same kind of real-position, real-data pass this section
+  just got for the stock modal.
 
 ## 4. Entry
 
@@ -1227,13 +1347,16 @@ code.
   *looked* clipped in a static screenshot ("...INDUS" cut at the edge)
   and turned out to be an intentional `overflow-x: auto` swipeable-chip
   row — a screenshot alone can't tell the two apart, only checking each
-  element's own overflow style can. The stock detail modal remains
-  unverified: it needs a live open position or signal card to open, and
-  this check does not fabricate one against the real production
-  database to force the test. `scripts/verify-mobile-viewport.mjs` runs
-  this whole sweep in ~15s against the local static server — run it
-  whenever a change touches `app.js`/`styles.css`/`index.html`, so this
-  stops being a thing anyone has to remember by hand.
+  element's own overflow style can. The stock detail modal is now
+  checked too (added when §3.9.4's intraday panel landed there): the
+  script clicks a real "View signal" button when an owned EDGE/legacy
+  position exists in production data and runs the same sweep on the
+  modal — still never fabricating a position to force the check, so an
+  empty portfolio reports NOT COVERED rather than a false PASS.
+  `scripts/verify-mobile-viewport.mjs` runs this whole sweep in ~15s
+  against the local static server — run it whenever a change touches
+  `app.js`/`styles.css`/`index.html`, so this stops being a thing anyone
+  has to remember by hand.
 - **Coverage tracking.** A day where the schedule underperforms produces
   no row and no signal; absence is indistinguishable from a quiet market.
   §2.2's market-closed-marker rule is the same idea and should be

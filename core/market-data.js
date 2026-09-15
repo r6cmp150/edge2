@@ -267,3 +267,86 @@ async function fetchHourlyBars(ticker) {
     return bars;
   } catch(e) { return []; }
 }
+
+// Phase 9 §2.0/§7 (2026-09-15): the intraday position panel's data
+// primitive — SIP minute bars from a position's buy date through "now",
+// per the render-time design (docs/phase-9-entry-exit-spec.md §2.0):
+// nothing captures this ahead of time, it's fetched on demand whenever the
+// panel renders. feed:'sip' deliberately, unlike every other fetcher in
+// this file — §2.0.1 measured IEX understating real session highs on real
+// thin $1-$20 names (up to 1.6% over a whole session) and this panel's
+// whole purpose is showing Roman a real high, so it can't use this file's
+// usual iex default. `end` is deliberately omitted, not computed — §2.0
+// verified live that Alpaca applies its own safe recency default rather
+// than erroring, for any granularity, so this naturally returns everything
+// SIP currently has and stops wherever its recency embargo does (typically
+// ~15 min behind live), with nothing here needing to know that boundary.
+//
+// Returns { bars, failed } rather than swallowing an error into `[]` the
+// way this file's other fetchers do: `failed` distinguishes "the request
+// itself broke" from "the request succeeded and truly found zero bars" —
+// the same failed-vs-confirmed-empty distinction core/universe.js's
+// _fetchRawMinuteBars already makes for its own callers, and load-bearing
+// here because §2.0.2 requires the panel to say it couldn't load rather
+// than silently rendering an empty/truncated path as if it were complete.
+async function fetchIntradaySipBars(ticker, sinceDateStr) {
+  try {
+    let bars = [];
+    let pageToken;
+    do {
+      const params = { timeframe: '1Min', start: sinceDateStr, limit: 10000, sort: 'asc', feed: 'sip', adjustment: HISTORICAL_BAR_ADJUSTMENT };
+      if (pageToken) params.page_token = pageToken;
+      const data = await alpacaGet(`/stocks/${ticker}/bars`, params);
+      bars = bars.concat(data.bars || []);
+      pageToken = data.next_page_token || null;
+      assertPageNotSuspiciouslyFull(`fetchIntradaySipBars(${ticker})`, (data.bars || []).length, params.limit, pageToken);
+    } while (pageToken);
+    return { bars, failed: false };
+  } catch(e) {
+    console.warn(`fetchIntradaySipBars(${ticker}): ${e.message}`);
+    return { bars: [], failed: true };
+  }
+}
+
+// Multi-symbol variant for the Portfolio card one-liner (§7): one batched
+// request for every held ticker's TODAY bars, rather than one request per
+// position — the same per-render cost concern §2.0's cost table already
+// measured as trivial (a 5-symbol/1-day request: 2,708 bars/183ms). Scoped
+// to today only, not full since-entry history: a per-symbol "since you
+// bought" fetch needs each position's own start date, which this shared,
+// single-start multi-symbol request can't give every ticker at once — the
+// modal (one ticker at a time, via fetchIntradaySipBars above) is where
+// that richer multi-day view lives. `failed` here is per-symbol: a symbol
+// present in the response with zero bars is a confirmed-empty result, and
+// a symbol whose whole batch request threw is reported in `failedSymbols`
+// so its card can say so instead of silently reading as confirmed-empty.
+async function fetchTodaySipBarsMulti(tickers) {
+  const clean = sanitizeTickerBatch(tickers);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const barsBySymbol = {};
+  const failedSymbols = [];
+  if (!clean.length) return { barsBySymbol, failedSymbols };
+  for (const batch of chunk(clean, 30)) {
+    try {
+      let pageToken;
+      do {
+        const params = { symbols: batch.join(','), timeframe: '1Min', start: todayStr, limit: 10000, sort: 'asc', feed: 'sip', adjustment: HISTORICAL_BAR_ADJUSTMENT };
+        if (pageToken) params.page_token = pageToken;
+        const data = await alpacaGet('/stocks/bars', params);
+        let pageRowCount = 0;
+        if (data.bars) {
+          for (const sym of Object.keys(data.bars)) {
+            pageRowCount += data.bars[sym].length;
+            barsBySymbol[sym] = (barsBySymbol[sym] || []).concat(data.bars[sym]);
+          }
+        }
+        pageToken = data.next_page_token || null;
+        assertPageNotSuspiciouslyFull('fetchTodaySipBarsMulti', pageRowCount, params.limit, pageToken);
+      } while (pageToken);
+    } catch(e) {
+      console.warn(`fetchTodaySipBarsMulti: batch error for ${batch.length} symbols: ${e.message}`);
+      failedSymbols.push(...batch);
+    }
+  }
+  return { barsBySymbol, failedSymbols };
+}

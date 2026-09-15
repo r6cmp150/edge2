@@ -30,11 +30,35 @@
 // Usage: start the local static server first (node scripts/_static-server.mjs),
 // then: node scripts/verify-mobile-viewport.mjs [url]
 import { chromium } from 'playwright';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const URL = process.argv[2] || 'http://localhost:8791/index.html';
 const VIEWPORT = { width: 390, height: 844 }; // iPhone 14/15-class width -- the narrowest common real device, not an arbitrary round number
 const TABS = ['signals', 'warrior', 'portfolio', 'sold', 'settings'];
-const PIN = '0684'; // default PIN, app.js's own documented fallback
+
+// Real end-to-end review (2026-09-15) found this script's first version
+// reported "no owned position priced" for a REAL reason but the WRONG
+// diagnosis: it never actually had an Alpaca key, so every price-dependent
+// fetch 401'd. `core/store.js`'s own comment says why -- API keys are
+// "deliberately never sent to Supabase at all," they live ONLY in this
+// browser's localStorage (`edge_apiKeys`) -- so a fresh Playwright profile
+// with an empty localStorage can never inherit them from the real
+// production account no matter how real the Supabase-backed portfolio
+// data is. This was already solved once in this repo: scripts/replay-
+// scan.mjs seeds both `edge_apiKeys` and the PIN-bypass flag via
+// addInitScript before the app's own boot code runs, reading the same
+// real keys from .env.local every other probe script in this project
+// already uses. Reused verbatim rather than re-derived.
+function readEnvLocal() {
+  const raw = readFileSync(path.join(REPO_ROOT, '.env.local'), 'utf8');
+  const kv = {};
+  for (const line of raw.split(/\r?\n/)) { const m = line.match(/^([A-Z_]+)=(.*)$/); if (m) kv[m[1]] = m[2]; }
+  return { alpacaKey: kv.APCA_API_KEY_ID, alpacaSecret: kv.APCA_API_SECRET_KEY };
+}
+const { alpacaKey, alpacaSecret } = readEnvLocal();
 
 function checkClippingScript() {
   const bad = [];
@@ -58,10 +82,15 @@ async function main() {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
+  await page.addInitScript(({ alpacaKey, alpacaSecret }) => {
+    try {
+      sessionStorage.setItem('edge2_pin_verified', 'true');
+      localStorage.setItem('edge_apiKeys', JSON.stringify({ alpacaKey, alpacaSecret, groqKey: '' }));
+    } catch (e) { /* localStorage unavailable — app's own boot will surface this */ }
+  }, { alpacaKey, alpacaSecret });
+
   await page.goto(URL, { waitUntil: 'load' });
   await page.waitForTimeout(1000);
-  await page.evaluate((pin) => { for (const d of pin) pinPress(d); }, PIN);
-  await page.waitForTimeout(2500);
 
   let failures = 0;
   for (const tab of TABS) {
@@ -72,6 +101,45 @@ async function main() {
     const ok = !pageOverflow && clipped.length === 0;
     console.log(`[mobile-viewport] ${tab}: ${ok ? 'PASS' : 'FAIL'}${pageOverflow ? ' (page-level horizontal overflow)' : ''}${clipped.length ? ` (${clipped.length} clipped element(s))` : ''}`);
     if (!ok) { failures++; if (clipped.length) console.log(JSON.stringify(clipped, null, 2)); }
+
+    // Phase 9 §7 (2026-09-15): the stock detail modal is where the new
+    // intraday panel lives (the copy this whole feature is FOR — "Roman
+    // reads this on a phone"), so it needs the same 390px pass as the 5
+    // tabs above, not a separate manual check remembered later. Only
+    // possible when a real owned EDGE/legacy position exists this run
+    // (state.portfolio reflects Roman's actual live data, same reason
+    // this script has never fabricated one) -- when none does, this is
+    // reported plainly as NOT COVERED, not silently skipped as if it
+    // passed.
+    if (tab === 'portfolio') {
+      const opened = await page.evaluate(() => {
+        const cards = [...document.querySelectorAll('.portfolio-card')];
+        for (const card of cards) {
+          const btn = [...card.querySelectorAll('button')].find(b => b.textContent.includes('View signal'));
+          if (btn) { btn.click(); return true; }
+        }
+        return false;
+      });
+      if (opened) {
+        await page.waitForTimeout(2500);
+        const modalIsStockModal = await page.evaluate(() => !!document.getElementById('stock-modal-body'));
+        if (modalIsStockModal) {
+          const modalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
+          const modalClipped = await page.evaluate(checkClippingScript);
+          const modalOk = !modalOverflow && modalClipped.length === 0;
+          console.log(`[mobile-viewport] portfolio/stock-modal: ${modalOk ? 'PASS' : 'FAIL'}${modalOverflow ? ' (page-level horizontal overflow)' : ''}${modalClipped.length ? ` (${modalClipped.length} clipped element(s))` : ''}`);
+          if (!modalOk) { failures++; if (modalClipped.length) console.log(JSON.stringify(modalClipped, null, 2)); }
+          const intradayText = await page.evaluate(() => document.querySelector('.intraday-panel, .intraday-panel-failed, .intraday-panel-nodata')?.textContent?.trim() || null);
+          console.log(`[mobile-viewport] portfolio/stock-modal intraday panel text: ${intradayText ? JSON.stringify(intradayText) : '(not rendered — no owned position priced, or none held)'}`);
+          await page.evaluate(() => { if (typeof closeModal === 'function') closeModal(); });
+          await page.waitForTimeout(300);
+        } else {
+          console.log('[mobile-viewport] portfolio/stock-modal: NOT COVERED (View signal opened a non-EDGE engine snapshot modal, not the stock detail modal)');
+        }
+      } else {
+        console.log('[mobile-viewport] portfolio/stock-modal: NOT COVERED (no owned position open this run to click into)');
+      }
+    }
   }
 
   if (pageErrors.length) {
@@ -80,7 +148,7 @@ async function main() {
   }
 
   console.log(`\n[mobile-viewport] === ${failures === 0 ? 'ALL PASS' : failures + ' CHECK(S) FAILED'} at ${VIEWPORT.width}x${VIEWPORT.height} ===`);
-  console.log('[mobile-viewport] NOTE: this covers 5 main tabs, not the stock detail modal -- that needs a live open position or signal card to open, and this script does not fabricate one against real data. Verify the modal by hand (or against a seeded test account) when a change touches it specifically.');
+  console.log('[mobile-viewport] NOTE: the stock detail modal is now checked too (Phase 9 §7), but only when an owned EDGE/legacy position exists in real production data this run -- this script still never fabricates one, so an empty portfolio means that check reports NOT COVERED above, not a false PASS.');
 
   await browser.close();
   process.exit(failures === 0 ? 0 : 1);
