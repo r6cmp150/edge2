@@ -1147,10 +1147,21 @@ code.
 
 ## 7. Open, not resolved here
 
-- **Mobile viewport has never been verified.** `resize_window` reports
-  success while `innerWidth` stays 1707px. This is a mobile website that
-  has never been rendered at phone dimensions. It is not a Phase 9 item
-  but it is the largest untested surface in the app.
+- **Mobile viewport: tooling gap found and worked around, 2026-09-15.**
+  `resize_window` (claude-in-chrome) reports success while `innerWidth`
+  stays 1707px — confirmed still broken. Playwright, launched directly
+  (not through that tool), does not have this problem: a real
+  `viewport: {width: 390, height: 844}` context reports `innerWidth: 390`
+  exactly. Checked Portfolio (a real seeded position card), Settings
+  (including tonight's new Max Loss Floor section), and the Signals
+  empty-state at 390px: no horizontal overflow, no element wider than
+  the viewport, on any of the three. Not exhaustive — the Warrior tab,
+  Sold tab, and the stock detail modal (couldn't open without live
+  signals in this local test) are still unverified, and "the largest
+  untested surface" should be downgraded to "spot-checked, not
+  comprehensively verified," not to "fine." This matters more now than
+  when first written: the position display §2.0/§3.9 calls for is
+  exactly the screen Roman would read on his phone mid-decision.
 - **Coverage tracking.** A day where the schedule underperforms produces
   no row and no signal; absence is indistinguishable from a quiet market.
   §2.2's market-closed-marker rule is the same idea and should be
