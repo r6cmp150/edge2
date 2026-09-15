@@ -432,6 +432,56 @@ five scheduled workflows still need it regardless of this decision.
 record of what was proposed and why it changed matters as much as the
 change itself.
 
+### 2.0.1 Feed choice is an accuracy decision, not plumbing
+
+IEX is one venue's volume. SIP is the consolidated tape. A "today's high
+was $X at HH:MM" figure derived from IEX is the high **of one venue**,
+not the real high — and understating the high is the one failure mode
+this feature cannot afford, since its entire purpose is helping Roman
+sell near a real peak, not a fraction-of-volume approximation of one.
+
+**Quantified before choosing the copy** (`scripts/probe-iex-vs-sip-session-high.mjs`,
+7 real $1–$20 sessions from Roman's own trades): |IEX high − SIP high|
+ranges 0.00%–1.60%, mean 0.32%. Six of seven agree to within a few
+cents. **One does not** — DAMD, 2026-09-03: IEX $18.40 vs SIP $18.70, a
+30-cent/1.6% gap on a stock in the high teens. IEX understated the true
+high in 5 of 7 cases (consistent with IEX being a strict subset of
+volume, missing whichever prints set the actual high elsewhere).
+
+That settles the copy question the quantification was for: **not**
+"agrees to within a cent" across the board. One in seven real cases
+disagreed by more than a rounding error, on exactly the thin $1–$20
+names this feature serves, and Roman cannot know in advance which
+session he's looking at. **The qualifier is loud, not quiet.**
+
+**Design:** SIP for anything ≥15 minutes old (denser, the consolidated
+tape). IEX only as a fallback when SIP is unavailable for a given
+window — and when it is, the figure that used it says so visibly, not
+in a footnote: "today's high: $3.40 (IEX only — may understate the
+real high)" rather than a bare "$3.40" with an asterisk. A number
+computed from a fraction of the volume is a different claim than a
+number computed from the whole tape, and the UI must not present them
+as the same claim.
+
+### 2.0.2 Failure mode: three-state, not a plausible-looking guess
+
+If the minute-bar fetch fails outright — network error, both feeds
+down, rate-limited — the intraday panel does not fall back to a partial
+path or the last value it happened to compute. **It says it couldn't
+load, and why**, the same posture §3.4's `CANNOT EVALUATE` already
+established for the exit floor: fires / doesn't fire / cannot evaluate,
+never a fourth state that looks like one of the first two.
+
+The reason this matters more here than it might look: a truncated
+intraday series has a **truncated high** — computing `max(price)` over
+whatever bars did arrive silently understates the real session high
+exactly the way a partial fetch would, but with no marker distinguishing
+it from a complete one. Half a price path is worse than none, because
+the number it produces is wrong in the same direction (understated) as
+the IEX-fallback case above, and looks identical to a correct one. No
+partial rendering of this panel ships without an explicit flag on which
+minutes are actually present.
+
 ### 2.1 New table — SUPERSEDED by §2.0, kept for history
 
 ```sql
@@ -788,6 +838,23 @@ predict. A model that has never seen TENX go to zero must never be able
 to talk Roman out of the floor. Wire it so the model can return HOLD only
 for positions already above the floor — not as a policy choice, as a
 structural one.
+
+**Second, independent reason the delisted population is unreliable,
+found 2026-09-15 building §2.0's render-time path:** `feed=sip` returned
+real RSLS rows when this dataset was built, and returned **zero** for
+the identical symbol and dates a few hours later the same day (§2.0's
+own finding 5). SIP access for a delisted symbol is not merely
+narrower than IEX's — it is **non-deterministic across runs**. That
+means **the 1.28M-row dataset itself is not reproducible**: re-running
+`build-exit-model-dataset.mjs` today could silently return a different
+row count and a different set of contributing delisted symbols than the
+15 recorded above, with no error and no signal that anything changed.
+"Identical row counts across two runs" was used earlier as evidence
+against truncation (§3.1's build log) — that inference is weaker than
+it looked, since it only proved two runs made *close together* agreed,
+not that the underlying SIP data for delisted names is stable over
+time. Recorded here so a future re-run that gets a different number
+isn't mistaken for a new bug — it would be this one, rediscovered.
 
 ### 3.1.4 Entry-day momentum is a dimension, not a filter
 
