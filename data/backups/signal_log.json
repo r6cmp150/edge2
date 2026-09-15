@@ -70,7 +70,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "d9ac028d-0fb1-4373-9016-51b737171df7",
@@ -143,7 +147,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "551be58f-7d19-44f3-9893-99d8caf1e51b",
@@ -216,7 +224,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "a75a5170-f6f9-4854-9f76-4cffb294b7ea",
@@ -289,7 +301,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "2322ff41-b06e-4263-985d-16e001bf8247",
@@ -362,7 +378,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "ab9b4521-70d4-48ac-a1c5-e04e09050481",
@@ -435,7 +455,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "9b0ad601-e24e-4eb3-b94d-450628849325",
@@ -508,7 +532,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "ad0bf5ea-cb84-4290-a272-5bc2983b55ff",
@@ -581,7 +609,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "2835d304-9dfe-43ab-907b-e351708aac7a",
@@ -654,7 +686,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "53ce06c8-f847-4d09-835a-f6e6c84e3791",
@@ -727,7 +763,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "79d19f0d-e314-4a0a-9692-b51afb43d49c",
@@ -800,7 +840,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "92d1429d-f811-4fbc-b21b-0c37e27bfc7f",
@@ -873,7 +917,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "a64cc1d9-62de-41db-9a28-dbfb5f67740d",
@@ -945,7 +993,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "fc3fe262-0196-4470-ad27-dddc11ad787e",
@@ -1018,7 +1070,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "1b06b523-fb35-4552-adb8-c6a70c61768b",
@@ -1090,7 +1146,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "33afb9d8-1466-4e61-8210-4705bb392315",
@@ -1164,7 +1224,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "9da87ed0-3a32-4b61-88ff-98adaced3ae9",
@@ -1237,7 +1301,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "3a6962c2-9e64-44c2-914b-a6e69dbbb3dc",
@@ -1310,7 +1378,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "3a18a6ce-87e6-4dfa-be10-0ae5b5e9e413",
@@ -1383,7 +1455,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "fef01368-2b21-49a0-8dbe-646854ef9688",
@@ -1456,7 +1532,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "12a2ead8-065b-4752-92e3-22958c856f77",
@@ -2780,7 +2860,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "145fdc0e-8a87-4a98-9499-f9322c189938",
@@ -4107,7 +4191,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "b623a738-29a3-4c96-a619-61f8413d9b48",
@@ -4180,7 +4268,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "ec712dd5-7d5d-45e1-a7e1-76f1dbe2170f",
@@ -4254,7 +4346,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "da4f115f-5692-4ede-90c1-1bcd5af0031d",
@@ -4327,7 +4423,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "bb6835af-86a1-4299-99e1-b011b5caf15c",
@@ -4400,7 +4500,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "80437dd9-c18d-4b3d-b195-f3a577c52db2",
@@ -5634,7 +5738,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "dd43e36c-f3cc-4364-ae7d-305cb2957180",
@@ -5707,7 +5815,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "aef5e989-4f7a-4f28-86e6-14ee1f30edc4",
@@ -7032,7 +7144,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "eed66229-23b1-4d91-952f-5e0cb4c3ede9",
@@ -8357,7 +8473,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "ba5036dc-b8ec-45fb-8b1b-a32ef43be421",
@@ -9742,7 +9862,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "19bf1b95-ec40-4b14-af52-09a14cb2d138",
@@ -11081,7 +11205,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "5ca50192-2544-43c3-8b67-4d353fa4e895",
@@ -11154,7 +11282,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "1fd4b173-3e34-4e3b-b2e3-d1d835f258e3",
@@ -11227,7 +11359,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "c0c58e46-e582-4d89-a8d4-206385ad35e8",
@@ -11299,7 +11435,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "97662149-b72c-41bb-9388-e5efd005375e",
@@ -11372,7 +11512,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "6be6baa4-37d7-483a-9430-f1b127ebc344",
@@ -11445,7 +11589,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "f9d5e9d8-1ccb-46ec-8f28-f8632d893e26",
@@ -11518,7 +11666,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "6559b23c-66dc-4e12-904b-c77f1d7594b2",
@@ -11591,7 +11743,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "8a53acc9-27dd-4a31-b6ae-c565a2d83e63",
@@ -11665,7 +11821,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "60c7971c-63d2-4539-945f-3d8596566d48",
@@ -11738,7 +11898,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "7636750c-f231-4806-b4b2-5577806b6810",
@@ -13093,7 +13257,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "75a16d6c-69b8-4082-9f5e-d058f67623cb",
@@ -14449,7 +14617,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "e88f8bc4-7903-4520-b01f-804ae77eb847",
@@ -15774,7 +15946,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "117c60bc-e10d-42a2-8405-9eeb1585a2a6",
@@ -17099,7 +17275,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "3c9c57ff-cab4-44da-accb-ee211bb37a89",
@@ -17172,7 +17352,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "22517f3c-66cd-4d92-91a7-7ab505b9e1e2",
@@ -17245,7 +17429,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "1662d6fb-dd6a-43ab-9bf0-42571b0671f1",
@@ -17318,7 +17506,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "03290142-de3a-4823-82bd-6a54946322fa",
@@ -17391,7 +17583,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "798e6d3c-f368-4e38-859d-3561adb662fb",
@@ -18716,7 +18912,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "76ac0eff-d331-4487-90c2-26cbcf5c913d",
@@ -20056,7 +20256,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "3da9059a-6c76-440f-86b6-640b174c2a12",
@@ -21381,7 +21585,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "00ce2b1e-da7a-4646-b3ec-c67d3d4b7adb",
@@ -22706,7 +22914,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "d6da2373-a9dc-4013-87b5-831a858719ac",
@@ -24031,7 +24243,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "4c2804be-0852-4ed4-a31c-bddc71b84126",
@@ -25356,7 +25572,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "521ea152-7980-4009-ac12-cd5ef620c88b",
@@ -25429,7 +25649,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "b47219ce-a67a-4b04-a96d-5135d9c2724a",
@@ -25502,7 +25726,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "56fa5282-c4b2-4c4c-bd11-5134d2effb3e",
@@ -25575,7 +25803,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "948cad52-444a-4560-ac4f-4714c5920682",
@@ -26900,7 +27132,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "3932d718-0600-46e5-9039-c39b54b3e7dc",
@@ -28224,7 +28460,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "aac34bd5-6b71-43fc-947a-e905ad21fff4",
@@ -29579,7 +29819,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "65994559-42b2-47b5-a56c-d58235728ff8",
@@ -30904,7 +31148,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "96444188-a15e-4217-8567-04a64c55a0f1",
@@ -32229,7 +32477,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "0ec60d0b-5b5e-4ef5-9f50-02ab50ed50db",
@@ -33553,7 +33805,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "6dbf56b0-055d-4ee6-8def-8d2ad1fd35dd",
@@ -33626,7 +33882,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "ec0b0a61-88c6-4f32-afa3-6a6367834935",
@@ -33699,7 +33959,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "3dee6b31-d447-4fbf-a71f-37a7b6fc431f",
@@ -33772,7 +34036,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "71183f3b-2b08-434c-8c98-69fb95e80c5a",
@@ -35111,7 +35379,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "2def89fa-722c-41af-b7f6-6db36626cb87",
@@ -36436,7 +36708,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "1d914d35-c96d-409b-93ca-552a128385af",
@@ -37760,7 +38036,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "4890bc3c-3f59-4840-a7f3-d56b27abfe50",
@@ -39112,7 +39392,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "4edd8bb0-b4ac-4746-b409-62f0dbb5ae5a",
@@ -40437,7 +40721,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "6d133388-714e-40f0-9f27-63b49d9cc75c",
@@ -41762,7 +42050,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "755559de-8703-43ce-9678-2bb13693f929",
@@ -41836,7 +42128,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "109f70ec-8421-41b3-a2ef-f6cfd4538760",
@@ -41910,7 +42206,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "0bc73b11-8fc2-40c4-833f-37d66b769a3a",
@@ -41984,7 +42284,11 @@
     "created_at": "2026-09-11T19:10:51.024772+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "f27336c2-fecf-4e9e-b6bd-7a49d3b4b317",
@@ -43308,7 +43612,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "f4b1e2e1-337d-4812-b8b7-982511dbfa95",
@@ -44666,7 +44974,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "e5aef5e2-df63-4263-9498-3111b353d89c",
@@ -45991,7 +46303,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "f1ee1a91-6fee-450f-a0a9-ab6e6468b86c",
@@ -47316,7 +47632,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "3a21afd5-11b8-40a7-bc10-a9dc098b6181",
@@ -48654,7 +48974,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "5e36d2ae-aeb0-44f7-a159-3d0ad299f781",
@@ -49979,7 +50303,11 @@
     "created_at": "2026-09-11T19:19:38.387001+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "1ee10310-58b9-48b6-929a-46b9ba17e694",
@@ -50052,7 +50380,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "81b0217d-89b3-4cf1-b412-1edf0af8e8a9",
@@ -50124,7 +50456,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "6c0adb66-c871-4c67-bac9-0e221ba35d3a",
@@ -50196,7 +50532,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "2a111fdc-bee0-48ed-8304-338b84038d83",
@@ -50270,7 +50610,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "6a47be8c-61f3-4d72-a24d-832ccb9c8299",
@@ -50343,7 +50687,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "fe8fb559-8bcc-4bcd-8840-0ea54c456469",
@@ -50416,7 +50764,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "29b93d67-9609-4651-bed9-dcd0b654170c",
@@ -50489,7 +50841,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "f0e980ed-6ddd-4378-afd7-bc36626f44db",
@@ -50562,7 +50918,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "d0f094ce-49b2-4824-b5ea-131775890fc8",
@@ -50634,7 +50994,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "2c33c412-af73-4bdb-82ea-7db7bce744ab",
@@ -50708,7 +51072,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "07bd8f12-04c7-44b4-9a9d-3ff98ca7d420",
@@ -50781,7 +51149,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "3e18f386-df4f-4073-95a4-04dd127d6109",
@@ -50855,7 +51227,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "a1bb48c1-0391-42f0-9570-7ecab238fd5e",
@@ -50928,7 +51304,11 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   },
   {
     "id": "93799a2e-ed79-40cc-8e6a-1b059545ccd3",
@@ -51000,6 +51380,10 @@
     "created_at": "2026-09-10T20:26:49.768707+00:00",
     "taken_resolution": "unresolved",
     "matched_trade_id": null,
-    "universe_rank": null
+    "universe_rank": null,
+    "ret_close_split_in_window": false,
+    "ret_1d_split_in_window": false,
+    "ret_3d_split_in_window": false,
+    "ret_5d_split_in_window": false
   }
 ]
