@@ -1665,8 +1665,8 @@ within the ${maxDays}-day window}`;
     // here — it's the same live state.signals entry (or fallback) already
     // used for every other live field in this prompt.
     let unifiedPromptBlock;
-    const ur = calcUnifiedRecommendation({ ...pos, currentPrice: livePrice, rsi: liveRsi }, stock, state.macroContext);
-    if (ur.hardFloor) {
+    const ur = calcUnifiedRecommendation({ ...pos, currentPrice: livePrice, rsi: liveRsi, priceFetchFailed: stock.priceFetchFailed }, stock, state.macroContext);
+    if (ur.hardFloor || ur.cannotEvaluate) {
       unifiedPromptBlock = `\nUnified recommendation: ${ur.label}\n`;
     } else if (ur.label === 'LOCK IN PROFITS') {
       const topPeakRisk = ur.peakRisk.topFactors;
@@ -2962,6 +2962,18 @@ async function openStockModal(ticker) {
 
     const price   = (s?.price) || sorted[sorted.length-1]?.c || 0;
     _chartCurrentPrice = price;
+    // Phase 9 §3.4 review (2026-09-15): found while auditing every
+    // calcUnifiedRecommendation call site for the new hard floor. Neither
+    // an s.price nor any daily bar at all (a halted/illiquid symbol
+    // returning zero rows, a realistic case in this $1-$20 microcap
+    // universe) leaves `price` at its literal 0 fallback above -- not a
+    // throw, so the try block continues and would otherwise feed a
+    // fabricated $0.00 into calcUnifiedRecommendation as if real,
+    // computing pnlPct as -100% and asserting CUT NOW on data the app
+    // never actually had. Recorded explicitly so both this modal's own
+    // recommendation block and buildAIPrompt() (which reads _modalStock,
+    // not this local price) can refuse to evaluate instead of guessing.
+    const modalPriceUnavailable = !s?.price && sorted.length === 0;
     const rsi     = calcRSI(closes);
 
     // high52/low52 are used directly in the template below, unconditionally
@@ -3018,6 +3030,7 @@ async function openStockModal(ticker) {
     // buildAIPrompt()'s owned-position branch (CONTINUE HIGHER vs FURTHER DROP).
     _modalStock.livePrice = _chartBarsMinute[_chartBarsMinute.length - 1]?.c || price;
     _modalStock.liveRsi = rsi;
+    _modalStock.priceFetchFailed = modalPriceUnavailable;
 
     // Always recompute new signal values from fresh bars
     let modalConsUpDays = 0;
@@ -3110,7 +3123,7 @@ async function openStockModal(ticker) {
     // state.signals snapshot).
     const unifiedModalBlock = ownedPos
       ? buildUnifiedRecommendationModalBlock(calcUnifiedRecommendation(
-          { ...ownedPos, currentPrice: _modalStock.livePrice, rsi: _modalStock.liveRsi },
+          { ...ownedPos, currentPrice: _modalStock.livePrice, rsi: _modalStock.liveRsi, priceFetchFailed: modalPriceUnavailable },
           s || state.ownedScores[ticker] || null,
           state.macroContext
         ))
@@ -3687,6 +3700,13 @@ async function renderPortfolioTab() {
     priceFetchFailed = true;
     console.error('Portfolio live price fetch failed, falling back to buy price:', e.message);
   }
+  // Shared with updateNavBadges (Phase 9 §3.4 review, 2026-09-15): that
+  // function reuses state.portfolioPrices independently of this render and
+  // had no way to know those cached prices came from this same failure --
+  // it relied on the identical accidental property (buyPrice fallback ->
+  // 0% pnl -> doesn't cross the floor) this file's calcUnifiedRecommendation
+  // fix replaced with an explicit check everywhere else.
+  state.portfolioPriceFetchFailed = priceFetchFailed;
   const staleBanner = priceFetchFailed
     ? `<div class="pf-stale-banner">⚠ Live prices unavailable — prices and P&L below are your buy price, not current. Pull to refresh once the connection recovers.</div>`
     : '';
@@ -7719,7 +7739,7 @@ function updateNavBadges() {
           return;
         }
         const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
-        const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy }, currentSignal, state.macroContext);
+        const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy, priceFetchFailed: state.portfolioPriceFetchFailed }, currentSignal, state.macroContext);
         if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(result.label)) warnCount++;
       });
     }
