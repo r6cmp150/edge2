@@ -81,6 +81,7 @@ export function resolveSellTiming({ buyDate, sellDate, buyPrice, allBars, rawBar
       resolved: true,
       bestExitPrice: null, bestExitDate: null,
       bestExitTiming: 'SPLIT_IN_WINDOW', priceAt5Days: null,
+      priceAt1Day: null, priceAt2Days: null,
     };
   }
 
@@ -94,14 +95,24 @@ export function resolveSellTiming({ buyDate, sellDate, buyPrice, allBars, rawBar
     }
   }
   const priceAt5Days = allBars[resolvedIdx].c ?? null;
+  // Same anchor, same already-fetched allBars array -- day+1/day+2 cost no
+  // extra Alpaca call, just two more array reads. Exist for the exact
+  // counterfactual Phase 9 §3.4's cut-loss floor needs measured (Roman
+  // asked, in review: "you cut at -6%, and two days later it was at X" --
+  // Model A's own conditioning in §3.2 asks the same "recovers within 2
+  // sessions" question). resolvedIdx is anchorIdx+5, already proven to
+  // exist by the length check above, so anchorIdx+1/+2 exist too.
+  const priceAt1Day = allBars[resolvedIdx - 4].c ?? null;
+  const priceAt2Days = allBars[resolvedIdx - 3].c ?? null;
 
   const impliedGain = (v) => (v - buyPrice) / buyPrice;
   const implausible = (v) => v != null && (impliedGain(v) > PLAUSIBLE_MAX_GAIN || impliedGain(v) < PLAUSIBLE_MIN_GAIN);
-  if (implausible(bestExitPrice) || implausible(priceAt5Days)) {
+  if (implausible(bestExitPrice) || implausible(priceAt5Days) || implausible(priceAt1Day) || implausible(priceAt2Days)) {
     return {
       resolved: true,
       bestExitPrice: null, bestExitDate: null,
       bestExitTiming: 'DATA_ERROR', priceAt5Days: null,
+      priceAt1Day: null, priceAt2Days: null,
     };
   }
 
@@ -110,7 +121,7 @@ export function resolveSellTiming({ buyDate, sellDate, buyPrice, allBars, rawBar
     : bestExitDate === sellDate ? 'ON'
     : 'AFTER';
 
-  return { resolved: true, bestExitPrice, bestExitDate, bestExitTiming, priceAt5Days };
+  return { resolved: true, bestExitPrice, bestExitDate, bestExitTiming, priceAt5Days, priceAt1Day, priceAt2Days };
 }
 
 export const SELL_TIMING_CONSTANTS = { SPLIT_RATIO_EPSILON, PLAUSIBLE_MAX_GAIN, PLAUSIBLE_MIN_GAIN };

@@ -42,6 +42,8 @@ function bar(date, h, c) { return { t: `${date}T00:00:00Z`, h, c }; }
   check('A: MSTU best_exit_price is null', result.bestExitPrice === null);
   check('A: MSTU best_exit_date is null', result.bestExitDate === null);
   check('A: MSTU price_at_plus5_days is null', result.priceAt5Days === null);
+  check('A: MSTU price_at_plus1_day is null', result.priceAt1Day === null);
+  check('A: MSTU price_at_plus2_days is null', result.priceAt2Days === null);
 }
 
 // ── Case B: synthetic forward 2:1 split ──
@@ -78,6 +80,7 @@ function bar(date, h, c) { return { t: `${date}T00:00:00Z`, h, c }; }
   check('B: forward split is detected', detectSplitInWindow(allBars, rawBars, 6) === true);
   check('B: synthetic forward split resolves to SPLIT_IN_WINDOW, not a plausible-looking number', result.resolved === true && result.bestExitTiming === 'SPLIT_IN_WINDOW', JSON.stringify(result));
   check('B: best_exit_price is null despite passing the plausibility guard', result.bestExitPrice === null);
+  check('B: price_at_plus1_day/plus2_days also null', result.priceAt1Day === null && result.priceAt2Days === null);
 }
 
 // ── Case C: no split (raw === adjusted throughout), but a data glitch ──
@@ -95,6 +98,7 @@ function bar(date, h, c) { return { t: `${date}T00:00:00Z`, h, c }; }
   check('C: no split detected (raw===adjusted)', detectSplitInWindow(allBars, rawBars, 6) === false);
   check('C: resolves to DATA_ERROR via the plausibility guard', result.resolved === true && result.bestExitTiming === 'DATA_ERROR', JSON.stringify(result));
   check('C: best_exit_price is null', result.bestExitPrice === null);
+  check('C: price_at_plus1_day/plus2_days also null', result.priceAt1Day === null && result.priceAt2Days === null);
 }
 
 // ── Case D: clean resolution, no defects ──
@@ -112,6 +116,8 @@ function bar(date, h, c) { return { t: `${date}T00:00:00Z`, h, c }; }
   check('D: best_exit_price is the real max high in window (10.60 on 03-04)', result.bestExitPrice === 10.60 && result.bestExitDate === '2026-03-04', JSON.stringify(result));
   check('D: bestExitTiming is AFTER (peak came after the 03-02 sale)', result.bestExitTiming === 'AFTER');
   check('D: priceAt5Days is the close 5 trading days after sellDate (index anchor+5 = 6 -> 03-07)', result.priceAt5Days === 10.05, JSON.stringify(result));
+  check('D: priceAt1Day is the close 1 trading day after sellDate (index anchor+1 = 2 -> 03-03)', result.priceAt1Day === 10.30, JSON.stringify(result));
+  check('D: priceAt2Days is the close 2 trading days after sellDate (index anchor+2 = 3 -> 03-04)', result.priceAt2Days === 10.40, JSON.stringify(result));
 }
 
 // ── Case E: window not yet closed ──

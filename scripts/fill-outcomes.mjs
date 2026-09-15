@@ -576,7 +576,7 @@ async function main() {
   // Candidates: every closed trade (sell_date <= today), NOT gated on the
   // current sell_timing_resolved value -- see this file's header for why
   // (MSTU's corruption class needs recomputation, not just first-fill).
-  const tradesSelectCols = 'id,ticker,buy_date,sell_date,buy_price,sell_timing_resolved,best_exit_price,best_exit_timing';
+  const tradesSelectCols = 'id,ticker,buy_date,sell_date,buy_price,sell_timing_resolved,best_exit_price,best_exit_timing,price_at_plus1_day,price_at_plus2_days,price_at_plus5_days,unified_recommendation_at_sale';
   const tradesRes = await fetch(
     `${SUPABASE_URL}/rest/v1/trades_v2?select=${tradesSelectCols}&sell_date=lte.${todayPT}&order=sell_date.asc`,
     { headers: anonHeaders }
@@ -635,6 +635,13 @@ async function main() {
       best_exit_date: result.bestExitDate,
       best_exit_timing: result.bestExitTiming,
       price_at_plus5_days: result.priceAt5Days,
+      // Phase 9 §3.4 review (2026-09-15): same allBars array, no extra
+      // Alpaca call -- the counterfactual the -6% floor needs measured
+      // ("you cut at -6%, two sessions later it was at X"), for every
+      // trade, not just floor-triggered ones (unified_recommendation_at_sale
+      // already names which, if any, hard floor fired at sale).
+      price_at_plus1_day: result.priceAt1Day,
+      price_at_plus2_days: result.priceAt2Days,
     });
     sellTimingResolvedCount++;
     if (result.bestExitTiming === 'SPLIT_IN_WINDOW') sellTimingSplitCount++;
@@ -642,7 +649,7 @@ async function main() {
   }
   const sellTimingToWrite = [...sellTimingPatches.entries()];
   console.log(`fill-outcomes: sell-timing resolved ${sellTimingResolvedCount}/${tradesRows.length} row(s) (${sellTimingSplitCount} SPLIT_IN_WINDOW, ${sellTimingErrorCount} DATA_ERROR, ${sellTimingSkippedCount} skipped -- window not closed or fetch failed this run).`);
-  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'trades_v2', ['sell_timing_resolved', 'best_exit_price', 'best_exit_date', 'best_exit_timing', 'price_at_plus5_days']);
+  await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'trades_v2', ['sell_timing_resolved', 'best_exit_price', 'best_exit_date', 'best_exit_timing', 'price_at_plus5_days', 'price_at_plus1_day', 'price_at_plus2_days']);
 
   const toWrite = [...patches.entries()].filter(([, p]) => Object.keys(p).length > 0);
   console.log(`fill-outcomes: ${returnsFilledCount} return value(s) computed, ${takenResolvedCount} taken_resolution transition(s), across ${toWrite.length} row(s) with at least one new column to write.`);

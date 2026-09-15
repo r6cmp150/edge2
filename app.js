@@ -4791,7 +4791,12 @@ function computeUnifiedSaleFields(pos, salePrice) {
     return {
       unifiedRecommendationAtSale: ur.label,
       unifiedCompositeAtSale: null,
-      topExitFactorsAtSale: ['Stop-loss breach'],
+      // Phase 9 §3.4 review (2026-09-15): was hardcoded 'Stop-loss breach'
+      // regardless of WHICH hard floor fired -- correct before this session
+      // when that was the only one, wrong now that the max-loss floor is a
+      // second, distinct trigger. ur.factors[0].name is the real factor
+      // (either floor sets exactly one).
+      topExitFactorsAtSale: [ur.factors[0]?.name || 'Hard floor'],
       topHoldFactorsAtSale: [],
       lockInProfitsFired: false,
       peakRiskScoreAtSale: null,
