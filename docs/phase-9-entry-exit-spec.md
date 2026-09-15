@@ -1214,21 +1214,26 @@ code.
 
 ## 7. Open, not resolved here
 
-- **Mobile viewport: tooling gap found and worked around, 2026-09-15.**
-  `resize_window` (claude-in-chrome) reports success while `innerWidth`
-  stays 1707px — confirmed still broken. Playwright, launched directly
-  (not through that tool), does not have this problem: a real
+- **Mobile viewport: tooling gap found and worked around, 2026-09-15
+  (finished, see `scripts/verify-mobile-viewport.mjs`).** `resize_window`
+  (claude-in-chrome) reports success while `innerWidth` stays 1707px —
+  confirmed still broken, filed as feedback. Playwright, launched
+  directly (not through that tool), does not have this problem: a real
   `viewport: {width: 390, height: 844}` context reports `innerWidth: 390`
-  exactly. Checked Portfolio (a real seeded position card), Settings
-  (including tonight's new Max Loss Floor section), and the Signals
-  empty-state at 390px: no horizontal overflow, no element wider than
-  the viewport, on any of the three. Not exhaustive — the Warrior tab,
-  Sold tab, and the stock detail modal (couldn't open without live
-  signals in this local test) are still unverified, and "the largest
-  untested surface" should be downgraded to "spot-checked, not
-  comprehensively verified," not to "fine." This matters more now than
-  when first written: the position display §2.0/§3.9 calls for is
-  exactly the screen Roman would read on his phone mid-decision.
+  exactly. All five main tabs (Signals, Warrior, Portfolio, Sold,
+  Settings — including the new Max Loss Floor section) pass a real
+  per-element clipping sweep at 390px, not just a page-level scrollWidth
+  check: the sweep exists because the Signals universe-filter row
+  *looked* clipped in a static screenshot ("...INDUS" cut at the edge)
+  and turned out to be an intentional `overflow-x: auto` swipeable-chip
+  row — a screenshot alone can't tell the two apart, only checking each
+  element's own overflow style can. The stock detail modal remains
+  unverified: it needs a live open position or signal card to open, and
+  this check does not fabricate one against the real production
+  database to force the test. `scripts/verify-mobile-viewport.mjs` runs
+  this whole sweep in ~15s against the local static server — run it
+  whenever a change touches `app.js`/`styles.css`/`index.html`, so this
+  stops being a thing anyone has to remember by hand.
 - **Coverage tracking.** A day where the schedule underperforms produces
   no row and no signal; absence is indistinguishable from a quiet market.
   §2.2's market-closed-marker rule is the same idea and should be
