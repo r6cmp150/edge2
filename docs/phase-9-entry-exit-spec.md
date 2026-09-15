@@ -1189,11 +1189,24 @@ positions, two different real outcomes:
 - The fully-quiet overnight case (hours after all trading stops, no
   after-hours prints at all) has not been observed — tonight's run
   landed inside the after-hours window, not past it.
-- Two unrelated items flagged the same day, unchanged by this work:
-  `audit-signal-log-splits`'s `--write` path remains unexercised, and
-  Warrior/Sold's 390px coverage (already in this script's TABS loop)
-  hasn't had the same kind of real-position, real-data pass this section
-  just got for the stock modal.
+- A live Warrior position's own detail view remains unverified at 390px
+  for the same structural reason as TWO's INACTIVE card path (§3.9.5):
+  no Warrior position is open right now to click into, and this project
+  doesn't fabricate one to force the check. Checked what's actually
+  available instead of assuming: the Warrior tab itself is real and
+  passes clean at 390px, but is genuinely idle right now (after-hours,
+  no scan run — "No scan yet"), and Sold's coverage turned out to
+  already be real and complete — its 46 real cards don't depend on the
+  Alpaca key at all (Supabase-sourced, unlike Portfolio's live P&L), so
+  it was never blocked by the harness gap the stock modal had; reconfirmed
+  clean at 390px against the current real 46-entry list.
+- `audit-signal-log-splits --write`: dry-run against production found 135
+  real rows, 0 fetch failures despite heavy real rate-limiting, 0
+  corruption. Honest limit, not a resolution: the script's own caveat
+  holds — 0 corrupt rows means the PATCH path itself is still
+  structurally unexercised, and stays that way until a real
+  split-corrupted row actually exists to correct. Not forced by writing
+  a fake one.
 
 ### 3.9.5 The real copy had a real bug (2026-09-15, same day)
 
