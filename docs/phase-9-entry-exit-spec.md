@@ -631,6 +631,86 @@ the setup, and must not ship as a stable probability. Out-of-sample
 agreement is the only evidence that any of this generalises, and it costs
 one extra pass over data already on disk.
 
+### 3.1.3 What the built dataset settled, and what it changed
+
+Results in 2026-09-15, against the 1.28M-row build.
+
+**Overlap inflation: not a problem here.** 216 of 288 cells clear all
+three minimums; **zero** cells have rows but fail the symbol or date
+bars, and no passing cell draws more than 20% of its rows from one date.
+The §3.1.1 worry was real and worth checking; the data says this grid
+does not suffer from it. The three-part minimum stays in place as a
+guard, not because it is currently binding.
+
+**Regime stability: good, within limits.** Fit 2024-10→2025-09, validate
+2025-10→2026-09: median |Δp_recover| 1.3pp, mean 1.7pp, max 12.0pp. That
+is tight. It demonstrates stability across two adjacent years of one
+broad regime — it does not demonstrate survival of a regime *change*, and
+must not be described as if it did.
+
+**Day 0 is structurally empty, and that is 35% of Roman's trades.** All
+72 empty cells are the day-of-hold=0 bucket. Entry-day return is 0 by
+construction in a daily-bar dataset, so "down X% on day 0" is
+unrepresentable without intraday bars. Thirteen of Roman's 37 closed
+trades were same-day.
+
+Consequence, stated rather than papered over: **for a position bought
+today, Model A and Model B have nothing to say.** The cell returns
+`NOT_EVALUATED`, the UI says so in words, and the only protection in
+force is §3.4's −6% floor. Do not substitute the day-1 cell as a proxy —
+that is precisely the quiet substitution §3.7 forbids.
+
+**Survivorship is decorative, and it biases the model in the dangerous
+direction.** Only **15 genuinely delisted symbols** (0.4% of 3,930)
+contributed rows. The other 72 apparent contributors were **ticker reuse**
+— 92 symbols appear on both Alpaca's active and inactive asset lists
+because a failed company's ticker was later reassigned, and bar requests
+are keyed by symbol string rather than asset ID, so those fetches
+returned the *surviving* company's continuous history. Found by noticing
+that 3,915 active + 87 inactive ≠ 3,930 distinct.
+
+This is not fixable with free data: Alpaca's history for delisted
+symbols largely disappears with the listing. So the honest statement is
+that **the model has barely seen a stock go to zero**, and its recovery
+probabilities are therefore optimistic exactly in the tail the
+cut-losses feature exists to catch.
+
+**Architectural consequence:** this is the reason §3.4's −6% floor
+overrides the model rather than advising it. The model's blind spot is
+the catastrophic case; the floor is blind to nothing because it does not
+predict. A model that has never seen TENX go to zero must never be able
+to talk Roman out of the floor. Wire it so the model can return HOLD only
+for positions already above the floor — not as a policy choice, as a
+structural one.
+
+### 3.1.4 Entry-day momentum is a dimension, not a filter
+
+The population check (Task 4) found a real divergence: full-band 44.4%
+vs momentum-restricted 61.1% at −4% drawdown / day 3+ / RSI<30 /
+vol>1.5×, a 16.7pp disagreement, with momentum names recovering *more*
+often. Only 10.12% of rows pass the precondition (volRatio ≥ 1.0 and
+entry-day move ≥ 2.0%).
+
+The obvious move is to adopt the momentum-restricted table, since Roman
+trades momentum names. **Checked against his actual trades, that is
+wrong.** Of his 37 closed trades, **19 have `volume_ratio_at_buy` below
+1.0** — more than half would fail the precondition. So would two of the
+three trades that constitute his entire loss (BTDR −$20.40 at 0.54,
+PGEN −$16.50 at 0.33).
+
+Neither table describes him. His entries are genuinely heterogeneous:
+some are volume-driven momentum, some are quiet.
+
+**So entry-day momentum becomes a fifth conditioning dimension rather
+than a filter on the population.** Both branches populate — ~130k rows
+on the momentum side (214/288 cells), ~1.15M on the other — so the grid
+can carry the split. Each live position is then scored against the cell
+matching the kind of entry it actually was.
+
+This is the same rule this project keeps rediscovering: when two things
+differ, model them separately rather than collapsing them and picking a
+winner. `engine_source` vs `source` was the same call.
+
 ### 3.2 Model A — "will it come back?" (Roman's 2b)
 
 **Question:** I am down X% on day D. Does it return to break-even within

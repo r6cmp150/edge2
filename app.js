@@ -4165,6 +4165,31 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
     };
   }
 
+  // ── STRUCTURAL INVARIANT for whoever wires Models A/B (§3.2/§3.3, tables
+  // built 2026-09-15 in data/exit-model-a.json / exit-model-b.json) into
+  // this function: nothing past this point may EVER run for a position at
+  // or past the max-loss floor. Not a policy check the model applies to
+  // itself -- the model must be structurally UNREACHABLE for that case,
+  // enforced by this function returning first, above, not by the model
+  // choosing to agree with the floor.
+  //
+  // Why this is load-bearing, not incidental: §3.1.3 found the model's
+  // training data has essentially never seen a stock go to zero (survivor-
+  // ship correction contributed 15 genuinely-delisted symbols out of 3,930,
+  // 0.4% -- not fixable with free data). That means Model A's recovery
+  // probabilities are optimistic exactly in the tail the floor exists to
+  // catch -- a model that has never seen TENX go to zero is a model that
+  // will confidently tell you TENX is coming back. The floor is safe
+  // BECAUSE it does not predict; the model is unsafe here FOR THE SAME
+  // REASON its predictions are useful everywhere else it has real data.
+  // Two blind spots covering different cases would be a coincidence.
+  // One structurally excluding the other's blind spot is the actual design.
+  //
+  // If a future change adds "let the model override CUT NOW when it's
+  // confident" -- don't. That is precisely the case with no supporting
+  // data. Re-read phase-9-entry-exit-spec.md §3.1.3 before touching this
+  // ordering.
+
   const factors = [];
   const add = (name, points) => factors.push({ name, points });
 
