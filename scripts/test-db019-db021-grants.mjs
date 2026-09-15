@@ -84,14 +84,19 @@ async function db019checkB() {
 
 async function db021checkA() {
   console.log('\n=== db/021 CHECK A: outcome_filler updates ret_5d_split_in_window (granted by db/021), real row, toggle + restore ===');
+  // No "all four ret_* filled" requirement: this step runs strictly after
+  // the filler step completes in the same job (separate sequential
+  // steps, not concurrent), so Pass 1's real writes are already done by
+  // the time this query runs -- any row with the flag currently false is
+  // safe to toggle, regardless of whether its ret_* columns are filled.
   const rowRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/signal_log?select=id,ret_5d_split_in_window&ret_close=not.is.null&ret_1d=not.is.null&ret_3d=not.is.null&ret_5d=not.is.null&ret_5d_split_in_window=eq.false&limit=1`,
+    `${SUPABASE_URL}/rest/v1/signal_log?select=id,ret_5d_split_in_window&ret_5d_split_in_window=eq.false&limit=1`,
     { headers: anonHeaders }
   );
   const rows = await rowRes.json();
-  if (!rows.length) { console.log('No already-settled signal_log row found (all four ret_* filled, flag false) -- cannot run this check without risking collision with tonight\'s real Pass 1 batch. Skipped.'); return; }
+  if (!rows.length) { console.log('No signal_log row found with ret_5d_split_in_window=false -- cannot run this check. Skipped.'); return; }
   const { id } = rows[0];
-  console.log(`Using real, already-settled signal_log row id=${id} (outside tonight's Pass 1 batch since it has no null ret_* column) -- toggling ret_5d_split_in_window true then back to false, re-selecting after each write`);
+  console.log(`Using real signal_log row id=${id} -- toggling ret_5d_split_in_window true then back to false, re-selecting after each write`);
 
   const setTrue = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}`, {
     method: 'PATCH', headers: roleHeaders, body: JSON.stringify({ ret_5d_split_in_window: true }),

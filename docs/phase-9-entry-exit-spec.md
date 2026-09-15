@@ -475,20 +475,25 @@ effect of testing.
 
 **Done:** `.github/workflows/fill-outcomes.yml` now exists (see its own
 header). `OUTCOME_FILLER_JWT` was confirmed missing via `gh secret list`
-earlier 2026-09-15, then added the same day. The token, per db/017's mint
-history, was minted 2026-09-10 and expires 2027-09-11 (365-day choice
-explained there). Renew by that date: re-run
+earlier 2026-09-15, then added the same day (confirmed via a second `gh
+secret list` and a real dispatch that used it successfully — see §6 test
+3/4 results and the 019/021 grant checks below). Current token: minted
+2026-09-15, expires **2027-09-15T17:27:14Z**. Renew by that date: re-run
 `SUPABASE_JWT_SECRET=... node scripts/sign-supabase-role-jwt.mjs outcome_filler 365`
 and update the secret.
 
-A separate, older token from that same 2026-09-10 mint session got the
-pre-fix `sign-supabase-role-jwt.mjs` default of 3650 days by accident,
-before being superseded by the 365-day one above. It cannot be revoked
-short of rotating the underlying Supabase project JWT secret, which is
-not planned (see the standing JWT-exposure decision for this project) —
-so if a copy of that first mint survives anywhere, it remains a valid
-`outcome_filler` bearer credential with UPDATE rights until roughly
-2036-09-07. Live risk, not history.
+Two older tokens are also still valid, neither is in the secret anymore:
+db/017's original 365-day mint (2026-09-10, expires 2027-09-11) was
+superseded by the 2026-09-15 one above, and before that, outcome_filler's
+very first mint (also 2026-09-10) got the pre-fix
+`sign-supabase-role-jwt.mjs` default of 3650 days by accident. Neither
+can be revoked short of rotating the underlying Supabase project JWT
+secret, which is not planned (see the standing JWT-exposure decision for
+this project) — so if a copy of either survives anywhere, it remains a
+valid `outcome_filler` bearer credential with UPDATE rights until its own
+expiry (2027-09-11, or roughly 2036-09-07 for the accidental one), not
+whichever token is in this workflow's secret today. Live risk, not
+history.
 
 ## 3. Exit engine v3
 

@@ -9,28 +9,31 @@ name: Fill outcomes
 # token to a local shell) plus a daily schedule.
 #
 # OUTCOME_FILLER_JWT: confirmed missing via `gh secret list` earlier
-# 2026-09-15, then added the same day. See db/017's header for the mint
-# history: the token intended for this role was minted 2026-09-10 and
-# expires 2027-09-11. RENEW BY 2027-09-11 -- re-run
+# 2026-09-15, then added the same day (confirmed present via a second
+# `gh secret list` and a real dispatch that used it successfully). CURRENT
+# TOKEN: minted 2026-09-15, expires 2027-09-15T17:27:14Z. RENEW BY THAT
+# DATE -- re-run
 #   SUPABASE_JWT_SECRET=... node scripts/sign-supabase-role-jwt.mjs outcome_filler 365
 # and update the secret. An expired or missing token fails this job loud
 # (401/403 -> assertNotAuthFailure in fill-outcomes.mjs -> exit 1 ->
 # GitHub Actions failure notification), not silent.
 #
-# A SEPARATE, OLDER TOKEN IS ALSO STILL VALID: outcome_filler's first
-# mint, also on 2026-09-10, omitted sign-supabase-role-jwt.mjs's `days`
-# argument and got that script's old default of 3650 days by accident
-# (see sign-supabase-role-jwt.mjs's own header -- the script no longer
-# has any default, for this exact reason). That accidental token was
-# superseded by the 365-day one above and is not the one in this
-# workflow's secret, but a JWT cannot be revoked short of rotating the
-# underlying Supabase project JWT secret -- so if a copy of that first
-# mint survives anywhere (a shell history, an old log, a chat), it
-# remains a valid outcome_filler bearer credential with UPDATE rights
-# until roughly 2036-09-07, regardless of what gets rotated here. Nobody
-# rotated the underlying secret over this, per the JWT-exposure decision
-# already on record for this project -- so treat that fact as live, not
-# historical.
+# TWO OLDER TOKENS ARE ALSO STILL VALID, NEITHER IS IN THE SECRET ANYMORE:
+# outcome_filler's original 365-day mint (db/017, minted 2026-09-10,
+# expires 2027-09-11) was superseded by the 2026-09-15 one above, and
+# before that, outcome_filler's very first mint (also 2026-09-10) omitted
+# sign-supabase-role-jwt.mjs's `days` argument and got that script's old
+# default of 3650 days by accident (see sign-supabase-role-jwt.mjs's own
+# header -- the script no longer has any default, for this exact reason).
+# A JWT cannot be revoked short of rotating the underlying Supabase
+# project JWT secret -- so if a copy of either older mint survives
+# anywhere (a shell history, an old log, a chat), it remains a valid
+# outcome_filler bearer credential with UPDATE rights until ITS OWN
+# expiry (2027-09-11 for the second mint, roughly 2036-09-07 for the
+# accidental first one), regardless of which token is in this workflow's
+# secret today. Nobody rotated the underlying secret over this, per the
+# JWT-exposure decision already on record for this project -- so treat
+# both older tokens' continued validity as live, not historical.
 #
 # NOT TIME-SENSITIVE THE WAY log-signals-edge/warrior ARE: this job's own
 # per-row/per-column gating (tradingDayHasClosed, the array-position
