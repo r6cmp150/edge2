@@ -96,7 +96,7 @@ Replaying the 37 trades with a hard cut at N% of cost basis:
 | −3% | **+$32.23** | +$106 |
 | −4% | **+$17.63** | +$91 |
 | −5% | **+$5.81** | +$80 |
-| **−6% (chosen)** | **−$3.16** | **+$71** |
+| **−6% (chosen)** | ~~**−$3.16**~~ **see §0.3.1 — this row was wrong** | ~~**+$71**~~ |
 | −8% | −$18.89 | +$55 |
 | −10% | −$28.68 | +$45 |
 | none (actual) | −$73.73 | — |
@@ -110,6 +110,203 @@ leverage on this book, and the answer is unambiguous.
 constant (`MAX_LOSS_PCT`), not a magic number, so it can be moved without
 a code change. Note in the settings UI what the replay showed for −3%
 through −10% so the tradeoff is visible at the point of adjustment.
+
+**The −3%/−4%/−5%/−8%/−10% rows above share the same flaw §0.3.1 found in
+−6%, and have NOT been individually re-verified.** Only −6% (the row that
+shipped) has been redone with the recovery counterfactual. Do not read
+the untouched rows as validated by that correction, and do not use this
+table to argue for a different cap level without redoing it the same way
+first.
+
+### 0.3.1 Correction (2026-09-16): the −6% row above was optimistic, and the honest number is much smaller
+
+The −$3.16 figure assumed a clean exit exactly at the cap and never asked
+what the stock did afterward — asserted, not verified, for a full day
+before "Did I sell too early?" (§4.4) made the same blind spot visible in
+Roman's real sells (BTDR sold at −7.2%, then +29.2% five days later) and
+forced the question back onto the floor's own replay.
+
+**Redone against real daily bars** (`scripts/replay-floor-with-recovery.mjs`),
+same 37-trade basis (`data/backups/trades.json`), cost basis = the real
+`buy_price`, split/data-error guarded the same way `sell-timing.mjs`
+already is. Two trigger definitions, reported separately because they
+answer different questions and must not be blended into one number:
+
+- **Any breach** (daily low OR close ≤ −6% — the theoretical upper bound,
+  true only if a real continuous stop existed or Roman happened to be
+  watching at the exact low): **15 of 37 trades** crossed, not 4.
+  Floor-applied: **−$171.51** — WORSE than doing nothing at all
+  (−$73.73). Holding 5 more trading days past each trigger instead:
+  −$156.26, still worse than actual. Under this definition the floor is a
+  net negative on his real book.
+- **Close only** (daily close ≤ −6% — approximates what checking the app
+  normally would actually have shown him, since `calcUnifiedRecommendation`
+  only evaluates when the portfolio renders, not continuously): **8 of 37
+  trades** crossed, not 4. Floor-applied: **−$71.86**. Actual: −$73.73.
+  **Real improvement: $1.87 — not $70.57.** Holding 5 more days past each
+  trigger instead: −$133.21 (worse than the floor either way, so the
+  floor still beats holding under this definition, by $61.34).
+
+**Roman's own guess (TENX, KEEL, BTDR, PGEN, n=4) was the realized-loss
+definition** — "which trades ended up losing more than 6%" — a different
+and much narrower question than "which trades ever traded at −6%," and
+the reason his mental model and both numbers above disagree. NUVB, RR,
+ACDC, PACB, OFAL, SLI, NEOG, TLYS, PURR, CXM, and a second BTDR trade all
+dipped to −6%+ intraday or on a close and recovered to a real profit or a
+small loss by the time Roman actually sold — a real floor would have cut
+every one of them at the bottom, not let them recover.
+
+**Does the floor still win once recovery is counted? Barely, and only
+under the realistic definition.** Close-only: yes, by $1.87 across 37
+trades — a real but nearly negligible edge, not the $70+ headline this
+spec asserted all day. Any-breach: no — it would have cost $97.78 more
+than doing nothing.
+
+**One trade accounts for nearly the entire close-only margin.** BTDR
+(bought 2026-08-21, real result +$4.75) gets force-cut to −$17.42 under
+the close-only floor — a single-trade swing of $22.17, against a total
+margin of $1.87. Remove BTDR and the close-only floor beats actual by
+$24.04, a real and comfortable edge; include it — as an honest replay
+must — and the margin nearly vanishes. Not a full sign flip, but close
+enough that this floor's entire historical case for the money it saved
+rests on how one trade is treated. **1 of the 8 real crossing trades
+erases 92% of the mechanism's own margin.** He should know that before he
+trusts the number, not after.
+
+**Not changing the floor — as of THIS correction.** At the time this
+section was written, the instruction was: touch only the reported
+historical figures, leave `calcUnifiedRecommendation`'s actual −6% floor
+alone, n=8/n=4 is too small to argue for a different threshold from this
+replay alone. That held for about as long as it took to ask one more
+question — see §0.3.2, written the same day, for why the floor itself
+changed anyway, and for a reason this section's own numbers don't cover:
+not "which threshold is best," but "should ANY threshold act
+unconditionally on a live price at all."
+
+### 0.3.2 The shipped mechanism was the bad case, confirmed against the code — and the fix (2026-09-16, same day)
+
+§0.3.1 reported "any breach" (theoretical upper bound) and "close only"
+(hypothetical, if Roman only ever checked after the close) as two
+separate scenarios, and reasoned that close-only was operationally
+realistic. That reasoning was never checked against the actual code —
+and it was wrong. **The shipped mechanism IS the any-breach case.**
+Confirmed by reading, not inferring: `renderPortfolioTab()` calls
+`fetchSnapshots()` → `/stocks/snapshots` with `feed:'iex'` (no recency
+embargo, established repeatedly this session), `getLivePrice()` returns
+`snap.dailyBar?.c || snap.latestTrade?.p` — the live, in-progress price —
+and `calcUnifiedRecommendation` fired `CUT NOW` the instant that price
+crossed the line, with no persistence requirement, no close-only gate,
+nothing standing between a momentary intraday dip and a verdict. **The
+mechanism running in production had a real, measured historical cost of
+$97.78 worse than doing nothing at all** — not a theoretical risk, the
+actual number for the actual code.
+
+**The full grid, redone across a real menu, not just −6%**
+(`scripts/replay-floor-grid.mjs`), because the −6% choice itself came
+from the same flawed original methodology. 37 trades → 34 usable (3
+excluded for a real split-in-hold: MSTU, DAMD ×2 — a narrower, stricter
+window check than §0.3.1 used, so the actual-total baseline here is
+−$74.13, not −$73.73; both are correct for what each checks).
+`trimmed_atr_at_buy` is empty for all 37 rows in `trades.json` (checked
+directly) — the ATR cells recompute the identical quantity fresh from
+real bars via the real `calcTrimmedATR`, a proxy for the missing column,
+not the stored value.
+
+```
+PERCENTAGE-THRESHOLD GRID — Actual (no cap), 34 trades: $-74.13
+pct    basis      n  trig  book_total    vs_actual   biggest_contributor
+ -4%  close      34   10   $ -36.55    +$ 37.58   TENX +$46.68 (124%)
+ -4%  any        34   21   $-174.52    -$100.39   TENX +$46.68 (-46%)
+ -4%  persist2   34    3   $ -17.10    +$ 57.03   TENX +$46.68 (82%)
+ -5%  close      34    9   $ -68.47    +$  5.66   TENX +$44.35 (784%)
+ -5%  any        34   17   $-178.19    -$104.06   TENX +$44.35 (-43%)
+ -5%  persist2   34    3   $ -24.41    +$ 49.72   TENX +$44.35 (89%)
+ -6%  close      34    8   $ -72.26    +$  1.87   TENX +$42.02 (2248%)
+ -6%  any        34   15   $-171.91    -$ 97.78   TENX +$42.02 (-43%)   <- SHIPPED
+ -6%  persist2   34    2   $ -27.01    +$ 47.12   TENX +$42.02 (89%)
+ -8%  close      34    5   $ -74.05    +$  0.08   TENX +$37.36 (47897%)
+ -8%  any        34    8   $-117.16    -$ 43.03   TENX +$37.36 (-87%)
+ -8%  persist2   34    2   $ -35.47    +$ 38.66   TENX +$37.36 (97%)
+-10%  close      34    3   $ -61.12    +$ 13.01   TENX +$32.70 (251%)
+-10%  any        34    6   $-113.87    -$ 39.74   TENX +$32.70 (-82%)
+-10%  persist2   34    1   $ -41.43    +$ 32.70   TENX +$32.70 (100%)
+-12%  close      34    2   $ -37.57    +$ 36.56   TENX +$28.04 (77%)
+-12%  any        34    4   $ -72.55    +$  1.58   PACB -$28.68 (-1815%)
+-12%  persist2   34    1   $ -46.09    +$ 28.04   TENX +$28.04 (100%)
+-15%  close      34    2   $ -50.31    +$ 23.82   TENX +$21.05 (88%)
+-15%  any        34    2   $ -50.31    +$ 23.82   TENX +$21.05 (88%)
+-15%  persist2   34    1   $ -53.08    +$ 21.05   TENX +$21.05 (100%)
+
+ATR-SCALED GRID — Actual (no cap), 34 trades: $-74.13
+mult   basis      n  trig  book_total    vs_actual   biggest_contributor
+1.5x  close      34    5   $-104.35    -$ 30.22   PURR -$35.80 (118%)
+1.5x  any        34    9   $-164.43    -$ 90.30   PURR -$35.80 (40%)
+1.5x  persist2   34    1   $ -72.59    +$  1.54   PGEN +$1.54 (100%)
+ 2x   close      34    0   $ -74.13    +$  0.00   (none triggered)
+ 2x   any        34    3   $-111.54    -$ 37.41   PACB -$30.46 (81%)
+ 2x   persist2   34    0   $ -74.13    +$  0.00   (none triggered)
+2.5x  close      34    0   $ -74.13    +$  0.00   (none triggered)
+2.5x  any        34    1   $ -82.56    -$  8.43   PGEN -$8.43 (100%)
+2.5x  persist2   34    0   $ -74.13    +$  0.00   (none triggered)
+```
+
+**What the grid actually shows, stated plainly:**
+
+- **`any` is negative at every threshold from −4% through −10%** — the
+  range the original −6% choice was drawn from. It only turns positive at
+  −12%/−15%, and only because so few trades trigger there (n=2) that the
+  cell is really just "did this catch TENX," not a general property.
+- **`persist2` (two consecutive closes past the line) is the only basis
+  that produces a large, non-fragile improvement** — +$47.12 at −6%, on
+  just 2 triggered trades (TENX, PGEN). But it structurally misses
+  KEEL (a real −$31.50 loss) entirely: KEEL's whole collapse happened
+  inside one session, before a second confirming close could exist.
+  Persistence's aggregate win comes from avoiding false-positive cuts, not
+  from catching real losers better than `close` does — trading one
+  failure mode (cutting recoverable dips) for a different, real one
+  (zero protection against a fast one-to-two-day collapse).
+- **TENX is the single largest swing in almost every cell that shows a
+  gain, in either direction** — most of this grid, at n≈34, is close to
+  "did this rule happen to catch TENX," not a statement about the rule.
+  The extreme percentages in the table (2248%, 47897%, −1815%) are the
+  tell: those cells have 0–2 triggered trades.
+- **ATR-scaled variants show nothing competitive.** 1.5× is net-harmful on
+  both `close` and `any`; 2×/2.5× barely trigger at all against real
+  $1–$20 mover volatility.
+
+**The decision, stated by Roman: the max-loss line stops being a
+mechanism at all.** Not "pick a better threshold or basis from the
+grid" — every cell above, even the good-looking ones, is thin evidence at
+n≈34 with one trade (TENX, or BTDR in §0.3.1) usually deciding the sign.
+Instead: `calcUnifiedRecommendation` no longer hard-returns on the
+max-loss line under ANY definition. It becomes a reported fact — a
+measured distance from a line Roman set for himself, shown in the
+intraday panel and the Portfolio card in the same descriptive register as
+everything else there ("Down 7.2% — 1.2pp past your −6% floor"), never an
+imperative, never alarm-colored. The stop-loss hard floor (§3.4 item 2,
+`price <= position.stop`) is unaffected — that is Roman's own stop, set
+by him at buy time, a different thing with different standing, and this
+correction does not touch it.
+
+The "Did I sell too early?" report section's own floor sub-section is
+repurposed the same day, from "when the floor cut, was cutting right"
+(impossible to ask now — nothing cuts) to "when a position crossed the
+line, what did Roman actually do, and what happened at +1d/+2d/+5d off
+that point." That is the evidence base this line — or any future one —
+would need before ever being promoted back to a verdict. It is not that
+evidence yet; it is the mechanism for accumulating it.
+
+**The lesson, stated once so it does not have to be relearned:** a
+mechanism validated by a simulation that never asked what happened after
+it fired is not validated. The original −$73.73 → −$3.16 figure was
+wrong by roughly 38× (real answer: −$97.78, the opposite sign), and it
+shipped, into production, onto Roman's real money, on the strength of a
+number nobody had checked past the moment of the assumed exit. **Every
+future rule that acts on Roman's positions gets the recovery-counted
+replay BEFORE it ships, not after — this grid, in this section, is the
+reference shape for what that replay looks like:** real bars, the same
+historical basis, more than one trigger definition, and a column for how
+much of the result rides on the single largest contributor, every time.
 
 ### 0.4 Entry time — the real finding, after confirming what the field means
 
@@ -941,7 +1138,7 @@ versus:
 > **64%** closed higher tomorrow (297 cases). Median additional gain:
 > **+1.2%**. Peak typically lands on day 3.
 
-### 3.4 The hard floor
+### 3.4 The hard floor — SUPERSEDED 2026-09-16, kept for history
 
 Evaluated before anything else, exactly as the current stop-loss hard
 floor is, and it overrides both models:
@@ -954,6 +1151,19 @@ floor is, and it overrides both models:
 The −6% floor supersedes the entire existing loss-factor ladder (−8% /
 −20%), which never fires in time. Delete it rather than leaving two
 loss mechanisms disagreeing.
+
+**Item 1 above is no longer built this way — see §0.3.2.** Confirmed
+directly against the actual shipped code (not reasoned about): `position.
+currentPrice` at render time is an IEX snapshot with no recency embargo
+(`fetchSnapshots`, `getLivePrice`), so item 1 fired the instant a LIVE
+price dipped past the line, at whatever moment Roman happened to open the
+app — the "any breach" case in §0.3.1's grid, not the "close only" one.
+Replayed honestly, that mechanism cost $97.78 MORE than doing nothing on
+Roman's own 37-trade book. It is no longer a hard return anywhere in
+`calcUnifiedRecommendation`. **Item 2 is unaffected and unchanged** —
+Roman's own stop, set by him at buy time, a different thing with
+different standing (§0.3.2 states this explicitly so it can't be
+conflated with item 1 again).
 
 ### 3.5 What gets deleted
 
@@ -1032,11 +1242,48 @@ different things.
 ### 3.9.2 The pivot: information, not prediction
 
 His book is now well characterised. Wins average +1.5% and cap at +3.9%.
-Losses ran to −24% before the floor existed. The floor fixes the loss
-tail — on his 37 trades it moves −$73.73 to −$3.16. **What remains is
-that his wins are too small**, and the resolved sell-timing data says the
-moves were there: BITO +25.8% available against +0.93% taken, AMC +11.3%
-against +0.81%, RR +19.2pp.
+Losses ran to −24% before the floor existed.
+
+**CORRECTED 2026-09-16 — both claims in the paragraph this replaced were
+wrong, and both failed the same way: generalizing from a handful of
+examples instead of running the full data.**
+
+1. **The floor figure was optimistic, not settled.** "Moves −$73.73 to
+   −$3.16" assumed a clean exit at the cap and never asked what happened
+   after. Redone honestly (§0.3.1) against real bars, same 37 trades: the
+   realistic (close-only) definition shows an improvement of **$1.87**,
+   not $70.57, and one trade (BTDR) accounts for 92% of even that thin
+   margin. **Superseded again the same day (§0.3.2): "close-only" was
+   never what the shipped code actually does** — confirmed against the
+   real code path, `calcUnifiedRecommendation` fires off a live intraday
+   price with no close-only gate, which is §0.3.1's "any breach" case: a
+   real **$97.78 loss** relative to doing nothing, not a win. The floor is
+   no longer a verdict at all as of §0.3.2 — this is now a closed
+   question, not an open tradeoff.
+2. **"His wins are too small" does not hold up against the full sell-
+   timing data — it was generalized from three cherry-picked resolved
+   rows (BITO, AMC, RR) on a day when only three existed.** Once "Did I
+   sell too early?" (§4.4) ran against all 34 resolved trades, the
+   opposite showed up at the horizons that matter most for a same-day/
+   next-day trader: at +1 day, his sells avoided $222.99 in declines
+   across 16 trades against $38.03 left on the table across 7 — favorable
+   to selling, by a wide margin, in both count and dollars. At +2 days,
+   still favorable ($236.76 avoided vs. $157.57 left). Only at +5 days
+   does it turn, and only mildly: $251.17 left across 14 trades vs.
+   $226.28 avoided across 9. **Roman's quick exits on winners are well
+   timed at the horizons he actually operates on.** The three examples
+   above were real, but they were the exceptions the full data doesn't
+   support as the pattern — BITO's own resolved row is one of the 14 in
+   the +5d "left on the table" bucket, not evidence of a systemic problem.
+
+Neither correction changes the render-time display decision below — it
+was never conditioned on either claim being right, only on both models
+having failed to answer the question with a probability. What changes is
+that this section no longer gets to assert "his wins are too small" as a
+settled fact feeding anything downstream: it is at most a mild, +5-day-
+only effect, an order of magnitude smaller than first stated, and the
+one-day/two-day picture (the one closer to how fast his trades actually
+resolve, per §3.9.1) says the opposite.
 
 The instinct was to answer "how long do I hold?" with a probability. Two
 attempts say that is not available from this data. The alternative is
@@ -1349,6 +1596,8 @@ evening's test couldn't reach — CLOSED tonight is still the same PT
 calendar day the market traded on. Needs a real weekend to observe, not
 manufacturable tonight.
 
+## 4. Entry
+
 ### 4.1 After-hours warning at the point of purchase
 
 When `buy_session` resolves to `AFTER_HOURS` or `PRE_MARKET` at the
@@ -1361,6 +1610,25 @@ moment of the buy, the confirm dialog shows:
 
 Warn, do not block. n = 10 does not justify a block, and Roman's stated
 risk appetite is medium-to-high.
+
+**Built (2026-09-16).** The three-worst/seven-fine numbers above were
+already stale by the time this shipped — a real check against
+`state.sold` while building this found CMPX's after-hours buy (−9.4%)
+had since displaced NEOG (−4.5%) out of the real worst-3, and n had moved
+from 10 to 11. Rather than re-type a sentence that will drift again,
+`buildAfterHoursWarningText()` (app.js) computes it live from
+`state.sold` on every render: worst-3 (fewer if n < 3, a generic line if
+n = 0) sorted by `pnlPct`, "N of M were fine" as the plain complement.
+Wired into `confirmAddPortfolio`, which now only validates the form and
+decides warn-or-not; the actual save moved to a new
+`finalizeAddPortfolio`, invoked directly when the session is
+REGULAR/CLOSED or via `showConfirm`'s callback ("Add anyway") when it
+isn't. The stamped `buySession` on the saved position is still a fresh
+`getPT()` read at the moment of finalizing, not the moment the warning
+appeared — if Roman dwells on the dialog, the recorded session reflects
+when he actually confirmed, not when he was first warned. Verified at
+390px (`showConfirm` renders correctly full-length, no clipping) and the
+live-computed text confirmed correct against real data (see above).
 
 ### 4.2 Make entry measurable
 
@@ -1377,13 +1645,105 @@ n = 150 that cannot be answered at n = 37:
 All four are nullable, three-state, and none is used to score anything
 yet. They exist so that in three months there is something to analyse.
 
+**Migration drafted, NOT applied (2026-09-16).** `db/024_entry_
+measurement_fields.sql` adds all four columns to both `portfolio` and
+`trades_v2` (nullable, no CHECK, no new grants needed — see that file's
+own header for why). The app.js/core/store.js code that reads and writes
+them (`computeEntryMeasurementFields`, the `mapPositionToSupabaseRow`/
+`mapSupabasePortfolioRowToPosition`/`writeTradeToSupabase` additions) is
+written and passes the full test suite, but is held out of any push
+until db/024 is confirmed applied — writing an unknown column through
+PostgREST fails the whole request, and this app's actual buy flow must
+not be the thing that discovers that live. `spread_at_buy` specifically
+never stores a value it can't validate: core/market-data.js's own
+`getLivePrice` HOTFIX comment already documents this account's IEX
+snapshot bid/ask coming back zero/garbage for thin after-hours tickers,
+so `computeEntryMeasurementFields` only accepts a quote where
+`bp > 0 && ap > 0 && ap >= bp`, null otherwise — exactly the condition
+most likely to fail on the after-hours buys this field exists to
+measure, which is the honest three-state answer, not a reason to relax
+the guard.
+
+Acceptance test (standing, restated per the calling instruction so this
+doesn't become the fifth field silently dropped on a round-trip, after
+`engine_source`/`universe_rank`/`request_count`/the `signal_snapshot`
+trio): apply db/024, add one real position through the app during
+AFTER_HOURS or PRE_MARKET, re-select the `portfolio` row via the anon key
+directly and confirm all four columns are populated (or `spread_at_buy`
+legitimately null, confirmed against the raw quote separately — not 0,
+not silently wrong), then mark it sold and confirm the same four values
+carried into the resulting `trades_v2` row unchanged.
+
 ### 4.3 Explicitly not doing
 
 **No re-tuning of entry scoring weights in Phase 9.** §0.5 gives the
 reason: at 37 trades, every entry bucket differences is inside the noise
 generated by three trades. The score-inversion hypothesis is real and
 worth testing, and testing it requires the signal log's forward test to
-accumulate, not a code change now.
+accumulate, not a code change now. Restated 2026-09-16 so it doesn't get
+revisited by a future pass that hasn't read this far: signal_log has had
+two days of real volume as of this writing, not three months — nothing
+here changes that math.
+
+### 4.4 Report fixes shipped alongside entry (2026-09-16)
+
+Two report changes, unrelated to §4.1/§4.2's schema but requested in the
+same pass:
+
+**Sell-warning compliance was measuring nothing.** It read
+`sellWarningAtSale`, a field `mapTradesV2ToSoldShape` has hardcoded to
+`null` since the trades_v2 cutover (db/002's own migration note calls it
+"a retired enum with no live writer") — meaning `SELL_NOW`/`SELL_SOON`/
+`HOLDING` counts had all read exactly 0 on every real trade for as long
+as trades_v2 has existed, regardless of what `unifiedRecommendationAtSale`
+(the real, live field, captured at every sale) actually said. Replaced
+with a direct count of `unifiedRecommendationAtSale`'s real values —
+free-text, not forced into the old three-bucket vocabulary, since nothing
+guarantees future labels fit it. Real output against production data
+(46 trades): `HOLD STRONG: 27, HOLD: 7, CONSIDER SELLING: 6, SELL NOW —
+Stop-loss hit: 4, LOCK IN PROFITS: 1, SELL SOON: 1` — no longer 0/0/0.
+
+**"DID I SELL TOO EARLY?"** — a new report section
+(`buildSellTooEarlySection`), the fuller both-directions/both-day-offset
+treatment of the same fact §3.9.2 named as Roman's central problem (wins
+average +1.5%, cap at +3.9%, while the moves kept going). Per closed
+trade: sold at X%, then the price's own move at +1d/+2d/+5d. Totals for
+wins (left on the table vs. avoided a decline) and losses (cutting hurt
+vs. cutting helped), at each of the three horizons, in both % and $ —
+sign-flipped on the "good news" side so an avoided decline reads as a
+positive amount avoided, not a confusing negative. `SPLIT_IN_WINDOW`/
+`DATA_ERROR` rows (`scripts/lib/sell-timing.mjs`'s own guard, which nulls
+all three day-offset fields together when it trips) are excluded by
+name, with a count, not silently dropped by a null check that happens to
+also catch them. A `-6%` floor-specific sub-section, same treatment,
+filtered to `unified_recommendation_at_sale = 'CUT NOW — Max-loss
+floor'` — real answer today is 0 trades (the floor is one day old), and
+the section says exactly that rather than reading like a broken query.
+**Repurposed the same day (§0.3.2), once the floor itself stopped being a
+verdict** — see `buildFloorCrossingScoreboard` and §0.3.2's own write-up;
+that filter no longer exists (the label it matched will never be produced
+again), replaced by a live bar-fetch that finds real crossings of
+whatever line is currently set, independent of what got recorded at
+sale.
+
+Real output against production data: 34 of 46 closed trades had
+resolved, trustworthy sell-timing data (9 not yet resolved, 3
+split-in-window, 0 data error). Wins left +$251 on the table at +5d
+across 14 trades (avg +6.7%) and avoided +$226 in declines across 9
+(avg +9.6%). Losses: cutting hurt (price recovered) on 6 trades at +5d
+(avg +11.3%, +$154 combined) and helped on 5 (avg +4.9%, +$63 avoided).
+Per-trade detail confirmed real and specific — e.g. BTDR sold at −7.2%,
+then +10.2%/+19.3%/+29.2% at +1d/+2d/+5d, a real, large "cutting hurt"
+case now visible for the first time.
+
+Also fixed while building this: `mapTradesV2ToSoldShape` never mapped
+`price_at_plus1_day`/`price_at_plus2_days` (db/022) into the sold shape
+at all — a real gap found only because this report needed those two
+fields specifically; every earlier read of `state.sold[...].priceAt1Day`
+anywhere in the app was silently `undefined`.
+
+Neither fix depends on db/024 and both are safe to ship independent of
+it.
 
 ---
 
@@ -1444,12 +1804,21 @@ reports "Success. No rows returned" and does nothing.
 
 ## 6. Acceptance tests
 
-The standing rule, stated four times in this project because it has been
-violated four times: **a value computed correctly and present in memory
+The standing rule, stated five times in this project because it has been
+violated five times: **a value computed correctly and present in memory
 is not a value that persists.** `engine_source`, `universe_rank`,
-`request_count`, and the `signal_snapshot`/`exit_rule_id`/`minutes_late`
-trio were each computed correctly and each silently dropped on the way to
-the database.
+`request_count`, the `signal_snapshot`/`exit_rule_id`/`minutes_late`
+trio, and — found 2026-09-16, while building "Did I sell too early?"
+(§4.4) — `price_at_plus1_day`/`price_at_plus2_days` (db/022) were each
+computed correctly, written to Supabase correctly, and each silently
+dropped somewhere else on the way back out: the first four at the
+write path, the fifth at `mapTradesV2ToSoldShape` (app.js), which never
+mapped either column into the shape the report itself reads. Different
+layer, identical shape of defect — the data was sitting in Supabase the
+whole time; every earlier read of `state.sold[...].priceAt1Day` anywhere
+in the app was silently `undefined`. This is the argument for the rule
+below, not an exception to it: a value can go missing on either side of
+the round trip, so the round trip is the only check that catches both.
 
 Every acceptance test below is a **round trip re-selected from the
 database**. Never a code read, never a UI display, never an HTTP status
@@ -1471,8 +1840,17 @@ code.
 5. **Session has more than one value.** `select buy_session, count(*)
    from trades_v2 group by 1` returns ≥ 2 non-null values; TENX, KEEL and
    NEOG each return `AFTER_HOURS`.
-6. **The hard floor fires.** Construct a position at −6.1%; the rendered
-   call is CUT NOW and the reason names the floor, not a composite.
+6. **The stop-loss hard floor fires; the max-loss LINE does not.**
+   SUPERSEDED 2026-09-16 (§0.3.2) — this used to read "construct a
+   position at −6.1%; the rendered call is CUT NOW and the reason names
+   the floor, not a composite." That behavior is gone by design. Current
+   test: construct a position at −6.1% with `price > position.stop`; the
+   rendered call is an ordinary composite label (never `CUT NOW —
+   Max-loss floor`, that string can no longer be produced), AND the
+   intraday panel/Portfolio card both report "1.1pp past your -6% floor."
+   Construct a SECOND position at `price <= position.stop`; that one
+   still renders `SELL NOW — Stop-loss hit` unconditionally — the one
+   hard floor this app still enforces, unchanged by any of this.
 7. **Thin cells are labelled, not guessed.** Construct a state with no
    populated cell; the UI shows `NOT_EVALUATED` and no probability.
 8. **The scoreboard records.** After one rendered call, re-select

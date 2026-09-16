@@ -3576,6 +3576,32 @@ function deriveRsiPts(rsi) {
   return -10; // rsi > 75
 }
 
+// Phase 9 §4.1 (2026-09-16): computed from Roman's own closed trades,
+// not hardcoded -- checked live while building this and the numbers had
+// already moved (CMPX's after-hours buy, at -9.4%, has since displaced
+// NEOG's -4.5% out of the real worst-3; the spec's own illustrative
+// "TENX/KEEL/NEOG" text was already stale by the time this shipped).
+// Computing directly from state.sold means the warning can't drift out
+// of sync with the data it's citing the way a hand-typed sentence would.
+// Degrades gracefully at low n rather than assuming exactly three
+// qualifying trades always exist.
+function buildAfterHoursWarningText() {
+  const tail = `The spread is wide, the book is thin, and you can't act on a gap before the open.`;
+  const ah = state.sold.filter(s => s.buySession === 'AFTER_HOURS' || s.buySession === 'PRE_MARKET');
+  const total = ah.length;
+  if (!total) {
+    return `After-hours entry. No closed after-hours/pre-market trades on record yet — ${tail}`;
+  }
+  const worst = [...ah].sort((a, b) => a.pnlPct - b.pnlPct).slice(0, Math.min(3, total));
+  const worstStr = worst.map(s => `${s.ticker} ${s.pnlPct >= 0 ? '+' : ''}${s.pnlPct.toFixed(0)}%`).join(', ');
+  const worstLabel = worst.length === 3 ? 'three worst trades were' : worst.length === 2 ? 'two worst trades were' : 'worst trade was';
+  const fineCount = total - worst.length;
+  const midClause = fineCount > 0
+    ? ` ${fineCount} of your ${total} after-hours/pre-market buys were fine — but the`
+    : ' The';
+  return `After-hours entry. Your ${worstLabel} bought after the close or before the open (${worstStr}).${midClause} spread is wide, the book is thin, and you can't act on a gap before the open.`;
+}
+
 async function confirmAddPortfolio(ticker, btn) {
   const shares = parseFloat(document.getElementById('pf-shares').value);
   const price  = parseFloat(document.getElementById('pf-price').value);
@@ -3585,7 +3611,68 @@ async function confirmAddPortfolio(ticker, btn) {
     alert('Please enter shares and price.'); return;
   }
 
+  // §4.1: warn, don't block -- n=10 (now 11) doesn't justify a hard stop,
+  // and Roman's stated risk appetite is medium-to-high. This check and
+  // finalizeAddPortfolio's own buySession (stamped on the position) use
+  // the identical classifySession(date, HH:MM) formula, but are
+  // deliberately two separate getPT() reads, not one value threaded
+  // through: if the warning is shown, the position isn't finalized until
+  // "Add anyway" is actually clicked, and the STORED session should
+  // reflect that real moment, not the moment the warning first appeared.
+  // The two can disagree only in the vanishingly rare case of dwelling
+  // across a session boundary while the dialog is open.
+  const nowPtForSession = getPT();
+  const nowHHMMForSession = `${String(nowPtForSession.getHours()).padStart(2,'0')}:${String(nowPtForSession.getMinutes()).padStart(2,'0')}`;
+  const buySessionForWarning = classifySession(date, nowHHMMForSession);
+  if (buySessionForWarning === 'AFTER_HOURS' || buySessionForWarning === 'PRE_MARKET') {
+    showConfirm(buildAfterHoursWarningText(), () => finalizeAddPortfolio(ticker, shares, price, date, btn), 'Add anyway');
+    return;
+  }
+  await finalizeAddPortfolio(ticker, shares, price, date, btn);
+}
+
+// Phase 9 §4.2 (2026-09-16) -- entry measurement, none of it scores
+// anything (see db/024's own header). Held out of the `position` object
+// literal below as its own async step: it needs a fresh network call
+// (spread) this flow never made before, and it must not be able to block
+// or corrupt the actual add if that call fails.
+async function computeEntryMeasurementFields(ticker, price, sig) {
+  // spread_at_buy: a real dollar bid/ask width, or null -- never a
+  // number known to be wrong. core/market-data.js's getLivePrice HOTFIX
+  // comment already documents this account's snapshot bid/ask coming
+  // back zero/garbage for thin after-hours tickers; the same feed, the
+  // same failure mode, so the same guard applies here: only accept
+  // bp>0, ap>0, ap>=bp.
+  let spreadAtBuy = null;
+  if (state.settings.alpacaKey) {
+    try {
+      const snaps = await fetchSnapshots([ticker]);
+      const q = snaps[ticker]?.latestQuote;
+      if (q && q.bp > 0 && q.ap > 0 && q.ap >= q.bp) spreadAtBuy = q.ap - q.bp;
+    } catch(e) {
+      console.warn(`spread_at_buy fetch failed for ${ticker}: ${e.message}`);
+    }
+  }
+
+  // minutes_from_open: PT minute-of-day minus 390 -- the same 6:30am PT/
+  // 9:30am ET reference classifySession uses for its own REGULAR-session
+  // lower bound (core/clock.js). Negative pre-market, 0 at the open,
+  // >390 once past a normal close.
+  const pt = getPT();
+  const minutesFromOpen = (pt.getHours() * 60 + pt.getMinutes()) - 390;
+
+  // bars_since_signal / entry_vs_signal_price_pct: both null when there's
+  // no signal behind this buy at all (an "Own Decision" trade) -- there
+  // is nothing for either to measure staleness or slippage against.
+  const barsSinceSignal = (sig && state.lastScanTime) ? Math.floor((Date.now() - state.lastScanTime) / 60000) : null;
+  const entryVsSignalPricePct = (sig && sig.price) ? ((price - sig.price) / sig.price) * 100 : null;
+
+  return { spreadAtBuy, minutesFromOpen, barsSinceSignal, entryVsSignalPricePct };
+}
+
+async function finalizeAddPortfolio(ticker, shares, price, date, btn) {
   const sig = state.signals.find(s => s.ticker === ticker);
+  const entryMeasurement = await computeEntryMeasurementFields(ticker, price, sig);
 
   const position = {
     id: Date.now().toString(),
@@ -3665,6 +3752,17 @@ async function confirmAddPortfolio(ticker, btn) {
     // this needs to come from which button was actually tapped, still not
     // from re-deriving "current signals" ambiently.
     engineSource: 'EDGE',
+    // §4.2 fields (spreadAtBuy/minutesFromOpen/barsSinceSignal/
+    // entryVsSignalPricePct) HELD OUT of this object on purpose, 2026-09-16
+    // -- db/024 (the migration adding their columns) has not been applied
+    // yet, and attaching them here would make mapPositionToSupabaseRow try
+    // to write unknown columns to `portfolio`, which PostgREST rejects
+    // outright. computeEntryMeasurementFields above still runs (harmless,
+    // its result is simply unused below) so re-enabling this is a one-line
+    // change once Roman confirms db/024 is live: uncomment and re-add the
+    // four `entryMeasurement.*` assignments here, plus their matching
+    // fields in core/store.js's two mapPosition*/mapSupabase* functions and
+    // in writeTradeToSupabase below (all marked the same way).
   };
 
   // Supabase is now the source of truth for portfolio (Data Migration
@@ -4183,12 +4281,22 @@ function buildFridayFlag(p, currentPrice, pnlPct) {
 // evaluation and was retired once it was found to be equivalent-or-better.
 
 const MAX_HOLD_DAYS = { DAY: 1, '3-DAY': 4, WEEK: 7 };
-// Phase 9 §3.4/§0.3: hard cut-loss floor, evaluated before any factor
-// scoring and before the stop-loss check, unconditional. Replayed against
-// all 37 closed trades: -3% -> +$32.23, -4% -> +$17.63, -5% -> +$5.81,
-// -6% (Roman's choice) -> -$3.16, -8% -> -$18.89, -10% -> -$28.68, no cap
-// (actual) -> -$73.73. Settings-visible (state.settings.maxLossPct) so it
-// can move without a code change; this is only the default.
+// Phase 9 §3.4/§0.3/§0.3.1: hard cut-loss floor, evaluated before any
+// factor scoring and before the stop-loss check, unconditional.
+//
+// CORRECTED 2026-09-16 (§0.3.1) -- the original replay assumed a clean
+// exit at the cap and never asked what happened after; the honest number
+// is much smaller and came from redoing it against real bars, not from
+// reasoning about it. Realistic (close-only) definition, same 37 trades:
+// 8 trades actually crossed -6% on a closing price (not the 4 originally
+// guessed), floor-applied -$71.86 vs actual -$73.73 -- a real improvement
+// of $1.87, not $70.57, and one trade (BTDR, a real +$4.75 forced to a
+// floor -$17.42) accounts for 92% of even that thin margin. The floor
+// still wins under this definition; under a theoretical continuous/
+// intraday-stop definition (15 trades would have crossed) it would have
+// been a net LOSS of $97.78 vs actual. Not a reason to change or remove
+// the floor (see §0.3.1's own "not changing the floor" note) -- a reason
+// not to repeat the old -$3.16 figure anywhere else.
 const DEFAULT_MAX_LOSS_PCT = 6;
 const MACRO_TAILWIND_CONDITIONS = ['BROAD_RALLY', 'MOMENTUM_DAY'];
 const DURATION_WINDOW_LABEL = { DAY: 'exit-today', '3-DAY': '2-4 day', WEEK: '5-7 day' };
@@ -4240,25 +4348,34 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
   const rsi = position.rsi;
   const pnlPct = ((price - position.buyPrice) / position.buyPrice) * 100;
 
-  // ── HARD FLOOR — must be the very first thing evaluated after the
-  // cannot-evaluate check above, before any factor scoring, and bypasses
-  // the composite entirely. Two independent triggers, either one
-  // unconditional; order matches Phase 9 §3.4.
-  const maxLossPct = state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT;
-  // 1e-9 epsilon: found live testing this change — a position at exactly
-  // -6.00% can compute to -5.9999999999999964 from ordinary float
-  // division (e.g. buyPrice 10.00, price 9.40), missing a bare <=
-  // comparison by binary rounding noise, not by any real cent of price.
-  if (pnlPct <= -maxLossPct + 1e-9) {
-    const factor = { name: `Down ${Math.abs(pnlPct).toFixed(1)}% — past the ${maxLossPct}% max-loss floor`, points: null };
-    return {
-      label: 'CUT NOW — Max-loss floor',
-      composite: null,
-      factors: [factor],
-      topFactors: [factor],
-      hardFloor: true,
-    };
-  }
+  // ── MAX-LOSS FLOOR REMOVED AS A VERDICT (2026-09-16, §0.3.1/grid
+  // correction). It used to hard-return CUT NOW here, before any factor
+  // scoring, on the theory that a threshold Roman chose from a replay was
+  // safe precisely because it didn't predict. The replay itself turned
+  // out to be the problem: it assumed a clean exit at the cap and never
+  // asked what the stock did afterward. Redone honestly against real
+  // bars, same 37-trade basis: the mechanism this function used to run
+  // (fires on ANY live price dip past the line, since position.currentPrice
+  // is whatever an IEX snapshot shows at render time -- no persistence, no
+  // close-only gate) would have cost $97.78 MORE than doing nothing at
+  // all, not saved $70.57 as first claimed. A full threshold x basis grid
+  // (docs/phase-9-entry-exit-spec.md §0.3.1) found no threshold or basis
+  // combination with a large, non-fragile edge -- most of what looked
+  // like an edge anywhere in that grid was really "did this rule happen
+  // to catch TENX," one trade, not a general property of the rule.
+  //
+  // The line is now reported, not enforced -- see computeIntradayPanel's
+  // maxLossReached field and the copy it drives (§7.x). This function no
+  // longer references maxLossPct/MAX_LOSS_PCT/DEFAULT_MAX_LOSS_PCT at
+  // all; a position at or past the line falls through to ordinary
+  // composite scoring like any other, same as it always has for every
+  // OTHER threshold this app has never claimed authority over.
+  //
+  // Stop-loss (below) is unaffected and unchanged -- that's Roman's own
+  // stop, set by him at buy time, not a mechanism inferred from a replay
+  // that turned out to be wrong. Different thing, different standing; see
+  // phase-9-entry-exit-spec.md's "what does not change" note the same day
+  // this comment was written.
   if (price <= position.stop) {
     const factor = { name: 'Stop-loss breach', points: null };
     return {
@@ -4269,31 +4386,6 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
       hardFloor: true,
     };
   }
-
-  // ── STRUCTURAL INVARIANT for whoever wires Models A/B (§3.2/§3.3, tables
-  // built 2026-09-15 in data/exit-model-a.json / exit-model-b.json) into
-  // this function: nothing past this point may EVER run for a position at
-  // or past the max-loss floor. Not a policy check the model applies to
-  // itself -- the model must be structurally UNREACHABLE for that case,
-  // enforced by this function returning first, above, not by the model
-  // choosing to agree with the floor.
-  //
-  // Why this is load-bearing, not incidental: §3.1.3 found the model's
-  // training data has essentially never seen a stock go to zero (survivor-
-  // ship correction contributed 15 genuinely-delisted symbols out of 3,930,
-  // 0.4% -- not fixable with free data). That means Model A's recovery
-  // probabilities are optimistic exactly in the tail the floor exists to
-  // catch -- a model that has never seen TENX go to zero is a model that
-  // will confidently tell you TENX is coming back. The floor is safe
-  // BECAUSE it does not predict; the model is unsafe here FOR THE SAME
-  // REASON its predictions are useful everywhere else it has real data.
-  // Two blind spots covering different cases would be a coincidence.
-  // One structurally excluding the other's blind spot is the actual design.
-  //
-  // If a future change adds "let the model override CUT NOW when it's
-  // confident" -- don't. That is precisely the case with no supporting
-  // data. Re-read phase-9-entry-exit-spec.md §3.1.3 before touching this
-  // ordering.
 
   const factors = [];
   const add = (name, points) => factors.push({ name, points });
@@ -4896,12 +4988,17 @@ function computeIntradayPanel({ buyPrice, buyDateStr, bars, failed, nowPrice, ma
     }
   }
 
+  // maxLossReached is a REPORTED fact now, not a verdict (2026-09-16,
+  // §0.3.1/grid correction) -- epsilon fix stays for the same reason it
+  // always did: a position at exactly -6.00% can compute to
+  // -5.9999999999999964 from ordinary float division, missing a bare <=
+  // by binary rounding noise, not by any real cent of price.
   const maxLossReached = nowPct <= -maxLossPct + 1e-9;
 
   return {
     state: 'OK', sameDay, todayOnly, nowPct, todayHigh, todayLow,
     sinceEntryHigh, sinceEntryHighDayOfHold, currentDayOfHold, volRatio,
-    recencyNote, maxLossReached,
+    recencyNote, maxLossReached, maxLossPct,
   };
 }
 
@@ -4944,9 +5041,17 @@ function renderIntradayPanelModal(panel) {
     return `Now ${offHigh}pp off today's high of ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}`;
   };
 
-  if (!panel.maxLossReached) {
-    lines.push(`${up ? 'Up' : 'Down'} ${Math.abs(panel.nowPct).toFixed(1)}% ${panel.sameDay ? 'now' : 'today'}`);
-  }
+  // The line Roman set for himself (Phase 9 §0.3.1/§4, 2026-09-16) — a
+  // reported distance, never a verdict. calcUnifiedRecommendation no
+  // longer hard-returns on this; the headline states the same fact
+  // "past"/"above" the floor states, in the descriptive register, with no
+  // imperative verb and no alarm styling. Only meaningful on the down
+  // side — a winning position has no "distance from a loss floor" worth
+  // saying.
+  const floorClause = (!up && panel.maxLossPct != null)
+    ? ` — ${Math.abs(panel.nowPct + panel.maxLossPct).toFixed(1)}pp ${panel.maxLossReached ? 'past' : 'above'} your -${panel.maxLossPct}% floor`
+    : '';
+  lines.push(`${up ? 'Up' : 'Down'} ${Math.abs(panel.nowPct).toFixed(1)}% ${panel.sameDay ? 'now' : 'today'}${floorClause}`);
 
   if (panel.sameDay) {
     if (up && panel.todayHigh) {
@@ -5021,11 +5126,14 @@ function renderIntradayLineCard(panel) {
     const highPart = panel.todayHigh ? `, high of ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}` : '';
     return `<div class="pf-intraday">Up ${panel.nowPct.toFixed(1)}% today${highPart}</div>`;
   }
-  // "now X pp off high" — same now-vs-high figure as the modal's
-  // nowOffHighLine, same reason it's explicitly "off today's high" rather
-  // than left to read as a property of anything else on this short line.
-  const offHighPart = panel.todayHigh ? ` (now ${(panel.todayHigh.pct - panel.nowPct).toFixed(1)}pp off today's high)` : '';
-  return `<div class="pf-intraday">Down ${Math.abs(panel.nowPct).toFixed(1)}% today${offHighPart}</div>`;
+  // The line, not the high, on the down side of this one-line card —
+  // same reasoning and wording as the modal's floorClause (§0.3.1/§4,
+  // 2026-09-16): a reported distance from where Roman set his own
+  // marker, never a verdict, no imperative verb, no alarm color.
+  const floorPart = panel.maxLossPct != null
+    ? ` — ${Math.abs(panel.nowPct + panel.maxLossPct).toFixed(1)}pp ${panel.maxLossReached ? 'past' : 'above'} your -${panel.maxLossPct}% floor`
+    : '';
+  return `<div class="pf-intraday">Down ${Math.abs(panel.nowPct).toFixed(1)}% today${floorPart}</div>`;
 }
 
 // ── 17. MARK AS SOLD ──────────────────────────────────────────────
@@ -5152,6 +5260,19 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       raw_score_at_buy: pos.rawScoreAtBuy,
       full_ure_factors_at_sale: record.fullUreFactorsAtSale,
       full_peak_risk_factors_at_sale: record.fullPeakRiskFactorsAtSale,
+      // Phase 9 §4.2 fields HELD OUT 2026-09-16 -- db/024 not yet applied;
+      // an INSERT naming an unknown column fails the whole trades_v2 row,
+      // which would break every "Mark as sold." Would have carried these
+      // forward from the position AS CAPTURED AT BUY (never recomputed
+      // here -- they describe the buy, not the sale, and trades_v2 is
+      // insert-only at sale time, db/002) -- re-enable by uncommenting
+      // once db/024 is confirmed applied, alongside the matching blocks in
+      // finalizeAddPortfolio and core/store.js's two mapPosition*/
+      // mapSupabase* functions.
+      // spread_at_buy: pos.spreadAtBuy ?? null,
+      // minutes_from_open: pos.minutesFromOpen ?? null,
+      // bars_since_signal: pos.barsSinceSignal ?? null,
+      // entry_vs_signal_price_pct: pos.entryVsSignalPricePct ?? null,
     }]).select('id');
     if (error) { console.error('Supabase trade write failed:', error.message); return; }
     // record is the same object reference already sitting in state.sold —
@@ -5690,6 +5811,14 @@ function mapTradesV2ToSoldShape(row) {
     bestExitPrice: row.best_exit_price,
     bestExitDate: row.best_exit_date,
     bestExitTiming: row.best_exit_timing,
+    // priceAt1Day/priceAt2Days (db/022) were never mapped here at all
+    // until Phase 9 §4/"Did I sell too early?" needed them (2026-09-16) —
+    // found while building that report section, not by design. Both
+    // columns had real data in Supabase the whole time this gap existed;
+    // every earlier read of state.sold[...].priceAt1Day was silently
+    // undefined.
+    priceAt1Day: row.price_at_plus1_day,
+    priceAt2Days: row.price_at_plus2_days,
     priceAt5Days: row.price_at_plus5_days,
     priceMomentumPts: row.price_momentum_pts,
     volSpikePts: row.vol_spike_pts,
@@ -5705,6 +5834,13 @@ function mapTradesV2ToSoldShape(row) {
     rawScoreAtBuy: row.raw_score_at_buy,
     fullUreFactorsAtSale: row.full_ure_factors_at_sale || [],
     fullPeakRiskFactorsAtSale: row.full_peak_risk_factors_at_sale || null,
+    // Phase 9 §4.2 (db/024) -- requires that migration applied; read as
+    // undefined (falls through to null in every consumer's ?? checks)
+    // on any row from before it.
+    spreadAtBuy: row.spread_at_buy,
+    minutesFromOpen: row.minutes_from_open,
+    barsSinceSignal: row.bars_since_signal,
+    entryVsSignalPricePct: row.entry_vs_signal_price_pct,
   };
 }
 
@@ -5948,6 +6084,193 @@ At +5 trading days vs actual sale:
 ${bestLine}${worstLine}`;
 }
 
+// "Did I sell too early?" (Phase 9 §4, 2026-09-16) -- Roman's own stated
+// central problem: wins average +1.5% and cap at +3.9% while the moves
+// kept going. This puts his own post-sale data in front of him directly,
+// in both directions, never just the regret side -- the same "wins keep
+// rising after he sells" fact SELL TIMING ANALYSIS above already shows
+// at +5 days only; this is the fuller, both-directions/both-outcomes/
+// both-day-1-and-2-and-5 treatment, plus the floor's own scoreboard.
+//
+// SPLIT_IN_WINDOW/DATA_ERROR (scripts/lib/sell-timing.mjs): the guard
+// that trips on either one nulls bestExitPrice AND all three
+// priceAtNDays fields together -- excluded here by name, with a count,
+// not silently dropped by a null check that happens to also catch them.
+// The line's own evidence base (2026-09-16, repurposed from "the floor's
+// own scoreboard" -- §0.3.1 found the floor-as-verdict's own historical
+// replay was wrong by 38x, so it's no longer a verdict; see
+// calcUnifiedRecommendation's own comment on the removal). Answers
+// "when a position closed at or past the line during the hold, what did
+// Roman actually do, and what happened at +1/+2/+5 trading days off that
+// point" -- the evidence a threshold would need before it's ever
+// promoted back to a verdict, gathered as trades happen instead of
+// asserted from a replay that never checked. Own live fetch
+// (fetchSellTimingBars, already used for this file's Sell Timing
+// Analysis -- same daily bars, same feed, no new API surface), not
+// gated on sellTimingResolved/trades_v2's server-filled columns: this
+// question doesn't need those, and restricting to that subset would
+// under-report on trades still waiting for the outcome filler.
+async function buildFloorCrossingScoreboard(sold, maxLossPct) {
+  const withDates = sold.filter(s => s.buyDate && s.sellDate);
+  const fmtPct = (v) => v == null ? '—' : `${v>=0?'+':''}${v.toFixed(1)}%`;
+
+  const results = await Promise.all(withDates.map(async (s) => {
+    let bars;
+    try { bars = await fetchSellTimingBars(s.ticker, s.buyDate, s.sellDate); }
+    catch(e) { return { ticker: s.ticker, error: true }; }
+    if (!bars || !bars.length) return { ticker: s.ticker, error: true };
+    const sorted = [...bars].sort((a, b) => new Date(a.t) - new Date(b.t));
+    const entryIdx = sorted.findIndex(b => (b.t || '').split('T')[0] === s.buyDate);
+    const sellIdx = sorted.findIndex(b => (b.t || '').split('T')[0] === s.sellDate);
+    if (entryIdx === -1 || sellIdx === -1) return { ticker: s.ticker, error: true };
+
+    // Close-only, matching the "minimal correct" reading from §0.3.1's
+    // grid -- not the live-price/any-breach behavior the removed verdict
+    // used to have. A daily bar's LOW is available here too, but this
+    // question is "what would checking normally have shown," not the
+    // theoretical intraday upper bound the grid already covered in full.
+    const thresholdPrice = s.buyPrice * (1 - maxLossPct / 100);
+    let crossIdx = null;
+    for (let i = entryIdx; i <= sellIdx; i++) {
+      if (sorted[i].c <= thresholdPrice + 1e-9) { crossIdx = i; break; }
+    }
+    if (crossIdx == null) return { ticker: s.ticker, crossed: false };
+
+    const daysHeldPastCross = sellIdx - crossIdx;
+    const priceAtOffset = (off) => sorted[crossIdx + off] ? sorted[crossIdx + off].c : null;
+    const pctFromLine = (p) => p != null ? ((p - thresholdPrice) / thresholdPrice) * 100 : null;
+    return {
+      ticker: s.ticker, crossed: true,
+      crossDate: (sorted[crossIdx].t || '').split('T')[0],
+      soldSameDay: daysHeldPastCross === 0, daysHeldPastCross,
+      realizedPnlPct: s.pnlPct,
+      pctAt1: pctFromLine(priceAtOffset(1)), pctAt2: pctFromLine(priceAtOffset(2)), pctAt5: pctFromLine(priceAtOffset(5)),
+    };
+  }));
+
+  const usable = results.filter(r => !r.error);
+  const crossers = usable.filter(r => r.crossed);
+  const skipped = results.length - usable.length;
+
+  if (!crossers.length) {
+    return `THE ${maxLossPct}% LINE'S OWN EVIDENCE: ${usable.length} closed trades checked (${skipped} skipped, no bar data available). 0 ever closed at or past -${maxLossPct}% of cost basis during the hold. Nothing to show yet — this fills in as real trades cross the line.`;
+  }
+
+  const soldSameDay = crossers.filter(r => r.soldSameDay);
+  const heldFurther = crossers.filter(r => !r.soldSameDay);
+  const lines = crossers
+    .sort((a, b) => new Date(a.crossDate) - new Date(b.crossDate))
+    .map(r => {
+      const action = r.soldSameDay
+        ? 'sold that day'
+        : `held ${r.daysHeldPastCross} more day(s), realized ${fmtPct(r.realizedPnlPct)}`;
+      return `  ${r.ticker.padEnd(6)} crossed ${r.crossDate} (${action})   +1d ${fmtPct(r.pctAt1).padStart(6)}  +2d ${fmtPct(r.pctAt2).padStart(6)}  +5d ${fmtPct(r.pctAt5).padStart(6)}  (off the line)`;
+    });
+
+  return `THE ${maxLossPct}% LINE'S OWN EVIDENCE (not a verdict — see calcUnifiedRecommendation's own note on why this is reported, never enforced):
+
+${crossers.length} of ${usable.length} closed trades (${skipped} skipped, no bar data) closed at or past -${maxLossPct}% of cost basis at some point during the hold. ${soldSameDay.length} were sold that same day; ${heldFurther.length} were held further before selling.
+
+${lines.join('\n')}
+
+This is the evidence base for whether this line — or any other — ever deserves promotion back to a verdict. Not enough of it yet to conclude anything; see docs/phase-9-entry-exit-spec.md §0.3.1 for the historical 37-trade replay this reasoning is built on, and the full threshold grid there before proposing a change based on this alone.`;
+}
+
+async function buildSellTooEarlySection(sold) {
+  const PNL_EPSILON = 1e-9; // same test generateClaudeReport's own shared isWin/isLoss use -- see that definition's comment on the CCRN breakeven bug this avoids
+  const isWin  = (s) => s.pnlDollar >  PNL_EPSILON;
+  const isLoss = (s) => s.pnlDollar < -PNL_EPSILON;
+
+  const notResolved   = sold.filter(s => !s.sellTimingResolved);
+  const splitExcluded = sold.filter(s => s.sellTimingResolved && s.bestExitTiming === 'SPLIT_IN_WINDOW');
+  const errorExcluded = sold.filter(s => s.sellTimingResolved && s.bestExitTiming === 'DATA_ERROR');
+  const usable = sold.filter(s => s.sellTimingResolved && s.bestExitTiming !== 'SPLIT_IN_WINDOW' && s.bestExitTiming !== 'DATA_ERROR');
+
+  const header = `${usable.length} of ${sold.length} closed trades have resolved, trustworthy sell-timing data.
+Excluded: ${notResolved.length} not yet resolved, ${splitExcluded.length} split-in-window, ${errorExcluded.length} data error.`;
+
+  if (!usable.length) {
+    return `=== DID I SELL TOO EARLY? ===
+
+${header}
+
+Nothing to show until the outcome filler resolves at least one trade.`;
+  }
+
+  const pctMove = (s, field) => s[field] != null ? ((s[field] - s.sellPrice) / s.sellPrice) * 100 : null;
+  const dollarMove = (s, field) => s[field] != null ? (s[field] - s.sellPrice) * s.shares : null;
+  const avgOf = (arr, fn) => { const v = arr.map(fn).filter(x => x != null); return v.length ? v.reduce((a,b)=>a+b,0) / v.length : null; };
+  const sumOf = (arr, fn) => { const v = arr.map(fn).filter(x => x != null); return v.length ? v.reduce((a,b)=>a+b,0) : null; };
+  const fmtPct = (v) => v == null ? '—' : `${v>=0?'+':''}${v.toFixed(1)}%`;
+  const fmtDollar = (v) => v == null ? '—' : `${v>=0?'+':''}$${v.toFixed(2)}`;
+
+  const FIELDS = [[1,'priceAt1Day'], [2,'priceAt2Days'], [5,'priceAt5Days']];
+
+  // Two buckets per horizon: `rose` (price kept rising after the sale)
+  // and `fell` (price fell or held after the sale) -- signed the way a
+  // human reads it, not the way the raw subtraction happens to come out.
+  // `fell`'s pct/dollar are sign-FLIPPED (raw delta is <= 0 there) so
+  // "avoided a decline of +$40" reads as a positive amount of benefit,
+  // never as "-$40 avoided" (which reads like a loss, not an avoided one).
+  function directionBlock(trades, field) {
+    const withField = trades.filter(s => s[field] != null);
+    const rose = withField.filter(s => pctMove(s, field) > 0);
+    const fell = withField.filter(s => pctMove(s, field) <= 0);
+    return {
+      rose: { n: rose.length, avgPct: avgOf(rose, s => pctMove(s, field)), totalDollar: sumOf(rose, s => dollarMove(s, field)) },
+      fell: { n: fell.length, avgPct: avgOf(fell, s => -pctMove(s, field)), totalDollar: sumOf(fell, s => -dollarMove(s, field)) },
+    };
+  }
+
+  function renderGroup(trades, label, roseLabel, fellLabel) {
+    if (!trades.length) return `${label}: 0 trades with resolved data.`;
+    const lines = [`${label}: ${trades.length} trade(s)`];
+    for (const [d, field] of FIELDS) {
+      const { rose, fell } = directionBlock(trades, field);
+      lines.push(`  +${d}d — ${roseLabel}: ${rose.n} trade(s), avg ${fmtPct(rose.avgPct)}, total ${fmtDollar(rose.totalDollar)}`);
+      lines.push(`  +${d}d — ${fellLabel}: ${fell.n} trade(s), avg ${fmtPct(fell.avgPct)}, total ${fmtDollar(fell.totalDollar)}`);
+    }
+    return lines.join('\n');
+  }
+
+  const wins = usable.filter(isWin);
+  const losses = usable.filter(isLoss);
+
+  const winsBlock = renderGroup(
+    wins, 'WINS (sold at a profit)',
+    'left on the table (price kept rising after the sale)',
+    'avoided a decline (price fell after the sale — selling was right)'
+  );
+  const lossesBlock = renderGroup(
+    losses, 'LOSSES (sold at a loss)',
+    'cutting hurt (price recovered after the sale)',
+    'cutting helped (price kept falling after the sale)'
+  );
+
+  // The line's own evidence base -- see buildFloorCrossingScoreboard's own
+  // header for why this is a live fetch, not a filter on a label the
+  // removed verdict used to emit.
+  const maxLossPct = state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT;
+  const floorSection = await buildFloorCrossingScoreboard(sold, maxLossPct);
+
+  const perTradeLines = [...usable]
+    .sort((a, b) => new Date(a.sellDate) - new Date(b.sellDate))
+    .map(s => `  ${s.ticker.padEnd(6)} sold ${fmtPct(s.pnlPct).padStart(7)}   +1d ${fmtPct(pctMove(s,'priceAt1Day')).padStart(7)}   +2d ${fmtPct(pctMove(s,'priceAt2Days')).padStart(7)}   +5d ${fmtPct(pctMove(s,'priceAt5Days')).padStart(7)}`);
+
+  return `=== DID I SELL TOO EARLY? ===
+
+${header}
+
+${winsBlock}
+
+${lossesBlock}
+
+${floorSection}
+
+Per trade (sold at X%, then the price's own move at +1d/+2d/+5d):
+${perTradeLines.join('\n')}`;
+}
+
 // Individual Signal Performance — breaks down win rate by the actual point
 // value each scoring component awarded at buy time (Step 5, full-breakdown
 // capture project). Gated on volSpikePts as a stand-in for "has buy-time
@@ -6151,6 +6474,7 @@ async function generateClaudeReport() {
   const ratingSnapshotSection = await buildRatingSnapshotHistorySection(sold);
   const winnerExitTimingSection = await buildWinnerExitTimingSection(sold);
   const sellTimingAnalysisSection = buildSellTimingAnalysisSection(sold);
+  const sellTooEarlySection = await buildSellTooEarlySection(sold);
   const individualSignalPerformanceSection = buildIndividualSignalPerformanceSection(sold);
   const ureFactorAccuracySection = buildUreFactorAccuracySection(sold);
 
@@ -6246,9 +6570,31 @@ Break-even win rate at this ratio: ${breakEvenWinRatePct!=null?breakEvenWinRateP
     return `=== CUMULATIVE P&L BY SELL DATE ===\n\n${summary}\n\n${lines.join('\n')}`;
   })();
 
-  const sellNowCount  = sold.filter(s => s.sellWarningAtSale === 'SELL_NOW').length;
-  const sellSoonCount = sold.filter(s => s.sellWarningAtSale === 'SELL_SOON').length;
-  const holdingCount  = sold.filter(s => s.sellWarningAtSale === 'HOLDING').length;
+  // Phase 9 §4 (2026-09-16): this used to read sellWarningAtSale, a field
+  // mapTradesV2ToSoldShape has hardcoded to null since the trades_v2
+  // cutover (002's migration note: "retired enum with no live writer") --
+  // meaning every one of these three counts has read exactly 0 for as
+  // long as trades_v2 has existed, on every real trade, printing 0/0/0
+  // in the report below regardless of what actually happened at sale.
+  // A section that always reads zero trains Roman to stop reading it.
+  // unifiedRecommendationAtSale is the real, live equivalent -- calc
+  // UnifiedRecommendation's own `label`, captured at the moment of every
+  // sale -- so this now counts real events instead of a retired field
+  // that was never wired to anything. Free-text, not a fixed enum
+  // (hard-floor labels like 'CUT NOW — Max-loss floor' are constants, but
+  // nothing enforces that every future label is), so every distinct
+  // value actually seen is counted and shown, not forced into the old
+  // three-bucket vocabulary.
+  const recAtSaleCounts = {};
+  let recAtSaleUnrecorded = 0;
+  sold.forEach(s => {
+    if (!s.unifiedRecommendationAtSale) { recAtSaleUnrecorded++; return; }
+    recAtSaleCounts[s.unifiedRecommendationAtSale] = (recAtSaleCounts[s.unifiedRecommendationAtSale] || 0) + 1;
+  });
+  const recAtSaleLines = Object.entries(recAtSaleCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, count]) => `  ${label}: ${count}`)
+    .join('\n');
 
   const tierStats = (min, max, label) => {
     const t = sold.filter(s => {
@@ -6390,10 +6736,9 @@ ${volBucket(1.0,2.0,'1.0–2x ')}
 ${volBucket(2.0,3.0,'2–3x   ')}
 ${volBucket(3.0,999,'3x+    ')}
 
-Sell warning compliance:
-  Trades where SELL NOW was showing at sale: ${sellNowCount}
-  Trades where SELL SOON was showing at sale: ${sellSoonCount}
-  Trades where HOLDING was showing at sale: ${holdingCount}
+Unified recommendation at time of sale (real counts — see this section's
+own note in the code if this ever reads 0/0/0 again, that was the bug):
+${recAtSaleLines || '  (none recorded)'}${recAtSaleUnrecorded ? `\n  Not recorded (pre-dates unified-recommendation capture): ${recAtSaleUnrecorded}` : ''}
 
 Performance by signal type at purchase:
   VOL BUILD signal fired:
@@ -6665,6 +7010,8 @@ ${winnerExitTimingSection}
 
 ${sellTimingAnalysisSection}
 
+${sellTooEarlySection}
+
 ${ratingSnapshotSection}
 
 ${individualSignalPerformanceSection}
@@ -6874,7 +7221,7 @@ function renderSettingsTab() {
       <div class="settings-row">
         <div>
           <div class="settings-label">Max Loss Floor</div>
-          <div class="settings-hint">Hard cut-loss %, evaluated before every other exit factor — the model doesn't get a vote past this line. Replayed against all 37 closed trades: -3% would have netted +$32.23, -4% +$17.63, -5% +$5.81, -6% (default) -$3.16, -8% -$18.89, -10% -$28.68, no cap (what actually happened) -$73.73. Backward-looking, assumes a fill at the cap — not a promise, a tradeoff to weigh.</div>
+          <div class="settings-hint">This is a line you're marking for yourself, not a cut trigger — it doesn't act on anything. calcUnifiedRecommendation no longer hard-returns on it; the stock modal and Portfolio card report your live distance from it ("1.2pp past your -6% floor") in the same plain-facts register as everything else there, never as an instruction. Why: replayed honestly against real bars (an assumed clean exit is not the same as knowing what actually happened next), the mechanism this setting used to enforce automatically — cutting the instant a live price dipped past the line — lost money relative to doing nothing at every threshold from -4% through -10%, the range it was actually chosen from. At -6% specifically: -$97.78 versus doing nothing on the same 37 trades that originally suggested this was worth +$70.57. That original number was wrong by roughly 38x — it assumed the trade was simply over at the cut, never asked what the stock did afterward. Full threshold × trigger-definition × ATR-scaled grid, and the correction itself: docs/phase-9-entry-exit-spec.md §0.3.1.</div>
         </div>
         <input id="set-max-loss-pct" class="settings-number" type="number"
           min="0" max="100" step="0.5" value="${s.maxLossPct ?? 6}">
