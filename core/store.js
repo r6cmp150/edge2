@@ -155,9 +155,9 @@ function mapSupabasePortfolioRowToPosition(row) {
     signalSnapshot: row.signal_snapshot,
     exitRuleId: row.exit_rule_id,
     minutesLate: row.minutes_late,
-    // Phase 9 §4.2 (db/024) -- entry measurement, none of it scores
-    // anything. Requires db/024 applied; do not read/write these before
-    // that migration lands.
+    // Phase 9 §4.2 (db/024, confirmed applied 2026-09-16) -- entry
+    // measurement, none of it scores anything. Direct reads, no `||` --
+    // 0 is real and meaningful for spread_at_buy/minutes_from_open.
     spreadAtBuy: row.spread_at_buy,
     minutesFromOpen: row.minutes_from_open,
     barsSinceSignal: row.bars_since_signal,
@@ -215,20 +215,14 @@ function mapPositionToSupabaseRow(position) {
     signal_snapshot: position.signalSnapshot ?? null,
     exit_rule_id: position.exitRuleId ?? null,
     minutes_late: position.minutesLate ?? null,
-    // Phase 9 §4.2 fields (spread_at_buy/minutes_from_open/
-    // bars_since_signal/entry_vs_signal_price_pct) HELD OUT 2026-09-16 --
-    // db/024 (the migration adding these columns to `portfolio` and
-    // trades_v2) has not been applied yet. Writing these keys here before
-    // then makes Supabase reject the whole upsert (unknown column), which
-    // would silently break every future "Add to Portfolio." Re-enable by
-    // uncommenting these four lines, the matching four in
-    // mapSupabasePortfolioRowToPosition above, app.js's finalizeAddPortfolio
-    // (position object) and writeTradeToSupabase (trades_v2 insert row) --
-    // all marked the same way -- once db/024 is confirmed applied.
-    // spread_at_buy: position.spreadAtBuy ?? null,
-    // minutes_from_open: position.minutesFromOpen ?? null,
-    // bars_since_signal: position.barsSinceSignal ?? null,
-    // entry_vs_signal_price_pct: position.entryVsSignalPricePct ?? null,
+    // Phase 9 §4.2 (db/024, confirmed applied 2026-09-16). `??`, not
+    // `||` -- 0 is a real, meaningful value for spread_at_buy (bid==ask)
+    // and minutes_from_open (a fill at exactly the open); `||` would
+    // silently discard both.
+    spread_at_buy: position.spreadAtBuy ?? null,
+    minutes_from_open: position.minutesFromOpen ?? null,
+    bars_since_signal: position.barsSinceSignal ?? null,
+    entry_vs_signal_price_pct: position.entryVsSignalPricePct ?? null,
     updated_at: new Date().toISOString(),
   };
 }

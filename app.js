@@ -3752,17 +3752,15 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn) {
     // this needs to come from which button was actually tapped, still not
     // from re-deriving "current signals" ambiently.
     engineSource: 'EDGE',
-    // §4.2 fields (spreadAtBuy/minutesFromOpen/barsSinceSignal/
-    // entryVsSignalPricePct) HELD OUT of this object on purpose, 2026-09-16
-    // -- db/024 (the migration adding their columns) has not been applied
-    // yet, and attaching them here would make mapPositionToSupabaseRow try
-    // to write unknown columns to `portfolio`, which PostgREST rejects
-    // outright. computeEntryMeasurementFields above still runs (harmless,
-    // its result is simply unused below) so re-enabling this is a one-line
-    // change once Roman confirms db/024 is live: uncomment and re-add the
-    // four `entryMeasurement.*` assignments here, plus their matching
-    // fields in core/store.js's two mapPosition*/mapSupabase* functions and
-    // in writeTradeToSupabase below (all marked the same way).
+    // §4.2 (db/024, confirmed applied 2026-09-16 — all 8 columns present
+    // via information_schema). Plain assignments, not `||`-guarded: 0 is
+    // a real, meaningful value for spreadAtBuy (bid==ask) and
+    // minutesFromOpen (a fill at exactly the open), and `||` would
+    // silently discard both.
+    spreadAtBuy: entryMeasurement.spreadAtBuy,
+    minutesFromOpen: entryMeasurement.minutesFromOpen,
+    barsSinceSignal: entryMeasurement.barsSinceSignal,
+    entryVsSignalPricePct: entryMeasurement.entryVsSignalPricePct,
   };
 
   // Supabase is now the source of truth for portfolio (Data Migration
@@ -5260,19 +5258,17 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       raw_score_at_buy: pos.rawScoreAtBuy,
       full_ure_factors_at_sale: record.fullUreFactorsAtSale,
       full_peak_risk_factors_at_sale: record.fullPeakRiskFactorsAtSale,
-      // Phase 9 §4.2 fields HELD OUT 2026-09-16 -- db/024 not yet applied;
-      // an INSERT naming an unknown column fails the whole trades_v2 row,
-      // which would break every "Mark as sold." Would have carried these
-      // forward from the position AS CAPTURED AT BUY (never recomputed
-      // here -- they describe the buy, not the sale, and trades_v2 is
-      // insert-only at sale time, db/002) -- re-enable by uncommenting
-      // once db/024 is confirmed applied, alongside the matching blocks in
-      // finalizeAddPortfolio and core/store.js's two mapPosition*/
-      // mapSupabase* functions.
-      // spread_at_buy: pos.spreadAtBuy ?? null,
-      // minutes_from_open: pos.minutesFromOpen ?? null,
-      // bars_since_signal: pos.barsSinceSignal ?? null,
-      // entry_vs_signal_price_pct: pos.entryVsSignalPricePct ?? null,
+      // Phase 9 §4.2 (db/024, confirmed applied 2026-09-16) -- carried
+      // forward from the position AS CAPTURED AT BUY, never recomputed
+      // here: these describe the buy, not the sale, and trades_v2 is
+      // insert-only at sale time (db/002), so this is the one moment
+      // they can still make it into the closed-trade record. `??`, not
+      // `||` -- 0 is real and meaningful for spread_at_buy/
+      // minutes_from_open.
+      spread_at_buy: pos.spreadAtBuy ?? null,
+      minutes_from_open: pos.minutesFromOpen ?? null,
+      bars_since_signal: pos.barsSinceSignal ?? null,
+      entry_vs_signal_price_pct: pos.entryVsSignalPricePct ?? null,
     }]).select('id');
     if (error) { console.error('Supabase trade write failed:', error.message); return; }
     // record is the same object reference already sitting in state.sold —
@@ -5834,9 +5830,9 @@ function mapTradesV2ToSoldShape(row) {
     rawScoreAtBuy: row.raw_score_at_buy,
     fullUreFactorsAtSale: row.full_ure_factors_at_sale || [],
     fullPeakRiskFactorsAtSale: row.full_peak_risk_factors_at_sale || null,
-    // Phase 9 §4.2 (db/024) -- requires that migration applied; read as
-    // undefined (falls through to null in every consumer's ?? checks)
-    // on any row from before it.
+    // Phase 9 §4.2 (db/024, confirmed applied 2026-09-16) -- direct
+    // reads, no `||` -- 0 is real and meaningful for spread_at_buy/
+    // minutes_from_open. null on any row sold before this migration.
     spreadAtBuy: row.spread_at_buy,
     minutesFromOpen: row.minutes_from_open,
     barsSinceSignal: row.bars_since_signal,
