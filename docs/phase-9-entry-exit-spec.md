@@ -1281,7 +1281,73 @@ green, PLUG's real render re-captured post-fix (misattribution gone,
 of check was still after-hours — regular-session-only high/low), and a
 fresh 390px pass on the corrected modal, clean.
 
-## 4. Entry
+### 3.9.6 The last unobserved state — and a bug only it could show (2026-09-15, ~8pm ET)
+
+The fully-quiet CLOSED session was the one state never checked live all
+day. Took the window while it was open (CLOSED starts 4h after the close
+and ends at the next PRE_MARKET open) and got it — and it immediately
+found a real bug neither the AFTER_HOURS render nor any constructed test
+data had a way to surface.
+
+**The bug: UTC calendar day, not PT.** `computeIntradayPanel`'s `todayStr`
+was `new Date().toISOString().slice(0,10)` — a UTC date. UTC midnight
+lands at 8pm ET during EDT, which is exactly the evening this feature is
+FOR. The first CLOSED-session capture, taken at 8:05pm ET, showed:
+
+```
+Down 4.4% today
+Since you bought (day 6): never above your buy price, now -4.4%
+Path shown through 7:50 PM — the last few minutes aren't available yet
+```
+
+Two things wrong, both from the same cause. `Today's low`/`Today's high`
+had silently vanished — `todaysBars` was filtered against `todayStr =
+"2026-09-16"` while every real bar was still stamped `"2026-09-15"`, so
+the filter matched nothing and the whole clause disappeared rather than
+erroring. And `day 6` is wrong — it was `day 5` a few hours earlier the
+same real evening; the UTC rollover added a full phantom day to
+`currentDayOfHold`. `fetchTodaySipBarsMulti` (core/market-data.js) had the
+identical bug in its own `todayStr`, one layer worse: requesting
+`start="2026-09-16"` (a future date in UTC terms) landed inside SIP's
+recency embargo and threw a **real 403** ("subscription does not permit
+querying recent SIP data") — confirmed by hand, not inferred — which
+surfaced as the Portfolio card wrongly reading FAILED for a position with
+perfectly good, available data.
+
+Fixed by switching both to `ptDateStr(getPT())` — PT midnight is 3am ET,
+comfortably after the close and the whole after-hours window, and it's
+the same reference frame `classifySession`/`isRegularHoursBar` already
+used, so the file no longer argues with itself about what "today" means.
+
+**The recency-copy question, answered directly.** "Path shown through
+{time} — the last few minutes aren't available yet" is true during the
+SIP embargo (REGULAR/AFTER_HOURS/PRE_MARKET — more data really is coming)
+and false once CLOSED, where it reads as "check back shortly" when
+nothing changes until the next session. `recencyNote` now carries a
+`type` (`'gap'` vs `'closed'`) decided by `nowSession`, not just the gap's
+size in minutes, so the same underlying fact gets the sentence that
+actually matches what happens next.
+
+**Real re-verified render, both bugs fixed, same real position:**
+```
+Down 4.4% today
+Since you bought (day 5): never above your buy price, now -4.4%
+Today's low: -5.6% at 3:56 PM
+Now 1.6pp off today's high of -2.8% at 9:32 AM
+Path shown through 7:50 PM — trading is closed for the day
+```
+Portfolio card: `Down 4.4% today (now 1.6pp off today's high)` — real
+data, no longer FAILED. Volume-ratio line stays correctly absent (`CLOSED`
+fails the same `nowSession === 'REGULAR'` gate `AFTER_HOURS` did earlier
+tonight). 390px clipping check on this exact render: clean.
+
+**Not chased further, by design, per instruction to stop for the night:**
+what "today's high" should mean on a Saturday (i.e., once the PT calendar
+date has advanced past the session that actually produced the data, not
+just past that session's close) is a related but distinct question this
+evening's test couldn't reach — CLOSED tonight is still the same PT
+calendar day the market traded on. Needs a real weekend to observe, not
+manufacturable tonight.
 
 ### 4.1 After-hours warning at the point of purchase
 

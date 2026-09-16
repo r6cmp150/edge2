@@ -322,7 +322,19 @@ async function fetchIntradaySipBars(ticker, sinceDateStr) {
 // so its card can say so instead of silently reading as confirmed-empty.
 async function fetchTodaySipBarsMulti(tickers) {
   const clean = sanitizeTickerBatch(tickers);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  // PT calendar date, not a UTC slice (found live 2026-09-15, ~8pm ET):
+  // UTC midnight lands at 8pm ET during EDT, squarely inside the evening
+  // Roman is most likely to open the app. A bare UTC slice() there reads
+  // "tomorrow" while it's still this evening in US market terms, and
+  // requesting a future `start` date lands inside SIP's own recency
+  // embargo -- confirmed live, a real 403 ("subscription does not permit
+  // querying recent SIP data"), not a hypothetical. That 403 then read as
+  // this whole function having failed, when the real, still-open trading
+  // day's data was sitting right there. ptDateStr(getPT()) matches
+  // core/clock.js's own convention (PT midnight is 3am ET) and the same
+  // reference frame app.js's computeIntradayPanel now uses for the exact
+  // same reason.
+  const todayStr = ptDateStr(getPT());
   const barsBySymbol = {};
   const failedSymbols = [];
   if (!clean.length) return { barsBySymbol, failedSymbols };

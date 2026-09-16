@@ -4754,7 +4754,9 @@ function buildUnifiedRecommendationModalBlock(result) {
 //   undershoots SIP's last-15-min high by up to 0.57% (n=7, real thin
 //   $1-$20 names) and consistently in the understating direction, small
 //   but real and n=7 doesn't bound the tail. The gap is disclosed as a
-//   gap (`showRecencyGap`), not papered over.
+//   gap (`recencyNote`), not papered over — and worded differently
+//   depending on WHY the gap exists (still-open SIP embargo vs. the
+//   session having simply closed for the day), not just how big it is.
 // - Three states, not a fourth that looks like one of the first two:
 //   FAILED (the fetch itself broke) is never rendered the same as
 //   NO_DATA (fetch succeeded, genuinely zero bars) — collapsing these
@@ -4794,8 +4796,25 @@ function computeIntradayPanel({ buyPrice, buyDateStr, bars, failed, nowPrice, ma
 
   const regularBars = bars.filter(isRegularHoursBar);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const todaysBars = regularBars.filter(b => b.t.slice(0, 10) === todayStr);
+  // PT calendar date, not a UTC slice (found live 2026-09-15, ~8pm ET):
+  // `new Date().toISOString().slice(0,10)` flips to the next date at UTC
+  // midnight, which during EDT is 8pm ET — squarely inside the evening
+  // Roman is most likely to actually open the app. At 8:05pm ET this
+  // made `todayStr` read "2026-09-16" while every one of today's real
+  // bars is still timestamped "2026-09-15", so `todaysBars` came back
+  // empty and the entire "Today's high/low" line silently vanished, and
+  // separately inflated `currentDayOfHold` by one (day 5 became day 6
+  // for the identical real evening, simply because UTC rolled over).
+  // `ptDateStr(getPT())` matches core/clock.js's own convention (PT
+  // midnight is 3am ET — comfortably after the close and the whole
+  // after-hours window) and is the same reference frame classifySession/
+  // isRegularHoursBar above already use, so this file no longer mixes
+  // two different definitions of "today" against each other.
+  const pt = getPT();
+  const nowHHMM = `${String(pt.getHours()).padStart(2, '0')}:${String(pt.getMinutes()).padStart(2, '0')}`;
+  const nowSession = classifySession(ptDateStr(pt), nowHHMM);
+  const todayStr = ptDateStr(pt);
+  const todaysBars = regularBars.filter(b => ptDateStr(getPT(new Date(b.t))) === todayStr);
   const sameDay = buyDateStr.slice(0, 10) === todayStr;
 
   function highOf(list) {
@@ -4839,9 +4858,7 @@ function computeIntradayPanel({ buyPrice, buyDateStr, bars, failed, nowPrice, ma
   // a weaker number in the same slot as a stronger one.
   let volRatio = null;
   if (!todayOnly) {
-    const pt = getPT();
-    const nowHHMM = `${String(pt.getHours()).padStart(2, '0')}:${String(pt.getMinutes()).padStart(2, '0')}`;
-    if (classifySession(ptDateStr(pt), nowHHMM) === 'REGULAR' && todaysBars.length) {
+    if (nowSession === 'REGULAR' && todaysBars.length) {
       const lastBarMs = new Date(todaysBars[todaysBars.length - 1].t).getTime();
       const last30 = todaysBars.filter(b => lastBarMs - new Date(b.t).getTime() < 30 * 60000);
       const prior30 = todaysBars.filter(b => {
@@ -4861,17 +4878,30 @@ function computeIntradayPanel({ buyPrice, buyDateStr, bars, failed, nowPrice, ma
   const lastBar = bars[bars.length - 1];
   const lastBarTime = new Date(lastBar.t);
   const gapMin = (Date.now() - lastBarTime.getTime()) / 60000;
-  // Disclose the recency gap only in the range the SIP embargo actually
-  // produces (~15 min) — a much larger gap (market closed, symbol halted)
-  // is a different fact this panel doesn't attempt to describe here.
-  const showRecencyGap = !todayOnly && gapMin >= 1 && gapMin <= 30;
+  // Two different reasons for the SAME gap, found live 2026-09-15 by
+  // actually reading the CLOSED-session render: "the last few minutes
+  // aren't available yet" is true and useful during the SIP embargo
+  // (REGULAR/AFTER_HOURS/PRE_MARKET, trading still ongoing or about to
+  // resume) — it's wrong once the session is CLOSED, where it reads as
+  // "check back in a minute" when nothing more is coming until the next
+  // session. Same underlying fact (a gap since the last bar), two
+  // different real meanings depending on what's happening right now, so
+  // the copy branches on `nowSession`, not just the gap's size.
+  let recencyNote = null;
+  if (!todayOnly && gapMin >= 1) {
+    if (nowSession === 'CLOSED') {
+      recencyNote = { type: 'closed', time: lastBarTime };
+    } else if (gapMin <= 30) {
+      recencyNote = { type: 'gap', time: lastBarTime };
+    }
+  }
 
   const maxLossReached = nowPct <= -maxLossPct + 1e-9;
 
   return {
     state: 'OK', sameDay, todayOnly, nowPct, todayHigh, todayLow,
     sinceEntryHigh, sinceEntryHighDayOfHold, currentDayOfHold, volRatio,
-    lastBarTime, showRecencyGap, maxLossReached,
+    recencyNote, maxLossReached,
   };
 }
 
@@ -4962,8 +4992,10 @@ function renderIntradayPanelModal(panel) {
   if (panel.volRatio != null) {
     lines.push(`Volume last 30 min: ${panel.volRatio.toFixed(1)}x the prior 30 min`);
   }
-  if (panel.showRecencyGap) {
-    lines.push(`Path shown through ${intradayFmtTime(panel.lastBarTime)} — the last few minutes aren't available yet`);
+  if (panel.recencyNote?.type === 'gap') {
+    lines.push(`Path shown through ${intradayFmtTime(panel.recencyNote.time)} — the last few minutes aren't available yet`);
+  } else if (panel.recencyNote?.type === 'closed') {
+    lines.push(`Path shown through ${intradayFmtTime(panel.recencyNote.time)} — trading is closed for the day`);
   }
 
   if (!lines.length) return '';
