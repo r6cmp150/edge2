@@ -16377,5 +16377,93 @@
     "volume_ratio": 0.7476840079055964,
     "price": 1.275,
     "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1507,
+    "ticker": "HLX",
+    "captured_at": "2026-09-22T13:59:47.68+00:00",
+    "score": 95,
+    "label": "SOFT BUY",
+    "rsi": 60.93749999999999,
+    "volume_ratio": 2.604842090553382,
+    "price": 10.62,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1508,
+    "ticker": "GRAB",
+    "captured_at": "2026-09-22T14:00:11.917+00:00",
+    "score": 85,
+    "label": "SOFT BUY",
+    "rsi": 36.36363636363635,
+    "volume_ratio": 0.5712701626614941,
+    "price": 3.12,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1509,
+    "ticker": "OPEN",
+    "captured_at": "2026-09-22T14:02:15.99+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 31.791907514450884,
+    "volume_ratio": 0.06809802142850843,
+    "price": 2.735,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1510,
+    "ticker": "TWO",
+    "captured_at": "2026-09-22T14:02:15.99+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 64.28571428571433,
+    "volume_ratio": 2.2418199309382003,
+    "price": 12.185,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1511,
+    "ticker": "GRAB",
+    "captured_at": "2026-09-22T14:04:13.57+00:00",
+    "score": 85,
+    "label": "SOFT BUY",
+    "rsi": 36.88524590163933,
+    "volume_ratio": 0.6551165099248066,
+    "price": 3.13,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1512,
+    "ticker": "BFLY",
+    "captured_at": "2026-09-22T15:32:42.161+00:00",
+    "score": 95,
+    "label": "SOFT BUY",
+    "rsi": 63.17280453257792,
+    "volume_ratio": 1.5162104258688514,
+    "price": 9.585,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1513,
+    "ticker": "NVAX",
+    "captured_at": "2026-09-22T15:32:42.161+00:00",
+    "score": 95,
+    "label": "SOFT BUY",
+    "rsi": 61.55988857938719,
+    "volume_ratio": 0.8033722305042924,
+    "price": 10.945,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1514,
+    "ticker": "SANA",
+    "captured_at": "2026-09-22T15:32:42.161+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 27.884615384615387,
+    "volume_ratio": 0.6117667315236431,
+    "price": 3.145,
+    "macro_condition": "GEOPOLITICAL"
   }
 ]
