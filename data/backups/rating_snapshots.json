@@ -16465,5 +16465,192 @@
     "volume_ratio": 0.6117667315236431,
     "price": 3.145,
     "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1515,
+    "ticker": "HLX",
+    "captured_at": "2026-09-23T14:20:14.139+00:00",
+    "score": 95,
+    "label": "SOFT BUY",
+    "rsi": 60.93749999999999,
+    "volume_ratio": 2.604842090553382,
+    "price": 10.62,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 1516,
+    "ticker": "TRLV",
+    "captured_at": "2026-09-23T18:06:29.909+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 60.552486187845304,
+    "volume_ratio": 1.2788584061996284,
+    "price": 12.675,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1517,
+    "ticker": "HLX",
+    "captured_at": "2026-09-23T18:11:05.194+00:00",
+    "score": 95,
+    "label": "SOFT BUY",
+    "rsi": 60.93749999999999,
+    "volume_ratio": 2.604842090553382,
+    "price": 10.62,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1518,
+    "ticker": "KOS",
+    "captured_at": "2026-09-23T18:11:05.194+00:00",
+    "score": 90,
+    "label": "SOFT BUY",
+    "rsi": 37.903225806451616,
+    "volume_ratio": 1.452117935439028,
+    "price": 2.64,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1519,
+    "ticker": "SOC",
+    "captured_at": "2026-09-23T18:11:05.194+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 38.369304556354905,
+    "volume_ratio": 0.6607347435902609,
+    "price": 4.265,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1520,
+    "ticker": "RES",
+    "captured_at": "2026-09-23T18:11:05.194+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 23.049645390070935,
+    "volume_ratio": 0.8610347729591646,
+    "price": 5.83,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1521,
+    "ticker": "PD",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 100,
+    "label": "SOFT BUY",
+    "rsi": 62.67123287671234,
+    "volume_ratio": 1.662470831986186,
+    "price": 14.89,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1522,
+    "ticker": "GPRO",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 95,
+    "label": "SOFT BUY",
+    "rsi": 35.102040816326536,
+    "volume_ratio": 1.0450498684504965,
+    "price": 1.335,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1523,
+    "ticker": "EGHT",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 85,
+    "label": "SOFT BUY",
+    "rsi": 74.7191011235955,
+    "volume_ratio": 1.4154348044123573,
+    "price": 2.29,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1524,
+    "ticker": "OCTV",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 85,
+    "label": "SOFT BUY",
+    "rsi": 55.70145127850725,
+    "volume_ratio": 0.7469702079046433,
+    "price": 19.825,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1525,
+    "ticker": "VERI",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 84.91849570016686,
+    "volume_ratio": 1.6660412816885708,
+    "price": 1.345,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1526,
+    "ticker": "KVYO",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 70,
+    "label": "WATCH",
+    "rsi": 34.250585480093704,
+    "volume_ratio": 0.8033290078837867,
+    "price": 16.62,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1527,
+    "ticker": "SECZ",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 70,
+    "label": "WATCH",
+    "rsi": 86.62628145386766,
+    "volume_ratio": 1.8050251011426288,
+    "price": 14.36,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1528,
+    "ticker": "AI",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 56.521739130434796,
+    "volume_ratio": 0.5263161632715386,
+    "price": 10.97,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1529,
+    "ticker": "FRSH",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 44.53551912568305,
+    "volume_ratio": 0.6793729460297034,
+    "price": 12.79,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1530,
+    "ticker": "ASAN",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 46.67266187050359,
+    "volume_ratio": 0.5974374803252618,
+    "price": 9.45,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 1531,
+    "ticker": "DOMO",
+    "captured_at": "2026-09-23T18:15:44.343+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 38.888888888888914,
+    "volume_ratio": 1.8273737224470867,
+    "price": 3.495,
+    "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
   }
 ]
