@@ -16982,5 +16982,159 @@
     "volume_ratio": 1.3448126119451649,
     "price": 1.895,
     "macro_condition": "TECH_ROTATION_OUT"
+  },
+  {
+    "id": 1562,
+    "ticker": "LCTX",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 110,
+    "label": "SOFT BUY",
+    "rsi": 44.00191938579655,
+    "volume_ratio": 1.4080188580903683,
+    "price": 1.035,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1563,
+    "ticker": "MNKD",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 18.468468468468487,
+    "volume_ratio": 1.5710851254274631,
+    "price": 3.36,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1564,
+    "ticker": "OLMA",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 25.34161490683229,
+    "volume_ratio": 1.6896984924623115,
+    "price": 8.76,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1565,
+    "ticker": "RLMD",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 34.308510638297875,
+    "volume_ratio": 1.2289265315972742,
+    "price": 3.84,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1566,
+    "ticker": "TNDM",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 27.58247701460253,
+    "volume_ratio": 1.1649405368844226,
+    "price": 15.755,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1567,
+    "ticker": "ATEC",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 58.06845965770172,
+    "volume_ratio": 0.7533681295577612,
+    "price": 10.11,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1568,
+    "ticker": "FATE",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 42.46575342465752,
+    "volume_ratio": 1.528282986060772,
+    "price": 2.36,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1569,
+    "ticker": "PGEN",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 65,
+    "label": "WATCH",
+    "rsi": 62.13235294117646,
+    "volume_ratio": 1.840407549298556,
+    "price": 7.765,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1570,
+    "ticker": "EVH",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 20.247933884297495,
+    "volume_ratio": 0.8805957243994356,
+    "price": 3.6,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1571,
+    "ticker": "PACB",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 70.86614173228347,
+    "volume_ratio": 1.9793159207066755,
+    "price": 1.615,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1572,
+    "ticker": "ONCO",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 51.517358582180144,
+    "volume_ratio": 5.522277064684123,
+    "price": 1.04,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1573,
+    "ticker": "XFOR",
+    "captured_at": "2026-09-25T19:59:37.493+00:00",
+    "score": 60,
+    "label": "WATCH",
+    "rsi": 21.643835616438352,
+    "volume_ratio": 1.4272133276903152,
+    "price": 3.015,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1574,
+    "ticker": "HLX",
+    "captured_at": "2026-09-25T20:00:40.606+00:00",
+    "score": 95,
+    "label": "SOFT BUY",
+    "rsi": 60.93749999999999,
+    "volume_ratio": 2.604842090553382,
+    "price": 10.62,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
+  },
+  {
+    "id": 1575,
+    "ticker": "EU",
+    "captured_at": "2026-09-25T20:00:40.606+00:00",
+    "score": 80,
+    "label": "SOFT BUY",
+    "rsi": 51.036484245439475,
+    "volume_ratio": 0.8714886832607164,
+    "price": 1.25,
+    "macro_condition": "SECTOR_WEAKNESS_ENERGY"
   }
 ]
