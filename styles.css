@@ -1692,6 +1692,109 @@ input:checked + .toggle-slider::before { transform: translateX(20px); }
 .summary-cell-val { font-family: var(--mono); font-size: 18px; font-weight: 600; }
 .summary-cell-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
+/* ── Analytics tab (db/025 analysis_periods) ──
+   .sold-summary-grid/.summary-cell above are reused as-is (renderMetricsSummaryGrid,
+   app.js) — these rules are only for the period-card chrome AROUND that
+   shared grid, nothing that duplicates it. */
+.analytics-start-period-btn {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 0 16px 16px;
+  background: var(--blue);
+  color: #04121a;
+  font-weight: 700;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  text-align: center;
+  font-size: 14px;
+}
+.analytics-period-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin: 0 16px 12px;
+}
+.analytics-period-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.analytics-period-name { font-family: var(--cond); font-weight: 700; font-size: 15px; color: var(--text); }
+.analytics-period-dates { font-size: 11px; color: var(--muted); }
+.analytics-period-change-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 10px; }
+.analytics-contributor-row {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.analytics-contributor-label { color: var(--muted); }
+.analytics-contributor-val { font-family: var(--mono); }
+.analytics-dominance-warning {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1a1a1a;
+  background: var(--yellow);
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.analytics-boundary-note {
+  margin: 0 16px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.analytics-period-select { margin: 0 16px 12px; width: calc(100% - 32px); }
+.analytics-trends-wrap {
+  margin: 0 16px 16px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+table.analytics-trends-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 11px;
+}
+.analytics-trends-table th, .analytics-trends-table td {
+  padding: 8px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+/* Period is the one column with real variable-length text — letting
+   it wrap in a narrow fixed column (confirmed at 390px with Playwright)
+   is what keeps every other column, Top trade included, on-screen
+   without a horizontal scroll. */
+.analytics-trends-table th:first-child, .analytics-trends-table td:first-child {
+  text-align: left;
+  white-space: normal;
+  width: 80px;
+  max-width: 80px;
+}
+.analytics-trends-table th {
+  color: var(--muted);
+  font-family: var(--cond);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.analytics-trends-table tbody tr:last-child td { border-bottom: none; }
+.analytics-trends-subdate { color: var(--muted); font-size: 10px; }
+.analytics-trends-baseline td { color: var(--muted); font-style: italic; }
+
 /* ── Utilities ── */
 .hidden { display: none !important; }
 .mono { font-family: var(--mono); }

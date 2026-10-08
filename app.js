@@ -806,6 +806,8 @@ let state = {
   settings: {},
   portfolio: [],
   sold: [],
+  analysisPeriods: [], // analysis_periods rows (db/025) — markers, never mutated, never deleted. Loaded by loadAnalysisPeriodsFromSupabase(), cached to localStorage same as sold.
+  analyticsSelectedPastSlotKey: null, // which past-period/derived-baseline the Analytics dropdown is showing — session only, not persisted; a fresh load always opens on the most recent past slot
   signals: [],
   news: [],
   newsUnavailable: false, // set by core/news.js when the last news fetch failed (e.g. wrong path, network) — distinct from "fetched fine, zero results"
@@ -855,7 +857,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations'].forEach(k => {
+  ['sold','analysisPeriods','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -2076,6 +2078,19 @@ function handleRefresh() {
   // simply does nothing in that case rather than throwing, same as it did
   // nothing for Warrior at all before Phase 3 wired this up.
   else if (state.activeTab === 'warrior') getEngine('WARRIOR')?.rescan?.();
+  else if (state.activeTab === 'analytics') {
+    // Both loaders already re-render on success, but only for THEIR OWN
+    // originating tab ('sold'/nothing) -- neither knows Analytics exists,
+    // so a refresh tapped from here needs its own re-render once both
+    // settle, not a second copy of either loader's success/failure logic.
+    Promise.allSettled([loadAnalysisPeriodsFromSupabase(), loadSoldFromSupabase()]).then(results => {
+      const failed = results.filter(r => r.status === 'rejected');
+      if (failed.length && typeof showGlobalErrorToast === 'function') {
+        showGlobalErrorToast('Could not refresh: ' + failed.map(f => f.reason?.message).join('; '));
+      }
+      if (state.activeTab === 'analytics' && typeof renderAnalyticsTab === 'function') renderAnalyticsTab();
+    });
+  }
 }
 
 // ── 11. SIGNALS TAB ───────────────────────────────────────────────
@@ -5465,6 +5480,89 @@ async function confirmMarkSold(posId, btn) {
 
 // ── 18. SOLD TAB ──────────────────────────────────────────────────
 
+// computeTradeMetrics/computeBiggestContributor (2026-10, Analytics tab):
+// extracted out of what used to be four inline lines at the top of
+// renderSoldTab, below, so the Analytics tab (§20) can call the EXACT
+// same formula against a date-filtered subset instead of a second,
+// possibly-drifting copy of "what is win rate." Roman's own words: "if
+// Analytics computes win rate even slightly differently from the Sold
+// screen, we have two numbers for the same thing and no way to know
+// which is right."
+//
+// Contract preserved byte-for-byte from the pre-extraction inline code,
+// on purpose, confirmed by a before/after diff of renderSoldTab's own
+// rendered output (see tests/analytics-metrics.test.js): winRate/
+// totalPnL are returned as RAW NUMBERS (formatting — toFixed, the +
+// sign, the % sign — happens at render time in each caller, same as
+// before), and winRate is 0 (a NUMBER), not null, when count is 0 —
+// identical to the original `filteredSold.length ? ... : 0` fallback.
+// That 0 is intentionally NOT "the real win rate of an empty set" (there
+// isn't one) — it's the pre-existing contract this extraction must not
+// silently change underneath Sold. A caller that needs to tell "zero
+// trades" apart from "a real 0% win rate" must check `count === 0`
+// itself BEFORE reading winRate, never infer it from the value — see
+// renderAnalyticsPeriodCard's three-state handling in §20, which is
+// exactly that check, done once, in the one place that needs it.
+function computeTradeMetrics(trades) {
+  const wins = trades.filter(t => t.pnlPct > 0).length;
+  const losses = trades.filter(t => t.pnlPct <= 0).length; // breakeven (pnlPct === 0) counts as a loss, not a win -- preserved exactly from the original inline filter
+  const count = trades.length;
+  const totalPnL = trades.reduce((sum, t) => sum + t.pnlDollar, 0);
+  const winRate = count ? (wins / count * 100) : 0;
+  return { count, totalPnL, winRate, wins, losses };
+}
+
+// The BTDR finding (docs/phase-9-entry-exit-spec.md §0.3.1/§0.3.2 — one
+// trade was 92% of the entire measured edge) generalized into a reusable
+// check: which single trade moved this set's P&L the most, and what
+// share of the total was it. By ABSOLUTE dollar size, not best %
+// return — a huge loss dominates a period's story exactly as much as a
+// huge win does, and the floor-analysis table this is modeled on
+// (phase-9 spec, "biggest_contributor" column) shows negative
+// contributors the same way (e.g. "PACB -$28.68 (-1815%)").
+//
+// pctOfTotal is null, not Infinity/NaN, when totalPnL is exactly 0 — a
+// share of nothing is not a computable fraction (e.g. one +$50 and one
+// -$50 trade: biggest is unambiguous, but "% of a $0 total" has no
+// honest number to report). Same null-not-zero discipline as
+// computeSuggestedShares (engines/warrior/setups.js) and every other
+// "no valid basis" case this project has already found and fixed.
+function computeBiggestContributor(trades) {
+  if (!trades.length) return null;
+  const totalPnL = trades.reduce((sum, t) => sum + t.pnlDollar, 0);
+  const biggest = trades.reduce((a, b) => Math.abs(b.pnlDollar) > Math.abs(a.pnlDollar) ? b : a);
+  const pctOfTotal = totalPnL !== 0 ? (biggest.pnlDollar / totalPnL * 100) : null;
+  return { ticker: biggest.ticker, pnlDollar: biggest.pnlDollar, pctOfTotal };
+}
+
+// Shared markup for the 4-metric summary grid — Sold's own card (below)
+// and every Analytics period card (§20) render this IDENTICAL block, so
+// a Trades/Win Rate/Total P&L/Record tile can never visually drift
+// between the two tabs either. Takes an already-computed metrics object
+// (computeTradeMetrics' return shape), not a trade array — callers decide
+// what to filter, this only decides how to show the result.
+function renderMetricsSummaryGrid(metrics) {
+  const { count, totalPnL, winRate, wins, losses } = metrics;
+  return `<div class="sold-summary-grid">
+    <div class="summary-cell">
+      <div class="summary-cell-val">${count}</div>
+      <div class="summary-cell-label">Trades</div>
+    </div>
+    <div class="summary-cell">
+      <div class="summary-cell-val">${winRate.toFixed(0)}%</div>
+      <div class="summary-cell-label">Win Rate</div>
+    </div>
+    <div class="summary-cell">
+      <div class="summary-cell-val ${totalPnL>=0?'pos':'neg'}">${totalPnL>=0?'+':''}$${totalPnL.toFixed(0)}</div>
+      <div class="summary-cell-label">Total P&L</div>
+    </div>
+    <div class="summary-cell">
+      <div class="summary-cell-val">${wins}W / ${losses}L</div>
+      <div class="summary-cell-label">Record</div>
+    </div>
+  </div>`;
+}
+
 // Sold-trade card display for Sell Timing Analysis — replaces the old
 // live "what if held" comparison (removed along with its fetchSnapshots
 // call above) per the Lazy Resolution project. No fetch of its own: State
@@ -5541,10 +5639,7 @@ async function renderSoldTab() {
 
   const engineFilter = state.soldEngineFilter || 'ALL';
   const filteredSold = filterByEngine(state.sold, engineFilter);
-  const wins = filteredSold.filter(s => s.pnlPct > 0);
-  const losses = filteredSold.filter(s => s.pnlPct <= 0);
-  const winRate = filteredSold.length ? (wins.length / filteredSold.length * 100).toFixed(0) : 0;
-  const totalPnL = filteredSold.reduce((sum, s) => sum + s.pnlDollar, 0);
+  const metrics = computeTradeMetrics(filteredSold);
 
   container.innerHTML = `
     <button id="report-btn" class="report-btn" onclick="generateClaudeReport()">📋 Generate Claude Report</button>
@@ -5553,24 +5648,7 @@ async function renderSoldTab() {
 
     <div class="sold-summary">
       <div class="section-label" style="padding:0 0 8px 0">Trade Summary</div>
-      <div class="sold-summary-grid">
-        <div class="summary-cell">
-          <div class="summary-cell-val">${filteredSold.length}</div>
-          <div class="summary-cell-label">Trades</div>
-        </div>
-        <div class="summary-cell">
-          <div class="summary-cell-val">${winRate}%</div>
-          <div class="summary-cell-label">Win Rate</div>
-        </div>
-        <div class="summary-cell">
-          <div class="summary-cell-val ${totalPnL>=0?'pos':'neg'}">${totalPnL>=0?'+':''}$${totalPnL.toFixed(0)}</div>
-          <div class="summary-cell-label">Total P&L</div>
-        </div>
-        <div class="summary-cell">
-          <div class="summary-cell-val">${wins.length}W / ${losses.length}L</div>
-          <div class="summary-cell-label">Record</div>
-        </div>
-      </div>
+      ${renderMetricsSummaryGrid(metrics)}
     </div>
 
     <div id="sold-list"><div class="empty-state"><span class="spinner"></span></div></div>
@@ -5867,6 +5945,22 @@ async function loadSoldFromSupabase() {
   // manual re-navigation — same live-refresh courtesy Warrior's own scan
   // tick already extends to whichever tab is currently open.
   if (state.activeTab === 'sold' && typeof renderSoldTab === 'function') renderSoldTab();
+}
+
+// analysis_periods (db/025) — same fire-and-forget, non-blocking,
+// localStorage-cached shape as loadSoldFromSupabase above, for the
+// identical reason: Analytics is a view over historical record-keeping,
+// not something the app needs before it can safely trade, so a Supabase
+// hiccup here gets a toast, not a blocking error screen. Ordered
+// ascending by started_at — every consumer (renderAnalyticsTab's
+// _buildPeriodSlots) assumes that ordering rather than re-sorting
+// defensively in more than one place.
+async function loadAnalysisPeriodsFromSupabase() {
+  const { data, error } = await supabaseClient.from('analysis_periods').select('*').order('started_at', { ascending: true });
+  if (error) throw error;
+  state.analysisPeriods = data || [];
+  persist('analysisPeriods');
+  if (state.activeTab === 'analytics' && typeof renderAnalyticsTab === 'function') renderAnalyticsTab();
 }
 
 // Races a promise against a timeout so a hung Supabase query can never hang
@@ -8197,7 +8291,7 @@ async function exportAllData(btn) {
 
 function clearAllData() {
   showConfirm('Are you sure? This will delete your portfolio and trade history. This cannot be undone.', () => {
-    ['settings','portfolio','sold','signals','lastScanTime','news','lastPassedCount'].forEach(k => {
+    ['settings','portfolio','sold','analysisPeriods','signals','lastScanTime','news','lastPassedCount'].forEach(k => {
       localStorage.removeItem('edge_' + k);
     });
     TICKERS = MASTER_TICKERS;
@@ -8229,6 +8323,286 @@ async function forceUpdateApp() {
     }
   } catch(e) { console.warn('Force update cleanup error', e.message); }
   window.location.reload(true);
+}
+
+// ── 20. ANALYTICS TAB ─────────────────────────────────────────────
+// db/025_analysis_periods.sql. A period is a NAMED START POINT, not a
+// reset — nothing here ever mutates trades_v2 or signal_log, and this
+// whole section only ever INSERTS into analysis_periods (anon has no
+// update/delete path there at all, by design — see that migration's own
+// header). Every metric below is computed fresh, every render, by
+// filtering state.sold — never stored per-period, so a past period's
+// numbers recompute correctly as later outcome data (e.g. price_at_plus1_day)
+// fills in, exactly as db/025's header requires.
+
+const ANALYTICS_CONTRIBUTOR_DOMINANCE_PCT = 60; // Roman's own threshold: "more than ~60% of a period's P&L" gets a words-not-just-a-number warning on the card
+
+// Periods are stored ascending by started_at (loadAnalysisPeriodsFromSupabase's
+// own .order()). A "slot" is one comparison window: a real period runs
+// [its own started_at, the NEXT period's started_at) or to now for the
+// newest — derived here, never stored (db/025's explicit no-end_at
+// design). Returns newest-first, since that's every caller's own order
+// (CURRENT PERIOD is slots[0], the trends table reads top-to-bottom).
+//
+// The DERIVED BASELINE (Roman, 2026-10, explicit design): the moment the
+// FIRST period ever exists, everything before its started_at is the only
+// honest comparison for period 1 — without it, OVERALL already includes
+// period 1's own trades, so period 1 has nothing clean to be measured
+// against. This is NOT a row in analysis_periods and never will be —
+// `period: null`, `startedAt: null` (an open lower bound, "everything
+// before"), so _tradeInSlot below never needs a real date for it. Absent
+// entirely (not even as an empty-state) until a first real period
+// exists — there's nothing to be "before" of yet (the plain OVERALL
+// card already covers that case).
+function _buildAnalyticsSlots(periods) {
+  if (!periods || !periods.length) return [];
+  const sorted = [...periods].sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+  const real = sorted.map((period, i) => ({
+    kind: 'real',
+    period,
+    startedAt: period.started_at,
+    endExclusive: i + 1 < sorted.length ? sorted[i + 1].started_at : null,
+  })).reverse(); // newest first
+  const baseline = { kind: 'baseline', period: null, startedAt: null, endExclusive: sorted[0].started_at };
+  return [...real, baseline]; // baseline is always oldest, always last
+}
+
+function _analyticsSlotKey(slot) { return slot.kind === 'baseline' ? 'baseline' : slot.period.id; }
+
+// Attribution is by BUY_DATE (req #6, explicit instruction — "trades
+// entered in this period"), at PT CALENDAR-DAY granularity: trades_v2.buy_date
+// is a plain date with no time-of-day, while a period's started_at is a
+// real instant, so the comparison converts the instant to the PT
+// calendar day it falls on (ptDateStr(getPT(...))) rather than comparing
+// a date string against a raw UTC instant — the exact mixed-coordinate
+// mistake CLAUDE.md's getPT() rule warns against. A trade bought on the
+// SAME PT calendar day a period starts counts as inside the new period,
+// even if the period started mid-session.
+function _tradeInAnalyticsSlot(trade, slot) {
+  if (!trade.buyDate) return false;
+  if (slot.startedAt) {
+    if (trade.buyDate < ptDateStr(getPT(new Date(slot.startedAt)))) return false;
+  }
+  if (slot.endExclusive) {
+    if (trade.buyDate >= ptDateStr(getPT(new Date(slot.endExclusive)))) return false;
+  }
+  return true;
+}
+
+// req #6's second half: "show a count of trades that span a period
+// boundary... so a contaminated comparison is visible rather than
+// silent." Scoped to trades already attributed to THIS slot (by buy
+// date) whose sellDate falls on/after the slot's own end boundary —
+// bought under this period's conditions, but the exit (and therefore
+// part of the P&L being measured) played out under whatever shipped
+// next. The open/current slot has no end yet, so it can't have spilled
+// into "the next period" — 0, not undefined, there's nothing to check.
+function _countAnalyticsBoundarySpanning(tradesInSlot, slot) {
+  if (!slot.endExclusive) return 0;
+  const endDay = ptDateStr(getPT(new Date(slot.endExclusive)));
+  return tradesInSlot.filter(t => t.sellDate && t.sellDate >= endDay).length;
+}
+
+function _analyticsSlotLabel(slot) {
+  return slot.kind === 'baseline' ? 'Baseline — before tracking' : slot.period.name;
+}
+function _analyticsSlotDateLabel(slot, isNewest) {
+  const startStr = slot.startedAt ? ptDateStr(getPT(new Date(slot.startedAt))) : null;
+  const endStr = slot.endExclusive ? ptDateStr(getPT(new Date(slot.endExclusive))) : null;
+  if (slot.kind === 'baseline') return `through ${endStr}`;
+  return isNewest ? `since ${startStr}` : `${startStr} – ${endStr}`;
+}
+
+// One card, three states — the three-state principle (req #3) applied
+// at the render layer, not just inside computeTradeMetrics: a slot with
+// NO trades never reaches computeTradeMetrics/renderMetricsSummaryGrid
+// at all, so there is no 0%/NaN% to accidentally show. "No trades yet"
+// and "a real 0% win rate" are different claims and must look
+// different, not just technically be different numbers under the hood.
+function _renderAnalyticsPeriodCard(slot, allTrades, isNewest) {
+  const tradesInSlot = allTrades.filter(t => _tradeInAnalyticsSlot(t, slot));
+  const label = _analyticsSlotLabel(slot);
+  const dateLabel = _analyticsSlotDateLabel(slot, isNewest);
+  const changeDesc = slot.kind === 'real' ? slot.period.change_description : null;
+  const header = `<div class="analytics-period-header">
+      <span class="analytics-period-name">${label}</span>
+      <span class="analytics-period-dates">${dateLabel}</span>
+    </div>
+    ${changeDesc ? `<div class="analytics-period-change-desc">${changeDesc}</div>` : ''}`;
+
+  if (!tradesInSlot.length) {
+    return `<div class="analytics-period-card">${header}<div class="card-sub">No trades yet.</div></div>`;
+  }
+
+  const metrics = computeTradeMetrics(tradesInSlot);
+  const contributor = computeBiggestContributor(tradesInSlot);
+  const dominant = contributor && contributor.pctOfTotal != null && Math.abs(contributor.pctOfTotal) >= ANALYTICS_CONTRIBUTOR_DOMINANCE_PCT;
+  const boundaryCount = _countAnalyticsBoundarySpanning(tradesInSlot, slot);
+
+  const contributorLine = contributor ? `<div class="analytics-contributor-row">
+      <span class="analytics-contributor-label">Biggest single trade</span>
+      <span class="analytics-contributor-val ${contributor.pnlDollar>=0?'pos':'neg'}">${contributor.ticker} ${contributor.pnlDollar>=0?'+':''}$${contributor.pnlDollar.toFixed(2)}${contributor.pctOfTotal!=null ? ` (${contributor.pctOfTotal.toFixed(0)}% of period P&L)` : ' (period P&L is $0 — share not computable)'}</span>
+    </div>` : '';
+
+  // "Not optional" (req #5), in words, not just the number above it.
+  const dominanceWarning = dominant ? `<div class="analytics-dominance-warning">⚠ One trade (${contributor.ticker}) is ${Math.abs(contributor.pctOfTotal).toFixed(0)}% of this period's result — this is one trade, not yet a trend.${tradesInSlot.length < 10 ? ` n=${tradesInSlot.length} is too small to credit any change until more trades land.` : ''}</div>` : '';
+
+  const boundaryNote = boundaryCount > 0 ? `<div class="analytics-boundary-note">⚠ ${boundaryCount} trade${boundaryCount===1?'':'s'} bought in this period but sold in a later one — counted here by <strong>buy date</strong> ("trades entered in this period"), so this isn't silently a mix of two policies. See the Sold tab for per-trade detail.</div>` : '';
+
+  return `<div class="analytics-period-card">${header}
+    ${renderMetricsSummaryGrid(metrics)}
+    ${contributorLine}
+    ${dominanceWarning}
+    ${boundaryNote}
+  </div>`;
+}
+
+// Trends table row — same three states as the card above, condensed.
+// Columns: Period | Trades | P&L | Win% | Top trade (Record dropped from
+// THIS table only, per explicit instruction — it carries nearly the same
+// information as Trades once you're comparing periods, and Top trade is
+// the column that must never be the one that scrolls off at 390px).
+function _renderAnalyticsTrendsRow(slot, allTrades, isNewest) {
+  const tradesInSlot = allTrades.filter(t => _tradeInAnalyticsSlot(t, slot));
+  const label = _analyticsSlotLabel(slot);
+  const dateLabel = _analyticsSlotDateLabel(slot, isNewest);
+  const rowCls = slot.kind === 'baseline' ? 'analytics-trends-baseline' : '';
+  const periodCell = `<td>${label}<br><span class="analytics-trends-subdate">${dateLabel}</span></td>`;
+
+  if (!tradesInSlot.length) {
+    return `<tr class="${rowCls}">${periodCell}<td colspan="4" style="text-align:center;color:var(--muted)">No trades yet</td></tr>`;
+  }
+  const metrics = computeTradeMetrics(tradesInSlot);
+  const contributor = computeBiggestContributor(tradesInSlot);
+  const contributorText = contributor
+    ? `${contributor.ticker} ${contributor.pnlDollar>=0?'+':''}$${contributor.pnlDollar.toFixed(0)}${contributor.pctOfTotal!=null ? ` (${contributor.pctOfTotal.toFixed(0)}%)` : ''}`
+    : '—';
+  return `<tr class="${rowCls}">${periodCell}
+    <td>${metrics.count}</td>
+    <td class="${metrics.totalPnL>=0?'pos':'neg'}">${metrics.totalPnL>=0?'+':''}$${metrics.totalPnL.toFixed(0)}</td>
+    <td>${metrics.winRate.toFixed(0)}%</td>
+    <td>${contributorText}</td>
+  </tr>`;
+}
+
+function renderAnalyticsTab() {
+  const container = document.getElementById('tab-content');
+  // OVERALL and every slot below: ALL trades, never engine-filtered —
+  // explicit instruction ("unchanged definitions, all trades, never
+  // filtered"). Unlike Sold, Analytics has no per-engine filter control
+  // at all.
+  const trades = state.sold || [];
+  const overallMetrics = computeTradeMetrics(trades);
+
+  const slots = _buildAnalyticsSlots(state.analysisPeriods || []);
+  const currentSlot = slots.length ? slots[0] : null; // newest-first; [0] is the open/current one
+  const pastSlots = slots.slice(1); // every closed slot, including the derived baseline
+
+  if (state.analyticsSelectedPastSlotKey == null && pastSlots.length) {
+    state.analyticsSelectedPastSlotKey = _analyticsSlotKey(pastSlots[0]);
+  }
+  const selectedPast = pastSlots.find(s => _analyticsSlotKey(s) === state.analyticsSelectedPastSlotKey) || pastSlots[0] || null;
+
+  const pastSectionHtml = pastSlots.length ? `
+    <div class="section-label" style="padding:0 16px 8px">VIEW A PAST PERIOD</div>
+    <select class="form-input analytics-period-select" onchange="analyticsSelectPastPeriod(this.value)">
+      ${pastSlots.map(s => {
+        const n = trades.filter(t => _tradeInAnalyticsSlot(t, s)).length;
+        const key = _analyticsSlotKey(s);
+        return `<option value="${key}" ${selectedPast && _analyticsSlotKey(selectedPast) === key ? 'selected' : ''}>${_analyticsSlotLabel(s)} (${n} trade${n===1?'':'s'})</option>`;
+      }).join('')}
+    </select>
+    ${selectedPast ? _renderAnalyticsPeriodCard(selectedPast, trades, false) : ''}
+  ` : '';
+
+  const trendsSectionHtml = slots.length ? `
+    <div class="section-label" style="padding:0 16px 8px">TRENDS — AM I IMPROVING?</div>
+    <div class="analytics-trends-wrap">
+      <table class="analytics-trends-table">
+        <thead><tr><th>Period</th><th>Trades</th><th>P&amp;L</th><th>Win%</th><th>Top trade</th></tr></thead>
+        <tbody>${slots.map((s, i) => _renderAnalyticsTrendsRow(s, trades, i === 0)).join('')}</tbody>
+      </table>
+    </div>
+  ` : '';
+
+  container.innerHTML = `
+    <div class="tab-header"><h1 class="tab-title">ANALYTICS</h1></div>
+
+    <button class="analytics-start-period-btn" onclick="analyticsOpenStartPeriodModal()">+ Start New Period</button>
+
+    <div class="section-label" style="padding:0 16px 8px">OVERALL (ALL TRADES)</div>
+    <div class="analytics-period-card" style="margin:0 16px 16px">
+      ${renderMetricsSummaryGrid(overallMetrics)}
+    </div>
+
+    <div class="section-label" style="padding:0 16px 8px">CURRENT PERIOD</div>
+    ${currentSlot
+      ? _renderAnalyticsPeriodCard(currentSlot, trades, true)
+      : `<div class="empty-state"><p>No period started yet. Tap + Start New Period above to begin tracking a change.</p></div>`}
+
+    ${pastSectionHtml}
+    ${trendsSectionHtml}
+  `;
+}
+
+function analyticsSelectPastPeriod(key) {
+  state.analyticsSelectedPastSlotKey = key;
+  renderAnalyticsTab();
+}
+
+// Two fields, the description required and hard to skip (req #2) — a
+// blank submit is rejected client-side with the SAME reasoning stated
+// back to the user, not just a disabled button, since "why" matters more
+// here than on an ordinary required field: Roman's own framing is the
+// validation message.
+function analyticsOpenStartPeriodModal() {
+  showModal(`<div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">Start New Period</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Name</label>
+        <input id="ap-name" class="form-input" type="text" placeholder="e.g. Tighter stop-loss (v2.19)">
+      </div>
+      <div class="form-group">
+        <label class="form-label">What changed? (required)</label>
+        <textarea id="ap-desc" class="form-input" rows="3" placeholder="Describe the change being tested. A period labelled only by its date is worthless in two months."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-success" style="flex:1" onclick="analyticsConfirmStartPeriod(this)">Start Period</button>
+    </div>`);
+}
+
+async function analyticsConfirmStartPeriod(btn) {
+  const name = document.getElementById('ap-name').value.trim();
+  const changeDescription = document.getElementById('ap-desc').value.trim();
+  if (!name || !changeDescription) {
+    alert('Both a name and a description of what changed are required — a period labelled only by its date is worthless in two months.');
+    return;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const { data, error } = await supabaseClient.from('analysis_periods')
+      .insert({ name, change_description: changeDescription, started_at: new Date().toISOString() })
+      .select();
+    if (error) throw error;
+    state.analysisPeriods.push(data[0]);
+    persist('analysisPeriods');
+    // The just-started period becomes CURRENT; the past-period selection
+    // is reset to "most recent past slot" rather than left pointing at a
+    // key that may no longer be first in the (now-shifted) dropdown.
+    state.analyticsSelectedPastSlotKey = null;
+    closeModal();
+    renderAnalyticsTab();
+  } catch(e) {
+    alert('Could not start new period: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── 21. PUSH NOTIFICATIONS ───────────────────────────────────────
@@ -8454,6 +8828,7 @@ function switchTab(name) {
     case 'warrior':   renderWarriorTab();   break;
     case 'portfolio': renderPortfolioTab(); break;
     case 'sold':      renderSoldTab();      break;
+    case 'analytics': renderAnalyticsTab(); break;
     case 'settings':  renderSettingsTab();  break;
   }
 
@@ -8616,6 +8991,13 @@ async function runDataLoadAndInit() {
     console.error('Sold history sync from Supabase failed:', e.message);
     if (typeof showGlobalErrorToast === 'function') {
       showGlobalErrorToast('Could not sync Sold history from the database — showing the last locally cached copy.');
+    }
+  });
+  // Same fire-and-forget treatment, same reason — see loadAnalysisPeriodsFromSupabase's own header.
+  loadAnalysisPeriodsFromSupabase().catch(e => {
+    console.error('Analysis periods sync from Supabase failed:', e.message);
+    if (typeof showGlobalErrorToast === 'function') {
+      showGlobalErrorToast('Could not sync analysis periods from the database — showing the last locally cached copy.');
     }
   });
 }
