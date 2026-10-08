@@ -3940,16 +3940,43 @@ async function renderPortfolioTab() {
     const closes = bars.map(b => b.c);
 
     const currentPrice = getLivePrice(snap) || p.buyPrice;
+    // priceUnavailable (2026-10, Roman, explicit priority fix — "it is
+    // live and corrupting money records"): getLivePrice(snap) returning
+    // falsy means EITHER the whole batch fetch failed (priceFetchFailed,
+    // set around the Promise.all above) OR THIS ONE ticker's snapshot was
+    // simply missing from an otherwise-successful batch — a gap
+    // priceFetchFailed was never able to see, since it's a single
+    // boolean for the whole render, not a per-position fact. Before this
+    // fix, that second case fell through `currentPrice` above's
+    // `|| p.buyPrice` with NO signal at all: the "Now" price looked
+    // exactly like a real observation on the card, and that same
+    // fabricated number pre-filled Mark as Sold's sale price — a trade
+    // could be, and 22 already have been, recorded as a "breakeven" that
+    // never happened. Seventh instance of this project's "computed in
+    // one code path, never checked in the other" family (see
+    // docs/phase-9-entry-exit-spec.md §6) and the first one that
+    // FABRICATES a value rather than dropping one.
+    //
+    // currentPrice itself still falls back to buyPrice numerically —
+    // every downstream consumer below (peak-price tracking, the exit-
+    // rule dispatch, the chart) needs SOME number to compute with, and
+    // ripping that out would cascade NaN through unrelated math. What's
+    // fixed is that priceUnavailable, not the coarser priceFetchFailed,
+    // now gates every place that number must not be TRUSTED — including
+    // two places priceFetchFailed never reached before (the "Now" label
+    // and Mark as Sold's pre-fill), which is exactly the gap that let
+    // this corrupt real trade records.
+    const priceUnavailable = priceFetchFailed || !getLivePrice(snap);
     const rsi = closes.length >= 15 ? calcRSI(closes) : p.rsiAtBuy;
     const trimmedAtr = bars.length >= 15 ? calcTrimmedATR(bars) : 0;
 
-    // Intraday one-liner (Phase 9 §7) — priceFetchFailed (global) means
+    // Intraday one-liner (Phase 9 §7) — priceUnavailable means
     // currentPrice above is the buyPrice fallback, not a real observation;
     // treating that as this panel's own FAILED state too keeps it from
     // showing "Up 0.0% today" off a fabricated flat price, the same
-    // fabricated-zero the file-level priceFetchFailed flag already exists
-    // to prevent everywhere else on this card.
-    let intradayPanel = priceFetchFailed
+    // fabricated-zero this per-position flag exists to prevent everywhere
+    // else on this card.
+    let intradayPanel = priceUnavailable
       ? { state: 'FAILED' }
       : computeIntradayPanel({
           buyPrice: p.buyPrice,
@@ -3996,17 +4023,20 @@ async function renderPortfolioTab() {
     // per position per field would be a real UX regression. Unlike
     // confirmAddPortfolio()/confirmMarkSold() (Step 5), a lost write here
     // just gets recomputed and re-sent on the next render.
-    // Guarded on !priceFetchFailed: currentPrice is the buy-price fallback
-    // during a fetch failure, not a real observation — writing it into
-    // peakPrice/momentumProtectionActivated/rsiSuspendedAtGainPct would
-    // persist fabricated data to Supabase instead of just degrading display.
-    if (!priceFetchFailed && currentPrice > (p.peakPrice || 0)) {
+    // Guarded on !priceUnavailable (was !priceFetchFailed — the whole-
+    // batch flag missed exactly this per-symbol gap, the same root cause
+    // as the sell-price bug this fix closes): currentPrice is the buy-
+    // price fallback when the real observation is missing, not a real
+    // one — writing it into peakPrice/momentumProtectionActivated/
+    // rsiSuspendedAtGainPct would persist fabricated data to Supabase
+    // instead of just degrading display.
+    if (!priceUnavailable && currentPrice > (p.peakPrice || 0)) {
       p.peakPrice = currentPrice;
       p.peakPriceDate = new Date().toISOString().split('T')[0];
       if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
-    if (!priceFetchFailed && !p.momentumProtectionActivated && p.peakPrice >= p.buyPrice * 1.20) {
+    if (!priceUnavailable && !p.momentumProtectionActivated && p.peakPrice >= p.buyPrice * 1.20) {
       p.momentumProtectionActivated = true;
       if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
@@ -4014,7 +4044,7 @@ async function renderPortfolioTab() {
     // Rule 5 support: first time RSI hits the (soon-to-be-suspended) 72+ threshold
     // while protected, snapshot the gain% at that instant — sticky, never overwritten —
     // so the report can later show what an RSI-based exit would have left on the table.
-    if (!priceFetchFailed && p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
+    if (!priceUnavailable && p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
       p.rsiSuspendedAtGainPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
       if (state.deletedPositionIds.has(p.id)) return;
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
@@ -4032,7 +4062,7 @@ async function renderPortfolioTab() {
     const pnlDollar = value - cost;
     const pnlPct    = ((currentPrice - p.buyPrice) / p.buyPrice * 100);
     const pnlCls    = pnlDollar >= 0 ? 'pos' : 'neg';
-    // priceFetchFailed makes pnlDollar/pnlPct compute to exactly 0 (currentPrice
+    // priceUnavailable makes pnlDollar/pnlPct compute to exactly 0 (currentPrice
     // fell back to buyPrice) — real numbers, but not real data. Card markup
     // below shows "—" instead so this doesn't read as a genuine breakeven.
 
@@ -4057,14 +4087,14 @@ async function renderPortfolioTab() {
       portBanner = buildRegisteredEngineExitBanner(exitResult);
     } else {
       const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
-      const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed }, currentSignal, state.macroContext, snap);
+      const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);
       portBanner = buildUnifiedPortfolioBanner(unifiedResult);
     }
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
     const priceDiffPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
-    const nowCls = priceFetchFailed ? 'pf-now-stale'
+    const nowCls = priceUnavailable ? 'pf-now-stale'
       : Math.abs(priceDiffPct) < 1 ? 'pf-now-flat' : priceDiffPct > 0 ? 'pf-now-up' : 'pf-now-down';
-    const priceBarCls = priceFetchFailed ? 'pf-bar-stale' : pnlDollar >= 0 ? 'pf-bar-profit' : 'pf-bar-loss';
+    const priceBarCls = priceUnavailable ? 'pf-bar-stale' : pnlDollar >= 0 ? 'pf-bar-profit' : 'pf-bar-loss';
 
     // Display-only target (sell warnings keep using p.target) — same >5% drift
     // threshold used for the card's "⚠ Shifted" note and the SELL SOON banner.
@@ -4178,7 +4208,7 @@ async function renderPortfolioTab() {
           <div class="pf-company">${p.company}</div>
         </div>
         <div class="pf-header-pnl">
-          ${priceFetchFailed
+          ${priceUnavailable
             ? `<div class="pf-pnl-dollar pf-now-stale">—</div><div class="pf-pnl-pct pf-now-stale">price unavailable</div>`
             : `<div class="pf-pnl-dollar ${pnlCls}">${pnlDollar>=0?'+':''}$${pnlDollar.toFixed(2)}</div>
           <div class="pf-pnl-pct ${pnlCls}">${pnlDollar>=0?'▲':'▼'}${Math.abs(pnlPct).toFixed(1)}%</div>`}
@@ -4191,8 +4221,8 @@ async function renderPortfolioTab() {
           <div class="pf-price-val pf-muted">$${p.buyPrice.toFixed(2)}</div>
         </div>
         <div class="pf-price-cell">
-          <div class="pf-price-label">Now${priceFetchFailed ? ' <span class="pf-stale-tag">(stale)</span>' : ''}</div>
-          <div class="pf-price-val ${nowCls}">$${currentPrice.toFixed(2)}</div>
+          <div class="pf-price-label">Now${priceUnavailable ? ` <span class="pf-stale-tag">(${priceFetchFailed ? 'stale' : 'unavailable'})</span>` : ''}</div>
+          <div class="pf-price-val ${nowCls}">${priceUnavailable ? 'Price unavailable' : `$${currentPrice.toFixed(2)}`}</div>
         </div>
         <div class="pf-price-divider"></div>
         <div class="pf-price-cell">
@@ -4227,7 +4257,7 @@ async function renderPortfolioTab() {
       ${durationBlockHtml}
       ${momentumBadge}
       <div class="pf-actions">
-        <button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${currentPrice})">Mark as sold</button>
+        <button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${priceUnavailable ? 'null' : currentPrice})">Mark as sold</button>
         <button class="btn btn-ghost" onclick="openPositionSnapshotModal('${p.ticker}')">View signal</button>
       </div>
     </div>`;
@@ -5151,18 +5181,30 @@ function renderIntradayLineCard(panel) {
 
 // ── 17. MARK AS SOLD ──────────────────────────────────────────────
 
+// currentPrice is `null` (see the Mark as sold button's own onclick,
+// above) whenever the Portfolio card could not vouch for a real live
+// price for this position — a missing single-symbol snapshot, or a
+// whole-batch fetch failure. Previously this always received the
+// buyPrice fallback and pre-filled it as if it were a real observation;
+// the sale-price field now renders EMPTY in that case instead, with its
+// own notice, so Roman has to type the real fill price rather than
+// unknowingly confirm a fabricated one. This is the fix for the bug
+// that produced 22 fake "breakeven" trades in trades_v2 — see
+// docs/phase-9-entry-exit-spec.md §6's seventh entry.
 function openMarkSoldModal(posId, currentPrice) {
   const today = new Date().toISOString().split('T')[0];
+  const priceUnavailable = currentPrice == null;
   showModal(`<div class="modal-handle"></div>
     <div class="modal-header">
       <div class="modal-title">Mark as Sold</div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
+      ${priceUnavailable ? `<div class="stale-table-warning">⚠ No live price was available for this position — the field below is empty on purpose. Enter the real fill price from your broker; do not guess.</div>` : ''}
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Sale Price per Share</label>
-          <input id="sold-price" class="form-input" type="number" step="0.01" value="${currentPrice.toFixed(2)}">
+          <input id="sold-price" class="form-input" type="number" step="0.01" value="${priceUnavailable ? '' : currentPrice.toFixed(2)}" placeholder="${priceUnavailable ? 'Enter actual sale price' : ''}">
         </div>
         <div class="form-group">
           <label class="form-label">Date Sold</label>

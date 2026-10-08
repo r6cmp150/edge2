@@ -1846,6 +1846,36 @@ gains a step the other doesn't also get. Fixed 2026-10-03 by having
 way `index.js` does, before building `setupTriggerRows` — not a second,
 parallel implementation of setup detection.
 
+A seventh, found 2026-10 while investigating why 22 of 290 `trades_v2`
+rows showed `sell_price` exactly equal to `buy_price` — and the first of
+these seven that **FABRICATES** a value instead of dropping one, which
+makes it worse, not just different. `renderPortfolioTab` (app.js) computed
+`currentPrice = getLivePrice(snap) || p.buyPrice` per position: when
+Alpaca's snapshot batch fetch failed ENTIRELY, a file-level
+`priceFetchFailed` flag existed and correctly suppressed every place that
+mattered (peak-price tracking, momentum-protection, the exit-rule
+dispatch, the "Now" price label). But that flag was computed once for the
+WHOLE batch — it could not see, and was never designed to see, a single
+ticker's snapshot missing from an otherwise-successful batch. In that
+narrower (and far more common) case, `currentPrice` fell through to
+`p.buyPrice` with **no signal anywhere**: the "Now" price on the card
+looked exactly like a real observation, and that same fabricated number
+pre-filled Mark as Sold's sale-price field. A user confirming a sale
+without noticing (or without ANY way to notice, short of independently
+checking the real quote) recorded a trade at exactly their own buy price
+— indistinguishable on the screen from a genuine breakeven. 22 real
+trades in `trades_v2` carry this shape. The other six entries on this
+list are a value that existed and got lost; this one is a value that was
+never real being handed to the user, and to the database, as if it were.
+Fixed by computing a per-POSITION `priceUnavailable` flag
+(`priceFetchFailed || !getLivePrice(snap)`) and using it everywhere the
+coarser batch-level flag used to stand in for "is this number real" —
+including the two places that flag never reached before: the card's
+"Now" label (now reads "Price unavailable" instead of a dollar figure)
+and Mark as Sold's price field (now renders EMPTY with an explicit
+notice, forcing a real typed fill, instead of silently inheriting a
+number nobody can vouch for).
+
 Every acceptance test below is a **round trip re-selected from the
 database**. Never a code read, never a UI display, never an HTTP status
 code.
