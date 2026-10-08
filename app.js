@@ -5489,27 +5489,52 @@ async function confirmMarkSold(posId, btn) {
 // screen, we have two numbers for the same thing and no way to know
 // which is right."
 //
-// Contract preserved byte-for-byte from the pre-extraction inline code,
-// on purpose, confirmed by a before/after diff of renderSoldTab's own
-// rendered output (see tests/analytics-metrics.test.js): winRate/
-// totalPnL are returned as RAW NUMBERS (formatting — toFixed, the +
-// sign, the % sign — happens at render time in each caller, same as
-// before), and winRate is 0 (a NUMBER), not null, when count is 0 —
-// identical to the original `filteredSold.length ? ... : 0` fallback.
-// That 0 is intentionally NOT "the real win rate of an empty set" (there
-// isn't one) — it's the pre-existing contract this extraction must not
-// silently change underneath Sold. A caller that needs to tell "zero
-// trades" apart from "a real 0% win rate" must check `count === 0`
-// itself BEFORE reading winRate, never infer it from the value — see
-// renderAnalyticsPeriodCard's three-state handling in §20, which is
-// exactly that check, done once, in the one place that needs it.
+// CORRECTION (2026-10, separate commit from the Analytics build this
+// function was extracted for): win/loss/breakeven now matches
+// generateClaudeReport's definition exactly, not the two-bucket
+// pnlPct-based test this function originally preserved byte-for-byte
+// from the pre-extraction Sold tab. The report's three-bucket,
+// pnlDollar-based, epsilon-tolerant classification (PNL_EPSILON, below)
+// was itself a deliberate fix, 2026-09-14, after a live bug (a $0.00
+// breakeven trade, CCRN, was being counted as a loss and dragging the
+// average loss toward zero) — Sold/Analytics had silently kept running
+// the exact test that fix replaced. Roman's call: the report's version
+// wins: a trade that returns exactly your money is not a loss, and
+// counting it as one both understates the win rate and misdescribes
+// what happened. breakeven is EXCLUDED from the win-rate denominator
+// (decided = count - breakeven), same as the report.
+//
+// winRate is null — not 0 — when there are no DECIDED trades, whether
+// because count is 0 or because every trade in the set is a breakeven.
+// Same null-not-zero discipline the rest of this codebase already
+// applies to "no valid basis" cases. Every caller (renderMetricsSummaryGrid
+// below) must render null as "N/A", never toFixed() it.
+//
+// PNL_EPSILON/isWin/isLoss/isBreakeven (promoted to top-level, 2026-10):
+// this exact classification used to be declared independently THREE
+// times — buildSellTooEarlySection, generateClaudeReport, and now this
+// function — the identical arrow functions, the identical epsilon,
+// retyped each place because nothing forced them to share one
+// definition. That shape is exactly what this project's own standing
+// rule warns about (a value/rule computed more than once can silently
+// drift out of agreement with itself); it simply hadn't been pointed at
+// THIS classification until Roman asked Sold/Analytics to match the
+// report. Both report functions below now reference these same three
+// names instead of re-declaring their own copies.
+const PNL_EPSILON = 1e-9;
+const isWin = (t) => t.pnlDollar > PNL_EPSILON;
+const isLoss = (t) => t.pnlDollar < -PNL_EPSILON;
+const isBreakeven = (t) => Math.abs(t.pnlDollar) <= PNL_EPSILON;
+
 function computeTradeMetrics(trades) {
-  const wins = trades.filter(t => t.pnlPct > 0).length;
-  const losses = trades.filter(t => t.pnlPct <= 0).length; // breakeven (pnlPct === 0) counts as a loss, not a win -- preserved exactly from the original inline filter
+  const wins = trades.filter(isWin).length;
+  const losses = trades.filter(isLoss).length;
+  const breakeven = trades.filter(isBreakeven).length;
   const count = trades.length;
   const totalPnL = trades.reduce((sum, t) => sum + t.pnlDollar, 0);
-  const winRate = count ? (wins / count * 100) : 0;
-  return { count, totalPnL, winRate, wins, losses };
+  const decided = count - breakeven;
+  const winRate = decided ? (wins / decided * 100) : null;
+  return { count, totalPnL, winRate, wins, losses, breakeven };
 }
 
 // The BTDR finding (docs/phase-9-entry-exit-spec.md §0.3.1/§0.3.2 — one
@@ -5542,14 +5567,23 @@ function computeBiggestContributor(trades) {
 // (computeTradeMetrics' return shape), not a trade array — callers decide
 // what to filter, this only decides how to show the result.
 function renderMetricsSummaryGrid(metrics) {
-  const { count, totalPnL, winRate, wins, losses } = metrics;
+  const { count, totalPnL, winRate, wins, losses, breakeven } = metrics;
+  // winRate null -> "N/A", never toFixed()'d -- null means no DECIDED
+  // trades exist (count===0, or every trade present is a breakeven), a
+  // different claim from "0% of decided trades won." Same three-state
+  // rule this codebase applies everywhere else.
+  const winRateDisplay = winRate == null ? 'N/A' : `${winRate.toFixed(0)}%`;
+  // Record: breakeven shown as its own bucket, not folded into losses —
+  // the whole point of this correction. Omitted when 0 so the common
+  // case ("149W / 141L") isn't permanently cluttered with "/ 0BE".
+  const recordDisplay = `${wins}W / ${losses}L${breakeven ? ` / ${breakeven}BE` : ''}`;
   return `<div class="sold-summary-grid">
     <div class="summary-cell">
       <div class="summary-cell-val">${count}</div>
       <div class="summary-cell-label">Trades</div>
     </div>
     <div class="summary-cell">
-      <div class="summary-cell-val">${winRate.toFixed(0)}%</div>
+      <div class="summary-cell-val">${winRateDisplay}</div>
       <div class="summary-cell-label">Win Rate</div>
     </div>
     <div class="summary-cell">
@@ -5557,7 +5591,7 @@ function renderMetricsSummaryGrid(metrics) {
       <div class="summary-cell-label">Total P&L</div>
     </div>
     <div class="summary-cell">
-      <div class="summary-cell-val">${wins}W / ${losses}L</div>
+      <div class="summary-cell-val">${recordDisplay}</div>
       <div class="summary-cell-label">Record</div>
     </div>
   </div>`;
@@ -6267,9 +6301,7 @@ This is the evidence base for whether this line — or any other — ever deserv
 }
 
 async function buildSellTooEarlySection(sold) {
-  const PNL_EPSILON = 1e-9; // same test generateClaudeReport's own shared isWin/isLoss use -- see that definition's comment on the CCRN breakeven bug this avoids
-  const isWin  = (s) => s.pnlDollar >  PNL_EPSILON;
-  const isLoss = (s) => s.pnlDollar < -PNL_EPSILON;
+  // isWin/isLoss: top-level shared definitions (§18, near computeTradeMetrics) -- no local redeclaration.
 
   const notResolved   = sold.filter(s => !s.sellTimingResolved);
   const splitExcluded = sold.filter(s => s.sellTimingResolved && s.bestExitTiming === 'SPLIT_IN_WINDOW');
@@ -6571,10 +6603,12 @@ async function generateClaudeReport() {
   const now = new Date();
   const dateStr = now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
 
-  // Shared win/loss/breakeven classification (2026-09-14): one definition,
-  // read by every section below that splits wins from losses, instead of
-  // ~30 inline `pnlPct > 0` copies that can silently drift out of agreement
-  // with each other. Found live: a $0.00 breakeven trade (CCRN) was being
+  // Shared win/loss/breakeven classification (2026-09-14, promoted to a
+  // single top-level definition 2026-10 — §18, near computeTradeMetrics —
+  // once Sold/Analytics were brought in line with it too): read by every
+  // section below that splits wins from losses, instead of ~30 inline
+  // `pnlPct > 0` copies that can silently drift out of agreement with
+  // each other. Found live: a $0.00 breakeven trade (CCRN) was being
   // counted as a "loss" everywhere under the old `pnlPct <= 0` test —
   // understating win rate and dragging the average loss toward zero by
   // averaging in a $0 "loss." Based on pnlDollar, not pnlPct (sign of the
@@ -6582,10 +6616,6 @@ async function generateClaudeReport() {
   // compared against a small epsilon rather than exact 0 so a float that
   // *displays* as $0.00 but isn't quite can't silently land in the wrong
   // bucket.
-  const PNL_EPSILON = 1e-9;
-  const isWin = (s) => s.pnlDollar > PNL_EPSILON;
-  const isLoss = (s) => s.pnlDollar < -PNL_EPSILON;
-  const isBreakeven = (s) => Math.abs(s.pnlDollar) <= PNL_EPSILON;
   // Win rate over DECIDED trades in t — breakeven excluded from the
   // denominator everywhere, same rule as the headline win rate below.
   // null (not 0) when t has no decided trades, so callers can tell
@@ -8477,10 +8507,14 @@ function _renderAnalyticsTrendsRow(slot, allTrades, isNewest) {
   const contributorText = contributor
     ? `${contributor.ticker} ${contributor.pnlDollar>=0?'+':''}$${contributor.pnlDollar.toFixed(0)}${contributor.pctOfTotal!=null ? ` (${contributor.pctOfTotal.toFixed(0)}%)` : ''}`
     : '—';
+  // winRate can be null here even though tradesInSlot.length > 0 -- every
+  // trade in this slot being a breakeven leaves zero DECIDED trades to
+  // rate. Same "N/A, never toFixed()'d" rule as renderMetricsSummaryGrid.
+  const winRateText = metrics.winRate == null ? 'N/A' : `${metrics.winRate.toFixed(0)}%`;
   return `<tr class="${rowCls}">${periodCell}
     <td>${metrics.count}</td>
     <td class="${metrics.totalPnL>=0?'pos':'neg'}">${metrics.totalPnL>=0?'+':''}$${metrics.totalPnL.toFixed(0)}</td>
-    <td>${metrics.winRate.toFixed(0)}%</td>
+    <td>${winRateText}</td>
     <td>${contributorText}</td>
   </tr>`;
 }

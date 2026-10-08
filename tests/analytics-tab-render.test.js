@@ -37,6 +37,15 @@ function loadAnalyticsTabFns() {
   evalModule(readSource('core/clock.js'), { expose: ['getPT', 'ptDateStr'] });
   // eslint-disable-next-line no-eval
   eval(extractConst('ANALYTICS_CONTRIBUTOR_DOMINANCE_PCT') + '\nglobal.ANALYTICS_CONTRIBUTOR_DOMINANCE_PCT = ANALYTICS_CONTRIBUTOR_DOMINANCE_PCT;');
+  // computeTradeMetrics (below) references these as free top-level
+  // variables, not self-contained -- same shared win/loss/breakeven
+  // classification generateClaudeReport uses (app.js §18). Each exposed
+  // onto global explicitly, in the SAME eval() call that declares it —
+  // direct eval()'s const/let bindings don't survive past the call that
+  // declared them otherwise (see tests/_lib.js's own comment on this).
+  // eslint-disable-next-line no-eval
+  eval([extractConst('PNL_EPSILON'), extractConst('isWin'), extractConst('isLoss'), extractConst('isBreakeven')].join('\n')
+    + '\nglobal.PNL_EPSILON = PNL_EPSILON; global.isWin = isWin; global.isLoss = isLoss; global.isBreakeven = isBreakeven;');
 
   const names = [
     'computeTradeMetrics', 'computeBiggestContributor', 'renderMetricsSummaryGrid',

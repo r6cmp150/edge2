@@ -1,23 +1,19 @@
 // tests/analytics-metrics.test.js — app.js's computeTradeMetrics/
 // computeBiggestContributor/renderMetricsSummaryGrid (Analytics tab,
-// 2026-10). Extracts the three functions via regex (same technique
-// tests/persist-quota.test.js already uses for core/store.js's persist())
-// rather than eval'ing the whole of app.js, which would need a DOM/
-// supabaseClient mock this test has no reason to care about.
+// Sold tab). Extracts via regex (same technique tests/persist-quota.test.js
+// already uses) rather than eval'ing the whole of app.js.
 //
-// Two jobs, not one:
-//   1. Prove the REFACTOR changed nothing — renderSoldTab used to compute
-//      these four numbers inline; this diffs the NEW
-//      computeTradeMetrics+renderMetricsSummaryGrid path against the OLD
-//      inline code (frozen here verbatim, not re-derived) across several
-//      trade sets, including the two edge cases most likely to be wrong
-//      and least likely to come up while testing by hand: an empty set
-//      and a single trade.
-//   2. Prove the three-state contract Roman asked for: computeTradeMetrics
-//      returns a NUMBER (0) for an empty set's winRate, matching the
-//      original inline fallback exactly — count===0 is what a caller
-//      must check to render "no trades yet" instead of "0%", never a
-//      property of winRate itself (see app.js's own comment on this).
+// CORRECTION (2026-10, separate commit from the original extraction):
+// win/loss/breakeven now matches generateClaudeReport's own three-bucket,
+// pnlDollar-based, epsilon-tolerant definition — Roman's explicit call:
+// "a trade that returns exactly your money is not a loss." This file
+// used to diff the refactor against the OLD two-bucket pnlPct-based test
+// to prove the extraction changed nothing; that was correct for THAT
+// commit, but asserting it today would just pin the bug back in place.
+// These tests now assert the NEW, corrected contract instead, plus a
+// static guard (testOnlyOneSharedDefinitionExists) against the exact
+// failure this correction fixed — the same classification logic had
+// drifted into three separate copies before this.
 'use strict';
 const assert = require('assert');
 const { readSource, run } = require('./_lib');
@@ -29,108 +25,95 @@ function extractFn(name) {
   if (!m) throw new Error(`could not extract ${name}() from app.js`);
   return m[0];
 }
+function extractConst(name) {
+  const src = readSource('app.js');
+  const re = new RegExp(`const ${name} = [^;]+;`);
+  const m = src.match(re);
+  if (!m) throw new Error(`could not extract const ${name} from app.js`);
+  return m[0];
+}
 
 function loadAnalyticsFns() {
-  const src = [
-    extractFn('computeTradeMetrics'),
-    extractFn('computeBiggestContributor'),
-    extractFn('renderMetricsSummaryGrid'),
-  ].join('\n\n');
+  const constSrc = [extractConst('PNL_EPSILON'), extractConst('isWin'), extractConst('isLoss'), extractConst('isBreakeven')].join('\n');
+  const fnNames = ['computeTradeMetrics', 'computeBiggestContributor', 'renderMetricsSummaryGrid'];
+  const fnSrc = fnNames.map(extractFn).join('\n\n');
+  const exposeLine = ['PNL_EPSILON', 'isWin', 'isLoss', 'isBreakeven', ...fnNames].map(n => `global.${n} = ${n};`).join(' ');
   // eslint-disable-next-line no-eval
-  eval(src + `
-global.__computeTradeMetrics = computeTradeMetrics;
-global.__computeBiggestContributor = computeBiggestContributor;
-global.__renderMetricsSummaryGrid = renderMetricsSummaryGrid;
-`);
-  return {
-    computeTradeMetrics: global.__computeTradeMetrics,
-    computeBiggestContributor: global.__computeBiggestContributor,
-    renderMetricsSummaryGrid: global.__renderMetricsSummaryGrid,
-  };
-}
-
-// The ORIGINAL inline code renderSoldTab ran before this extraction —
-// frozen here VERBATIM (copied, not re-derived from memory of what it
-// did), so this test can never drift toward agreeing with a changed
-// "new" version by accident. This is the ground truth the refactor must
-// match exactly.
-function oldInlineComputeAndRender(filteredSold) {
-  const wins = filteredSold.filter(s => s.pnlPct > 0);
-  const losses = filteredSold.filter(s => s.pnlPct <= 0);
-  const winRate = filteredSold.length ? (wins.length / filteredSold.length * 100).toFixed(0) : 0;
-  const totalPnL = filteredSold.reduce((sum, s) => sum + s.pnlDollar, 0);
-  return `<div class="sold-summary-grid">
-        <div class="summary-cell">
-          <div class="summary-cell-val">${filteredSold.length}</div>
-          <div class="summary-cell-label">Trades</div>
-        </div>
-        <div class="summary-cell">
-          <div class="summary-cell-val">${winRate}%</div>
-          <div class="summary-cell-label">Win Rate</div>
-        </div>
-        <div class="summary-cell">
-          <div class="summary-cell-val ${totalPnL>=0?'pos':'neg'}">${totalPnL>=0?'+':''}$${totalPnL.toFixed(0)}</div>
-          <div class="summary-cell-label">Total P&L</div>
-        </div>
-        <div class="summary-cell">
-          <div class="summary-cell-val">${wins.length}W / ${losses.length}L</div>
-          <div class="summary-cell-label">Record</div>
-        </div>
-      </div>`;
-}
-
-// Whitespace BETWEEN tags is cosmetic (indentation changed when the
-// template moved from being nested inside renderSoldTab's own literal to
-// its own function) and must not fail this diff; whitespace and text
-// INSIDE a tag (the actual numbers/labels) must match exactly. Collapsing
-// runs of whitespace between '>' and '<' is a semantic-HTML comparison,
-// not a byte-for-byte one — the right comparison for "did the refactor
-// change anything a user would see."
-function normalize(html) {
-  return html.replace(/>\s+</g, '><').trim();
+  eval(constSrc + '\n' + fnSrc + '\n' + exposeLine);
+  const out = {};
+  for (const n of ['computeTradeMetrics', 'computeBiggestContributor', 'renderMetricsSummaryGrid']) out[n] = global[n];
+  return out;
 }
 
 function mk(pnlDollar, pnlPct, ticker = 'XXX') { return { pnlDollar, pnlPct, ticker }; }
+function normalize(html) { return html.replace(/>\s+</g, '><').trim(); }
 
-const FIXTURES = {
-  empty: [],
-  singleWin: [mk(10, 5)],
-  singleLoss: [mk(-7.5, -3)],
-  singleBreakeven: [mk(0, 0)], // pnlPct === 0 must count as a LOSS (<=0), not a win -- the exact boundary the original inline filter used
-  mixed: [mk(46.68, 92, 'TENX'), mk(-20.40, -15, 'BTDR'), mk(-31.50, -22, 'KEEL'), mk(12.00, 8, 'PGEN')],
-  oneTradeDominates: [mk(38.20, 140, 'AEVA'), mk(2.10, 4, 'B'), mk(1.80, 3, 'C'), mk(-0.40, -2, 'D')],
-};
-
-async function testRenderedOutputMatchesOldInlineCodeAcrossFixtures() {
-  const { computeTradeMetrics, renderMetricsSummaryGrid } = loadAnalyticsFns();
-  for (const [name, trades] of Object.entries(FIXTURES)) {
-    const oldHtml = normalize(oldInlineComputeAndRender(trades));
-    const newHtml = normalize(renderMetricsSummaryGrid(computeTradeMetrics(trades)));
-    console.log(`fixture "${name}": old=${JSON.stringify(oldHtml)}`);
-    console.log(`fixture "${name}": new=${JSON.stringify(newHtml)}`);
-    assert.strictEqual(newHtml, oldHtml, `fixture "${name}": refactored output must match the original inline code exactly`);
+// Regression guard for the exact failure this correction fixes: the
+// classification (PNL_EPSILON/isWin/isLoss/isBreakeven) existed as THREE
+// independent copies in app.js before this commit (buildSellTooEarlySection,
+// generateClaudeReport, and computeTradeMetrics' own pre-correction
+// pnlPct test) — found only because Roman asked why Sold/Analytics
+// disagreed with the report. A static count, not a behavioral test: if
+// someone reintroduces a second `const isWin = ` anywhere in app.js,
+// this fails immediately, before the two copies have a chance to drift.
+async function testOnlyOneSharedDefinitionExists() {
+  const src = readSource('app.js');
+  for (const name of ['PNL_EPSILON', 'isWin', 'isLoss', 'isBreakeven']) {
+    const count = (src.match(new RegExp(`const ${name} = `, 'g')) || []).length;
+    assert.strictEqual(count, 1, `expected exactly one top-level "const ${name} = " in app.js, found ${count} — a second copy is how this drifts again`);
   }
 }
 
-async function testEmptyArrayIsTheOriginalZeroFallbackNotNull() {
+async function testEmptyArray() {
   const { computeTradeMetrics } = loadAnalyticsFns();
   const m = computeTradeMetrics([]);
-  assert.strictEqual(m.count, 0);
-  assert.strictEqual(m.totalPnL, 0);
-  assert.strictEqual(m.winRate, 0, 'winRate must be the number 0 for an empty set -- identical to the pre-extraction `filteredSold.length ? ... : 0` fallback, not null (callers distinguish "no trades" from "a real 0%" via count===0, never via winRate\'s value)');
-  assert.strictEqual(m.wins, 0);
-  assert.strictEqual(m.losses, 0);
+  assert.deepStrictEqual(m, { count: 0, totalPnL: 0, winRate: null, wins: 0, losses: 0, breakeven: 0 });
 }
 
-async function testSingleTradeArray() {
+async function testSingleWinLossBreakeven() {
   const { computeTradeMetrics } = loadAnalyticsFns();
-  const win = computeTradeMetrics([mk(10, 5)]);
-  assert.deepStrictEqual(win, { count: 1, totalPnL: 10, winRate: 100, wins: 1, losses: 0 });
-  const loss = computeTradeMetrics([mk(-7.5, -3)]);
-  assert.deepStrictEqual(loss, { count: 1, totalPnL: -7.5, winRate: 0, wins: 0, losses: 1 });
-  const breakeven = computeTradeMetrics([mk(0, 0)]);
-  assert.strictEqual(breakeven.winRate, 0, 'pnlPct === 0 is a loss, not a win -- <=0, preserved from the original filter');
-  assert.strictEqual(breakeven.losses, 1);
+  assert.deepStrictEqual(computeTradeMetrics([mk(10, 5)]), { count: 1, totalPnL: 10, winRate: 100, wins: 1, losses: 0, breakeven: 0 });
+  assert.deepStrictEqual(computeTradeMetrics([mk(-7.5, -3)]), { count: 1, totalPnL: -7.5, winRate: 0, wins: 0, losses: 1, breakeven: 0 });
+  // The core of Roman's correction: a $0.00 trade is its own bucket, not
+  // a loss, and winRate is null (no decided trades), not 0%.
+  const breakeven = computeTradeMetrics([mk(0, 0, 'CCRN')]);
+  assert.deepStrictEqual(breakeven, { count: 1, totalPnL: 0, winRate: null, wins: 0, losses: 0, breakeven: 1 });
+}
+
+async function testBreakevenExcludedFromWinRateDenominatorNotJustRelabeled() {
+  const { computeTradeMetrics } = loadAnalyticsFns();
+  // 2 wins, 1 loss, 2 breakeven -- decided = 3, winRate = 2/3, NOT 2/5.
+  const m = computeTradeMetrics([mk(10, 5), mk(20, 8), mk(-5, -2), mk(0, 0), mk(0, 0)]);
+  assert.strictEqual(m.breakeven, 2);
+  assert.strictEqual(m.wins, 2);
+  assert.strictEqual(m.losses, 1);
+  assert.ok(Math.abs(m.winRate - (2 / 3 * 100)) < 1e-9, `winRate must be over DECIDED trades only (66.7%), got ${m.winRate}`);
+}
+
+async function testEpsilonCatchesAFloatThatDisplaysAsZeroButIsnt() {
+  const { computeTradeMetrics } = loadAnalyticsFns();
+  // A float a hair off zero (e.g. 4.9999999999999999999e-10, below the
+  // epsilon) must still land as breakeven, not win/loss by a dust amount.
+  const m = computeTradeMetrics([mk(1e-12, 0.0001)]);
+  assert.strictEqual(m.breakeven, 1);
+  assert.strictEqual(m.wins, 0);
+}
+
+async function testRenderMetricsSummaryGridNullWinRateIsNA() {
+  const { computeTradeMetrics, renderMetricsSummaryGrid } = loadAnalyticsFns();
+  const html = renderMetricsSummaryGrid(computeTradeMetrics([mk(0, 0, 'CCRN')]));
+  console.log('all-breakeven grid:', normalize(html));
+  assert.ok(html.includes('>N/A<'), 'a null winRate must render "N/A", never be toFixed()\'d into "NaN%"');
+  assert.ok(!html.includes('NaN'));
+}
+
+async function testRenderMetricsSummaryGridShowsBreakevenBucketOnlyWhenNonzero() {
+  const { computeTradeMetrics, renderMetricsSummaryGrid } = loadAnalyticsFns();
+  const noBE = renderMetricsSummaryGrid(computeTradeMetrics([mk(10, 5), mk(-5, -2)]));
+  assert.ok(/\d+W \/ \d+L<\/div>/.test(normalize(noBE)), 'zero breakeven must not clutter Record with "/ 0BE"');
+  const withBE = renderMetricsSummaryGrid(computeTradeMetrics([mk(10, 5), mk(-5, -2), mk(0, 0)]));
+  console.log('with-breakeven record:', normalize(withBE).match(/summary-cell-val">([^<]*)<\/div><div class="summary-cell-label">Record/)?.[1]);
+  assert.ok(/1W \/ 1L \/ 1BE/.test(withBE), 'a nonzero breakeven count must show as its own bucket in Record');
 }
 
 async function testBiggestContributorEmptyAndSingle() {
@@ -142,37 +125,32 @@ async function testBiggestContributorEmptyAndSingle() {
 
 async function testBiggestContributorByAbsoluteDollarsNotBestPct() {
   const { computeBiggestContributor } = loadAnalyticsFns();
-  // B has the better % return, but A moved the total P&L more in dollar
-  // terms -- A must win. Mirrors the real floor-analysis finding this is
-  // modeled on: the biggest DOLLAR mover, not the biggest percentage.
   const r = computeBiggestContributor([mk(100, 5, 'A'), mk(50, 200, 'B')]);
   assert.strictEqual(r.ticker, 'A');
 }
 
 async function testBiggestContributorNegativeContributorReportsNegativePct() {
   const { computeBiggestContributor } = loadAnalyticsFns();
-  // Total is POSITIVE ($20: -30 + 25 + 25) while the biggest mover is a
-  // LOSS -- that sign mismatch is what must surface as a negative
-  // percentage. (A biggest-loss-with-an-also-negative-total, e.g.
-  // -30/-10, would wrongly look "positive" by this same arithmetic --
-  // not this test's case, just the reason the fixture is built this way
-  // rather than assumed.)
   const r = computeBiggestContributor([mk(-30, -40, 'PACB'), mk(25, 10, 'X'), mk(25, 10, 'Y')]);
   assert.strictEqual(r.ticker, 'PACB');
-  assert.ok(r.pctOfTotal < 0, 'a loss that dominates a POSITIVE-total set must report a NEGATIVE percentage, not be hidden or reported positive');
+  assert.ok(r.pctOfTotal < 0);
 }
 
 async function testBiggestContributorZeroTotalPnlIsNullNotInfinity() {
   const { computeBiggestContributor } = loadAnalyticsFns();
   const r = computeBiggestContributor([mk(50, 100, 'A'), mk(-50, -100, 'B')]);
-  assert.strictEqual(r.ticker, 'A'); // tie on |pnlDollar| -- reduce() keeps the first seen, deterministic
-  assert.strictEqual(r.pctOfTotal, null, 'a $0 total has no computable "share of total" -- must be null, never Infinity/NaN');
+  assert.strictEqual(r.ticker, 'A');
+  assert.strictEqual(r.pctOfTotal, null);
 }
 
 (async () => {
-  await run('analytics-metrics: refactored summary grid matches the original inline code across every fixture (the before/after diff)', testRenderedOutputMatchesOldInlineCodeAcrossFixtures);
-  await run('analytics-metrics: empty array -> winRate is the number 0, matching the original fallback exactly', testEmptyArrayIsTheOriginalZeroFallbackNotNull);
-  await run('analytics-metrics: single-trade array (win/loss/breakeven)', testSingleTradeArray);
+  await run('analytics-metrics: exactly one shared win/loss/breakeven definition exists in app.js (regression guard)', testOnlyOneSharedDefinitionExists);
+  await run('analytics-metrics: empty array', testEmptyArray);
+  await run('analytics-metrics: single win/loss/breakeven', testSingleWinLossBreakeven);
+  await run('analytics-metrics: breakeven excluded from the win-rate DENOMINATOR, not just relabeled', testBreakevenExcludedFromWinRateDenominatorNotJustRelabeled);
+  await run('analytics-metrics: epsilon catches a near-zero float, not just exact 0', testEpsilonCatchesAFloatThatDisplaysAsZeroButIsnt);
+  await run('analytics-metrics: renderMetricsSummaryGrid shows "N/A" for a null winRate, never NaN%', testRenderMetricsSummaryGridNullWinRateIsNA);
+  await run('analytics-metrics: Record shows the breakeven bucket only when nonzero', testRenderMetricsSummaryGridShowsBreakevenBucketOnlyWhenNonzero);
   await run('analytics-metrics: computeBiggestContributor on empty/single-trade sets', testBiggestContributorEmptyAndSingle);
   await run('analytics-metrics: biggest contributor is by absolute dollars, not best percent return', testBiggestContributorByAbsoluteDollarsNotBestPct);
   await run('analytics-metrics: a dominant LOSS reports a negative percentage, not hidden', testBiggestContributorNegativeContributorReportsNegativePct);
