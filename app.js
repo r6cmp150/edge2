@@ -5568,15 +5568,26 @@ const isWin = (t) => t.pnlDollar > PNL_EPSILON;
 const isLoss = (t) => t.pnlDollar < -PNL_EPSILON;
 const isBreakeven = (t) => Math.abs(t.pnlDollar) <= PNL_EPSILON;
 
+// EXCLUDED (2026-10, db/026): a trade with sellPriceUnverified is
+// "outcome unknown," not a breakeven and not a zero — the fabricated
+// $0.00 it carries in the database must never enter ANY trade-count
+// denominator (count/totalPnL/winRate/wins/losses/breakeven all
+// computed over the verified subset only), the same way SPLIT_IN_WINDOW
+// trades are pulled out of buildSellTooEarlySection's usable set rather
+// than averaged in as $0 outcomes. `excluded` is returned, not just
+// dropped silently, so every caller can STATE the count (Roman's
+// explicit instruction) instead of letting n quietly shrink unremarked.
 function computeTradeMetrics(trades) {
-  const wins = trades.filter(isWin).length;
-  const losses = trades.filter(isLoss).length;
-  const breakeven = trades.filter(isBreakeven).length;
-  const count = trades.length;
-  const totalPnL = trades.reduce((sum, t) => sum + t.pnlDollar, 0);
+  const verified = trades.filter(t => !t.sellPriceUnverified);
+  const excluded = trades.length - verified.length;
+  const wins = verified.filter(isWin).length;
+  const losses = verified.filter(isLoss).length;
+  const breakeven = verified.filter(isBreakeven).length;
+  const count = verified.length;
+  const totalPnL = verified.reduce((sum, t) => sum + t.pnlDollar, 0);
   const decided = count - breakeven;
   const winRate = decided ? (wins / decided * 100) : null;
-  return { count, totalPnL, winRate, wins, losses, breakeven };
+  return { count, totalPnL, winRate, wins, losses, breakeven, excluded };
 }
 
 // The BTDR finding (docs/phase-9-entry-exit-spec.md §0.3.1/§0.3.2 — one
@@ -5595,9 +5606,14 @@ function computeTradeMetrics(trades) {
 // computeSuggestedShares (engines/warrior/setups.js) and every other
 // "no valid basis" case this project has already found and fixed.
 function computeBiggestContributor(trades) {
-  if (!trades.length) return null;
-  const totalPnL = trades.reduce((sum, t) => sum + t.pnlDollar, 0);
-  const biggest = trades.reduce((a, b) => Math.abs(b.pnlDollar) > Math.abs(a.pnlDollar) ? b : a);
+  // Same exclusion as computeTradeMetrics (db/026) -- a sellPriceUnverified
+  // trade's $0.00 is fabricated, not a real (and necessarily tiny)
+  // contribution; it must never be eligible to win or dilute this
+  // comparison, same "outcome unknown, not zero" reasoning.
+  const verified = trades.filter(t => !t.sellPriceUnverified);
+  if (!verified.length) return null;
+  const totalPnL = verified.reduce((sum, t) => sum + t.pnlDollar, 0);
+  const biggest = verified.reduce((a, b) => Math.abs(b.pnlDollar) > Math.abs(a.pnlDollar) ? b : a);
   const pctOfTotal = totalPnL !== 0 ? (biggest.pnlDollar / totalPnL * 100) : null;
   return { ticker: biggest.ticker, pnlDollar: biggest.pnlDollar, pctOfTotal };
 }
@@ -5609,7 +5625,7 @@ function computeBiggestContributor(trades) {
 // (computeTradeMetrics' return shape), not a trade array — callers decide
 // what to filter, this only decides how to show the result.
 function renderMetricsSummaryGrid(metrics) {
-  const { count, totalPnL, winRate, wins, losses, breakeven } = metrics;
+  const { count, totalPnL, winRate, wins, losses, breakeven, excluded } = metrics;
   // winRate null -> "N/A", never toFixed()'d -- null means no DECIDED
   // trades exist (count===0, or every trade present is a breakeven), a
   // different claim from "0% of decided trades won." Same three-state
@@ -5619,6 +5635,14 @@ function renderMetricsSummaryGrid(metrics) {
   // the whole point of this correction. Omitted when 0 so the common
   // case ("149W / 141L") isn't permanently cluttered with "/ 0BE".
   const recordDisplay = `${wins}W / ${losses}L${breakeven ? ` / ${breakeven}BE` : ''}`;
+  // excluded (db/026): sellPriceUnverified trades never reach the grid
+  // above at all (computeTradeMetrics already filtered them out of
+  // count/totalPnL/wins/losses/breakeven) -- stated here so that
+  // exclusion is visible, not a silently smaller n, same posture as the
+  // report's own SPLIT_IN_WINDOW handling.
+  const excludedNote = excluded
+    ? `<div class="card-sub mt4">${excluded} trade${excluded===1?'':'s'} excluded — sell price unverified, outcome unknown</div>`
+    : '';
   return `<div class="sold-summary-grid">
     <div class="summary-cell">
       <div class="summary-cell-val">${count}</div>
@@ -5636,7 +5660,7 @@ function renderMetricsSummaryGrid(metrics) {
       <div class="summary-cell-val">${recordDisplay}</div>
       <div class="summary-cell-label">Record</div>
     </div>
-  </div>`;
+  </div>${excludedNote}`;
 }
 
 // Sold-trade card display for Sell Timing Analysis — replaces the old
@@ -5906,6 +5930,15 @@ function mapTradesV2ToSoldShape(row) {
     daysHeld,
     pnlDollar: row.pnl_dollars,
     pnlPct: row.pnl_pct,
+    // sellPriceUnverified (db/026, 2026-10, applied): true for the 22
+    // rows where sell_price was fabricated — silently set to buyPrice by
+    // the now-fixed Portfolio-tab bug (docs/phase-9-entry-exit-spec.md
+    // §6's seventh entry) — not a genuine breakeven close. "Outcome
+    // unknown," not zero: computeTradeMetrics/generateClaudeReport must
+    // exclude these from any trade-count-denominator calculation, and
+    // STATE the exclusion count rather than silently dropping them, same
+    // posture as SPLIT_IN_WINDOW in buildSellTooEarlySection.
+    sellPriceUnverified: !!row.sell_price_unverified,
     source: row.source,
     engineSource: row.engine_source,
     scoreAtBuy: row.signal_score,
@@ -6627,6 +6660,28 @@ async function generateClaudeReport() {
     return;
   }
 
+  // sellPriceUnverified exclusion (db/026, 2026-10): these rows are
+  // "outcome unknown," not a genuine breakeven and not a real $0 -- a
+  // Portfolio-tab bug (fixed) fabricated sell_price = buy_price for them.
+  // Every aggregate below (win rate, total/avg P&L, best/worst, the
+  // cumulative P&L walk, app-vs-own breakdowns, the auto-flag divergence
+  // checks) divides by or sums over `sold`, so `sold` itself is narrowed
+  // to the verified subset HERE, once, rather than patching each of the
+  // ~40 downstream reads individually -- the same reasoning as every
+  // other exclusion of this shape in this report (SPLIT_IN_WINDOW/
+  // DATA_ERROR in buildSellTooEarlySection, below). `allSold` keeps the
+  // complete fetched set for the ONE place that must still show every
+  // record individually -- FULL TRADE HISTORY -- so no trade vanishes
+  // from the historical log, it's only excluded from the arithmetic.
+  const allSold = sold;
+  const unverifiedSold = sold.filter(s => s.sellPriceUnverified);
+  sold = sold.filter(s => !s.sellPriceUnverified);
+  if (!sold.length) {
+    if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
+    alert(`All ${allSold.length} completed trades have an unverified sell price — nothing left to report on.`);
+    return;
+  }
+
   // Everything below (section builders through the Blob download) used to
   // sit outside any try/catch — a single throw anywhere in this ~550-line
   // span left report-btn permanently disabled on "Fetching data…" with no
@@ -6861,7 +6916,7 @@ Include Under $2: ${state.settings.includeUnder2?'Yes':'No'}
 Show WATCH signals: ${state.settings.showWatch?'Yes':'No'}
 
 === SUMMARY STATISTICS ===
-Total completed trades: ${sold.length}
+Total completed trades: ${sold.length}${unverifiedSold.length ? ` (${allSold.length} total closed trades; ${unverifiedSold.length} excluded below — sell price unverified, outcome unknown, see FULL TRADE HISTORY)` : ''}
   - App signal trades: ${apps.length} (${sold.length?(apps.length/sold.length*100).toFixed(0):0}% of total)
   - Own decision trades: ${owns.length} (${sold.length?(owns.length/sold.length*100).toFixed(0):0}% of total)
 
@@ -7191,7 +7246,7 @@ ${ureFactorAccuracySection}
   const momentumBucketLabel = (pts) => ({20:' (up 4%+)', 10:' (up 2-4%)', 0:' (under 2%)'}[pts] ?? '');
   const relStrengthBucketLabel = (pts) => ({15:' (outperform 2%+)', 10:' (outperform 1%+)', 5:' (outperform >0%)', 0:' (underperform)'}[pts] ?? '');
 
-  sold.forEach((s, i) => {
+  allSold.forEach((s, i) => {
     // Change 4 (Data & Reporting): pre-update trades won't have these fields —
     // fall back to explicit 'N/A' rather than letting undefined leak into the report.
     const subTenLine = s.subTenEntryAdjustment == null
@@ -7210,8 +7265,8 @@ ${ureFactorAccuracySection}
   Bought: $${s.buyPrice.toFixed(2)} on ${s.buyDate}
   Sold: $${s.sellPrice.toFixed(2)} on ${s.sellDate}
   Shares: ${s.shares} | Days held: ${s.daysHeld}
-  Result: ${s.pnlDollar>=0?'WIN':'LOSS'} $${s.pnlDollar.toFixed(2)} (${s.pnlPct.toFixed(1)}%)
-  Source: ${s.source}
+  Result: ${s.sellPriceUnverified ? 'UNKNOWN — sell price unverified' : `${s.pnlDollar>=0?'WIN':'LOSS'} $${s.pnlDollar.toFixed(2)} (${s.pnlPct.toFixed(1)}%)`}
+  ${s.sellPriceUnverified ? '⚠ Excluded from every P&L/win-rate aggregate elsewhere in this report (db/026) — sell_price was fabricated (buy price substituted for a missing live quote), not a real outcome.\n  ' : ''}Source: ${s.source}
   Signal score at purchase: ${s.scoreAtBuy}/100
   Signals fired at purchase: ${(s.signalsFiredAtBuy||[]).length ? s.signalsFiredAtBuy.join(', ') : 'none'}
   RSI at purchase: ${s.rsiAtBuy?.toFixed(1)||'N/A'}

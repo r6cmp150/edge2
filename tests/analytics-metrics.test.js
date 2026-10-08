@@ -45,7 +45,7 @@ function loadAnalyticsFns() {
   return out;
 }
 
-function mk(pnlDollar, pnlPct, ticker = 'XXX') { return { pnlDollar, pnlPct, ticker }; }
+function mk(pnlDollar, pnlPct, ticker = 'XXX', sellPriceUnverified = false) { return { pnlDollar, pnlPct, ticker, sellPriceUnverified }; }
 function normalize(html) { return html.replace(/>\s+</g, '><').trim(); }
 
 // Regression guard for the exact failure this correction fixes: the
@@ -67,17 +67,58 @@ async function testOnlyOneSharedDefinitionExists() {
 async function testEmptyArray() {
   const { computeTradeMetrics } = loadAnalyticsFns();
   const m = computeTradeMetrics([]);
-  assert.deepStrictEqual(m, { count: 0, totalPnL: 0, winRate: null, wins: 0, losses: 0, breakeven: 0 });
+  assert.deepStrictEqual(m, { count: 0, totalPnL: 0, winRate: null, wins: 0, losses: 0, breakeven: 0, excluded: 0 });
 }
 
 async function testSingleWinLossBreakeven() {
   const { computeTradeMetrics } = loadAnalyticsFns();
-  assert.deepStrictEqual(computeTradeMetrics([mk(10, 5)]), { count: 1, totalPnL: 10, winRate: 100, wins: 1, losses: 0, breakeven: 0 });
-  assert.deepStrictEqual(computeTradeMetrics([mk(-7.5, -3)]), { count: 1, totalPnL: -7.5, winRate: 0, wins: 0, losses: 1, breakeven: 0 });
+  assert.deepStrictEqual(computeTradeMetrics([mk(10, 5)]), { count: 1, totalPnL: 10, winRate: 100, wins: 1, losses: 0, breakeven: 0, excluded: 0 });
+  assert.deepStrictEqual(computeTradeMetrics([mk(-7.5, -3)]), { count: 1, totalPnL: -7.5, winRate: 0, wins: 0, losses: 1, breakeven: 0, excluded: 0 });
   // The core of Roman's correction: a $0.00 trade is its own bucket, not
   // a loss, and winRate is null (no decided trades), not 0%.
   const breakeven = computeTradeMetrics([mk(0, 0, 'CCRN')]);
-  assert.deepStrictEqual(breakeven, { count: 1, totalPnL: 0, winRate: null, wins: 0, losses: 0, breakeven: 1 });
+  assert.deepStrictEqual(breakeven, { count: 1, totalPnL: 0, winRate: null, wins: 0, losses: 0, breakeven: 1, excluded: 0 });
+}
+
+// db/026: sellPriceUnverified is "outcome unknown," not a breakeven and
+// not a zero -- must never enter count/totalPnL/wins/losses/breakeven,
+// and the exclusion itself must be visible on the returned object (so
+// every caller can STATE it), not just silently shrink n.
+async function testSellPriceUnverifiedExcludedEntirely() {
+  const { computeTradeMetrics } = loadAnalyticsFns();
+  const trades = [
+    mk(10, 5, 'A'),
+    mk(-5, -2, 'B'),
+    mk(0, 0, 'REAL_BREAKEVEN'),           // genuine breakeven, NOT excluded
+    mk(0, 0, 'FAKE1', true),              // fabricated $0.00 -- excluded
+    mk(0, 0, 'FAKE2', true),              // fabricated $0.00 -- excluded
+  ];
+  const m = computeTradeMetrics(trades);
+  assert.deepStrictEqual(m, { count: 3, totalPnL: 5, winRate: 50, wins: 1, losses: 1, breakeven: 1, excluded: 2 });
+}
+
+async function testAllTradesUnverifiedLeavesCountZeroNotCrash() {
+  const { computeTradeMetrics } = loadAnalyticsFns();
+  const m = computeTradeMetrics([mk(0, 0, 'FAKE1', true), mk(0, 0, 'FAKE2', true)]);
+  assert.deepStrictEqual(m, { count: 0, totalPnL: 0, winRate: null, wins: 0, losses: 0, breakeven: 0, excluded: 2 });
+}
+
+async function testComputeBiggestContributorAlsoExcludesUnverified() {
+  const { computeBiggestContributor } = loadAnalyticsFns();
+  // FAKE's $0.00 must never be eligible to win (trivially wouldn't here
+  // anyway, by magnitude) NOR dilute totalPnL used for pctOfTotal.
+  const r = computeBiggestContributor([mk(10, 100, 'REAL'), mk(0, 0, 'FAKE', true)]);
+  assert.deepStrictEqual(r, { ticker: 'REAL', pnlDollar: 10, pctOfTotal: 100 });
+  assert.strictEqual(computeBiggestContributor([mk(0, 0, 'ONLY_FAKE', true)]), null);
+}
+
+async function testRenderMetricsSummaryGridStatesExcludedCountNotSilent() {
+  const { computeTradeMetrics, renderMetricsSummaryGrid } = loadAnalyticsFns();
+  const withExcluded = renderMetricsSummaryGrid(computeTradeMetrics([mk(10, 5), mk(0, 0, 'FAKE', true)]));
+  console.log('grid with 1 excluded:', normalize(withExcluded));
+  assert.ok(withExcluded.includes('1 trade excluded — sell price unverified, outcome unknown'), 'must STATE the excluded count, not silently show a smaller Trades tile with no explanation');
+  const noExcluded = renderMetricsSummaryGrid(computeTradeMetrics([mk(10, 5)]));
+  assert.ok(!noExcluded.includes('excluded'), 'no note at all when nothing was excluded');
 }
 
 async function testBreakevenExcludedFromWinRateDenominatorNotJustRelabeled() {
@@ -155,4 +196,8 @@ async function testBiggestContributorZeroTotalPnlIsNullNotInfinity() {
   await run('analytics-metrics: biggest contributor is by absolute dollars, not best percent return', testBiggestContributorByAbsoluteDollarsNotBestPct);
   await run('analytics-metrics: a dominant LOSS reports a negative percentage, not hidden', testBiggestContributorNegativeContributorReportsNegativePct);
   await run('analytics-metrics: a $0 total set reports pctOfTotal as null, never Infinity/NaN', testBiggestContributorZeroTotalPnlIsNullNotInfinity);
+  await run('analytics-metrics: sellPriceUnverified trades are excluded entirely, not just relabeled', testSellPriceUnverifiedExcludedEntirely);
+  await run('analytics-metrics: all trades unverified leaves count 0, not a crash', testAllTradesUnverifiedLeavesCountZeroNotCrash);
+  await run('analytics-metrics: computeBiggestContributor also excludes unverified trades', testComputeBiggestContributorAlsoExcludesUnverified);
+  await run('analytics-metrics: renderMetricsSummaryGrid STATES the excluded count, never silent', testRenderMetricsSummaryGridStatesExcludedCountNotSilent);
 })();
