@@ -1820,6 +1820,32 @@ in the app was silently `undefined`. This is the argument for the rule
 below, not an exception to it: a value can go missing on either side of
 the round trip, so the round trip is the only check that catches both.
 
+A sixth belongs on this list — found 2026-10-03, while chasing why
+`setup_triggers` had zero rows after three weeks of Warrior scanning
+live. It is NOT the same shape as the five above: those five were each
+computed correctly and then lost somewhere between memory and the
+read-back — present at one end of the round trip, absent at the other.
+This one never had a value to lose. `primarySetup`/`setups`/`armedLevels`
+are attached to a QUALIFIED gate result by exactly one call site,
+`engines/warrior/index.js`'s `_scanTick` (lines 106-117): it runs
+`evaluateGateBatch`, then separately runs `evaluateSetupsBatch` on the
+QUALIFIED subset and attaches the result. `scripts/log-signals-warrior.mjs`
+— the ONLY code path that actually writes `setup_triggers` — runs
+`evaluateGateBatch` and stops; it never imported or called
+`evaluateSetupsBatch` at all. Every `result.primarySetup` was therefore
+`undefined` unconditionally, so `setupTriggerRows = results.filter(r =>
+r.primarySetup)` was an empty array on every single run regardless of
+what the market did that day — zero rows could not be distinguished from
+"no setup armed" because the code made zero rows the only possible
+outcome. The shape: **computed in one code path, never called in the
+other.** Two things that look like the same pipeline (a live browser
+scan and its Supabase-writing counterpart) are actually two separate
+implementations that can silently stop agreeing the moment one of them
+gains a step the other doesn't also get. Fixed 2026-10-03 by having
+`log-signals-warrior.mjs` call the real `evaluateSetupsBatch`, the same
+way `index.js` does, before building `setupTriggerRows` — not a second,
+parallel implementation of setup detection.
+
 Every acceptance test below is a **round trip re-selected from the
 database**. Never a code read, never a UI display, never an HTTP status
 code.

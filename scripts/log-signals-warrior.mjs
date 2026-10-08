@@ -82,8 +82,21 @@ if (!ALPACA_KEY_ID || !ALPACA_SECRET_KEY) {
 // it the same way tests/warrior-index-render.test.js already does for
 // this exact file, rather than reimplementing gate.js's logic as a
 // second copy that could drift from the real one.
+//
+// setups.js (added 2026-10-03, for the setup-detection fix below) is NOT
+// import-free like gate.js -- it has `import { ... } from './replay.js'`,
+// and replay.js in turn has `import { CHANGE_MIN_PCT } from './gate.js'`.
+// Plain eval() can't parse `import` syntax either, same problem as
+// `export`. Stripped the same way: load each file in dependency order
+// (gate.js, then replay.js, then setups.js) via this same loadReal, with
+// each one's imported names already sitting on `global` from the
+// previous loadReal call by the time the next file's stripped source
+// runs -- the exact mechanism index.js's own real `import` statements
+// give it for free, reproduced here because eval() has no import system
+// to give it to.
 function stripExportSyntax(src) {
   return src
+    .replace(/^import\s*\{[\s\S]*?\}\s*from\s*'[^']*';?\s*$/gm, '')
     .replace(/^export\s*\{[\s\S]*?\};?\s*$/m, '')
     .replace(/^export (function|const|async function|class)/gm, '$1');
 }
@@ -132,6 +145,11 @@ async function main() {
   loadReal('core/universe.js', [
     '_getAssetIndex', '_assetIndexBySymbol', '_inPriceRange', 'getUniverse',
     '_fetchCumulativeMinuteVolume', '_getSip30DayAvgVolume',
+    // _fetchRawMinuteBars (added 2026-10-03): setups.js's own header names
+    // this as a global it references from core/universe.js, same pattern
+    // as the five names above -- needed now that evaluateSetupsBatch
+    // (below) is a real call, not just an unused import.
+    '_fetchRawMinuteBars',
   ]);
   loadReal('core/news.js', ['fetchNewsForTickers']);
 
@@ -152,6 +170,19 @@ async function main() {
   loadReal('core/float-table.js', ['getFloatDataForSymbols']);
 
   loadReal('engines/warrior/gate.js', ['evaluateGateBatch']);
+
+  // Setup detection (added 2026-10-03 -- see docs/phase-9-entry-exit-
+  // spec.md §6's sixth round-trip item for the bug this closes). Loaded
+  // in the same dependency order their own `import` lines require --
+  // replay.js imports CHANGE_MIN_PCT from gate.js (already loaded above),
+  // setups.js imports five names from replay.js -- exposing exactly the
+  // names each next file's import line actually asks for, same
+  // per-name-per-file discipline as every other loadReal call here.
+  loadReal('engines/warrior/replay.js', [
+    'REPLAY_CHUNK_SIZE', 'fetchReplayBars', 'fetchPrevCloseAsOf',
+    'runReplay', 'runReplayNaiveAndRearmed',
+  ]);
+  loadReal('engines/warrior/setups.js', ['evaluateSetupsBatch']);
 
   // ── session ── getMarketStatus() returns `.status`, not `.session`
   // (confirmed by reading core/clock.js directly after a first dry run
@@ -314,6 +345,85 @@ async function main() {
 
   console.log(`log-signals-warrior: evaluated ${evaluatedCount} of ${candidates.length} universe candidates, ${fetchFailedCount} with a fetch-failed pillar, aborted=${aborted}`);
 
+  // Setup detection (added 2026-10-03): mirrors engines/warrior/index.js's
+  // own _scanTick (lines 106-117) EXACTLY -- same filter, same call, same
+  // attach loop -- because this script writing setup_triggers while
+  // running a second, hand-rolled version of "what counts as armed" is
+  // exactly how the two could silently disagree later. Before this, this
+  // script called evaluateGateBatch and stopped: no result here EVER
+  // carried .primarySetup, so setupTriggerRows below (unchanged since
+  // db/013) was an empty array on every run regardless of what the market
+  // did -- see docs/phase-9-entry-exit-spec.md §6's sixth round-trip item
+  // for the full incident.
+  //
+  // riskPerTradeDollars/availableBudget deliberately omitted (both
+  // default to 0 in setups.js's own detectSetupsForCandidate): this
+  // script has no portfolio or state.settings.budget to size against --
+  // it only observes and records triggers, it never buys anything. 0/0
+  // makes computeSuggestedShares return { shares: null, constraint: null
+  // }, which renders as "not sized" (index.js's _renderEntryTargetStop),
+  // an honest "no basis to size from here" rather than a fabricated
+  // number. entryTargetStop (the field setup_triggers and buyability
+  // both actually key on) does not depend on either value.
+  const qualified = results.filter(r => r.tier === 'QUALIFIED');
+  let setupsResult = { resultsBySymbol: {}, requests: 0 };
+  if (!aborted) {
+    try {
+      setupsResult = await global.evaluateSetupsBatch(qualified, session, { now: new Date() });
+    } catch (e) {
+      if (e instanceof ReferenceError || e instanceof TypeError || e instanceof SyntaxError) throw e;
+      aborted = true;
+      abortReason = e.message;
+      console.error(`log-signals-warrior: evaluateSetupsBatch threw -- ${e.message}`);
+    }
+  }
+  for (const r of qualified) {
+    const sr = setupsResult.resultsBySymbol[r.symbol];
+    r.setups = sr ? sr.setups : [];
+    r.primarySetup = sr ? sr.primary : null;
+    r.armedLevels = sr ? sr.armedLevels : [];
+  }
+  console.log(`log-signals-warrior: ${qualified.length} QUALIFIED, ${qualified.filter(r => r.primarySetup).length} with an armed primarySetup, setup detection made ${setupsResult.requests} request(s)`);
+
+  // TEST-ONLY HOOK (2026-10-03, never set by log-signals-warrior.yml --
+  // the scheduled workflow sets no such env var, so this is dead code on
+  // every real firing). Exists for exactly one acceptance test: "0 rows"
+  // cannot tell a working setupTriggerRows pipeline from the broken one
+  // this file had for three weeks, so proving the fix needs a row that
+  // did not depend on the market cooperating that minute. Appends one
+  // fully synthetic, obviously-fake result -- never a real candidate from
+  // `candidates`/`results`, so this works identically on a dead market or
+  // a live one. Added AFTER evaluatedCount/fetchFailedCount are already
+  // computed, so scan_runs' own completeness numbers stay honest about
+  // what was actually fetched from Alpaca -- this row was not.
+  // Deliberately excluded from signalRows below (`_syntheticTestRow`):
+  // signal_log has no anon delete path either, and this fix's blast
+  // radius should be the one disposable setup_triggers row the test
+  // needs, not a second permanent fake entry in the forward-test's own
+  // signal history. Follows db/013's own verification plan ("insert a
+  // disposable setup_triggers row via the anon key, confirm it reads
+  // back") rather than inventing a different test shape.
+  if (process.env.TEST_FORCE_TRIGGER_SYMBOL) {
+    const symbol = process.env.TEST_FORCE_TRIGGER_SYMBOL;
+    const primarySetup = {
+      id: 'hod-momentum',
+      triggerPrice: 1.23,
+      triggeredAt: new Date().toISOString(),
+      minutesSinceTrigger: 0,
+      late: false,
+      margins: {},
+      entryTargetStop: { entry: 1.23, stop: 1.10, target: 1.50 },
+      suggestedShares: null,
+      sizingConstraint: null,
+    };
+    results.push({
+      symbol, tier: 'QUALIFIED', pillars: [], buildVersion: global.VERSION,
+      _syntheticTestRow: true, // never a real signal -- excluded from signalRows below
+      primarySetup, setups: [primarySetup], armedLevels: [],
+    });
+    console.log(`log-signals-warrior: TEST_FORCE_TRIGGER_SYMBOL=${symbol} -- appended a synthetic QUALIFIED/armed result (not a real signal, not written to signal_log) to prove setupTriggerRows end-to-end.`);
+  }
+
   const scanRun = {
     id: scanRunId,
     engine_source: 'WARRIOR',
@@ -335,17 +445,22 @@ async function main() {
     prefiltered_count: 0,
     evaluated_count: evaluatedCount,
     fetch_failed_count: fetchFailedCount,
-    // request_count (db/015): the real Alpaca request cost of this run,
-    // previously computed by evaluateGateBatch and discarded here. Null
-    // on an aborted run (see the batchResult fallback above), not 0.
-    request_count: requests,
+    // request_count (db/015): the real Alpaca request cost of this run --
+    // gate evaluation's own count plus setup detection's (added
+    // 2026-10-03; same "it's one pipeline now, not two to verify
+    // separately" reasoning as index.js's own PHASE-3-UNVERIFIED comment
+    // for the live scan). Null on an aborted run (requests is null from
+    // the batchResult fallback above, and `null + n` is NaN, not null --
+    // guarded explicitly rather than silently writing NaN into a numeric
+    // column), not 0.
+    request_count: requests == null ? null : requests + (setupsResult.requests || 0),
     aborted,
     abort_reason: abortReason,
     build_version: global.VERSION,
   };
 
   const candidatesBySymbol = new Map(candidates.map(c => [c.symbol, c]));
-  const signalRows = results.map(r => ({
+  const signalRows = results.filter(r => !r._syntheticTestRow).map(r => ({
     signal_date: today,
     symbol: r.symbol,
     engine_source: 'WARRIOR',

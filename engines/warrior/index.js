@@ -140,6 +140,19 @@ async function _scanTick() {
       _lastKnownFloatTableStalenessDays = floatTableStalenessDays;
     }
     _lastScanResults = { session, results, scannedAt: new Date(), rvolCheckable };
+    // Clear a prior failure the moment a tick actually succeeds (2026-10-05,
+    // Roman's "nothing armed vs. the scan never ran" question) --
+    // state.warrior.lastScanError was being SET on failure but never
+    // unset on the next success, so one transient failure would leave a
+    // permanent-looking error on screen (see renderTab's banner) long
+    // after the loop had already recovered -- the exact opposite failure
+    // from the one this fix closes. Presence of lastScanError is now a
+    // live fact about the MOST RECENT tick, not a sticky flag from
+    // whenever one last went wrong.
+    if (typeof state !== 'undefined') {
+      state.warrior = state.warrior || {};
+      state.warrior.lastScanError = null;
+    }
     if (typeof state !== 'undefined' && state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') {
       renderWarriorTab();
     }
@@ -178,9 +191,22 @@ function _handleScanError(err) {
   if (typeof state !== 'undefined') {
     state.warrior = state.warrior || {};
     state.warrior.lastScanError = tagged;
+    // lastScanErrorAt (2026-10-05): the toast below is transient and easy
+    // to miss if nobody's looking at the exact second it fires; renderTab's
+    // banner is what actually answers "is the scan loop currently stuck,"
+    // and that needs a time to show, not just the message.
+    state.warrior.lastScanErrorAt = new Date();
   }
   if (typeof showGlobalErrorToast === 'function') {
     showGlobalErrorToast(tagged);
+  }
+  // Re-render immediately if Warrior is the visible tab, same condition
+  // _scanTick's own success path uses -- without this, a tick that fails
+  // while Warrior is on screen leaves the PREVIOUS successful render
+  // (and its now-stale "last scan HH:MM PT" line) up with no visible sign
+  // anything just went wrong until the next tab switch.
+  if (typeof state !== 'undefined' && state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') {
+    renderWarriorTab();
   }
 }
 
@@ -1073,12 +1099,32 @@ function _renderPhase6FloatCoverageBlock() {
   return baseLine + clusteringNote + ageLine + staleWarning;
 }
 
+// Scan-health banner (2026-10-05, Roman's explicit question: "how does he
+// distinguish nothing armed today from the scan never ran"). Before this,
+// state.warrior.lastScanError was computed and stored (_handleScanError)
+// but never rendered anywhere -- the ONLY visible signs a tick had failed
+// were a transient toast (missed if nobody's looking at that exact
+// second) and the tab-subtitle's "last scan HH:MM PT" line quietly
+// falling behind, which required Roman to do his own mental math against
+// the current clock to notice. _scanTick's success path now clears
+// lastScanError the moment a tick actually succeeds (see that comment),
+// so this banner's mere presence is a live fact about the MOST RECENT
+// tick, not a sticky flag from whenever one last went wrong -- no banner
+// means the loop is healthy as of the last attempt, full stop, and
+// "QUALIFIED (0)" below can be trusted to mean exactly that.
+function _renderScanHealthBanner() {
+  if (typeof state === 'undefined' || !state.warrior?.lastScanError) return '';
+  const at = state.warrior.lastScanErrorAt ? _formatPTTime(state.warrior.lastScanErrorAt) : '?';
+  return `<div class="stale-table-warning">⚠ Scan attempt at ${at} PT failed: ${state.warrior.lastScanError} — results below are from the last successful scan, may be stale.</div>`;
+}
+
 function renderTab() {
   const replayPanel = renderReplayPanel();
   if (!_lastScanResults) {
     return `<div class="tab-header">
       <h1 class="tab-title">WARRIOR</h1>
     </div>
+    ${_renderScanHealthBanner()}
     ${_PHASE5_UNVALIDATED_LINE}
     ${_renderPhase6FloatCoverageBlock()}
     <div class="empty-state">
@@ -1187,6 +1233,7 @@ function renderTab() {
   return `<div class="tab-header">
     <h1 class="tab-title">WARRIOR</h1>
   </div>
+  ${_renderScanHealthBanner()}
   ${_PHASE5_UNVALIDATED_LINE}
   ${_renderPhase6FloatCoverageBlock()}
   <div class="tab-subtitle">Session: ${session} · ${results.length} scanned · last scan ${_formatPTTime(scannedAt)} PT</div>
