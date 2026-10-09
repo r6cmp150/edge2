@@ -52,7 +52,8 @@ insert into _fix (id, old_res, old_trade, new_res) values
     ('e4a6ad82-db96-4ca8-9b7b-b53031d4d2d2'::uuid, 'taken-by-fallback', '15088fd1-ccb4-4716-b142-0856274aa5bb'::uuid, 'unresolved'),  -- TDAY 2026-10-01 SHOWN  [order predates signal]
     ('bb949611-7b64-42a4-a43d-3cf95030f0ae'::uuid, 'traded-against-engine', '9f98084e-ef91-4c5b-acf2-aed00b595dd9'::uuid, 'not-taken-confirmed'),  -- AMC 2026-09-25 BELOW_THRESHOLD
     ('483b7bcc-a201-4050-8a2e-665df6edf5d4'::uuid, 'taken-by-fallback', 'b35fa609-b1ce-4253-8615-9dd4a1374008'::uuid, 'not-taken-confirmed'),  -- LUMN 2026-09-23 SHOWN
-    ('28dbaf9d-5e85-4ff0-87c9-684d39ee00ed'::uuid, 'taken-by-fallback', 'c31f964f-770a-470d-b5d9-38bdbccb170c'::uuid, 'unresolved')   -- GO 2026-10-01 SHOWN  [order predates signal];
+    ('28dbaf9d-5e85-4ff0-87c9-684d39ee00ed'::uuid, 'taken-by-fallback', 'c31f964f-770a-470d-b5d9-38bdbccb170c'::uuid, 'unresolved')   -- GO 2026-10-01 SHOWN  [order predates signal]
+;
 
 do $$
 declare n int;
