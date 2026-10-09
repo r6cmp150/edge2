@@ -70,24 +70,33 @@ function getMarketStatus() {
     return { status:'PRE', label:'PRE-MARKET (TEST MODE)', color:'#ffd166',
              countdown:'Forced via Settings testing toggle', isOpen:false };
   }
+  // ONE CLASSIFIER (2026-10-09): the session itself comes from
+  // classifySession -- this function only adds presentation (label, color,
+  // countdown). It used to re-derive the windows with a hard-coded 1:00pm
+  // close, so on an EARLY_CLOSES day (11-27, 12-24) it reported OPEN from
+  // 10:00 to 1:00pm PT after the market had closed, while classifySession
+  // (used by the scan gate and trades_v2.buy_session) said AFTER_HOURS. Two
+  // classifiers that can disagree is the bug; there is now one.
   const pt = getPT();
-  const h = pt.getHours(), m = pt.getMinutes();
-  const tMin = h * 60 + m;
-  const trading = isTradingDay(pt);
+  const tMin = pt.getHours() * 60 + pt.getMinutes();
+  const dateStr = ptDateStr(pt);
+  const cls = classifySession(dateStr, _hhmm(pt));
+  const closeMin = EARLY_CLOSES[dateStr] ?? 780;
+  const early = closeMin < 780 ? ' (EARLY CLOSE)' : '';
 
-  if (trading && tMin >= 390 && tMin < 780) {   // 6:30am–1:00pm
-    const left = 780 - tMin;
-    return { status:'OPEN', label:'MARKET OPEN', color:'#00ff88',
+  if (cls === 'REGULAR') {
+    const left = closeMin - tMin;
+    return { status:'OPEN', label:'MARKET OPEN' + early, color:'#00ff88',
              countdown:`Closes in ${Math.floor(left/60)}h ${left%60}m`, isOpen:true };
   }
-  if (trading && tMin >= 60 && tMin < 390) {     // 1:00am–6:30am
+  if (cls === 'PRE_MARKET') {
     const left = 390 - tMin;
     return { status:'PRE', label:'PRE-MARKET', color:'#ffd166',
              countdown:`Opens in ${Math.floor(left/60)}h ${left%60}m`, isOpen:false };
   }
-  if (trading && tMin >= 780 && tMin < 1020) {   // 1:00pm–5:00pm
-    const left = 1020 - tMin;
-    return { status:'AH', label:'AFTER HOURS', color:'#ffd166',
+  if (cls === 'AFTER_HOURS') {
+    const left = closeMin + 240 - tMin;
+    return { status:'AH', label:'AFTER HOURS' + early, color:'#ffd166',
              countdown:`Extended hours end in ${Math.floor(left/60)}h ${left%60}m`, isOpen:false };
   }
 
@@ -135,8 +144,7 @@ function isAfternoonMode() {
 function isPreMarketHours() {
   if (state.settings.forcePreMarketMode) return true;
   const pt = getPT();
-  const tMin = pt.getHours() * 60 + pt.getMinutes();
-  return isTradingDay(pt) && tMin >= 60 && tMin < 390;
+  return classifySession(ptDateStr(pt), _hhmm(pt)) === 'PRE_MARKET'; // one classifier
 }
 
 function isAfterHoursMode() {
@@ -145,8 +153,12 @@ function isAfterHoursMode() {
 
 function isMarketHoursNow() {
   const pt = getPT();
-  const tMin = pt.getHours() * 60 + pt.getMinutes();
-  return isTradingDay(pt) && tMin >= 390 && tMin < 780; // 6:30am–1:00pm PT
+  return classifySession(ptDateStr(pt), _hhmm(pt)) === 'REGULAR'; // one classifier; early-close aware
+}
+
+// "HH:MM" PT wall clock of a getPT()-derived Date -- classifySession's input.
+function _hhmm(pt) {
+  return `${String(pt.getHours()).padStart(2, '0')}:${String(pt.getMinutes()).padStart(2, '0')}`;
 }
 
 // Bug 4 follow-up. Hours since the most recent trading day's regular-session
