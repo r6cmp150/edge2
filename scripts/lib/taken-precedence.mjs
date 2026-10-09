@@ -42,3 +42,27 @@ export function signalPrecedesTrade(row, trade, ptWallClockToInstant) {
   if (buyInstant) return new Date(row.first_shown_at) <= buyInstant;
   return trade.buy_date > row.signal_date;
 }
+
+// MOST RECENT PRIOR SIGNAL ONLY (2026-10-09). A trade is credited to at most
+// ONE signal day per (symbol, engine): the latest signal_date whose row was
+// first shown at or before the order. Previously every signal day whose
+// 9-day window contained the order claimed the same trade -- one FLNC buy
+// on 9/27 counted as "taking" the 9/18, 9/22, 9/23 and 9/25 signals, and 40
+// taken rows were really 20 trades. A ticker shown on four days and bought
+// on the fifth was DECLINED four times and taken once; counting all four as
+// taken would make the app's worst (most-ignored) signals score as its
+// most-taken.
+//
+// laterRows: this symbol/engine's signal_log rows with signal_date AFTER
+// the group's own date (any tier -- the engine's latest verdict before the
+// order is what Roman acted on or against). Returns true iff none of them
+// was shown at or before the order, i.e. this group is the most recent
+// prior signal for this trade.
+//
+// No staleness cutoff on the signal-to-order gap: there's no principled
+// number for one. The gap is derivable per taken row (matched trade's
+// buy_date minus signal_date) and is logged at resolution; it is not
+// stored as a column.
+export function isMostRecentPriorSignal(trade, laterRows, ptWallClockToInstant) {
+  return !laterRows.some(r => signalPrecedesTrade(r, trade, ptWallClockToInstant));
+}

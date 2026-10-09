@@ -61,7 +61,7 @@ import { fileURLToPath } from 'node:url';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
 import { reportNoop } from './lib/workflow-instrumentation.mjs';
-import { signalPrecedesTrade } from './lib/taken-precedence.mjs';
+import { signalPrecedesTrade, isMostRecentPriorSignal } from './lib/taken-precedence.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -161,7 +161,7 @@ async function main() {
   // requirement both loggers already satisfy this same way.
   global.state = { settings: { alpacaKey: ALPACA_KEY_ID, alpacaSecret: ALPACA_SECRET_KEY } };
 
-  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'ptWallClockToInstant']);
+  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'ptWallClockToInstant', 'businessDaysBetween']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', 'createApiClient', 'assertPageNotSuspiciouslyFull', 'sipSafeEndParams']);
   loadReal('core/market-data.js', ['HISTORICAL_BAR_ADJUSTMENT']);
 
@@ -549,7 +549,20 @@ async function main() {
     // qualifies, the group resolves to not-taken-confirmed once the window
     // elapses, same as a group with no trade.
     const precedes = (row, trade) => signalPrecedesTrade(row, trade, global.ptWallClockToInstant);
-    const candidates = (await candRes.json()).filter(c => groupRows.some(row => precedes(row, c)));
+    const precededCandidates = (await candRes.json()).filter(c => groupRows.some(row => precedes(row, c)));
+    // Most recent prior signal only (taken-precedence.mjs): drop any trade
+    // that a LATER signal day of this symbol/engine also preceded -- that
+    // later day is the one it gets credited to, and this day was declined.
+    let candidates = precededCandidates;
+    if (precededCandidates.length) {
+      const laterRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/signal_log?select=signal_date,first_shown_at&engine_source=eq.${engineSource}&symbol=eq.${symbol}&signal_date=gt.${signalDate}&signal_date=lte.${windowEnd}`,
+        { headers: anonHeaders }
+      );
+      if (laterRes.status >= 300) { console.warn(`fill-outcomes: later-signal query failed for ${key}: ${laterRes.status} ${await laterRes.text()} -- leaving unresolved`); continue; }
+      const laterRows = await laterRes.json();
+      candidates = precededCandidates.filter(c => isMostRecentPriorSignal(c, laterRows, global.ptWallClockToInstant));
+    }
     const windowElapsed = tradingDayHasClosed(windowEnd);
 
     if (candidates.length) {
@@ -565,6 +578,7 @@ async function main() {
         const isExact = match.signal_log_id === winner.id;
         patchFor(winner.id).taken_resolution = isExact ? 'taken-exact' : 'taken-by-fallback';
         patchFor(winner.id).matched_trade_id = match.id;
+        console.log(`fill-outcomes: ${key} taken by trade ${match.id} ordered ${match.buy_date} ${match.buy_time ?? ''} -- signal-to-order gap ${global.businessDaysBetween(signalDate, match.buy_date)} trading day(s)`);
         takenResolvedCount++;
         for (const row of groupRows) {
           if (row.id === winner.id) continue;

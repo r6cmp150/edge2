@@ -12,6 +12,20 @@ const { readSource, evalModule, run, REPO_ROOT } = require('./_lib');
 global.state = { settings: {} };
 evalModule(readSource('core/clock.js'), { expose: ['ptWallClockToInstant'] });
 
+run('most recent prior signal only: one trade, one signal day', async () => {
+  const { isMostRecentPriorSignal } = await import(
+    pathToFileURL(path.join(REPO_ROOT, 'scripts/lib/taken-precedence.mjs')).href);
+  const conv = global.ptWallClockToInstant;
+  // Real case: one FLNC order (Sun 9/27 07:36 PT) was credited to the
+  // 9/18, 9/22, 9/23 and 9/25 signal days. Only 9/25 may claim it.
+  const trade = { buy_date: '2026-09-27', buy_time: '07:36' };
+  const days = { '2026-09-18': '2026-09-18T19:15:07Z', '2026-09-22': '2026-09-22T19:17:09Z', '2026-09-23': '2026-09-23T19:15:12Z', '2026-09-25': '2026-09-25T19:12:36Z' };
+  const later = (d) => Object.entries(days).filter(([sd]) => sd > d).map(([signal_date, first_shown_at]) => ({ signal_date, first_shown_at }));
+  assert.deepStrictEqual(Object.keys(days).filter(d => isMostRecentPriorSignal(trade, later(d), conv)), ['2026-09-25']);
+  // A later signal shown AFTER the order doesn't steal it (it couldn't have informed the decision).
+  assert.strictEqual(isMostRecentPriorSignal({ buy_date: '2026-10-01', buy_time: '08:03' }, [{ signal_date: '2026-10-01', first_shown_at: '2026-10-01T19:05:57Z' }], conv), true);
+});
+
 run('taken precedence: signal must be first shown at or before the buy', async () => {
   const { signalPrecedesTrade, tradeBuyInstant } = await import(
     pathToFileURL(path.join(REPO_ROOT, 'scripts/lib/taken-precedence.mjs')).href);
