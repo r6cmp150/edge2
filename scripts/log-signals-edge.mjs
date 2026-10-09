@@ -98,10 +98,13 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
+import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
 import { scheduledScanGate, SPACING_MIN } from './lib/scan-gate.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
+// Before anything else: no test override may reach a stored column (scripts/lib/test-override-guard.mjs).
+try { refuseTestOverridesWithWrite('log-signals-edge'); } catch (e) { console.error(e.message); process.exit(1); }
 
 const SUPABASE_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';

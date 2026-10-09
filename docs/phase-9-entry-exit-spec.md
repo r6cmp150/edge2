@@ -891,6 +891,8 @@ into a number.
 > editor with `delete from workflow_runs where workflow_name = 'db023-verify';`
 > — the filter stays harmless either way.
 >
+> **Second permanent exclusion, signal_log side:** scan `3da6957d-84fa-4472-9385-10679dc4e979` carries `session = 'FORCED_TEST'` (a hand-run Warrior scan with a forced session, 2026-10-03). It drops out of phase-8's session buckets by construction, not by a filter list; see docs/phase-8-report-spec.md rule 1.
+>
 > **The created_at cross-check, concretely.** In all six workflows the
 > firing insert is step 0 of the only job — before checkout, before any
 > work (confirmed by parsing the YAML, 2026-10-09) — and `actual_fired_at`
