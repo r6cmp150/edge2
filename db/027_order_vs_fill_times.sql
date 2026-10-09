@@ -38,6 +38,16 @@
 -- order for the next open. Treating extended hours as pending would make
 -- him hand-enter a fill on every after-hours trade; he'd skip it, and the
 -- data would go bad through a different door.
+--
+-- "CLOSED -> PENDING" FOR MARKET ORDERS IS CORRECT EVEN THOUGH ROMAN'S
+-- BROKER TRADES OVERNIGHT. Confirmed with Roman on 2026-10-09, not
+-- inferred: the broker's 24-hour market accepts LIMIT ORDERS ONLY
+-- overnight; a plain market order placed then waits for the next session.
+-- (classifySession's CLOSED covers 5:00pm-1:00am PT plus weekends and
+-- holidays -- the overnight window included.) The Sunday-night fills on
+-- 2026-09-27 were limit orders, which this rule already treats as pending
+-- until marked. Do not "fix" this to fill market orders at 9pm; if the
+-- broker's overnight rules ever change, re-confirm with Roman first.
 -- So for every new row, filled_at NULL means one thing: NOT FILLED (yet,
 -- or never confirmed) -- whatever the order type. The invariant is about
 -- the fill, not the intent. A position can't be sold until it's marked
