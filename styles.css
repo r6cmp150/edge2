@@ -2170,3 +2170,14 @@ table.analytics-trends-table {
   40%, 60% { transform: translateX(10px); }
 }
 .pin-boxes.shake { animation: edge-pin-shake 0.4s; }
+
+/* Order vs fill (db/027, phase-9 spec §4.8) */
+.order-fill-note { font-size: 12px; color: var(--muted); margin: -4px 0 10px; line-height: 1.4; }
+.pf-pending-section { margin: 0 16px 14px; } /* same 16px gutter as .tab-header */
+.pf-pending-title { font-size: 12px; letter-spacing: 1px; color: var(--muted); margin: 4px 0 8px; }
+.pf-pending-card { border: 1px dashed var(--border, #2a3a4a); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+.pf-pending-card .pf-pending-head { font-weight: 600; font-size: 13px; }
+.pf-pending-card .pf-pending-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.pf-pending-card .pf-pending-actions { display: flex; gap: 8px; margin-top: 8px; }
+.pf-pending-stale { border-color: #ffd166; }
+.pf-stale-orders-banner { background: rgba(255, 209, 102, 0.12); border: 1px solid #ffd166; border-radius: 8px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; }

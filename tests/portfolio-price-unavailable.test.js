@@ -30,8 +30,17 @@ function extractFn(name) {
   return m[0];
 }
 
-function loadOpenMarkSoldModal() {
+// openMarkSoldModal (2026-10-09) reads the position to refuse a pending
+// order, and renders a sell order-type select -- real core/clock.js and
+// core/orders.js supply those, not stubs.
+global.state = { settings: {}, portfolio: [] };
+evalModule(readSource('core/clock.js'), { expose: ['getPT', 'ptDateStr', 'classifySession', 'marketClosesHeld', 'ptWallClockToInstant'] });
+evalModule(readSource('core/orders.js'), { expose: ['isPendingOrder', 'ORDER_TYPES'] });
+
+function loadOpenMarkSoldModal(position = { id: 'pos1', orderType: null, filledAt: null }) {
   let captured = null;
+  global.state.portfolio = [position];
+  global.alert = () => {};
   global.showModal = (html) => { captured = html; };
   global.window = global.window || {}; // openMarkSoldModal sets window._saleDecision at the end
   const src = extractFn('openMarkSoldModal');
@@ -58,6 +67,11 @@ async function testAvailablePriceStillPrefillsNormally() {
   console.log('\n--- Mark as Sold, real price available ---\n' + html + '\n--- end ---\n');
   assert.ok(/id="sold-price"[^>]*value="14\.37"/.test(html), 'a real price must still pre-fill exactly as before -- this fix must not degrade the normal case');
   assert.ok(!html.includes('stale-table-warning'), 'no warning banner when a real price was available');
+  assert.ok(/id="sold-order-type"[\s\S]*value="market" selected/.test(html), 'sell order type select present, defaulting to market (db/027)');
+  // A pending order is not a position: the sale form must not open at all.
+  const pend = loadOpenMarkSoldModal({ id: 'pos1', orderType: 'limit', filledAt: null });
+  pend.openMarkSoldModal('pos1', 14.37);
+  assert.strictEqual(pend.getHtml(), null, 'a pending order must never reach the sale form');
 }
 
 // getLivePrice itself is untouched by this fix (core/market-data.js) --

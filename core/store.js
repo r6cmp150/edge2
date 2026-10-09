@@ -162,6 +162,11 @@ function mapSupabasePortfolioRowToPosition(row) {
     minutesFromOpen: row.minutes_from_open,
     barsSinceSignal: row.bars_since_signal,
     entryVsSignalPricePct: row.entry_vs_signal_price_pct,
+    // db/027 (order vs fill). Direct reads: NULL is meaningful in both --
+    // orderType NULL = legacy (treated as a holding), filledAt NULL with an
+    // orderType = PENDING ORDER (core/orders.js isPendingOrder).
+    orderType: row.order_type,
+    filledAt: row.filled_at,
   };
 }
 
@@ -223,6 +228,8 @@ function mapPositionToSupabaseRow(position) {
     minutes_from_open: position.minutesFromOpen ?? null,
     bars_since_signal: position.barsSinceSignal ?? null,
     entry_vs_signal_price_pct: position.entryVsSignalPricePct ?? null,
+    order_type: position.orderType ?? null, // db/027 -- `??`: NULL means legacy / not filled, never coerced
+    filled_at: position.filledAt ?? null,
     updated_at: new Date().toISOString(),
   };
 }

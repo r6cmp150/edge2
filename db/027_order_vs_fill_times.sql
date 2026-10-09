@@ -29,17 +29,24 @@
 --
 -- WHEN filled_at IS SET (app contract, one comparison on
 -- core/clock.js classifySession at the moment the buy is entered):
---   market + PRE_MARKET / REGULAR / AFTER_HOURS -> filled_at = now
+--   market + REGULAR                              -> filled_at = now
+--   market + PRE_MARKET / AFTER_HOURS             -> NULL, pending
 --   market + CLOSED (overnight, weekend, holiday) -> NULL, pending
 --   limit / stop / stop_limit / trailing_stop     -> NULL until marked filled
 --     (none of them fills on placement; each waits on a price condition)
--- The line is "is the market transacting", not "is this the regular
--- session". Extended-hours fills are real: Roman's broker executes in pre-
--- and after-hours (10 of his first 37 buys were after the close, confirmed
--- as real fills at that time). Only a fully closed market queues a market
--- order for the next open. Treating extended hours as pending would make
--- him hand-enter a fill on every after-hours trade; he'd skip it, and the
--- data would go bad through a different door.
+--
+-- REVISED 2026-10-09 (comment only; the columns are unchanged). This file
+-- first said "market + PRE_MARKET / AFTER_HOURS -> filled now", reasoning
+-- that Roman's extended-hours fills are real (10 of his first 37 buys were
+-- after the close). That establishes extended-hours FILLS exist, not that a
+-- plain MARKET order fills on placement there -- many brokers queue it for
+-- the open or require a limit. The error is asymmetric: a wrongly-pending
+-- order costs one tap on Mark filled; a wrongly-filled one writes a
+-- fabricated timestamp into filled_at, the column every hold-time figure
+-- runs from, permanently and indistinguishably from a real one. So only
+-- REGULAR auto-fills until Roman confirms what his broker does with a market
+-- order pre-market and after-hours -- ASK, don't infer (the overnight rule
+-- below was learned the same way).
 --
 -- "CLOSED -> PENDING" FOR MARKET ORDERS IS CORRECT EVEN THOUGH ROMAN'S
 -- BROKER TRADES OVERNIGHT. Confirmed with Roman on 2026-10-09, not

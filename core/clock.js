@@ -275,6 +275,39 @@ function marketClosesHeld(startDateStr, endDateStr) {
   return count;
 }
 
+// THE hold-duration function (2026-10-09, phase-9 spec §4.8). Every hold
+// figure in the app goes through this -- Sold tab, sale record, report,
+// Portfolio card day count and progress, urgency sort, URE's past-window
+// factor, time-limit alerts. Inline date arithmetic at each site is how 68
+// of 270 trades ended up in the wrong hold bucket.
+//   t: { filledAt (ISO instant | null), buyDate ('YYYY-MM-DD', the ORDER
+//        date), orderType ('market'|'limit'|... | null = legacy) }
+//   endDateStr: sell_date for a closed trade (a fill, by construction), or
+//        today (PT) for an open holding.
+// Starts from the FILL when known; otherwise from the order date, and says
+// so in `basis` -- callers that aggregate must report the basis mix rather
+// than average two different measures.
+function holdSpan(t, endDateStr) {
+  const startDate = t.filledAt ? ptDateStr(getPT(new Date(t.filledAt))) : t.buyDate;
+  const basis = t.filledAt ? 'fill'
+    : t.orderType ? 'order date (fill not recorded)'
+    : 'order date (legacy row)';
+  return { startDate, basis, closes: marketClosesHeld(startDate, endDateStr) };
+}
+
+// User-facing hold vocabulary (2026-10-09). The count is holdSpan's
+// .closes, shown AS IS -- never +1 -- so the card, progress bar, AI prompt,
+// Sold tab and report all show the number Roman is graded on, under one
+// name. "Market days" is the word on screen; "closes" is ours.
+function marketDaysLabel(n) {
+  if (n == null) return '—';
+  return n === 0 ? 'Same day' : n === 1 ? '1 market day' : `${n} market days`;
+}
+// Estimated-hold ranges per duration class, in market days. They must agree
+// with MAX_HOLD_DAYS (app.js): 3-DAY's window is 3, WEEK's is 5, so the
+// ranges top out there rather than at the old calendar-day 2-4 / 5-7.
+const HOLD_RANGE_LABEL = { DAY: 'same day', '3-DAY': '2–3 market days', WEEK: '4–5 market days' };
+
 function businessDaysBetween(startDateStr, endDateStr) {
   // T12:00:00 (no zone -> parsed as local time), not T00:00:00, is
   // deliberate: noon gives ~12h of slack on either side before a

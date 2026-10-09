@@ -520,7 +520,7 @@ function _openAddPositionModal(symbol) {
       <div class="modal-footer"><button class="btn btn-ghost" style="flex:1" onclick="closeModal()">Close</button></div>`);
     return;
   }
-  const today = new Date().toISOString().split('T')[0];
+  const today = ptDateStr(getPT()); // PT, not the UTC date (CLAUDE.md getPT rule)
   showModal(`<div class="modal-handle"></div>
     <div class="modal-header">
       <div class="modal-title">Add ${symbol} to Portfolio</div>
@@ -534,24 +534,26 @@ function _openAddPositionModal(symbol) {
         <div class="warrior-exit-disclosure-conditions">Forward-test conditions: paper or minimum size only. Review point is 30 Warrior trades or 60 days, pre-committed before any results are read.</div>
       </div>
       <div class="form-group">
-        <label class="form-label">Shares Purchased</label>
+        <label class="form-label">Shares</label>
         <input id="wf-shares" class="form-input" type="number" min="0.01" step="0.01" placeholder="${candidate.primarySetup.suggestedShares || ''}">
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">Price Paid per Share</label>
+          <label class="form-label" id="wf-price-label">Price paid per share</label>
           <input id="wf-price" class="form-input" type="number" step="0.01" value="${ets.entry.toFixed(2)}">
         </div>
         <div class="form-group">
-          <label class="form-label">Date Purchased</label>
-          <input id="wf-date" class="form-input" type="date" value="${today}">
+          <label class="form-label">Order date</label>
+          <input id="wf-date" class="form-input" type="date" value="${today}" onchange="orderEntryRefresh('wf')">
         </div>
       </div>
+      ${orderEntryFieldsHtml('wf')}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-success" style="flex:1" onclick="warriorConfirmAddPosition('${symbol.replace(/'/g, "\\'")}', this)">+ Add Position</button>
+      <button class="btn btn-success" style="flex:1" onclick="warriorConfirmAddPosition('${symbol.replace(/'/g, "\\'")}', this)">+ Add</button>
     </div>`);
+  orderEntryRefresh('wf'); // core/orders.js -- the same fill rule as EDGE's add form
 }
 
 async function _confirmAddPosition(symbol, btn) {
@@ -561,6 +563,9 @@ async function _confirmAddPosition(symbol, btn) {
   if (!shares || !price || isNaN(shares) || isNaN(price)) {
     alert('Please enter shares and price.'); return;
   }
+  // Order vs fill (db/027) -- core/orders.js, shared with EDGE's add form.
+  const order = readOrderEntry('wf', date);
+  if (order.error) { alert(order.error); return; }
 
   const candidate = (_lastScanResults?.results || []).find(r => r.symbol === symbol);
   const ets = candidate?.primarySetup?.entryTargetStop;
@@ -603,6 +608,8 @@ async function _confirmAddPosition(symbol, btn) {
     exitRuleId: 'warrior.sameday.tightstop',
     signalSnapshot: candidate,
     minutesLate,
+    orderType: order.orderType, // db/027: buyDate/buyTime = the order; filledAt = the fill (null = pending)
+    filledAt: order.filledAt,
   };
 
   if (btn) btn.disabled = true;

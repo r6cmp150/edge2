@@ -1858,8 +1858,10 @@ Every other reader calls `getHoldings()` or `getPendingOrders()`. A grep for
 
 Never a position. A pending card shows only facts that exist before a fill:
 
-> **PENDING LIMIT BUY** · CCO · 200 sh @ $4.20 · placed Mon 07:41 (2 closes ago)
-> last $4.31 (2.6% above your limit) · [Mark filled] [Cancel]
+> **PENDING LIMIT BUY** · CCO · 200 sh @ $4.20 order price · placed 2026-10-12 07:41 PT · pending 1 market day
+> [Mark filled] [Cancel order]
+
+(As built 2026-10-09: no current price on pending cards — `state.portfolioPrices` is only filled for holdings, and the spec makes the distance-to-trigger line optional, so it was left out rather than adding a fetch.)
 
 - **Must not appear:** a return %, P&L, hold time, Score Now / URE recommendation, or a Sell button. Those are facts about a holding, and a pending order has none. Rendering them would be the sell-price bug again: a row that looks like a fact because the renderer had no way to say "there's nothing here yet."
 - **May appear:** the current price, labelled as distance to the order's trigger price. That's a fact about the order, not a return.
@@ -1888,7 +1890,9 @@ holdSpan(t, endDate) -> { startDate, basis, closes }
 - **One function.** It lives in core/clock.js beside `marketClosesHeld`, and every hold calculation goes through it: the Sold-tab mapper, the sale-time record, the archive report line, `checkTimeLimitAlerts`, and the Portfolio card's days-held. `endDate` is `sell_date` for a closed trade (a fill, by construction) and today for an open holding.
 - **No inline arithmetic.** Calendar arithmetic repeated at each call site is how 52 of 270 trades (68 under the final definition) landed in the wrong bucket.
 - **Report the mix.** Anything that aggregates hold duration states how many trades used each `basis`, rather than averaging two different measures.
-- **Open decision:** the live Portfolio windows (DAY 1 / 3-DAY 4 / WEEK 7 in `maxHoldDays`) currently count calendar days. Moving them to closes changes when alerts fire, so `holdSpan` supplies the start date there and the unit stays as it is until Roman decides.
+- **Decided 2026-10-09: the hold windows count market days, and were RE-DERIVED, not transplanted.** The old `{DAY: 1, '3-DAY': 4, WEEK: 7}` were calendar days; the same numbers read as market days lengthen every window by ~40% in real time (3-DAY → ~6 calendar days, WEEK → ~9), in the direction the n=292 result says costs money (same day +$341, 1 day −$32, 2–3 days −$606, 4–7 days −$227, 8+ days −$160 at 0% wins). Now `MAX_HOLD_DAYS = {DAY: 1, '3-DAY': 3, WEEK: 5}`: DAY at the same-day/overnight boundary the evidence identifies, WEEK = one trading week. Range labels follow the windows (`HOLD_RANGE_LABEL`: 2–3 and 4–5 market days).
+- **One number, one name, everywhere.** Every surface shows holdSpan's count AS IS (no +1), worded by `marketDaysLabel`: 0 → "Same day", 1 → "1 market day", n → "n market days". "Closes" is our word; "market days" is the one on screen.
+- **Market orders auto-fill only in REGULAR.** Pre-market and after-hours are pending until Roman confirms what his broker does with a plain market order there (see db/027's header): a wrongly-pending order costs one tap, a wrongly-filled one fabricates `filled_at` permanently.
 
 
 ## 5. DDL and sequencing
@@ -2019,6 +2023,25 @@ including the two places that flag never reached before: the card's
 and Mark as Sold's price field (now renders EMPTY with an explicit
 notice, forcing a real typed fill, instead of silently inheriting a
 number nobody can vouch for).
+
+
+An eleventh — and the first on this list caught BEFORE it shipped. (The
+eighth through tenth are recorded where they were found: `workflow_runs`
+written to but never created; `job_status` written before the step that
+could fail the job had run; `is_noop`'s `:-false` reporting "did real
+work" for runs that never decided.) Found 2026-10-09 by the 390px browser
+pass on the order/fill add form, not by a test: switching Order type from
+Market to Limit kept "Already filled" selected. `core/orders.js` stored
+the AUTOMATIC "market order, market trading → filled now" state in the same
+slot as Roman's explicit choice, so when the type changed, the app's own
+derivation was carried forward as though Roman had asserted it. Shipped,
+every limit order entered after looking at Market first would have been
+written with a `filled_at` for a fill that never happened — and
+`filled_at` is the column every hold-time figure now runs from. Same
+family as the seventh: a value the app derived, handed to the database as
+an observation. Fixed by keeping two separate records — what Roman CHOSE
+(set only by his tap) and what is in EFFECT — so an automatic state can
+never masquerade as a choice; a fresh form starts with no choice at all.
 
 Every acceptance test below is a **round trip re-selected from the
 database**. Never a code read, never a UI display, never an HTTP status

@@ -917,7 +917,15 @@ function getOwnedPosition(ticker) {
   const needle = String(ticker || '').trim().toUpperCase();
   if (!needle) return null;
 
-  return state.portfolio.find(p => String(p.ticker || '').trim().toUpperCase() === needle) || null;
+  // Holdings only (phase-9 spec §4.8): a pending order is not "in
+  // Portfolio" -- see getPendingOrder for that.
+  return getHoldings().find(p => String(p.ticker || '').trim().toUpperCase() === needle) || null;
+}
+
+function getPendingOrder(ticker) {
+  const needle = String(ticker || '').trim().toUpperCase();
+  if (!needle) return null;
+  return getPendingOrders().find(p => String(p.ticker || '').trim().toUpperCase() === needle) || null;
 }
 
 // ── 3. PACIFIC TIME / MARKET STATUS ─────────────────────────────
@@ -992,10 +1000,17 @@ function updateMarketBanner() {
 // reuses this exact formula instead of computing a second, parallel
 // notion of availability that could silently drift from what the budget
 // bar itself shows.
+// Deployed = holdings at cost. Committed = pending buy orders at their
+// order price -- the broker really does reserve that cash, so hiding it
+// would overstate what's available (phase-9 spec §4.8). Reported
+// separately, never folded into "deployed".
+function getCommittedToOpenOrders() {
+  return getPendingOrders().reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
+}
 function getAvailableBudget() {
   const budget = parseFloat(state.settings.budget) || 0;
-  const deployed = state.portfolio.reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
-  return budget - deployed;
+  const deployed = getHoldings().reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
+  return budget - deployed - getCommittedToOpenOrders();
 }
 
 function updateBudgetBar() {
@@ -1010,13 +1025,15 @@ function updateBudgetBar() {
 
   const budget = parseFloat(state.settings.budget) || 0;
   const avail = getAvailableBudget();
-  const deployed = budget - avail;
+  const committed = getCommittedToOpenOrders();
+  const deployed = budget - avail - committed;
   const availClass = avail >= 0 ? 'pos' : 'neg';
 
   el.classList.remove('hidden');
   el.innerHTML = `
     <span>Budget: <strong class="mono">$${budget.toFixed(2)}</strong></span>
-    <span>Deployed: <strong class="mono">$${deployed.toFixed(2)}</strong></span>
+    <span>Deployed: <strong class="mono">$${deployed.toFixed(2)}</strong></span>${committed > 0 ? `
+    <span>In open orders: <strong class="mono">$${committed.toFixed(2)}</strong></span>` : ''}
     <span>Available: <strong class="mono ${availClass}">$${avail.toFixed(2)}</strong></span>
   `;
 }
@@ -1592,9 +1609,8 @@ function buildAIPrompt(stock, pos) {
   // urgency sort/progress bar. Unowned candidates have 0 days held (no
   // position exists yet) but still get a duration classification, so the
   // "intended window" framing stays meaningful either way.
-  const durationMaxDays = { DAY: 1, '3-DAY': 4, WEEK: 7 };
-  const maxDays = durationMaxDays[duration] || 1;
-  const daysHeld = pos ? Math.floor((Date.now() - new Date(pos.buyDate).getTime()) / 86400000) : 0;
+  const maxDays = MAX_HOLD_DAYS[duration] || 1; // one window table, in market closes (2026-10-09)
+  const daysHeld = pos ? holdSpan(pos, ptDateStr(getPT())).closes : 0;
   // Change: time window as a first-class factor in the Groq prompt, not just
   // a data line — remaining runway matters more the closer a position is to
   // its intended exit. Floored at 1 so an at/past-window position still gets
@@ -1629,7 +1645,7 @@ Entry: $${entry.toFixed(2)} | Target: $${target.toFixed(2)} | Stop-loss: $${stop
 Distance to target: ${distToTargetPct.toFixed(1)}% away
 Distance to stop-loss: ${distToStopPct.toFixed(1)}% away
 Price vs 20-day MA: ${aboveBelow} by ${maPct.toFixed(1)}%
-Days held: ${daysHeld} of intended ${maxDays} day window
+Held: ${marketDaysLabel(daysHeld)} of an intended ${maxDays}-market-day window
 Current macro condition: ${conditionLabel}
 Market context: ${marketContext}
 SPY today: ${spyStr}%
@@ -1723,7 +1739,7 @@ ${daysRemaining} days for this to succeed}`;
 Purchase price: $${pos.buyPrice.toFixed(2)}
 Unrealized P&L: -$${Math.abs(pnlDollar).toFixed(2)} (-${Math.abs(pnlPct).toFixed(1)}%)
 Peak price since purchase: $${peakPrice.toFixed(2)}
-Days held: ${daysHeld} of intended ${maxDays} window
+Held: ${marketDaysLabel(daysHeld)} of an intended ${maxDays}-market-day window
 Stop-loss: $${stop.toFixed(2)} (${distToStopPct.toFixed(1)}% away)
 ${unifiedPromptBlock}
 You are evaluating this position specifically within its
@@ -1818,10 +1834,10 @@ function durBadgeClass(duration) {
   return duration === 'DAY' ? 'badge-day' : duration === '3-DAY' ? 'badge-swing' : 'badge-week';
 }
 function durBadgeText(duration) {
-  return duration === 'DAY' ? 'EXIT TODAY' : duration === '3-DAY' ? '2-4 DAYS' : '5-7 DAYS';
+  return duration === 'DAY' ? 'EXIT TODAY' : duration === '3-DAY' ? '2–3 MKT DAYS' : '4–5 MKT DAYS';
 }
 function durHoldLabel(duration) {
-  return duration === 'DAY' ? 'exit today' : duration === '3-DAY' ? 'est. 2-4 day' : 'est. 5-7 day';
+  return duration === 'DAY' ? 'exit today' : `est. ${HOLD_RANGE_LABEL[duration] || HOLD_RANGE_LABEL.WEEK}`;
 }
 
 // ── 9. SCORING ENGINE ─────────────────────────────────────────────
@@ -1970,7 +1986,7 @@ async function runScreener() {
     // scoreStock() has no side effects (pure/sync), so it's safe to call
     // here; this is a small supplementary fetch since neither their
     // snapshot nor bars are guaranteed to already exist above.
-    const ownedTickers = [...new Set(state.portfolio.map(p => p.ticker))];
+    const ownedTickers = [...new Set(getHoldings().map(p => p.ticker))];
     const missingOwnedTickers = ownedTickers.filter(t => !updatedOwnedTickers.has(t));
     if (missingOwnedTickers.length) {
       try {
@@ -2125,8 +2141,8 @@ function renderSignalsTab() {
   `;
 
   // Exit alerts (afternoon mode)
-  if (aft && state.portfolio.length > 0) {
-    const exitTickers = state.portfolio
+  if (aft && getHoldings().length > 0) {
+    const exitTickers = getHoldings()
       .filter(p => {
         const sig = state.signals.find(s => s.ticker === p.ticker);
         if (!sig) return false;
@@ -2160,8 +2176,9 @@ function renderSignalsTab() {
       <button class="btn btn-primary" onclick="runScreener()">↻ Refresh</button>
     </div>`;
   } else {
-    // Exclude already-owned positions so the summary counts match the cards below.
-    const unowned = state.signals.filter(s => !getOwnedPosition(s.ticker));
+    // Exclude already-owned positions AND tickers with a pending order (Roman
+    // has already acted on those) so the summary counts match the cards below.
+    const unowned = state.signals.filter(s => !getOwnedPosition(s.ticker) && !getPendingOrder(s.ticker));
     const sb  = unowned.filter(s => s.signal === 'STRONG BUY').length;
     const sfb = unowned.filter(s => s.signal === 'SOFT BUY').length;
     const w   = unowned.filter(s => s.signal === 'WATCH').length;
@@ -2408,7 +2425,7 @@ function renderFilterButtons() {
     <div class="filter-label">Trade Duration</div>
     <div class="filter-row">
       ${['all','DAY','3-DAY','WEEK'].map(v =>
-        `<button class="filter-btn ${df===v?'active':''}" onclick="setFilter('duration','${v}')">${v==='all'?'All':v==='DAY'?'Exit Today':v==='3-DAY'?'2-4 Days':'5-7 Days'}</button>`
+        `<button class="filter-btn ${df===v?'active':''}" onclick="setFilter('duration','${v}')">${v==='all'?'All':v==='DAY'?'Exit Today':v==='3-DAY'?'2–3 Mkt Days':'4–5 Mkt Days'}</button>`
       ).join('')}
     </div>
   `;
@@ -2446,8 +2463,10 @@ function sigToggleKey(signal) {
 
 function getFilteredSignals() {
   return state.signals.filter(s => {
-    // Already-owned positions don't belong in buy-signal results.
-    if (getOwnedPosition(s.ticker)) return false;
+    // Already-owned positions don't belong in buy-signal results -- nor does
+    // a ticker with a pending order: Roman has already acted, and showing it
+    // again invites a duplicate order (phase-9 spec §4.8).
+    if (getOwnedPosition(s.ticker) || getPendingOrder(s.ticker)) return false;
     if (!state.signalToggles[sigToggleKey(s.signal)]) return false;
     const { priceRange, duration, catalystOnly } = state.filters;
     if (catalystOnly && !s.catalystSetup) return false;
@@ -2953,6 +2972,7 @@ let _modalStock = null;
 async function openStockModal(ticker) {
   const s = state.signals.find(x => x.ticker === ticker);
   const ownedPos = getOwnedPosition(ticker);
+  const pendingOrder = ownedPos ? null : getPendingOrder(ticker);
 
   showModal(`<div class="modal-handle"></div>
     <div class="modal-header">
@@ -3301,6 +3321,9 @@ async function openStockModal(ticker) {
     document.getElementById('stock-modal-footer').innerHTML = ownedPos ? `
       <button class="btn btn-ghost" style="flex:1" disabled>✓ In Portfolio</button>
       <button class="btn btn-ghost" onclick="closeModal()">✕</button>
+    ` : pendingOrder ? `
+      <button class="btn btn-ghost" style="flex:1" disabled title="Mark it filled or cancel it on the Portfolio tab">⏳ Order pending — see Portfolio</button>
+      <button class="btn btn-ghost" onclick="closeModal()">✕</button>
     ` : daySuppressed ? `
       <button class="btn btn-ghost" style="flex:1" disabled title="Entry window closed for today">+ Add to Portfolio</button>
       <button class="btn btn-ghost" onclick="closeModal()">✕</button>
@@ -3535,7 +3558,9 @@ function openPositionSnapshotModal(ticker) {
 
 function openAddPortfolioModal(ticker) {
   const price = state.signals.find(s => s.ticker === ticker)?.price || 0;
-  const today = new Date().toISOString().split('T')[0];
+  // PT date, not new Date().toISOString() -- that's the UTC date, which
+  // pre-filled TOMORROW for any add after 5pm PT (CLAUDE.md's getPT rule).
+  const today = ptDateStr(getPT());
 
   showModal(`<div class="modal-handle"></div>
     <div class="modal-header">
@@ -3544,24 +3569,26 @@ function openAddPortfolioModal(ticker) {
     </div>
     <div class="modal-body">
       <div class="form-group">
-        <label class="form-label">Shares Purchased</label>
+        <label class="form-label">Shares</label>
         <input id="pf-shares" class="form-input" type="number" min="0.01" step="0.01" placeholder="100">
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">Price Paid per Share</label>
+          <label class="form-label" id="pf-price-label">Price paid per share</label>
           <input id="pf-price" class="form-input" type="number" step="0.01" value="${price.toFixed(2)}">
         </div>
         <div class="form-group">
-          <label class="form-label">Date Purchased</label>
-          <input id="pf-date" class="form-input" type="date" value="${today}">
+          <label class="form-label">Order date</label>
+          <input id="pf-date" class="form-input" type="date" value="${today}" onchange="orderEntryRefresh('pf')">
         </div>
       </div>
+      ${orderEntryFieldsHtml('pf')}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-success" style="flex:1" onclick="confirmAddPortfolio('${ticker}', this)">+ Add Position</button>
+      <button class="btn btn-success" style="flex:1" onclick="confirmAddPortfolio('${ticker}', this)">+ Add</button>
     </div>`);
+  orderEntryRefresh('pf');
 }
 
 // Buy-time signal-component derivation for trade-record capture (data
@@ -3625,6 +3652,10 @@ async function confirmAddPortfolio(ticker, btn) {
   if (!shares || !price || isNaN(shares) || isNaN(price)) {
     alert('Please enter shares and price.'); return;
   }
+  // Order vs fill (core/orders.js): market + trading session -> filled now;
+  // market while CLOSED, or any other order type -> pending until marked.
+  const order = readOrderEntry('pf', date);
+  if (order.error) { alert(order.error); return; }
 
   // §4.1: warn, don't block -- n=10 (now 11) doesn't justify a hard stop,
   // and Roman's stated risk appetite is medium-to-high. This check and
@@ -3640,10 +3671,10 @@ async function confirmAddPortfolio(ticker, btn) {
   const nowHHMMForSession = `${String(nowPtForSession.getHours()).padStart(2,'0')}:${String(nowPtForSession.getMinutes()).padStart(2,'0')}`;
   const buySessionForWarning = classifySession(date, nowHHMMForSession);
   if (buySessionForWarning === 'AFTER_HOURS' || buySessionForWarning === 'PRE_MARKET') {
-    showConfirm(buildAfterHoursWarningText(), () => finalizeAddPortfolio(ticker, shares, price, date, btn), 'Add anyway');
+    showConfirm(buildAfterHoursWarningText(), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');
     return;
   }
-  await finalizeAddPortfolio(ticker, shares, price, date, btn);
+  await finalizeAddPortfolio(ticker, shares, price, date, btn, order);
 }
 
 // Phase 9 §4.2 (2026-09-16) -- entry measurement, none of it scores
@@ -3685,7 +3716,7 @@ async function computeEntryMeasurementFields(ticker, price, sig) {
   return { spreadAtBuy, minutesFromOpen, barsSinceSignal, entryVsSignalPricePct };
 }
 
-async function finalizeAddPortfolio(ticker, shares, price, date, btn) {
+async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
   const sig = state.signals.find(s => s.ticker === ticker);
   const entryMeasurement = await computeEntryMeasurementFields(ticker, price, sig);
 
@@ -3776,6 +3807,10 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn) {
     minutesFromOpen: entryMeasurement.minutesFromOpen,
     barsSinceSignal: entryMeasurement.barsSinceSignal,
     entryVsSignalPricePct: entryMeasurement.entryVsSignalPricePct,
+    // db/027: buyDate/buyTime above are the ORDER; filledAt is the fill
+    // (null = pending order, not a position -- core/orders.js).
+    orderType: order.orderType,
+    filledAt: order.filledAt,
   };
 
   // Supabase is now the source of truth for portfolio (Data Migration
@@ -3798,13 +3833,124 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn) {
   switchTab('portfolio');
 }
 
+// ── Pending orders (db/027, phase-9 spec §4.8) ──
+// Rendered as ORDERS: type, shares, order price, when placed, how many
+// closes it has sat through. Never a return, P&L, hold time, recommendation
+// or Sell -- those are facts about a holding, and there isn't one yet.
+function buildPendingOrdersHtml() {
+  const pending = getPendingOrders();
+  if (!pending.length) return '';
+  const today = ptDateStr(getPT());
+  const stale = pending.filter(isStalePendingOrder);
+  const banner = stale.length
+    ? `<div class="pf-stale-orders-banner">⚠ ${stale.length === 1 ? '1 order has' : `${stale.length} orders have`} been pending for a market day or more. Still open at your broker? Mark filled or cancel.</div>`
+    : '';
+  const cards = pending.map(p => {
+    const closes = marketClosesHeld(p.buyDate, today);
+    const isStale = isStalePendingOrder(p);
+    const typeLabel = (ORDER_TYPE_LABEL[p.orderType] || p.orderType || '').toUpperCase();
+    return `<div class="pf-pending-card${isStale ? ' pf-pending-stale' : ''}">
+      <div class="pf-pending-head">PENDING ${typeLabel} BUY · ${p.ticker}${p.engineSource && p.engineSource !== 'EDGE' ? ` · ${p.engineSource}` : ''}</div>
+      <div class="pf-pending-meta">${p.shares} sh @ $${Number(p.buyPrice).toFixed(2)} order price · placed ${p.buyDate}${p.buyTime ? ` ${p.buyTime} PT` : ''}${closes ? ` · pending ${marketDaysLabel(closes)}` : ''}</div>
+      <div class="pf-pending-actions">
+        <button class="btn btn-sm btn-success" onclick="openMarkFilledModal('${p.id}')">Mark filled</button>
+        <button class="btn btn-sm btn-ghost" onclick="cancelPendingOrder('${p.id}', this)">Cancel order</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="pf-pending-section"><div class="pf-pending-title">PENDING ORDERS</div>${banner}${cards}</div>`;
+}
+
+function openMarkFilledModal(posId) {
+  const p = state.portfolio.find(x => x.id === posId);
+  if (!p || !isPendingOrder(p)) return;
+  const pt = getPT();
+  const today = ptDateStr(pt);
+  const hhmm = `${String(pt.getHours()).padStart(2, '0')}:${String(pt.getMinutes()).padStart(2, '0')}`;
+  showModal(`<div class="modal-handle"></div>
+    <div class="modal-header">
+      <div class="modal-title">${p.ticker} — order filled</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="order-fill-note">Enter the fill from your broker. From this moment it's a position: its hold time runs from this fill.</div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Fill date</label><input id="mf-date" class="form-input" type="date" value="${today}"></div>
+        <div class="form-group"><label class="form-label">Fill time (PT)</label><input id="mf-time" class="form-input" type="time" value="${hhmm}"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Fill price per share</label>
+        <input id="mf-price" class="form-input" type="number" step="0.01" value="${Number(p.buyPrice).toFixed(2)}">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-success" style="flex:1" onclick="confirmMarkFilled('${p.id}', this)">Mark filled</button>
+    </div>`);
+}
+
+async function confirmMarkFilled(posId, btn) {
+  const p = state.portfolio.find(x => x.id === posId);
+  if (!p || !isPendingOrder(p)) { closeModal(); return; }
+  const fillPrice = parseFloat(document.getElementById('mf-price').value);
+  if (!fillPrice || isNaN(fillPrice)) { alert('Enter the fill price.'); return; }
+  const fill = _readFillInstant(document.getElementById('mf-date').value, document.getElementById('mf-time').value, p.buyDate, p.orderType);
+  if (fill.error) { alert(fill.error); return; }
+  const fillDate = ptDateStr(getPT(new Date(fill.filledAt)));
+  // buyDate/buyTime stay the ORDER (signal attribution uses them); the fill
+  // price replaces the order price, and peak tracking restarts at the fill.
+  const updated = { ...p, filledAt: fill.filledAt, buyPrice: fillPrice, peakPrice: fillPrice, peakPriceDate: fillDate };
+  if (btn) btn.disabled = true;
+  try {
+    await savePositionToSupabase(updated);
+  } catch (e) {
+    alert('Could not save the fill to Supabase: ' + e.message);
+    if (btn) btn.disabled = false;
+    return;
+  }
+  state.portfolio = state.portfolio.map(x => x.id === posId ? updated : x);
+  closeModal();
+  updateNavBadges();
+  renderPortfolioTab();
+}
+
+// A cancelled order never became a trade: the row is deleted and nothing is
+// written to trades_v2.
+function cancelPendingOrder(posId, btn) {
+  const p = state.portfolio.find(x => x.id === posId);
+  if (!p || !isPendingOrder(p)) return;
+  showConfirm(`Cancel the pending ${(ORDER_TYPE_LABEL[p.orderType] || '').toLowerCase()} order for ${p.shares} ${p.ticker}? It's removed from Portfolio; no trade is recorded.`, async () => {
+    state.deletedPositionIds.add(p.id);
+    try {
+      await deletePositionFromSupabase(p.id);
+    } catch (e) {
+      state.deletedPositionIds.delete(p.id);
+      alert('Could not remove the order from Supabase: ' + e.message);
+      return;
+    }
+    state.portfolio = state.portfolio.filter(x => x.id !== posId);
+    updateNavBadges();
+    renderPortfolioTab();
+  }, 'Cancel order');
+}
+
 async function renderPortfolioTab() {
   const container = document.getElementById('tab-content');
   updateBudgetBar();
   const aft = isAfternoonMode();
+  // Phase-9 spec §4.8: cards, prices, totals, sort and engine counts are
+  // HOLDINGS only. Pending orders render in their own section as orders --
+  // never with a return, P&L, hold time, recommendation or Sell button.
+  const holdings = getHoldings();
+  const pendingHtml = buildPendingOrdersHtml();
 
-  if (!state.portfolio.length) {
-    container.innerHTML = `<div class="empty-state">
+  if (!holdings.length) {
+    container.innerHTML = pendingHtml ? `<div class="tab-header">
+      <h1 class="tab-title">PORTFOLIO</h1>
+      <button class="btn btn-sm btn-ghost" onclick="renderPortfolioTab()">↻</button>
+    </div>
+    ${pendingHtml}
+    <div class="empty-state"><p>No open positions yet.</p></div>` : `<div class="empty-state">
       <div class="empty-icon">💼</div>
       <p>No open positions yet.<br>Find a signal and tap "+ Add to Portfolio".</p>
     </div>`;
@@ -3817,13 +3963,14 @@ async function renderPortfolioTab() {
     <h1 class="tab-title">PORTFOLIO</h1>
     <button class="btn btn-sm btn-ghost" onclick="renderPortfolioTab()">↻</button>
   </div>
-  ${buildEngineFilterControl('portfolioEngineFilter', state.portfolio)}
+  ${buildEngineFilterControl('portfolioEngineFilter', holdings)}
   ${weekendBanner}
+  ${pendingHtml}
   <div id="pf-list"><div class="empty-state"><span class="spinner"></span></div></div>
   <div id="pf-summary"></div>`;
 
   // Fetch live prices
-  const tickers = state.portfolio.map(p => p.ticker);
+  const tickers = holdings.map(p => p.ticker);
   let snapshots = {};
   let allBars   = {};
   let pfAHSnaps = {};
@@ -3875,7 +4022,7 @@ async function renderPortfolioTab() {
   // plain synchronous forEach and can't await per card.
   const intradayAssetStatusByTicker = {};
   if (!priceFetchFailed) {
-    const noDataTickers = state.portfolio.filter(p => {
+    const noDataTickers = holdings.filter(p => {
       const cp = getLivePrice(snapshots[p.ticker]) || p.buyPrice;
       const panel = computeIntradayPanel({
         buyPrice: p.buyPrice, buyDateStr: p.buyDate,
@@ -3907,7 +4054,9 @@ async function renderPortfolioTab() {
   // Sort by urgency: how much of the position's intended hold duration has
   // elapsed. Ratio >= 1.0 (at/past max duration) naturally sorts to the top
   // since it's just the largest values in a descending sort.
-  const maxHoldDays = { DAY: 1, '3-DAY': 4, WEEK: 7 };
+  // One window table (MAX_HOLD_DAYS), counted in market closes via holdSpan
+  // -- the same clock the Sold tab and report use (2026-10-09).
+  const maxHoldDays = MAX_HOLD_DAYS;
   // maxHoldDays[p.duration] is undefined for every Warrior position (no
   // `duration` field -- same-day, not DAY/3-DAY/WEEK), which would produce
   // NaN here and leave sort order unspecified rather than throwing. Not
@@ -3922,10 +4071,10 @@ async function renderPortfolioTab() {
       const nowPT = getPT();
       return (nowPT.getHours() * 60 + nowPT.getMinutes()) / (12 * 60 + 30);
     }
-    const daysHeld = Math.floor((Date.now() - new Date(p.buyDate).getTime()) / 86400000);
+    const daysHeld = holdSpan(p, ptDateStr(getPT())).closes;
     return daysHeld / (maxHoldDays[p.duration] || 1);
   };
-  const sortedPortfolio = [...state.portfolio].sort((a, b) => portfolioUrgencyRatio(b) - portfolioUrgencyRatio(a));
+  const sortedPortfolio = [...holdings].sort((a, b) => portfolioUrgencyRatio(b) - portfolioUrgencyRatio(a));
 
   sortedPortfolio.forEach(p => {
     // Filter check happens here, up front -- everything below (peakPrice
@@ -4066,7 +4215,7 @@ async function renderPortfolioTab() {
     // fell back to buyPrice) — real numbers, but not real data. Card markup
     // below shows "—" instead so this doesn't read as a genuine breakeven.
 
-    const days = Math.floor((Date.now() - new Date(p.buyDate).getTime()) / 86400000);
+    const days = holdSpan(p, ptDateStr(getPT())).closes; // market closes held, from the fill when known
     const durLabel = durHoldLabel(p.duration);
 
     // Registry dispatch (Phase 7). EDGE is never registered via
@@ -4182,8 +4331,8 @@ async function renderPortfolioTab() {
       </div>`
       : `<div class="pf-duration">
         <div class="pf-duration-row">
-          <span>Day ${days+1} of ${durLabel} trade</span>
-          <span class="${durationCls}">${daysLeft} days left</span>
+          <span>${days === 0 ? 'Same day' : `${marketDaysLabel(days)} held`} · ${durLabel}</span>
+          <span class="${durationCls}">${daysLeft <= 0 ? 'window reached' : `${marketDaysLabel(daysLeft)} left`}</span>
         </div>
         <div class="pf-duration-track"><div class="pf-duration-fill ${durationCls}" style="width:${durationPct}%"></div></div>
       </div>`;
@@ -4323,7 +4472,19 @@ function buildFridayFlag(p, currentPrice, pnlPct) {
 // SELL SOON/HOLD trip wires) ran in parallel behind a beta toggle for
 // evaluation and was retired once it was found to be equivalent-or-better.
 
-const MAX_HOLD_DAYS = { DAY: 1, '3-DAY': 4, WEEK: 7 };
+// THE hold-window table -- formerly three copies (stock-modal prompt,
+// Portfolio sort/progress, URE). Counted in MARKET DAYS (closes held, via
+// holdSpan) since 2026-10-09, the same clock as the Sold tab and report.
+// RE-DERIVED, not transplanted: the old 1/4/7 were calendar days, and the
+// same numbers read as market days lengthen every window ~40% in real time
+// (3-DAY -> ~6 calendar days, WEEK -> ~9) -- in the direction the n=292
+// result says costs money (same day +$341, 1 day -$32, 2-3 days -$606,
+// 4-7 days -$227, 8+ days -$160 at a 0% win rate). So:
+//   DAY = 1  -- the same-day/overnight boundary the evidence identifies
+//   3-DAY = 3
+//   WEEK = 5 -- one trading week, so the label is true
+// Keep HOLD_RANGE_LABEL (core/clock.js) in agreement with these.
+const MAX_HOLD_DAYS = { DAY: 1, '3-DAY': 3, WEEK: 5 };
 // Phase 9 §3.4/§0.3/§0.3.1: hard cut-loss floor, evaluated before any
 // factor scoring and before the stop-loss check, unconditional.
 //
@@ -4342,7 +4503,7 @@ const MAX_HOLD_DAYS = { DAY: 1, '3-DAY': 4, WEEK: 7 };
 // not to repeat the old -$3.16 figure anywhere else.
 const DEFAULT_MAX_LOSS_PCT = 6;
 const MACRO_TAILWIND_CONDITIONS = ['BROAD_RALLY', 'MOMENTUM_DAY'];
-const DURATION_WINDOW_LABEL = { DAY: 'exit-today', '3-DAY': '2-4 day', WEEK: '5-7 day' };
+const DURATION_WINDOW_LABEL = { DAY: 'exit-today', '3-DAY': '2–3 market-day', WEEK: '4–5 market-day' };
 
 // position: a portfolio position object AUGMENTED by the caller with live
 //   `currentPrice` and `rsi` fields (the position itself only persists
@@ -4433,7 +4594,7 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
   const factors = [];
   const add = (name, points) => factors.push({ name, points });
 
-  const days = Math.floor((Date.now() - new Date(position.buyDate).getTime()) / 86400000);
+  const days = holdSpan(position, ptDateStr(getPT())).closes; // market closes held (2026-10-09)
   const maxHold = MAX_HOLD_DAYS[position.duration];
   const inProtection = !!position.momentumProtectionActivated;
 
@@ -4454,9 +4615,19 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
   // -- leaving them would be two loss mechanisms silently disagreeing.
 
   // ── Duration
+  // Overdue thresholds RE-DERIVED to market days (2026-10-09) so each
+  // penalty fires at the same real elapsed time it always did -- that
+  // calibration is the only grounded thing about these numbers. Old 3-DAY:
+  // 4 calendar days + "severely past" at >=3 over => ~day 7 calendar. New:
+  // 3 market days + >=2 over => 5 market days, ~day 7 calendar. Same
+  // moment, now on the clock everything else uses. Deliberately NOT
+  // tightened even though the n=292 hold-time data argues for it: a new,
+  // tighter rule acting on positions needs its own recovery-counted replay
+  // with a largest-single-contributor share (the BTDR rule) -- raise that as
+  // its own proposal, never fold it into a units change.
   if (maxHold != null) {
     const overdueDays = days - maxHold;
-    if (overdueDays >= 3) {
+    if (overdueDays >= 2) {
       add('Severely past intended hold window', -50);
     } else if (overdueDays >= 1) {
       add('Past intended hold window', -25);
@@ -4653,11 +4824,13 @@ function calcPeakRiskScore(position, currentSignal, snap) {
   // ── Well past duration window while still winning
   const maxHold = MAX_HOLD_DAYS[position.duration];
   if (maxHold != null && position.buyDate) {
-    const days = Math.floor((Date.now() - new Date(position.buyDate).getTime()) / 86400000);
+    const days = holdSpan(position, ptDateStr(getPT())).closes; // market closes held (2026-10-09)
     const overdueDays = days - maxHold;
     const pnlPct = price != null ? ((price - position.buyPrice) / position.buyPrice) * 100 : null;
-    if (overdueDays > 3 && pnlPct != null && pnlPct > 0) {
-      add(`${overdueDays} days past intended hold window, still winning`, -20);
+    // > 2 market days over (was > 3 calendar) -- same real elapsed time; see
+    // the Duration block in calcUnifiedRecommendation for why not tighter.
+    if (overdueDays > 2 && pnlPct != null && pnlPct > 0) {
+      add(`${marketDaysLabel(overdueDays)} past intended hold window, still winning`, -20);
     }
   }
 
@@ -5192,7 +5365,10 @@ function renderIntradayLineCard(panel) {
 // that produced 22 fake "breakeven" trades in trades_v2 — see
 // docs/phase-9-entry-exit-spec.md §6's seventh entry.
 function openMarkSoldModal(posId, currentPrice) {
-  const today = new Date().toISOString().split('T')[0];
+  const pos = state.portfolio.find(p => p.id === posId);
+  if (pos && isPendingOrder(pos)) { alert('This is a pending order, not a position -- mark it filled first.'); return; }
+  const today = ptDateStr(getPT()); // PT, not the UTC date (CLAUDE.md getPT rule)
+  const sellTypeOpts = ORDER_TYPES.map(([v, l]) => `<option value="${v}"${v === 'market' ? ' selected' : ''}>${l}</option>`).join('');
   const priceUnavailable = currentPrice == null;
   showModal(`<div class="modal-handle"></div>
     <div class="modal-header">
@@ -5210,6 +5386,10 @@ function openMarkSoldModal(posId, currentPrice) {
           <label class="form-label">Date Sold</label>
           <input id="sold-date" class="form-input" type="date" value="${today}">
         </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Sell order type</label>
+        <select id="sold-order-type" class="form-input">${sellTypeOpts}</select>
       </div>
       <div class="form-group">
         <label class="form-label">Why did you sell?</label>
@@ -5326,6 +5506,12 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       minutes_from_open: pos.minutesFromOpen ?? null,
       bars_since_signal: pos.barsSinceSignal ?? null,
       entry_vs_signal_price_pct: pos.entryVsSignalPricePct ?? null,
+      // db/027. buy_date/buy_time = the order; filled_at = the buy fill;
+      // sell_date/sell_time = the sell fill by construction. `??`: NULL
+      // means legacy / not recorded, never coerced.
+      order_type: pos.orderType ?? null,
+      filled_at: pos.filledAt ?? null,
+      sell_order_type: record.sellOrderType ?? null,
     }]).select('id');
     if (error) { console.error('Supabase trade write failed:', error.message); return; }
     // record is the same object reference already sitting in state.sold —
@@ -5422,6 +5608,14 @@ async function confirmMarkSold(posId, btn) {
 
   const pos = state.portfolio.find(p => p.id === posId);
   if (!pos) { closeModal(); return; }
+  // Backstop (pending cards have no Sell button): a pending order is not a
+  // position and can't be sold -- no write.
+  if (isPendingOrder(pos)) { alert('This is a pending order, not a position -- mark it filled first.'); return; }
+  const sellOrderType = document.getElementById('sold-order-type')?.value || 'market';
+  // Fill-before-sale, validated here rather than as a cross-type SQL CHECK
+  // (db/027 header): the sale can't be dated before the buy filled.
+  const hold = holdSpan(pos, saleDate);
+  if (saleDate < hold.startDate) { alert(`The sale date (${saleDate}) can't be before the buy ${hold.basis === 'fill' ? 'filled' : 'order date'} (${hold.startDate}).`); return; }
 
   // Supabase is now the source of truth for portfolio — await the delete
   // and only remove the position locally (move it to Sold) on success. A
@@ -5438,9 +5632,9 @@ async function confirmMarkSold(posId, btn) {
     return;
   }
 
-  // Market closes held through, not calendar days (core/clock.js
-  // marketClosesHeld, 2026-10-09) -- Friday -> Monday is 1, not 3.
-  const days = marketClosesHeld(pos.buyDate, saleDate);
+  // Market closes held through, from the FILL when known (core/clock.js
+  // holdSpan) -- Friday -> Monday is 1, not 3.
+  const days = hold.closes;
   const pnlDollar = (salePrice - pos.buyPrice) * pos.shares;
   const pnlPct    = ((salePrice - pos.buyPrice) / pos.buyPrice) * 100;
   const targetDriftPct = (pos.liveTarget != null && pos.target)
@@ -5464,6 +5658,10 @@ async function confirmMarkSold(posId, btn) {
     buyDate: pos.buyDate,
     sellDate: saleDate,
     daysHeld: days,
+    holdBasis: hold.basis,
+    orderType: pos.orderType ?? null,
+    filledAt: pos.filledAt ?? null,
+    sellOrderType,
     pnlDollar, pnlPct,
     source: window._saleDecision === 'app' ? 'App Signal' : 'Own Decision',
     scoreAtBuy: pos.scoreAtBuy,
@@ -5510,7 +5708,7 @@ async function confirmMarkSold(posId, btn) {
   // re-buy of the same ticker starts a fresh hold rather than inheriting
   // stale prev/peak RSI from this position — unless another open position
   // on the same ticker still exists.
-  if (!state.portfolio.some(p => p.ticker === pos.ticker)) {
+  if (!getHoldings().some(p => p.ticker === pos.ticker)) {
     delete state.ownedPrevRSI[pos.ticker];
     delete state.ownedPeakRSI[pos.ticker];
     persist('ownedPrevRSI');
@@ -5770,7 +5968,7 @@ async function renderSoldTab() {
           </div>
           <div class="company-name mt4">${s.company}</div>
           <div class="pf-meta">${s.shares} sh · Buy $${s.buyPrice.toFixed(2)} → Sell $${s.sellPrice.toFixed(2)}</div>
-          <div class="pf-meta">${s.buyDate} → ${s.sellDate} (${s.daysHeld == null ? '?' : s.daysHeld + (s.daysHeld === 1 ? ' close' : ' closes')})</div>
+          <div class="pf-meta">${s.buyDate} → ${s.sellDate} (${marketDaysLabel(s.daysHeld)})</div>
         </div>
         <div class="sold-pnl ${s.pnlDollar>=0?'pos':'neg'}">
           ${s.pnlDollar>=0?'+':''}$${s.pnlDollar.toFixed(2)}<br>
@@ -5916,12 +6114,12 @@ ${correlationText}`;
 // hardcoded null: that field was never carried into trades_v2 at all
 // (retired enum, no live writer — see 002's migration note).
 function mapTradesV2ToSoldShape(row) {
-  // Market closes held through (core/clock.js marketClosesHeld), not
-  // calendar days -- changed 2026-10-09: a Friday -> Monday hold is one
-  // close, and calendar days put 52 of 270 trades in the wrong bucket.
-  const daysHeld = (row.buy_date && row.sell_date)
-    ? marketClosesHeld(row.buy_date, row.sell_date)
+  // Market closes held through, from the buy FILL when known (core/clock.js
+  // holdSpan -- the one hold function; 2026-10-09). holdBasis says which.
+  const hold = (row.buy_date && row.sell_date)
+    ? holdSpan({ filledAt: row.filled_at, buyDate: row.buy_date, orderType: row.order_type }, row.sell_date)
     : null;
+  const daysHeld = hold ? hold.closes : null;
   return {
     id: String(row.id),
     supabaseId: row.id,
@@ -5933,6 +6131,10 @@ function mapTradesV2ToSoldShape(row) {
     buyDate: row.buy_date,
     sellDate: row.sell_date,
     daysHeld,
+    holdBasis: hold ? hold.basis : null,
+    orderType: row.order_type,
+    filledAt: row.filled_at,
+    sellOrderType: row.sell_order_type,
     pnlDollar: row.pnl_dollars,
     pnlPct: row.pnl_pct,
     // sellPriceUnverified (db/026, 2026-10, applied): true for the 22
@@ -6945,7 +7147,8 @@ Signal data at purchase — wins vs losses:
   Avg volume ratio: wins ${avg(wins,s=>s.volRatioAtBuy||0).toFixed(2)}x | losses ${avg(losses,s=>s.volRatioAtBuy||0).toFixed(2)}x
   Avg risk score:   wins ${avg(wins,s=>s.riskAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.riskAtBuy||0).toFixed(1)}
   Avg signal score: wins ${avg(wins,s=>s.scoreAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.scoreAtBuy||0).toFixed(1)}
-  Avg hold time:    wins ${avg(wins,s=>s.daysHeld||0).toFixed(1)} | losses ${avg(losses,s=>s.daysHeld||0).toFixed(1)} market closes held through (Fri->Mon = 1; calendar days before 2026-10-09)
+  Avg hold time:    wins ${avg(wins,s=>s.daysHeld||0).toFixed(1)} | losses ${avg(losses,s=>s.daysHeld||0).toFixed(1)} market days held (Fri->Mon = 1; calendar days before 2026-10-09)
+  Hold measured from: ${(() => { const c = {}; sold.forEach(s => { const b = s.holdBasis || 'order date (legacy row)'; c[b] = (c[b] || 0) + 1; }); return Object.entries(c).map(([b, k]) => `${k} ${b}`).join(', '); })()}
 
 RSI at purchase — win rate by bucket:
 ${rsiBucket(0,45,'<45    ')}
@@ -6981,8 +7184,8 @@ Performance by price tier:
 
 Performance by duration classification:
   ${durStats('DAY','Exit Today')}
-  ${durStats('3-DAY','Est. 2-4 Days')}
-  ${durStats('WEEK','Est. 5-7 Days')}
+  ${durStats('3-DAY','Est. 2–3 market days')}
+  ${durStats('WEEK','Est. 4–5 market days')}
 
 Performance by signal score at purchase:
   ${scoreStats(29,72)}
@@ -7270,7 +7473,7 @@ ${ureFactorAccuracySection}
   Ticker: ${s.ticker} — ${s.company}
   Bought: $${s.buyPrice.toFixed(2)} on ${s.buyDate}
   Sold: $${s.sellPrice.toFixed(2)} on ${s.sellDate}
-  Shares: ${s.shares} | Market closes held: ${s.daysHeld}
+  Shares: ${s.shares} | Held: ${marketDaysLabel(s.daysHeld)}
   Result: ${s.sellPriceUnverified ? 'UNKNOWN — sell price unverified' : `${s.pnlDollar>=0?'WIN':'LOSS'} $${s.pnlDollar.toFixed(2)} (${s.pnlPct.toFixed(1)}%)`}
   ${s.sellPriceUnverified ? '⚠ Excluded from every P&L/win-rate aggregate elsewhere in this report (db/026) — sell_price was fabricated (buy price substituted for a missing live quote), not a real outcome.\n  ' : ''}Source: ${s.source}
   Signal score at purchase: ${s.scoreAtBuy}/100
@@ -7872,8 +8075,8 @@ Performance by price tier:
 
 Performance by duration classification:
   ${durStats('DAY','Exit Today')}
-  ${durStats('3-DAY','Est. 2-4 Days')}
-  ${durStats('WEEK','Est. 5-7 Days')}
+  ${durStats('3-DAY','Est. 2–3 market days')}
+  ${durStats('WEEK','Est. 4–5 market days')}
 
 Performance by signal score at purchase:
   ${scoreStats(29,72)}
@@ -7965,14 +8168,14 @@ ${snapTickers.length ? snapTickers.map(t => `  ${t.padEnd(8)} ${snapByTicker[t]}
         ? `${t.distance_from_target.toFixed(1)}% below target`
         : `${Math.abs(t.distance_from_target).toFixed(1)}% above target`;
     const daysHeld = (t.buy_date && t.sell_date)
-      ? marketClosesHeld(t.buy_date, t.sell_date) // closes held through, not calendar days (2026-10-09)
+      ? holdSpan({ filledAt: t.filled_at, buyDate: t.buy_date, orderType: t.order_type }, t.sell_date).closes // closes held, from the fill when known
       : null;
 
     report += `Trade #${i+1}
   Ticker: ${t.ticker} — ${t.company || t.ticker}
   Bought: $${(t.buy_price??0).toFixed(2)} on ${t.buy_date}
   Sold: $${(t.sell_price??0).toFixed(2)} on ${t.sell_date}
-  Shares: ${t.shares} | Market closes held: ${daysHeld ?? 'N/A'}
+  Shares: ${t.shares} | Held: ${daysHeld == null ? 'N/A' : marketDaysLabel(daysHeld)}
   Result: ${(t.pnl_dollars??0)>=0?'WIN':'LOSS'} $${(t.pnl_dollars??0).toFixed(2)} (${(t.pnl_pct??0).toFixed(1)}%)
   Source: ${t.source || 'N/A'}
   Signal score at purchase: ${t.signal_score ?? 'N/A'}/100 (${t.signal_label || 'N/A'})
@@ -8825,13 +9028,13 @@ async function checkPriceAlerts() {
   if (Notification.permission !== 'granted') return;
   if (!isMarketHoursNow()) return;
   if (!state.settings.alpacaKey || !state.settings.alpacaSecret) return;
-  if (!state.portfolio.length) return;
+  if (!getHoldings().length) return;
 
   state.notifications.lastPriceCheck = new Date().toISOString();
   persist('notifications');
 
   try {
-    const tickers = [...new Set(state.portfolio.map(p => p.ticker))];
+    const tickers = [...new Set(getHoldings().map(p => p.ticker))];
     // Phase 0.5: this is the background poller the rate-limit queue's
     // priority ordering exists to isolate from whatever the user is
     // actively looking at. Own client (2026-08-30, replacing
@@ -8841,7 +9044,7 @@ async function checkPriceAlerts() {
     // foreground request the way the ambient flag could.
     const snaps = await fetchSnapshots(tickers, undefined, backgroundEdgeClient);
 
-    for (const pos of state.portfolio) {
+    for (const pos of getHoldings()) {
       const snap = snaps[pos.ticker];
       if (!snap) continue;
       const price = getLivePrice(snap);
@@ -8891,21 +9094,24 @@ async function checkPriceAlerts() {
 async function checkTimeLimitAlerts() {
   if (!state.notifications.enabled) return;
   if (Notification.permission !== 'granted') return;
-  if (!state.portfolio.length) return;
+  if (!getHoldings().length) return;
 
   const todayStr = ptDateStr(getPT());
 
-  for (const pos of state.portfolio) {
-    const { ticker, duration, buyDate } = pos;
+  for (const pos of getHoldings()) {
+    const { ticker, duration } = pos;
     let threshold = null, durationLabel = '';
-    if (duration === '3-DAY')     { threshold = 4; durationLabel = 'Est. 2-4 Days'; }
-    else if (duration === 'WEEK') { threshold = 7; durationLabel = 'Est. 5-7 Days'; }
+    if (duration === '3-DAY')     { threshold = MAX_HOLD_DAYS['3-DAY']; durationLabel = `est. ${HOLD_RANGE_LABEL['3-DAY']}`; }
+    else if (duration === 'WEEK') { threshold = MAX_HOLD_DAYS.WEEK; durationLabel = `est. ${HOLD_RANGE_LABEL.WEEK}`; }
     else continue; // 'DAY' — no time limit alert
 
-    const daysHeld = businessDaysBetween(buyDate, todayStr);
+    // Market closes held, from the fill when known -- the same clock as the
+    // card and the report (holdSpan). Was businessDaysBetween, which ignored
+    // holidays and always started at the order date.
+    const daysHeld = holdSpan(pos, todayStr).closes;
     if (daysHeld > threshold && !isDuplicateAlert(ticker, 'TIME_LIMIT')) {
       await sendNotification('EDGE Alert',
-        `📅 ${ticker} has been held ${daysHeld} days. Your estimated duration was ${durationLabel}. Consider selling today before market open.`,
+        `📅 ${ticker} has been held ${marketDaysLabel(daysHeld).toLowerCase()}. Your estimated duration was ${durationLabel}. Consider selling today before market open.`,
         `${ticker}_TIME_LIMIT`);
       recordAlert(ticker, 'TIME_LIMIT');
     }
@@ -9005,7 +9211,7 @@ function updateNavBadges() {
   if (pfBadge) {
     let warnCount = 0;
     if (isAfternoonMode()) {
-      state.portfolio.forEach(p => {
+      getHoldings().forEach(p => {
         const price = state.portfolioPrices[p.ticker] || p.buyPrice;
         // Same dispatch shape as renderPortfolioTab's banner (Phase 7) --
         // kept in sync deliberately, not two independent implementations of
@@ -9025,6 +9231,10 @@ function updateNavBadges() {
         if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(result.label)) warnCount++;
       });
     }
+    // Pending orders that have sat through a close need an answer from
+    // Roman (filled? cancelled?) -- counted on the same badge, always, not
+    // just in afternoon mode.
+    warnCount += getPendingOrders().filter(isStalePendingOrder).length;
     pfBadge.textContent = warnCount;
     pfBadge.classList.toggle('hidden', warnCount === 0);
   }
