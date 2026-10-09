@@ -15,6 +15,31 @@
 -- closed with no qualifying trade, so it's set to its final state here.
 -- Computed by replaying the new rules over production on 2026-10-09.
 --
+-- APPLIED 2026-10-09 by Roman; re-selected: 29/29 rows in the expected
+-- state, matched_trade_id NULL on all, 26 not-taken-confirmed + 3 unresolved.
+--
+-- WHY 3 + 1 -- the four "[order predates signal]" rows don't all land in the
+-- same state, deliberately. All four lost their credit for the same reason
+-- (the matched order was placed before the signal was first shown). What
+-- differs is whether each signal's 9-calendar-day matching window has
+-- CLOSED -- the same rule fill-outcomes Pass 2 applies to every row:
+--   * STUB 2026-09-18: window ran to 09-27 and has closed. Every STUB order
+--     in it fails the rules (the 09-18 09:26 order predates the 12:15 PT
+--     sighting and is correctly credited to the 09-17 signal instead, shown
+--     the day before), so nothing can ever qualify -> final state,
+--     not-taken-confirmed.
+--   * CCO / TDAY / GO 2026-10-01: windows run to 10-10 and are still OPEN --
+--     an order placed after the 10-01 sighting, up to 10-10, would still
+--     legitimately take them. So they're unresolved, NOT adjudicated here,
+--     and left for fill-outcomes, which will resolve them under the current
+--     rules once 10-10 has closed.
+--   CAUTION, same lookback trap as the reason this file exists:
+--     fill-outcomes only reads signal_date >= today - 12, so these three
+--     drop out of its view on 2026-10-14 (PT). They must be resolved by the
+--     2026-10-12 or 2026-10-13 runs (weekday crons; 10-10 is a Saturday, so
+--     10-12 is the first run that sees the window closed). Re-select them
+--     on 10-14; if any is still unresolved, it needs a follow-up correction.
+--
 -- ATOMIC BY CONSTRUCTION (rewritten 2026-10-09, before first run): the whole
 -- correction is ONE statement -- a DO block with the 29 rows as an inline
 -- VALUES list. A single statement is atomic in Postgres regardless of how
@@ -43,7 +68,7 @@ begin
       ('db41ae9a-1ee0-466e-84c2-905906cf0f7f'::uuid, 'traded-against-engine', 'fd5a7de1-302f-41f8-ad25-602ca853b779'::uuid, 'not-taken-confirmed'),  -- UPXI 2026-09-22 BELOW_THRESHOLD
       ('92062fa2-4d1d-4d5d-8fae-b6c4ea79b3ba'::uuid, 'taken-by-fallback', 'c8fbd8e7-9809-43c8-bcc3-22075bc834df'::uuid, 'not-taken-confirmed'),  -- CCO 2026-09-23 SHOWN
       ('18543147-95a9-4eb9-92ce-3851a20d23c5'::uuid, 'taken-by-fallback', '72c045ec-4583-4eb4-afe5-9adc01ace5f7'::uuid, 'not-taken-confirmed'),  -- STUB 2026-09-22 SHOWN
-      ('e2123e91-a30f-4da5-8c85-715299d3b98f'::uuid, 'taken-by-fallback', 'a72c6982-7546-4cee-8c00-36f89627afd7'::uuid, 'not-taken-confirmed'),  -- STUB 2026-09-18 SHOWN  [order predates signal]
+      ('e2123e91-a30f-4da5-8c85-715299d3b98f'::uuid, 'taken-by-fallback', 'a72c6982-7546-4cee-8c00-36f89627afd7'::uuid, 'not-taken-confirmed'),  -- STUB 2026-09-18 SHOWN  [order predates signal; window CLOSED 09-27 -> final, see WHY 3 + 1 above]
       ('fe9f3f26-e264-4bc0-9134-8fa6429a4cb3'::uuid, 'taken-by-fallback', '3eb71993-390e-4c63-898e-f9b1516f3867'::uuid, 'not-taken-confirmed'),  -- COUR 2026-09-22 SHOWN
       ('6a9db08f-88ab-409c-8e09-abc0deaf2b75'::uuid, 'taken-by-fallback', '3926bf32-b5c1-4e96-9b50-95aeff422b26'::uuid, 'not-taken-confirmed'),  -- FLNC 2026-09-23 SHOWN
       ('e59f39fb-b485-4283-8802-b3f53831c9de'::uuid, 'traded-against-engine', 'd76943a7-4017-4adc-94df-0d56dbeb95a0'::uuid, 'not-taken-confirmed'),  -- ALM 2026-09-18 BELOW_THRESHOLD
@@ -58,11 +83,11 @@ begin
       ('d63ff4c3-ad5b-4b32-888b-3b17c2ef8d14'::uuid, 'taken-by-fallback', '544d5516-05dc-46f8-81f3-dc8a14177373'::uuid, 'not-taken-confirmed'),  -- IE 2026-09-23 SHOWN
       ('1992ff1b-b197-4c3d-94b3-7299180b0036'::uuid, 'taken-by-fallback', '7dff89ea-2575-4b91-97e9-c987269205ac'::uuid, 'not-taken-confirmed'),  -- UAMY 2026-09-25 SHOWN
       ('f953fca6-9dc3-41a3-b2b4-7c25535eee6a'::uuid, 'taken-by-fallback', '3eb71993-390e-4c63-898e-f9b1516f3867'::uuid, 'not-taken-confirmed'),  -- COUR 2026-09-23 SHOWN
-      ('840f85f7-bb6d-4973-a7d8-22cc2d30a079'::uuid, 'taken-by-fallback', 'c8fbd8e7-9809-43c8-bcc3-22075bc834df'::uuid, 'unresolved'),  -- CCO 2026-10-01 SHOWN  [order predates signal]
-      ('e4a6ad82-db96-4ca8-9b7b-b53031d4d2d2'::uuid, 'taken-by-fallback', '15088fd1-ccb4-4716-b142-0856274aa5bb'::uuid, 'unresolved'),  -- TDAY 2026-10-01 SHOWN  [order predates signal]
+      ('840f85f7-bb6d-4973-a7d8-22cc2d30a079'::uuid, 'taken-by-fallback', 'c8fbd8e7-9809-43c8-bcc3-22075bc834df'::uuid, 'unresolved'),  -- CCO 2026-10-01 SHOWN  [order predates signal; window OPEN to 10-10 -> unresolved, see WHY 3 + 1 above]
+      ('e4a6ad82-db96-4ca8-9b7b-b53031d4d2d2'::uuid, 'taken-by-fallback', '15088fd1-ccb4-4716-b142-0856274aa5bb'::uuid, 'unresolved'),  -- TDAY 2026-10-01 SHOWN  [order predates signal; window OPEN to 10-10 -> unresolved, see WHY 3 + 1 above]
       ('bb949611-7b64-42a4-a43d-3cf95030f0ae'::uuid, 'traded-against-engine', '9f98084e-ef91-4c5b-acf2-aed00b595dd9'::uuid, 'not-taken-confirmed'),  -- AMC 2026-09-25 BELOW_THRESHOLD
       ('483b7bcc-a201-4050-8a2e-665df6edf5d4'::uuid, 'taken-by-fallback', 'b35fa609-b1ce-4253-8615-9dd4a1374008'::uuid, 'not-taken-confirmed'),  -- LUMN 2026-09-23 SHOWN
-      ('28dbaf9d-5e85-4ff0-87c9-684d39ee00ed'::uuid, 'taken-by-fallback', 'c31f964f-770a-470d-b5d9-38bdbccb170c'::uuid, 'unresolved')  -- GO 2026-10-01 SHOWN  [order predates signal]
+      ('28dbaf9d-5e85-4ff0-87c9-684d39ee00ed'::uuid, 'taken-by-fallback', 'c31f964f-770a-470d-b5d9-38bdbccb170c'::uuid, 'unresolved')  -- GO 2026-10-01 SHOWN  [order predates signal; window OPEN to 10-10 -> unresolved, see WHY 3 + 1 above]
     ) as f(id, old_res, old_trade, new_res)
    where s.id = f.id
      and s.taken_resolution = f.old_res
