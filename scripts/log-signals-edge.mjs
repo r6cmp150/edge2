@@ -125,22 +125,32 @@ function loadReal(relPath, exposeNames) {
   eval(src + '\n' + exposeLine);
 }
 
-// Extracts a fixed line range from app.js and evals it in isolation --
-// same discipline as the original core/edge-scoring.js extraction script:
-// verify the exact first/last line text before trusting the cut, throw on
-// drift rather than silently splicing the wrong text if app.js changes
-// around these lines later.
-function loadFromAppJs(appJsSrc, startLine, endLine, expectedFirst, expectedLast, exposeNames) {
-  const lines = appJsSrc.split('\n');
-  const actualFirst = lines[startLine - 1];
-  const actualLast = lines[endLine - 1];
-  if (actualFirst !== expectedFirst) {
-    throw new Error(`app.js boundary drift at line ${startLine}.\nExpected: ${JSON.stringify(expectedFirst)}\nActual:   ${JSON.stringify(actualFirst)}`);
+// Extracts a block from app.js by TEXT ANCHOR and evals it in isolation.
+// Was a fixed line range (2026-10-08: a4af74a added two comment lines above
+// BASE_SCORE_THRESHOLD, the pinned range missed by 2, and every EDGE run
+// crashed until the numbers were hand-bumped). Now: the block starts at the
+// ONE line exactly equal to expectedFirst (zero or several matches throws --
+// never guess), and ends at the first line after it exactly equal to
+// expectedLast. Unrelated app.js edits no longer break this; a change to the
+// anchor line itself (e.g. the threshold value) still throws, which is the
+// point -- that's a scoring change a human should look at before the logger
+// keeps running. A wrong end line can't slip through silently either: the
+// expose line below references every name, so a short cut throws a
+// ReferenceError.
+function loadFromAppJs(appJsSrc, expectedFirst, expectedLast, exposeNames) {
+  const lines = appJsSrc.split('\n').map(l => l.replace(/\r$/, ''));
+  const starts = [];
+  lines.forEach((l, i) => { if (l === expectedFirst) starts.push(i); });
+  if (starts.length !== 1) {
+    throw new Error(`app.js anchor ${JSON.stringify(expectedFirst)} found ${starts.length} times (expected exactly 1)${starts.length ? ' at lines ' + starts.map(i => i + 1).join(', ') : ''}.`);
   }
-  if (actualLast !== expectedLast) {
-    throw new Error(`app.js boundary drift at line ${endLine}.\nExpected: ${JSON.stringify(expectedLast)}\nActual:   ${JSON.stringify(actualLast)}`);
+  const startIdx = starts[0];
+  const endIdx = lines.findIndex((l, i) => i > startIdx && l === expectedLast);
+  if (endIdx === -1) {
+    throw new Error(`app.js end marker ${JSON.stringify(expectedLast)} not found after anchor ${JSON.stringify(expectedFirst)} (line ${startIdx + 1}).`);
   }
-  const block = lines.slice(startLine - 1, endLine).join('\n');
+  console.log(`log-signals-edge: app.js ${JSON.stringify(expectedFirst)} -> lines ${startIdx + 1}-${endIdx + 1}`);
+  const block = lines.slice(startIdx, endIdx + 1).join('\n');
   const exposeLine = exposeNames.map(n => `global.${n} = ${n};`).join(' ');
   // eslint-disable-next-line no-eval
   eval(block + '\n' + exposeLine);
@@ -167,12 +177,12 @@ async function main() {
   loadReal('core/indicators.js', ['calcRSI', 'calcATR', 'calcTrimmedATR', 'calcMA', 'calcAvgVolume']);
   loadReal('core/edge-scoring.js', ['scoreStock']);
 
-  // STOCK_UNIVERSES (app.js:272-782) -- verified boundary, see loadFromAppJs.
-  loadFromAppJs(appJsSrc, 272, 782, 'const STOCK_UNIVERSES = {', '};', ['STOCK_UNIVERSES']);
+  // STOCK_UNIVERSES -- text-anchored, see loadFromAppJs.
+  loadFromAppJs(appJsSrc, 'const STOCK_UNIVERSES = {', '};', ['STOCK_UNIVERSES']);
   const TICKERS = global.STOCK_UNIVERSES.OTHER;
 
-  // Display-threshold logic (app.js:1426-1440) -- verified boundary.
-  loadFromAppJs(appJsSrc, 1426, 1440,
+  // Display-threshold logic -- text-anchored, see loadFromAppJs.
+  loadFromAppJs(appJsSrc,
     'const BASE_SCORE_THRESHOLD = 29;', '}',
     ['BASE_SCORE_THRESHOLD', 'ELEVATED_SCORE_THRESHOLD', 'SECTOR_WEAKNESS_THRESHOLD_CATEGORIES', 'BROAD_ELEVATED_CONDITIONS', 'getDisplayThreshold']);
 
