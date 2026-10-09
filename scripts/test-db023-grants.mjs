@@ -34,7 +34,8 @@ const id = a.json?.[0]?.id;
 if (a.status >= 300 || !id) { fail(`A insert: HTTP ${a.status} ${a.text.slice(0, 200)}`); process.exit(1); }
 const rowA = await reselect(id);
 const skewSec = Math.abs(new Date(rowA.created_at) - Date.now()) / 1000;
-if (rowA && sameInstant(rowA.actual_fired_at, T) && skewSec < 120) pass(`A insert landed; created_at is server time (${skewSec.toFixed(1)}s from local clock)`);
+const outcomesNull = rowA && rowA.completed_at == null && rowA.job_status == null && rowA.is_noop == null && rowA.noop_reason == null;
+if (rowA && sameInstant(rowA.actual_fired_at, T) && skewSec < 120 && outcomesNull) pass(`A insert landed; created_at is server time (${skewSec.toFixed(1)}s from local clock); all four outcome columns NULL (none fabricated)`);
 else fail(`A re-select: ${JSON.stringify(rowA)}`);
 
 // B -- actual_fired_at alone must be refused.
@@ -48,7 +49,7 @@ if (b.status < 400) fail(`B expected a refusal status, got HTTP ${b.status} -- r
 // C -- adversarial mixed body: the WHOLE statement must be refused.
 const c = await req('PATCH', `?id=eq.${id}`, { completed_at: new Date().toISOString(), job_status: 'success', is_noop: true, noop_reason: 'check C', actual_fired_at: earlier });
 const rowC = await reselect(id);
-const untouched = rowC.completed_at == null && rowC.job_status == null && rowC.is_noop === false && rowC.noop_reason == null && sameInstant(rowC.actual_fired_at, T);
+const untouched = rowC.completed_at == null && rowC.job_status == null && rowC.is_noop == null && rowC.noop_reason == null && sameInstant(rowC.actual_fired_at, T);
 if (untouched) pass(`C mixed PATCH refused as a whole -- all five columns unchanged by re-select (HTTP ${c.status}${c.json?.code ? ', ' + c.json.code : ''})`);
 else fail(`C PARTIAL OR FULL APPLICATION: ${JSON.stringify({ completed_at: rowC.completed_at, job_status: rowC.job_status, is_noop: rowC.is_noop, noop_reason: rowC.noop_reason, actual_fired_at: rowC.actual_fired_at })}`);
 

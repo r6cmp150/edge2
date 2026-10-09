@@ -29,19 +29,32 @@
 -- scripts/lib/workflow-instrumentation.mjs's reportNoop() writes at the
 -- exact point each script already self-diagnoses a no-op (found once,
 -- console-only, per §2.4; now also persisted). Unset (false/null) is the
--- correct default for a run that actually did its job -- backup-tables
+-- correct value for a run that actually did its job -- backup-tables
 -- and build-float-table have no no-op concept at all and always report
 -- real work.
+--
+-- WHAT THE STORAGE MAY NOT ASSERT (2026-10-09, before first apply):
+--   * is_noop is NULLABLE WITH NO DEFAULT. The insert doesn't set it and the
+--     outcome PATCH (the last step, the one that doesn't always run) does.
+--     A default false would report "determined: not a no-op" on exactly the
+--     runs where nothing was determined. NULL = not determined, matching
+--     job_status row for row. Never coalesce it to false.
+--   * trigger_type has NO CHECK constraint. Expected values today are
+--     'schedule' and 'workflow_dispatch', but a rejected insert fails the
+--     job (fail-on-missing-id), so a CHECK would let the observer break the
+--     observed: adding repository_dispatch / push / workflow_run to any of
+--     the six would turn it red. An audit log records what happened; it
+--     doesn't adjudicate whether it was allowed to.
 create table if not exists workflow_runs (
   id uuid primary key default gen_random_uuid(),
   workflow_name text not null,
-  trigger_type text not null check (trigger_type in ('schedule', 'workflow_dispatch')),
+  trigger_type text not null,
   declared_cron text,
   actual_fired_at timestamptz not null,
   run_url text,
   completed_at timestamptz,
   job_status text,
-  is_noop boolean not null default false,
+  is_noop boolean,
   noop_reason text,
   created_at timestamptz not null default now()
 );
@@ -83,8 +96,8 @@ create index if not exists workflow_runs_name_time_idx
 -- if the default were ever dropped, not null makes the insert fail loudly
 -- rather than store an absence). anon may insert exactly workflow_name,
 -- trigger_type, declared_cron, actual_fired_at, run_url -- the workflows'
--- insert payload, verbatim. id, is_noop and created_at take defaults;
--- the outcome columns arrive later by PATCH.
+-- insert payload, verbatim. id and created_at take defaults; the four
+-- outcome columns (is_noop included) start NULL and arrive by PATCH.
 --
 -- VERIFICATION PLAN (run after applying, as anon via the REST API). Same
 -- shape as db/019's check B: every refusal is proven BY RE-SELECT, even on
@@ -93,7 +106,8 @@ create index if not exists workflow_runs_name_time_idx
 -- than once. Every check that should fail must be attempted.
 --   A. INSERT {workflow_name:'db023-verify', trigger_type:
 --      'workflow_dispatch', actual_fired_at:<T>}. Re-select: row exists,
---      created_at within seconds of real now.
+--      created_at within seconds of real now, and all four outcome columns
+--      (completed_at, job_status, is_noop, noop_reason) are NULL.
 --   B. PATCH that row {actual_fired_at:<T - 1 day>}. Expect 42501.
 --      Re-select: actual_fired_at still <T>.
 --   C. ADVERSARIAL MIXED PATCH: {completed_at, job_status, is_noop,
