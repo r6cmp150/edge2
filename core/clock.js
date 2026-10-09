@@ -241,6 +241,28 @@ function classifySession(dateStr, hhmm) {
   return 'CLOSED';
 }
 
+// Hold duration for a closed trade (2026-10-09): the number of regular-
+// session CLOSES held through -- trading days d with startDateStr <= d <
+// endDateStr. Same-day = 0; Friday -> Monday = 1 (one close, Friday's), not
+// the 3 calendar days the app used to report; a holiday is not a close.
+// A Sunday-placed order sold Monday is 0 whether it filled Sunday night or
+// at Monday's open -- Sunday has no regular close. An early-close day still
+// counts (it closes, just early). Date-string arithmetic in UTC, so the
+// machine's timezone can't shift a day. Unlike businessDaysBetween (which
+// the live time-limit alert uses and which ignores holidays), this is the
+// definition every closed-trade hold figure uses.
+function marketClosesHeld(startDateStr, endDateStr) {
+  let count = 0;
+  const cur = new Date(startDateStr + 'T12:00:00Z');
+  const end = new Date(endDateStr + 'T12:00:00Z');
+  while (cur < end) {
+    const dow = cur.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !HOLIDAYS.has(cur.toISOString().slice(0, 10))) count++;
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return count;
+}
+
 function businessDaysBetween(startDateStr, endDateStr) {
   // T12:00:00 (no zone -> parsed as local time), not T00:00:00, is
   // deliberate: noon gives ~12h of slack on either side before a

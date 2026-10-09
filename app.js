@@ -5438,7 +5438,9 @@ async function confirmMarkSold(posId, btn) {
     return;
   }
 
-  const days = Math.floor((new Date(saleDate) - new Date(pos.buyDate)) / 86400000);
+  // Market closes held through, not calendar days (core/clock.js
+  // marketClosesHeld, 2026-10-09) -- Friday -> Monday is 1, not 3.
+  const days = marketClosesHeld(pos.buyDate, saleDate);
   const pnlDollar = (salePrice - pos.buyPrice) * pos.shares;
   const pnlPct    = ((salePrice - pos.buyPrice) / pos.buyPrice) * 100;
   const targetDriftPct = (pos.liveTarget != null && pos.target)
@@ -5768,7 +5770,7 @@ async function renderSoldTab() {
           </div>
           <div class="company-name mt4">${s.company}</div>
           <div class="pf-meta">${s.shares} sh · Buy $${s.buyPrice.toFixed(2)} → Sell $${s.sellPrice.toFixed(2)}</div>
-          <div class="pf-meta">${s.buyDate} → ${s.sellDate} (${s.daysHeld}d)</div>
+          <div class="pf-meta">${s.buyDate} → ${s.sellDate} (${s.daysHeld == null ? '?' : s.daysHeld + (s.daysHeld === 1 ? ' close' : ' closes')})</div>
         </div>
         <div class="sold-pnl ${s.pnlDollar>=0?'pos':'neg'}">
           ${s.pnlDollar>=0?'+':''}$${s.pnlDollar.toFixed(2)}<br>
@@ -5914,8 +5916,11 @@ ${correlationText}`;
 // hardcoded null: that field was never carried into trades_v2 at all
 // (retired enum, no live writer — see 002's migration note).
 function mapTradesV2ToSoldShape(row) {
+  // Market closes held through (core/clock.js marketClosesHeld), not
+  // calendar days -- changed 2026-10-09: a Friday -> Monday hold is one
+  // close, and calendar days put 52 of 270 trades in the wrong bucket.
   const daysHeld = (row.buy_date && row.sell_date)
-    ? Math.floor((new Date(row.sell_date) - new Date(row.buy_date)) / 86400000)
+    ? marketClosesHeld(row.buy_date, row.sell_date)
     : null;
   return {
     id: String(row.id),
@@ -6919,6 +6924,7 @@ Show WATCH signals: ${state.settings.showWatch?'Yes':'No'}
 Total completed trades: ${sold.length}${unverifiedSold.length ? ` (${allSold.length} total closed trades; ${unverifiedSold.length} excluded below — sell price unverified, outcome unknown, see FULL TRADE HISTORY)` : ''}
   - App signal trades: ${apps.length} (${sold.length?(apps.length/sold.length*100).toFixed(0):0}% of total)
   - Own decision trades: ${owns.length} (${sold.length?(owns.length/sold.length*100).toFixed(0):0}% of total)
+    (Self-reported label, chosen on the sale form -- which pre-selects "App Signal" -- not derived from whether an engine actually showed this ticker before the order. The derived answer is signal_log.taken_resolution.)
 
 ${netResultBlock}
 
@@ -6939,7 +6945,7 @@ Signal data at purchase — wins vs losses:
   Avg volume ratio: wins ${avg(wins,s=>s.volRatioAtBuy||0).toFixed(2)}x | losses ${avg(losses,s=>s.volRatioAtBuy||0).toFixed(2)}x
   Avg risk score:   wins ${avg(wins,s=>s.riskAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.riskAtBuy||0).toFixed(1)}
   Avg signal score: wins ${avg(wins,s=>s.scoreAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.scoreAtBuy||0).toFixed(1)}
-  Avg hold time:    wins ${avg(wins,s=>s.daysHeld||0).toFixed(1)} days | losses ${avg(losses,s=>s.daysHeld||0).toFixed(1)} days
+  Avg hold time:    wins ${avg(wins,s=>s.daysHeld||0).toFixed(1)} | losses ${avg(losses,s=>s.daysHeld||0).toFixed(1)} market closes held through (Fri->Mon = 1; calendar days before 2026-10-09)
 
 RSI at purchase — win rate by bucket:
 ${rsiBucket(0,45,'<45    ')}
@@ -7264,7 +7270,7 @@ ${ureFactorAccuracySection}
   Ticker: ${s.ticker} — ${s.company}
   Bought: $${s.buyPrice.toFixed(2)} on ${s.buyDate}
   Sold: $${s.sellPrice.toFixed(2)} on ${s.sellDate}
-  Shares: ${s.shares} | Days held: ${s.daysHeld}
+  Shares: ${s.shares} | Market closes held: ${s.daysHeld}
   Result: ${s.sellPriceUnverified ? 'UNKNOWN — sell price unverified' : `${s.pnlDollar>=0?'WIN':'LOSS'} $${s.pnlDollar.toFixed(2)} (${s.pnlPct.toFixed(1)}%)`}
   ${s.sellPriceUnverified ? '⚠ Excluded from every P&L/win-rate aggregate elsewhere in this report (db/026) — sell_price was fabricated (buy price substituted for a missing live quote), not a real outcome.\n  ' : ''}Source: ${s.source}
   Signal score at purchase: ${s.scoreAtBuy}/100
@@ -7830,6 +7836,7 @@ Rating snapshot date range: ${minDate ? `${minDate.split('T')[0]} to ${maxDate.s
 Total completed trades: ${trades.length}
   - App signal trades: ${apps.length} (${trades.length?(apps.length/trades.length*100).toFixed(0):0}% of total)
   - Own decision trades: ${owns.length} (${trades.length?(owns.length/trades.length*100).toFixed(0):0}% of total)
+    (Self-reported label, chosen on the sale form -- which pre-selects "App Signal" -- not derived from whether an engine actually showed this ticker before the order. The derived answer is signal_log.taken_resolution.)
 
 Overall win rate: ${trades.length?((wins.length/trades.length*100).toFixed(0)):0}%
   - App signal win rate: ${apps.length?((appWins.length/apps.length*100).toFixed(0)):0}%
@@ -7958,14 +7965,14 @@ ${snapTickers.length ? snapTickers.map(t => `  ${t.padEnd(8)} ${snapByTicker[t]}
         ? `${t.distance_from_target.toFixed(1)}% below target`
         : `${Math.abs(t.distance_from_target).toFixed(1)}% above target`;
     const daysHeld = (t.buy_date && t.sell_date)
-      ? Math.round((new Date(t.sell_date) - new Date(t.buy_date)) / 86400000)
+      ? marketClosesHeld(t.buy_date, t.sell_date) // closes held through, not calendar days (2026-10-09)
       : null;
 
     report += `Trade #${i+1}
   Ticker: ${t.ticker} — ${t.company || t.ticker}
   Bought: $${(t.buy_price??0).toFixed(2)} on ${t.buy_date}
   Sold: $${(t.sell_price??0).toFixed(2)} on ${t.sell_date}
-  Shares: ${t.shares} | Days held: ${daysHeld ?? 'N/A'}
+  Shares: ${t.shares} | Market closes held: ${daysHeld ?? 'N/A'}
   Result: ${(t.pnl_dollars??0)>=0?'WIN':'LOSS'} $${(t.pnl_dollars??0).toFixed(2)} (${(t.pnl_pct??0).toFixed(1)}%)
   Source: ${t.source || 'N/A'}
   Signal score at purchase: ${t.signal_score ?? 'N/A'}/100 (${t.signal_label || 'N/A'})
