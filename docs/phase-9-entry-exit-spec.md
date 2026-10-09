@@ -890,6 +890,29 @@ into a number.
 > `where workflow_name <> 'db023-verify'`. Roman can delete it in the SQL
 > editor with `delete from workflow_runs where workflow_name = 'db023-verify';`
 > — the filter stays harmless either way.
+>
+> **The created_at cross-check, concretely.** In all six workflows the
+> firing insert is step 0 of the only job — before checkout, before any
+> work (confirmed by parsing the YAML, 2026-10-09) — and `actual_fired_at`
+> is `$(date -u)` evaluated inside that same curl command. So for every
+> row, Δ = `created_at − actual_fired_at` is just request latency plus
+> `date -u`'s truncation to whole seconds:
+> - **Expected: 0 s ≤ Δ ≤ 5 s.** Truncation alone adds up to 1 s; the
+>   POST (TLS + PostgREST + insert) is normally well under a second.
+> - **Δ between −2 s and 0 s:** runner clock slightly ahead (NTP keeps it
+>   sub-second). Not a failure.
+> - **FAILING CROSS-CHECK: Δ < −2 s or Δ > 10 s.** Negative means the
+>   runner's clock is wrong — `actual_fired_at` is then untrustworthy and
+>   delay for that row is computed from `created_at` instead. Large positive
+>   means the insert did not happen at fire time (moved later in the job,
+>   or retried) — the row's delay is overstated by Δ, and the YAML must be
+>   checked before trusting any row from that workflow.
+>
+> Every delay analysis reports the count of failing rows per workflow
+> alongside the delay figures — zero is the expected answer and should be
+> stated, not omitted. Cron delay itself is `actual_fired_at − declared
+> fire time`; runner provisioning happens before step 0 and is correctly
+> counted as part of GitHub's delivery delay.
 
 After a week there is a real delivery rate per schedule density, and the
 platform question answers itself. Candidates if the answer is bad:
