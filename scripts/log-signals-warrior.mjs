@@ -56,6 +56,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { reportNoop } from './lib/workflow-instrumentation.mjs';
+import { scheduledScanGate, SPACING_MIN } from './lib/scan-gate.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -139,7 +140,7 @@ async function main() {
   // failure shape as core/edge-scoring.js's extraction verification and
   // the EDGAR CORS gap: a Node harness proves the code it exercises, not
   // the code it doesn't reach.
-  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'ptWallClockToInstant', 'getMarketStatus', 'hoursSincePreviousClose']);
+  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'ptWallClockToInstant', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
   loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT']);
   loadReal('core/universe.js', [
@@ -193,78 +194,25 @@ async function main() {
   const session = marketStatus.status;
   console.log(`log-signals-warrior: session=${session}`);
 
-  // ── DST no-op check + once-per-target dedup ──
-  // (2026-09-10, explicit ask; EXTENDED 2026-09-11 after the six-entry
-  // paired schedule's own assumption broke live -- GitHub delivered every
-  // scheduled firing hours late and clustered together, collapsing three
-  // intended moments into a window where only one landed inside tolerance
-  // by chance. See .github/workflows/log-signals-warrior.yml's header for
-  // the full incident and the fix: a dense schedule (every 15 min across
-  // the whole trading window) replaces trying to fire at the right
-  // moment, and this same tolerance check now also has to guard against
-  // the new possibility that DENSITY introduces -- more than one firing
-  // landing inside the same target's window.
-  //
-  // Applies ONLY to a real scheduled firing (GITHUB_EVENT_NAME==='schedule')
-  // -- a manual workflow_dispatch (testing, or Roman/Claude checking
-  // something by hand) always runs regardless of clock time, same as
-  // --session= already bypasses session detection for exactly that reason.
-  //
-  // Tolerance is explicit, not implicit in an inequality: a firing counts
-  // as "on time" if it lands within TOLERANCE_MIN minutes of one of the
-  // three intended offsets from open, or the one intended offset before
-  // close. Targets: 20 min after open (opening momentum), 105 min after
-  // open (mid-morning), 60 min before close (late-session).
+  // ── Scheduled-scan gate (2026-10-09) ──
+  // Was a fixed-target window (see git history); replaced because GitHub
+  // delivers these crons hours late and the window turned almost every
+  // firing into a silent exit-0 no-op. Rule and rationale live in
+  // scripts/lib/scan-gate.mjs: scan iff the regular session is open and
+  // no WARRIOR scan_runs row started in the last SPACING_MIN minutes.
+  // Applies ONLY to a real scheduled firing -- a manual workflow_dispatch
+  // always runs, for testing/debugging.
   if (process.env.GITHUB_EVENT_NAME === 'schedule') {
-    const TOLERANCE_MIN = 10;
-    const TARGETS = [
-      { name: 'open+20', kind: 'afterOpen', offset: 20 },
-      { name: 'open+105', kind: 'afterOpen', offset: 105 },
-      { name: 'close-60', kind: 'beforeClose', offset: 60 },
-    ];
-    function minutesFromTarget(target, sinceOpen, toClose) {
-      return target.kind === 'afterOpen' ? sinceOpen - target.offset : toClose - target.offset;
-    }
-    const pt = global.getPT();
-    const tMin = pt.getHours() * 60 + pt.getMinutes();
-    const minutesSinceOpen = tMin - 390; // 390 = 6:30am PT = 9:30am ET, same convention as gate.js's _elapsedSessionMinutes
-    const minutesToClose = 780 - tMin;   // 780 = 1:00pm PT = 4:00pm ET
-
-    const matched = TARGETS.find(t => Math.abs(minutesFromTarget(t, minutesSinceOpen, minutesToClose)) <= TOLERANCE_MIN);
-    if (!matched) {
-      const reason = `scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of any intended target (open+20, open+105, close-60)`;
-      console.log(`log-signals-warrior: ${reason}. No-op: no scan_runs row written, no Alpaca request made.`);
-      reportNoop(reason);
+    const gate = await scheduledScanGate({
+      engineSource: 'WARRIOR', getPT: global.getPT, ptDateStr: global.ptDateStr,
+      classifySession: global.classifySession, supabaseUrl: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY,
+    });
+    if (!gate.proceed) {
+      console.log(`log-signals-warrior: ${gate.reason} (minutesSinceOpen=${gate.minutesSinceOpen}). No-op: no scan_runs row written, no Alpaca request made.`);
+      reportNoop(gate.reason);
       return;
     }
-
-    // Once-per-target dedup -- new requirement a dense schedule
-    // introduces that three widely-spaced entries never needed. Recompute
-    // each EXISTING row's own minutesSinceOpen/minutesToClose from ITS
-    // OWN started_at (never "now") -- an earlier run's own delay doesn't
-    // matter here, only where IT actually landed relative to open/close
-    // on its own clock. This is a Supabase read, not an Alpaca request --
-    // still zero cost against the rate-limit queue, and only reached at
-    // all once a target has already matched (the common no-match no-op
-    // above returns before this, unchanged).
-    const todayStr = global.ptDateStr(pt);
-    const existingRes = await fetch(`${SUPABASE_URL}/rest/v1/scan_runs?engine_source=eq.WARRIOR&scan_date=eq.${todayStr}&select=started_at`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
-    });
-    if (existingRes.status >= 300) throw new Error(`log-signals-warrior: dedup check failed -- could not read today's existing scan_runs: ${existingRes.status} ${await existingRes.text()}`);
-    const existingRuns = await existingRes.json();
-    const alreadySatisfied = existingRuns.some(row => {
-      const rowPt = global.getPT(new Date(row.started_at));
-      const rowMin = rowPt.getHours() * 60 + rowPt.getMinutes();
-      return Math.abs(minutesFromTarget(matched, rowMin - 390, 780 - rowMin)) <= TOLERANCE_MIN;
-    });
-    if (alreadySatisfied) {
-      const reason = `target ${matched.name} was already satisfied by an earlier scan_runs row today`;
-      console.log(`log-signals-warrior: ${reason} -- no-op, no duplicate scan, no Alpaca request made.`);
-      reportNoop(reason);
-      return;
-    }
-    console.log(`log-signals-warrior: scheduled firing matched target ${matched.name} (minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose}), not yet satisfied today -- proceeding with a real scan.`);
+    console.log(`log-signals-warrior: scheduled firing at ${gate.hhmm} PT, minutesSinceOpen=${gate.minutesSinceOpen}, regular session open, no WARRIOR scan in the last ${SPACING_MIN} min -- proceeding with a real scan.`);
   }
 
   // ── universe: committed movers-snapshot preferred, self-fetch as a

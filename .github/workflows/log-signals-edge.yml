@@ -3,43 +3,44 @@ name: Log EDGE signals
 # Phase 7's second engine -- see scripts/log-signals-edge.mjs's header for
 # the full design.
 #
-# SCHEDULED (2026-09-10, after dry-run review, db/014 landing on
-# production, and the schema-check helper proving it fails loudly on a
-# missing column rather than silently -- see scripts/lib/schema-check.mjs).
-# Six cron entries, same DST-paired shape as log-signals-warrior.yml and
-# for the same reason: GitHub Actions cron is UTC-only, the market's hours
-# are ET, and DST shifts the UTC offset a full hour twice a year. Each pair
-# covers both the EDT and EST offset for the same intended moment;
-# log-signals-edge.mjs's own DST no-op check (its header, and the
-# GITHUB_EVENT_NAME==='schedule' branch in main()) determines at run time
-# which half of each pair is real and lets the other stand down cleanly --
-# no scan_runs row, no Alpaca request.
+# SCHEDULE (2026-10-09) -- AIMED AT GITHUB'S OBSERVED DELIVERY, NOT AT THE
+# INTENDED MOMENT. These crons are NOT the times scans happen.
 #
-# SCHEDULED DURING MARKET HOURS DESPITE NO SESSION DEPENDENCY: scoreStock
-# has no session gate (checked directly, not assumed -- see the header
-# note above), but entry/target/stop computed off an after-hours price
-# isn't an actionable trade even though the numbers would be real. Reusing
-# Warrior's open/close-relative targets keeps both engines' rows anchored
-# to the same kind of moment for comparison, not because EDGE needs the
-# timing for its own scoring.
+# Measured from every run's declared_cron, Sep 15-Oct 8: GitHub delivers
+# this repo's scheduled runs hours late, in order, compressed, and the
+# delay SHRINKS the later the declared time (median declared -> delivered):
+#   06:00Z -> ~11:55Z (backup-tables)     13:45Z -> ~19:00Z (movers)
+#   14:00Z -> ~18:50Z (this file, old)    20:15Z -> ~23:45Z (this file, old)
+# Jitter is +-1-2h day to day; both Mondays in the sample ran ~2h later.
+# The old schedule (14:00-20:15Z, aimed at open+30/open+140/close-45)
+# therefore delivered 11:45am-5pm PT -- never the 6:30-8:00am PT window
+# Roman actually trades -- and the script's ±10-min target check turned
+# nearly every delivery into a silent no-op (10 of 20 trading days had no
+# EDGE row at all).
 #
-# Intended moments (all approximate to +/-10 min, the tolerance the script
-# checks against): 30 min after open, 140 min after open, 45 min before
-# close. Open is 13:30 UTC (EDT) / 14:30 UTC (EST); close is 20:00 UTC
-# (EDT) / 21:00 UTC (EST).
+# TARGET: deliveries inside 13:30-15:00Z (6:30-8:00am PDT). A straight-line
+# fit through the 06:00Z and 14:00Z points puts that at declared ~07:50-
+# 09:35Z, so six entries across 07:30-09:40Z. THIS IS A FIT THROUGH AN
+# UNINSTRUMENTED RANGE: nothing in this repo has ever declared a cron
+# between 08:00Z and 13:45Z, so the interpolation spans exactly the part we
+# care about. Revisit after one week of real deliveries (from 2026-10-12):
+# pull actual_fired_at by declared_cron and re-aim.
 #
-#   14:00 / 15:05 UTC -- open+30   (EDT / EST)
-#   15:50 / 16:50 UTC -- open+140  (EDT / EST)
-#   19:15 / 20:15 UTC -- close-45  (EDT / EST)
+# Missing the target is no longer fatal: scripts/lib/scan-gate.mjs scans
+# on ANY delivery that lands in the regular session (subject to 30-min
+# spacing), so a late delivery is a midday row, not a no-op. Only a
+# delivery before the open is lost. Earliest-sighting-wins dedup in
+# signal_log means that when this schedule works, a symbol's row is its
+# morning sighting.
 #
-# The EST open+30 slot is 15:05, not 15:00 -- 15:00 UTC is already
-# capture-movers-snapshot's EST slot, and no two scheduled jobs in this
-# repo share a minute against the one shared Alpaca rate-limit queue.
-# Combined worst case across Warrior (~8-12 req/run), EDGE (~11 req/run,
-# scales with filtered candidates not universe size), and
-# capture-movers-snapshot (2 req/run, 1 on a closed-market no-op) is
-# comfortably under the shared 200/min Basic ceiling even where slots fall
-# in the same UTC minute across workflows.
+# DST -- NOV 1, 2026: ET falls back, the open moves from 13:30Z to 14:30Z,
+# and the target becomes 14:30-16:00Z. Shift every entry below +1h at that
+# point (and back -1h on the March DST change). The scan gate is DST-safe
+# on its own (it reads PT wall clock); only the AIM changes.
+#
+# Alpaca rate budget: unchanged per run (~11 req, scales with filtered
+# candidates); no entry shares a minute with capture-movers-snapshot
+# (13:45/14:30/14:45/15:00Z) or backup-tables (06:00Z).
 #
 # dry_run input still defaults to true for a MANUAL workflow_dispatch --
 # unaffected by the schedule going live in --write mode below. A schedule-
@@ -51,12 +52,12 @@ name: Log EDGE signals
 # SQL editor.
 on:
   schedule:
-    - cron: '0 14 * * 1-5'
-    - cron: '5 15 * * 1-5'
-    - cron: '50 15 * * 1-5'
-    - cron: '50 16 * * 1-5'
-    - cron: '15 19 * * 1-5'
-    - cron: '15 20 * * 1-5'
+    - cron: '30 7 * * 1-5'
+    - cron: '55 7 * * 1-5'
+    - cron: '20 8 * * 1-5'
+    - cron: '45 8 * * 1-5'
+    - cron: '10 9 * * 1-5'
+    - cron: '40 9 * * 1-5'
   workflow_dispatch:
     inputs:
       dry_run:

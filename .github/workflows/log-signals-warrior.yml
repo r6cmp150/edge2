@@ -4,6 +4,16 @@ name: Log Warrior signals
 # header for the full design (universe provenance, scan completeness,
 # dry-run-by-default).
 #
+# SUPERSEDED 2026-10-09 -- the target/tolerance/dedup design described
+# below is GONE from the script. GitHub delivers ~2 of these 32 daily
+# firings, hours late, and the ±10-min target check no-op'd almost all of
+# those (4 Warrior scans in three weeks). The script now scans on ANY
+# delivery inside the regular session, with 30-min spacing replacing the
+# per-target dedup -- see scripts/lib/scan-gate.mjs. The schedule itself is
+# unchanged. Warrior is a first-hour strategy: rows now land at any time of
+# day and MUST be bucketed by minutes-since-open, never pooled -- see
+# docs/phase-8-report-spec.md "Time-of-day bucketing". History kept below.
+#
 # SCHEDULED (2026-09-10, six paired cron entries; REPLACED 2026-09-11
 # after the first real unattended day showed the pairing's own assumption
 # was wrong). Original design: two cron entries per intended

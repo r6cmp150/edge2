@@ -61,6 +61,7 @@ import { fileURLToPath } from 'node:url';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
 import { reportNoop } from './lib/workflow-instrumentation.mjs';
+import { signalPrecedesTrade } from './lib/taken-precedence.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -160,7 +161,7 @@ async function main() {
   // requirement both loggers already satisfy this same way.
   global.state = { settings: { alpacaKey: ALPACA_KEY_ID, alpacaSecret: ALPACA_SECRET_KEY } };
 
-  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus']);
+  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'ptWallClockToInstant']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', 'createApiClient', 'assertPageNotSuspiciouslyFull', 'sipSafeEndParams']);
   loadReal('core/market-data.js', ['HISTORICAL_BAR_ADJUSTMENT']);
 
@@ -537,17 +538,28 @@ async function main() {
     // tradeoff, not a shortcut version of the same bug.
     const windowEnd = addCalendarDays(signalDate, 9);
     const candRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/trades_v2?select=id,signal_log_id,buy_date,created_at&source=neq.Own Decision&engine_source=eq.${engineSource}&ticker=eq.${symbol}&buy_date=gte.${signalDate}&buy_date=lte.${windowEnd}&order=buy_date.asc,created_at.asc`,
+      `${SUPABASE_URL}/rest/v1/trades_v2?select=id,signal_log_id,buy_date,buy_time,created_at&source=neq.Own Decision&engine_source=eq.${engineSource}&ticker=eq.${symbol}&buy_date=gte.${signalDate}&buy_date=lte.${windowEnd}&order=buy_date.asc,created_at.asc`,
       { headers: anonHeaders }
     );
     if (candRes.status >= 300) { console.warn(`fill-outcomes: trades_v2 candidate query failed for ${key}: ${candRes.status} ${await candRes.text()}`); continue; }
-    const candidates = await candRes.json();
+    // Causality precondition (scripts/lib/taken-precedence.mjs): a trade
+    // only counts against this group if at least one of the group's rows
+    // was first shown at or before the trade's buy time. A trade that
+    // predates every row is not a candidate at all -- if nothing later
+    // qualifies, the group resolves to not-taken-confirmed once the window
+    // elapses, same as a group with no trade.
+    const precedes = (row, trade) => signalPrecedesTrade(row, trade, global.ptWallClockToInstant);
+    const candidates = (await candRes.json()).filter(c => groupRows.some(row => precedes(row, c)));
     const windowElapsed = tradingDayHasClosed(windowEnd);
 
     if (candidates.length) {
       const match = candidates[0];
       const rankOf = (row) => ACTIONABLE_TIER_RANK[engineSource]?.[row.tier];
-      const actionable = groupRows.filter(row => rankOf(row) != null).sort((a, b) => rankOf(a) - rankOf(b));
+      // Only rows shown at or before the buy can be the one taken (or
+      // traded against); a later-shown row in the same group falls through
+      // to not-taken-confirmed below.
+      const eligibleRows = groupRows.filter(row => precedes(row, match));
+      const actionable = eligibleRows.filter(row => rankOf(row) != null).sort((a, b) => rankOf(a) - rankOf(b));
       if (actionable.length) {
         const winner = actionable[0];
         const isExact = match.signal_log_id === winner.id;
@@ -561,8 +573,12 @@ async function main() {
         }
       } else {
         for (const row of groupRows) {
-          patchFor(row.id).taken_resolution = 'traded-against-engine';
-          patchFor(row.id).matched_trade_id = match.id;
+          if (eligibleRows.includes(row)) {
+            patchFor(row.id).taken_resolution = 'traded-against-engine';
+            patchFor(row.id).matched_trade_id = match.id;
+          } else {
+            patchFor(row.id).taken_resolution = 'not-taken-confirmed';
+          }
           takenResolvedCount++;
         }
       }

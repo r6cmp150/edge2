@@ -98,6 +98,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { reportNoop } from './lib/workflow-instrumentation.mjs';
+import { scheduledScanGate, SPACING_MIN } from './lib/scan-gate.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -170,7 +171,7 @@ async function main() {
   if (!versionMatch) throw new Error('Could not read VERSION from app.js -- refusing to log signals with no buildVersion.');
   global.VERSION = versionMatch[1];
 
-  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose']);
+  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
   loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT', 'fetchMultiBars', 'checkUnresolvedSymbols']);
   loadReal('core/news.js', ['fetchNewsForTickers']);
@@ -190,42 +191,25 @@ async function main() {
   const session = marketStatus.status;
   console.log(`log-signals-edge: session=${session}`);
 
-  // ── DST-safe schedule no-op check (2026-09-10) ──
-  // scoreStock ITSELF has no session gate (checked directly, confirmed
-  // again by tonight's real AH-session run completing cleanly) -- but
-  // entry/target/stop computed off an after-hours price is not a signal
-  // anyone could act on; the numbers would be real and the trade
-  // imaginary. So the SCHEDULE, not the scoring, is what should never
-  // manufacture that ambiguity: EDGE is scheduled to run only during real
-  // market hours, using the identical target-offset-plus-tolerance shape
-  // scripts/log-signals-warrior.mjs already uses for the same DST-safety
-  // reason (GitHub Actions cron is UTC-only; ET market hours shift a full
-  // hour in UTC terms at each DST transition). Reused rather than
-  // reinvented as a bare "is session OPEN" check specifically because a
-  // bare check would let both members of a DST-paired cron entry fire on
-  // the same real day whenever both happen to land inside market hours
-  // (an EST-shifted pair member can drift into real hours without being
-  // the INTENDED moment) -- narrow, named targets avoid that the same way
-  // they already do for Warrior.
-  //
-  // Applies ONLY to a real scheduled firing (GITHUB_EVENT_NAME==='schedule')
-  // -- a manual workflow_dispatch always runs, for testing/debugging.
+  // ── Scheduled-scan gate (2026-10-09) ──
+  // Was a fixed-target window (see git history); replaced because GitHub
+  // delivers these crons hours late and the window turned almost every
+  // firing into a silent exit-0 no-op. Rule and rationale live in
+  // scripts/lib/scan-gate.mjs: scan iff the regular session is open and
+  // no EDGE scan_runs row started in the last SPACING_MIN minutes.
+  // Applies ONLY to a real scheduled firing -- a manual workflow_dispatch
+  // always runs, for testing/debugging.
   if (process.env.GITHUB_EVENT_NAME === 'schedule') {
-    const TOLERANCE_MIN = 10;
-    const TARGET_MINUTES_AFTER_OPEN = [30, 140];
-    const TARGET_MINUTES_BEFORE_CLOSE = 45;
-    const pt = global.getPT();
-    const tMin = pt.getHours() * 60 + pt.getMinutes();
-    const minutesSinceOpen = tMin - 390; // 390 = 6:30am PT = 9:30am ET
-    const minutesToClose = 780 - tMin;   // 780 = 1:00pm PT = 4:00pm ET
-    const nearAnOpenOffset = TARGET_MINUTES_AFTER_OPEN.some(target => Math.abs(minutesSinceOpen - target) <= TOLERANCE_MIN);
-    const nearPreClose = Math.abs(minutesToClose - TARGET_MINUTES_BEFORE_CLOSE) <= TOLERANCE_MIN;
-    if (!nearAnOpenOffset && !nearPreClose) {
-      const reason = `scheduled firing at minutesSinceOpen=${minutesSinceOpen}, minutesToClose=${minutesToClose} doesn't land within ${TOLERANCE_MIN} minutes of an intended target (open+30, open+140, close-45) -- wrong-season half of a DST-paired cron entry`;
-      console.log(`log-signals-edge: ${reason}. No-op: no scan_runs row written, no Alpaca request made. The Actions log is the record that the cron fired.`);
-      reportNoop(reason);
+    const gate = await scheduledScanGate({
+      engineSource: 'EDGE', getPT: global.getPT, ptDateStr: global.ptDateStr,
+      classifySession: global.classifySession, supabaseUrl: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY,
+    });
+    if (!gate.proceed) {
+      console.log(`log-signals-edge: ${gate.reason} (minutesSinceOpen=${gate.minutesSinceOpen}). No-op: no scan_runs row written, no Alpaca request made.`);
+      reportNoop(gate.reason);
       return;
     }
+    console.log(`log-signals-edge: scheduled firing at ${gate.hhmm} PT, minutesSinceOpen=${gate.minutesSinceOpen}, regular session open, no EDGE scan in the last ${SPACING_MIN} min -- proceeding with a real scan.`);
   }
 
   const scanRunId = randomUUID();

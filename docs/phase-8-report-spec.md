@@ -20,7 +20,7 @@ The third cut is what needs signal_log. Without a record of signals shown but NO
 
 - Traded outcomes — trades_v2, with engine_source ('EDGE'/'WARRIOR'/NULL) and source ('App Signal'/'Own Decision') as INDEPENDENT axes. NULL engine_source means no engine produced it. Never collapse those two columns into one label — Roman can act on his own judgment on a stock Warrior surfaced, and that case has to stay visible.
 - Untraded outcomes — signal_log's ret_5m … ret_5d, filled by the outcome job. The report is not buildable until that job runs.
-- The link — trades_v2.signal_log_id, with the outcome job's resolution states: unresolved / taken-exact / taken-by-fallback / not-taken-confirmed. source = 'Own Decision' rows are excluded from fallback matching entirely.
+- The link — trades_v2.signal_log_id, with the outcome job's resolution states: unresolved / taken-exact / taken-by-fallback / not-taken-confirmed. source = 'Own Decision' rows are excluded from fallback matching entirely. CAUSALITY PRECONDITION (2026-10-09): a signal_log row can only be taken (or traded against) by a trade bought at or after its first_shown_at (buy_date + buy_time, PT) — scripts/lib/taken-precedence.mjs. Before this, all 4 same-day matches in production were trades bought hours BEFORE the signal was logged.
 
 ## Rules the report enforces itself, not left to the reader
 
@@ -28,13 +28,14 @@ The third cut is what needs signal_log. Without a record of signals shown but NO
    - OPEN vs CLOSED session rows. RVOL is structurally uncheckable outside market hours. Join through scan_session → scan_runs.session. Required, not optional.
    - Complete vs incomplete scan runs. A run that evaluated 40 of 60 looks exactly like a day with 40 candidates.
    - Periods where only one engine was logging. If Warrior logs from day 1 and EDGE from day 12, the first eleven days cannot appear in a head-to-head. State the overlapping window and compute only inside it.
+   - TIME-OF-DAY BUCKETING (2026-10-09). Since scripts/lib/scan-gate.mjs, both loggers scan whenever a late GitHub delivery lands in the regular session, so rows arrive at irregular, day-varying times. Every aggregate over signal_log or scan_runs buckets by minutes-since-open, derived per row from first_shown_at (PT; 6:30am = 0). There is no column for it, on purpose. NEVER POOL A SESSION. This is hardest-binding for WARRIOR: it is a first-hour strategy, and a setup that arms at 12:30pm is a real observation but NOT evidence about the strategy the playbook describes. A 12:30pm row must never be averaged together with a 6:50am row as if they were the same thing. Pooling is the obvious query to write, and it is wrong. Also: EDGE rows before 2026-10-12 are almost all ~12:05-12:25pm PT (the only window the old schedule ever hit), so they form one bucket, not a sample of the day.
    - Pre-migration trades. The 37 migrated rows are null for peak price, ATR, near-miss, news, signals-fired. Disclose the count; never let null average as zero.
 
 2. NOT_EVALUATED IS A COUNT, NEVER A SILENCE. Tier totals must sum to candidates scanned. If 10 of 23 weren't judged, that appears on the same line as the qualification rate, not in a footnote.
 
 3. THE REPORT MUST BE ABLE TO SAY "NOT ENOUGH DATA YET." The single most important requirement. At 30 trades nothing is meaningful, and a report that always names a winner will name one on three trades and be believed. Every comparison prints its n. Below the pre-committed review point (30 Warrior trades or 60 days) the headline reads PROVISIONAL and states what would change it.
 
-4. HONEST DENOMINATOR FOR "ROMAN VS THE ENGINE." His picks compare against the full list shown that day, not the subset that happened to work. That's the same selection bias that contaminated the original backtest.
+4. HONEST DENOMINATOR FOR "ROMAN VS THE ENGINE." His picks compare against the full list shown that day, not the subset that happened to work. That's the same selection bias that contaminated the original backtest. REPORT THE SCAN COUNT NEXT TO IT (2026-10-09): "the list shown that day" is the union of every scan's first sightings, so it grows with the number of scans. A 1-scan day and a 5-scan day are not the same denominator. Print scans-that-day (count of scan_runs rows per engine/date) on the same line as the list size, never silently compare across different scan counts.
 
 5. THE STANDING VERDICT TRAVELS WITH ANY POSITIVE RESULT. The 18-month backtest was negative at every horizon, every float bucket, every cell of the stop/target grid. If forward results look good on a small sample, that's a reason to check the sample. The report says so in its own text so the caveat can't be separated from the numbers.
 
