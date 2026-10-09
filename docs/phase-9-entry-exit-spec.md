@@ -878,6 +878,19 @@ cron time, actual fire time, delivered-vs-dropped inferred from the gaps,
 and the no-op reason — turns "GitHub is unreliable" from an impression
 into a number.
 
+> **workflow_runs data notes (2026-10-09).** The table was written here on
+> 2026-09-15 but not applied until 2026-10-09 — the workflows' insert
+> failed silently for 24 days, so there is no delivery data before that.
+> Anon may insert only the five firing columns and update only the four
+> outcome columns (db/023), so `actual_fired_at` is write-once and
+> `created_at` is always server time — compare the two as a sanity
+> check on every delay analysis. **One verification row,
+> `workflow_name = 'db023-verify'`, is permanent** (anon has no delete
+> path): every query computing cron delay must include
+> `where workflow_name <> 'db023-verify'`. Roman can delete it in the SQL
+> editor with `delete from workflow_runs where workflow_name = 'db023-verify';`
+> — the filter stays harmless either way.
+
 After a week there is a real delivery rate per schedule density, and the
 platform question answers itself. Candidates if the answer is bad:
 Cloudflare Workers cron (free, runs the existing JS, reliable delivery)

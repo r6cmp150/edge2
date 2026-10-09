@@ -72,21 +72,49 @@ create index if not exists workflow_runs_name_time_idx
 -- trigger_type, not trigger: trigger is a (non-reserved) Postgres keyword;
 -- it works unquoted but reads like DDL when scanning the schema.
 --
--- VERIFICATION PLAN (run after applying; same shape as db/019's check B --
--- RE-SELECT, never a status code: PostgREST returns 200 with an empty
--- body on a filtered/refused update, which is how this class of bug has
--- hidden before):
---   A. As anon: INSERT a row (workflow_name='db023-verify',
---      trigger_type='workflow_dispatch', actual_fired_at=<T>). Re-select:
---      row exists.
---   B. As anon: PATCH that row's actual_fired_at to <T - 1 day>. Expect a
---      permission error (42501). Re-select: actual_fired_at still <T>.
---      THIS is the check; it fails the file if the value moved.
---   C. As anon: PATCH that row's completed_at/job_status/is_noop/
---      noop_reason. Re-select: all four changed -- the two-phase write the
---      workflows depend on still works.
---   The verify row stays (anon has no delete path, by design); it is
---   named so it can be filtered out.
+-- INSERT IS NARROWED TOO, so created_at is always the SERVER's clock.
+-- actual_fired_at is self-reported by the audited process and has to be
+-- (the workflow is the only thing that knows when it fired). created_at,
+-- set by default now() because anon can't supply it, is the only
+-- independent corroboration this table will ever have: if the two diverge
+-- by more than a few seconds, something is wrong. Column-level insert
+-- privilege means an omitted column falls back to its default -- created_at
+-- is "not null default now()", so it can never silently become NULL (and
+-- if the default were ever dropped, not null makes the insert fail loudly
+-- rather than store an absence). anon may insert exactly workflow_name,
+-- trigger_type, declared_cron, actual_fired_at, run_url -- the workflows'
+-- insert payload, verbatim. id, is_noop and created_at take defaults;
+-- the outcome columns arrive later by PATCH.
+--
+-- VERIFICATION PLAN (run after applying, as anon via the REST API). Same
+-- shape as db/019's check B: every refusal is proven BY RE-SELECT, even on
+-- a clean 4xx -- a column-grant refusal is a different code path from
+-- RLS, and a status code alone has proven nothing in this project more
+-- than once. Every check that should fail must be attempted.
+--   A. INSERT {workflow_name:'db023-verify', trigger_type:
+--      'workflow_dispatch', actual_fired_at:<T>}. Re-select: row exists,
+--      created_at within seconds of real now.
+--   B. PATCH that row {actual_fired_at:<T - 1 day>}. Expect 42501.
+--      Re-select: actual_fired_at still <T>.
+--   C. ADVERSARIAL MIXED PATCH: {completed_at, job_status, is_noop,
+--      noop_reason, actual_fired_at} in ONE body. Expect 42501 for the
+--      WHOLE statement. Re-select: all five unchanged -- including the
+--      four permitted columns. A partial application (four landed,
+--      actual_fired_at didn't) is a FAIL, and is exactly what a
+--      passing-looking test would hide.
+--   D. INSERT {workflow_name:'db023-verify', trigger_type:
+--      'workflow_dispatch', actual_fired_at:<T>, created_at:
+--      '2020-01-01T00:00:00Z'}. Expect 42501. Re-select: no db023-verify
+--      row with created_at in 2020.
+--   E. PATCH the A row with ONLY the four outcome columns. Re-select: all
+--      four changed -- the two-phase write the workflows depend on still
+--      works.
+--
+-- THE db023-verify ROW STAYS (anon has no delete path, by design). It
+-- would sit in the delay statistics, so EVERY query computing cron delay
+-- from this table filters it:  where workflow_name <> 'db023-verify'
+-- Roman can remove it from the SQL editor whenever he likes:
+--   delete from workflow_runs where workflow_name = 'db023-verify';
 alter table workflow_runs enable row level security;
 
 drop policy if exists "anon insert" on workflow_runs;
@@ -97,6 +125,9 @@ create policy "anon update" on workflow_runs for update to anon using (true) wit
 
 revoke update on workflow_runs from anon;
 grant update (completed_at, job_status, is_noop, noop_reason) on workflow_runs to anon;
+
+revoke insert on workflow_runs from anon;
+grant insert (workflow_name, trigger_type, declared_cron, actual_fired_at, run_url) on workflow_runs to anon;
 
 drop policy if exists "anon select" on workflow_runs;
 create policy "anon select" on workflow_runs for select to anon using (true);
