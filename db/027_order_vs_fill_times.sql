@@ -14,15 +14,16 @@
 --   filled_at              = BUY FILL instant (timestamptz -- not a date +
 --     text pair; buy_time's implicit-PT text is why that comparison needed
 --     a converter).
---   order_type             = 'market' | 'limit'; NULL = legacy row, type
---     never recorded (every row before this file).
+--   order_type             = 'market' | 'limit' | 'stop' | 'stop_limit' |
+--     'trailing_stop'; NULL = legacy row, type never recorded (every row
+--     before this file).
 --   sell_date / sell_time  = the SELL FILL, by construction: a sale can
 --     only be recorded once it has filled, because its price isn't known
 --     before that (and trades_v2 is insert-only for anon, db/002, so it
 --     can't be recorded early and completed later). No sell placement
 --     column: nothing would read it -- hold duration uses the fill, and
 --     attribution is entry-side only.
---   sell_order_type        = 'market' | 'limit'; NULL = legacy. Recorded
+--   sell_order_type        = same five values; NULL = legacy. Recorded
 --     for one question nothing else can answer: do limit exits beat market
 --     exits?
 --
@@ -30,7 +31,8 @@
 -- core/clock.js classifySession at the moment the buy is entered):
 --   market + PRE_MARKET / REGULAR / AFTER_HOURS -> filled_at = now
 --   market + CLOSED (overnight, weekend, holiday) -> NULL, pending
---   limit                                         -> NULL until marked filled
+--   limit / stop / stop_limit / trailing_stop     -> NULL until marked filled
+--     (none of them fills on placement; each waits on a price condition)
 -- The line is "is the market transacting", not "is this the regular
 -- session". Extended-hours fills are real: Roman's broker executes in pre-
 -- and after-hours (10 of his first 37 buys were after the close, confirmed
@@ -76,6 +78,17 @@
 -- are a date + PT-text pair, and a cross-type, timezone-converting CHECK is
 -- more fragile than the app validating "fill before sale" on the form.
 --
+-- WHY THE ORDER-TYPE CHECKS STAY (unlike workflow_runs.trigger_type, whose
+-- CHECK was removed): there the writer was an audit log recording an
+-- external event it didn't control, and a rejection failed the very job
+-- being observed. Here the writer is our own UI with a fixed set of
+-- choices, so a rejected value means a UI bug, and failing loudly is
+-- correct. The set is widened up front (stop / stop_limit / trailing_stop,
+-- 2026-10-09) because Roman uses a stop on every position: recording a
+-- broker-side stop order must not fail, and widening later would cost a
+-- migration. A broker stop ORDER is distinct from the app's own
+-- position.stop level.
+--
 -- Additive only. Safe to run twice. Run in the Supabase SQL editor.
 
 begin;
@@ -87,18 +100,18 @@ alter table trades_v2 add column if not exists sell_order_type text;
 
 alter table trades_v2 drop constraint if exists trades_v2_order_type_chk;
 alter table trades_v2 add  constraint trades_v2_order_type_chk
-  check (order_type in ('market', 'limit'));
+  check (order_type in ('market', 'limit', 'stop', 'stop_limit', 'trailing_stop'));
 alter table trades_v2 drop constraint if exists trades_v2_sell_order_type_chk;
 alter table trades_v2 add  constraint trades_v2_sell_order_type_chk
-  check (sell_order_type in ('market', 'limit'));
+  check (sell_order_type in ('market', 'limit', 'stop', 'stop_limit', 'trailing_stop'));
 
 comment on column trades_v2.buy_date        is 'BUY ORDER PLACEMENT date (PT) -- the decision moment. Signal attribution uses this, never filled_at. (db/027)';
 comment on column trades_v2.buy_time        is 'BUY ORDER PLACEMENT time, PT wall clock HH:MM. See buy_date. (db/027)';
 comment on column trades_v2.filled_at       is 'BUY FILL instant. NULL = not filled/confirmed (new rows) or legacy (order_type NULL). Hold duration runs from this when set. (db/027)';
-comment on column trades_v2.order_type      is '''market'' | ''limit''; NULL = legacy row, type never recorded. (db/027)';
+comment on column trades_v2.order_type      is '''market'' | ''limit'' | ''stop'' | ''stop_limit'' | ''trailing_stop''; NULL = legacy row, type never recorded. (db/027)';
 comment on column trades_v2.sell_date       is 'SELL FILL date (PT), by construction -- a sale is recorded only once filled. (db/027)';
 comment on column trades_v2.sell_time       is 'SELL FILL time, PT wall clock HH:MM. (db/027)';
-comment on column trades_v2.sell_order_type is '''market'' | ''limit''; NULL = legacy row. For "do limit exits beat market exits". (db/027)';
+comment on column trades_v2.sell_order_type is '''market'' | ''limit'' | ''stop'' | ''stop_limit'' | ''trailing_stop''; NULL = legacy row. For "do limit exits beat market exits". (db/027)';
 
 -- ── portfolio (open positions; no RLS by design -- db/NOTE_portfolio_rls_not_applied.sql) ──
 alter table portfolio add column if not exists order_type text;
@@ -106,9 +119,9 @@ alter table portfolio add column if not exists filled_at  timestamptz;
 
 alter table portfolio drop constraint if exists portfolio_order_type_chk;
 alter table portfolio add  constraint portfolio_order_type_chk
-  check (order_type in ('market', 'limit'));
+  check (order_type in ('market', 'limit', 'stop', 'stop_limit', 'trailing_stop'));
 
-comment on column portfolio.order_type is '''market'' | ''limit''; NULL = entered before db/027 (treated as filled). (db/027)';
+comment on column portfolio.order_type is '''market'' | ''limit'' | ''stop'' | ''stop_limit'' | ''trailing_stop''; NULL = entered before db/027 (treated as filled). (db/027)';
 comment on column portfolio.filled_at  is 'BUY FILL instant. NULL with order_type set = PENDING ORDER, not a position. (db/027)';
 
 commit;

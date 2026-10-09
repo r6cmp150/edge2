@@ -1810,6 +1810,85 @@ it.
 
 ---
 
+## 4.8 Order vs fill (db/027) — what `portfolio` means once a row can be pending
+
+*Written 2026-10-09, before any UI. db/027 adds `order_type` + `filled_at`
+(trades_v2, portfolio) and `sell_order_type` (trades_v2). Adding the columns
+is the easy half. The hard half: every existing read of `portfolio` assumes
+every row is a holding, and after db/027 that stops being true.*
+
+**Definition.** A `portfolio` row is a **holding** unless `order_type` is set
+and `filled_at` is NULL, in which case it is a **pending order**. Legacy rows
+(`order_type` NULL) are holdings, as today. One predicate decides this, in
+one place:
+
+```js
+isPendingOrder(p)  = p.orderType != null && p.filledAt == null
+getHoldings()      = state.portfolio.filter(p => !isPendingOrder(p))
+getPendingOrders() = state.portfolio.filter(isPendingOrder)
+```
+
+**Rule:** no code outside persistence reads `state.portfolio` directly.
+Persistence means load, save, push on add, and remove on sale or cancel.
+Every other reader calls `getHoldings()` or `getPendingOrders()`. A grep for
+`state.portfolio` outside those spots is a review failure, the same way
+`check-boundaries.sh` treats engine imports.
+
+### Every current read, and what it becomes (enumerated 2026-10-09, 31 references in 14 functions)
+
+| Call site | Today | After |
+|---|---|---|
+| `getOwnedPosition` (app.js:916) → modal (2955, 3428, 3510), owned-score snapshot (1950) | finds any row by ticker | **holdings only**; add `getPendingOrder(ticker)` so the modal can say "order pending" instead of showing a position |
+| `getFilteredSignals` (2450), signals summary counts (2164) | hide owned tickers from buy signals | hide tickers with a holding **or** a pending order (Roman has already acted; showing it again invites a duplicate order). The summary counts follow the same rule |
+| `getAvailableBudget` (997) | `shares × buyPrice` over all rows | holdings at `buyPrice`, **plus** pending buys at their order price, reported as a separate "committed to open orders" figure. A pending order really does reserve the cash; hiding it would overstate what's available |
+| `runScreener` owned tickers (1973) | all rows | holdings only |
+| `renderSignalsTab` after-hours exit list (2128–2129) | all rows | holdings only (nothing to exit on a pending order) |
+| `renderPortfolioTab` (3801): empty state (3806), engine filter (3815–3820), price fetch (3826), no-data list (3878), urgency sort (3928), cards and totals (to 4053) | every row is a card with price, return, P&L, hold time, URE | holdings render exactly as today. Pending orders get their **own section** (below). The empty state only shows when both lists are empty. Totals, P&L, urgency and engine-filter counts use holdings only |
+| `filterByEngine` / engine counts (4789–4808) | all rows | holdings only for the "positions" count; pending counted separately |
+| `confirmMarkSold` (5418) | sells any row | **refuses a pending row** (loud toast, no write). Pending cards have no Sell button at all; this guard is the backstop |
+| `checkPriceAlerts` (8828–8844) | all rows | holdings only |
+| `checkTimeLimitAlerts` (8894–8898) | all rows, held-days from `buyDate` | holdings only; hold start from `holdSpan` (below) |
+| `updateNavBadges` URE badge (9002–9024) | all rows | holdings only. Pending orders get their own badge only when stale (below) |
+| `finalizeAddPortfolio` (3795), Warrior `_confirmAddPosition` (engines/warrior/index.js:617) | push a holding | push with `orderType` / `filledAt` set by the session rule in db/027's header |
+| `loadState` / `loadPortfolioAndSettingsFromSupabase` (9058), localStorage key list (8428), `core/store.js` mappers (108, 168) | raw rows | carry `orderType` / `filledAt` through both mappers. No filtering here: persistence stays raw |
+
+### What a pending row renders as
+
+Never a position. A pending card shows only facts that exist before a fill:
+
+> **PENDING LIMIT BUY** · CCO · 200 sh @ $4.20 · placed Mon 07:41 (2 closes ago)
+> last $4.31 (2.6% above your limit) · [Mark filled] [Cancel]
+
+- **Must not appear:** a return %, P&L, hold time, Score Now / URE recommendation, or a Sell button. Those are facts about a holding, and a pending order has none. Rendering them would be the sell-price bug again: a row that looks like a fact because the renderer had no way to say "there's nothing here yet."
+- **May appear:** the current price, labelled as distance to the order's trigger price. That's a fact about the order, not a return.
+- **Mark filled** asks for the fill time and fill price. It defaults to now and the order price, and both are editable. It writes `filled_at` and the real `buyPrice`. From that moment the row is a holding.
+
+### An order that never fills
+
+Two exits, and neither is silent:
+
+1. **Cancel** deletes the row from `portfolio`. Nothing is written to `trades_v2`, because no trade happened.
+2. **Stale surfacing.** Once a pending order has sat through **one full market close** after placement (`marketClosesHeld(placementDate, today) >= 1`), it is **stale**. Stale orders get a banner at the top of the Portfolio tab and a nav badge: "Still open at your broker? Mark filled / Cancel".
+   - A day order would have expired at that close, and a market order placed while the market was closed should have filled at the next open. Either way, the app's picture is now probably wrong.
+   - The app never changes the state itself, since it can't know what the broker did. It keeps asking until Roman answers.
+
+### Hold duration: one function, every caller (rule from 2026-10-09)
+
+```js
+holdSpan(t, endDate) -> { startDate, basis, closes }
+  startDate = t.filledAt ? ptDate(t.filledAt) : t.buyDate
+  basis     = t.filledAt ? 'fill'
+            : t.orderType ? 'order date — fill not recorded'
+            :               'order date — legacy row'
+  closes    = marketClosesHeld(startDate, endDate)
+```
+
+- **One function.** It lives in core/clock.js beside `marketClosesHeld`, and every hold calculation goes through it: the Sold-tab mapper, the sale-time record, the archive report line, `checkTimeLimitAlerts`, and the Portfolio card's days-held. `endDate` is `sell_date` for a closed trade (a fill, by construction) and today for an open holding.
+- **No inline arithmetic.** Calendar arithmetic repeated at each call site is how 52 of 270 trades (68 under the final definition) landed in the wrong bucket.
+- **Report the mix.** Anything that aggregates hold duration states how many trades used each `basis`, rather than averaging two different measures.
+- **Open decision:** the live Portfolio windows (DAY 1 / 3-DAY 4 / WEEK 7 in `maxHoldDays`) currently count calendar days. Moving them to closes changes when alerts fire, so `holdSpan` supplies the start date there and the unit stays as it is until Roman decides.
+
+
 ## 5. DDL and sequencing
 
 Order matters; each step must round-trip before the next starts.

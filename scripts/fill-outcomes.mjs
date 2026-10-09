@@ -122,6 +122,11 @@ function loadReal(relPath, exposeNames) {
 // BLOCKED/REJECTED/NOT_EVALUATED; EDGE: BELOW_THRESHOLD/NOT_EVALUATED) --
 // see db/016's taken_resolution comment for the full design and the
 // traded-against-engine state this distinction exists to produce.
+// Taken-resolution matching window, calendar days after signal_date. One
+// constant: Pass 2 and the stale-unresolved assertion at the end of main()
+// must agree on when a window has closed.
+const TAKEN_WINDOW_CALENDAR_DAYS = 9;
+
 const ACTIONABLE_TIER_RANK = {
   WARRIOR: { QUALIFIED: 1, NEAR_MISS: 2 },
   EDGE: { SHOWN: 1 },
@@ -537,7 +542,7 @@ async function main() {
     // candidates -- unlike the returns fix, there's no per-column value
     // to mislabel, so an approximate calendar bound is an honest
     // tradeoff, not a shortcut version of the same bug.
-    const windowEnd = addCalendarDays(signalDate, 9);
+    const windowEnd = addCalendarDays(signalDate, TAKEN_WINDOW_CALENDAR_DAYS);
     const candRes = await fetch(
       `${SUPABASE_URL}/rest/v1/trades_v2?select=id,signal_log_id,buy_date,buy_time,created_at&source=neq.Own Decision&engine_source=eq.${engineSource}&ticker=eq.${symbol}&buy_date=gte.${signalDate}&buy_date=lte.${windowEnd}&order=buy_date.asc,created_at.asc`,
       { headers: anonHeaders }
@@ -757,6 +762,27 @@ async function main() {
     console.log(`fill-outcomes: re-selected ${verifyBody.length}/${touchedTradeIds.length} touched trades_v2 row(s) via anon key:`);
     for (const row of verifyBody) console.log(`  ${row.id}: ${JSON.stringify(row)}`);
   }
+
+  // ── Stale-unresolved assertion (2026-10-09) ──
+  // A signal_log row whose matching window has CLOSED but is still
+  // 'unresolved' is a defect, not a waiting state: Pass 2 only reads the
+  // last 12 days, so a row that misses resolution before it ages out stays
+  // unresolved forever, silently -- the exact trap that made
+  // db/CORRECTION_2026-10-09_taken_resolution.sql necessary. Replaces a
+  // human reminder ("re-select CCO/TDAY/GO on 10-14") with a check that
+  // can't be forgotten: re-read from the database AFTER this run's writes,
+  // across ALL dates (not just the lookback -- a row already past it is
+  // stuck for good and must surface too), and fail the job naming every
+  // stuck row. Clears itself once they resolve. --write runs only: a dry
+  // run writes nothing, so it would fail on rows it was about to resolve.
+  const unresolvedRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?select=symbol,signal_date,engine_source,tier&taken_resolution=eq.unresolved`, { headers: anonHeaders });
+  if (unresolvedRes.status >= 300) throw new Error(`stale-unresolved assertion: could not read signal_log: ${unresolvedRes.status} ${await unresolvedRes.text()}`);
+  const stuck = (await unresolvedRes.json()).filter(r => tradingDayHasClosed(addCalendarDays(r.signal_date, TAKEN_WINDOW_CALENDAR_DAYS)));
+  if (stuck.length) {
+    const list = stuck.map(r => `${r.engine_source} ${r.symbol} ${r.signal_date} ${r.tier}`).join(', ');
+    throw new Error(`${stuck.length} signal_log row(s) still 'unresolved' after their ${TAKEN_WINDOW_CALENDAR_DAYS}-day window closed -- Pass 2 should have resolved them, and once older than the 12-day lookback they never will: ${list}`);
+  }
+  console.log(`fill-outcomes: stale-unresolved assertion passed -- no 'unresolved' row has a closed ${TAKEN_WINDOW_CALENDAR_DAYS}-day window.`);
 }
 
 main().catch(e => { console.error('fill-outcomes: FAILED', e.message, e.stack); process.exit(1); });
