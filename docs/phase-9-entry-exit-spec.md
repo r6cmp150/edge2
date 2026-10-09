@@ -913,6 +913,25 @@ into a number.
 > stated, not omitted. Cron delay itself is `actual_fired_at − declared
 > fire time`; runner provisioning happens before step 0 and is correctly
 > counted as part of GitHub's delivery delay.
+>
+> **job_status states — never collapse them.** The outcome PATCH is the
+> LAST step of every workflow, `if: always()`, writing `${{ job.status }}`
+> (never a literal). Until 2026-10-09 it ran before the commit/push and
+> deliberate-fail steps, so it recorded the job's state before those steps
+> could fail it: a failed push, or backup-tables' own "fail the run" step,
+> was logged as success. (Instance nine of the family: the workflow
+> genuinely knew it failed, and the record was written before the fact
+> existed.) Four real states:
+> - `success` / `failure` — written by the final step from job.status.
+> - `cancelled` — also written by it (`always()` steps run on cancel).
+> - **NULL — the final step never executed** (runner killed, the job died
+>   before reaching it, or a job-level timeout that didn't run it). **NULL
+>   is a finding, not a missing value**: never default it, never coalesce
+>   it to failure. The column is nullable with no default, by design.
+>
+> Any query counting failures reports NULL as its own bucket — pass / fail
+> / cancelled / not-recorded — same discipline as everywhere else in this
+> project.
 
 After a week there is a real delivery rate per schedule density, and the
 platform question answers itself. Candidates if the answer is bad:
