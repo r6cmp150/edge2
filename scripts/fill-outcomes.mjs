@@ -60,7 +60,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
-import { reportNoop } from './lib/workflow-instrumentation.mjs';
+import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { signalPrecedesTrade, isMostRecentPriorSignal } from './lib/taken-precedence.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -192,6 +192,8 @@ async function main() {
   // run mostly no-oping on incomplete same-day data, and so the decision
   // is made from a REAL /v2/clock check -- not a bare cron-time assumption
   // that today's own investigation just showed cannot be trusted.
+  // The no-op decision is made here and reported ONCE, below, either way.
+  let noopReason = null;
   if (process.argv.includes('--scheduled')) {
     const clockRes = await fetch('https://paper-api.alpaca.markets/v2/clock', {
       headers: { 'APCA-API-KEY-ID': ALPACA_KEY_ID, 'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY },
@@ -199,13 +201,12 @@ async function main() {
     if (!clockRes.ok) throw new Error(`v2/clock check failed: HTTP ${clockRes.status} ${await clockRes.text()}`);
     const clock = await clockRes.json();
     if (clock.is_open) {
-      const reason = `market still open at ${new Date().toISOString()} (next close ${clock.next_close}) -- this scheduled firing landed before close, standing down`;
-      console.log(`fill-outcomes: ${reason}. A later firing in the same day's schedule will pick this up once the market is confirmed closed. The Actions log is the record that the cron fired.`);
-      reportNoop(reason);
-      return;
-    }
-    console.log(`fill-outcomes: market confirmed closed at ${new Date().toISOString()} (next open ${clock.next_open}) -- proceeding.`);
+      noopReason = `market still open at ${new Date().toISOString()} (next close ${clock.next_close}) -- this scheduled firing landed before close, standing down`;
+      console.log(`fill-outcomes: ${noopReason}. A later firing in the same day's schedule will pick this up once the market is confirmed closed. The Actions log is the record that the cron fired.`);
+    } else console.log(`fill-outcomes: market confirmed closed at ${new Date().toISOString()} (next open ${clock.next_open}) -- proceeding.`);
   }
+  reportNoopDecision(noopReason !== null, noopReason);
+  if (noopReason !== null) return;
 
   const todayPT = global.ptDateStr(global.getPT());
   const pt = global.getPT();

@@ -26,7 +26,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { reportNoop } from './lib/workflow-instrumentation.mjs';
+import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -62,12 +62,15 @@ async function main() {
   const capturedAt = new Date().toISOString();
   const clock = await alpacaGet(ALPACA_TRADING_BASE, '/v2/clock');
 
+  // The no-op decision: a closed market writes a closed marker but makes no
+  // screener call. Reported ONCE, here, either way.
+  const closedReason = clock.is_open ? null : `market closed at ${capturedAt} (next open ${clock.next_open})`;
+  reportNoopDecision(!clock.is_open, closedReason);
+
   let row;
   if (!clock.is_open) {
     row = { capturedAt, marketOpen: false, movers: null, mostActives: null };
-    const reason = `market closed at ${capturedAt} (next open ${clock.next_open})`;
-    console.log(`capture-movers-snapshot: ${reason} -- logging a closed marker, no screener call made.`);
-    reportNoop(reason);
+    console.log(`capture-movers-snapshot: ${closedReason} -- logging a closed marker, no screener call made.`);
   } else {
     const [movers, mostActives] = await Promise.all([
       alpacaGet(ALPACA_SCREENER_BASE, '/screener/stocks/movers', { top: 50 }),

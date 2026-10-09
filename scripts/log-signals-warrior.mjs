@@ -55,7 +55,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
-import { reportNoop } from './lib/workflow-instrumentation.mjs';
+import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { scheduledScanGate, SPACING_MIN } from './lib/scan-gate.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -202,18 +202,20 @@ async function main() {
   // no WARRIOR scan_runs row started in the last SPACING_MIN minutes.
   // Applies ONLY to a real scheduled firing -- a manual workflow_dispatch
   // always runs, for testing/debugging.
+  // The no-op decision is made here and reported ONCE, below, either way.
+  let noopReason = null;
   if (process.env.GITHUB_EVENT_NAME === 'schedule') {
     const gate = await scheduledScanGate({
       engineSource: 'WARRIOR', getPT: global.getPT, ptDateStr: global.ptDateStr,
       classifySession: global.classifySession, supabaseUrl: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY,
     });
     if (!gate.proceed) {
+      noopReason = gate.reason;
       console.log(`log-signals-warrior: ${gate.reason} (minutesSinceOpen=${gate.minutesSinceOpen}). No-op: no scan_runs row written, no Alpaca request made.`);
-      reportNoop(gate.reason);
-      return;
-    }
-    console.log(`log-signals-warrior: scheduled firing at ${gate.hhmm} PT, minutesSinceOpen=${gate.minutesSinceOpen}, regular session open, no WARRIOR scan in the last ${SPACING_MIN} min -- proceeding with a real scan.`);
+    } else console.log(`log-signals-warrior: scheduled firing at ${gate.hhmm} PT, minutesSinceOpen=${gate.minutesSinceOpen}, regular session open, no WARRIOR scan in the last ${SPACING_MIN} min -- proceeding with a real scan.`);
   }
+  reportNoopDecision(noopReason !== null, noopReason);
+  if (noopReason !== null) return;
 
   // ── universe: committed movers-snapshot preferred, self-fetch as a
   // named, stamped fallback ──

@@ -38,6 +38,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const OUT_PATH = path.join(REPO_ROOT, 'data', 'float-table.json');
@@ -72,6 +73,10 @@ const LIMIT = limitArg !== -1 ? parseInt(argv[limitArg + 1], 10) : null;
 async function main() {
   const t0 = Date.now();
   const { alpacaKeyId, alpacaSecretKey } = readCredentials();
+  // No no-op concept: past the credential check, every run does real work.
+  // Reported as false (not left unset) so is_noop NULL keeps one meaning --
+  // the run died before deciding.
+  reportNoopDecision(false);
 
   global.state = { settings: { alpacaKey: alpacaKeyId, alpacaSecret: alpacaSecretKey }, warriorEdgarCikMapCache: null, warriorFloatCache: null, universeAssetCache: null };
   global.persist = () => {};

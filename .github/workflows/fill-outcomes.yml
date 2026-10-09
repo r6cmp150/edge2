@@ -88,7 +88,7 @@ jobs:
             -H "apikey: sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl" \
             -H "Content-Type: application/json" \
             -H "Prefer: return=representation" \
-            -d "{\"workflow_name\": \"${{ github.workflow }}\", \"trigger\": \"${{ github.event_name }}\", \"declared_cron\": \"${{ github.event.schedule }}\", \"actual_fired_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"run_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}")
+            -d "{\"workflow_name\": \"${{ github.workflow }}\", \"trigger_type\": \"${{ github.event_name }}\", \"declared_cron\": \"${{ github.event.schedule }}\", \"actual_fired_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"run_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}")
           echo "$ROW"
           echo "id=$(echo "$ROW" | jq -r 'if type=="array" then (.[0].id // empty) else empty end' 2>/dev/null || echo)" >> "$GITHUB_OUTPUT"
 
@@ -113,18 +113,6 @@ jobs:
           fi
           echo "Running: node scripts/fill-outcomes.mjs $ARGS"
           node scripts/fill-outcomes.mjs $ARGS
-
-      - name: Log workflow outcome (Phase 9 §2.7)
-        if: always()
-        run: |
-          ID="${{ steps.log_fired.outputs.id }}"
-          if [ -z "$ID" ]; then echo "no workflow_runs id captured, skipping outcome log"; exit 0; fi
-          REASON_JSON=$(node -e "console.log(JSON.stringify(process.env.WORKFLOW_NOOP_REASON || null))")
-          curl -s -X PATCH "https://kbjqxaukyawcmcyjoiey.supabase.co/rest/v1/workflow_runs?id=eq.$ID" \
-            -H "apikey: sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl" \
-            -H "Content-Type: application/json" \
-            -d "{\"completed_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"job_status\": \"${{ job.status }}\", \"is_noop\": ${WORKFLOW_IS_NOOP:-false}, \"noop_reason\": $REASON_JSON}" \
-            -o /dev/null
 
       - name: Run split audit (audit-signal-log-splits.mjs --write)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_grant_checks == 'true'
@@ -153,3 +141,26 @@ jobs:
             git pull --rebase
             git push
           fi
+
+      # LAST STEP, if: always() (2026-10-09): job_status must be written
+      # AFTER every step that can fail the job (commit/push, deliberate
+      # fail steps), or it records the state before the fact existed.
+      # job.status, never a literal. NULL job_status = this step never ran.
+      - name: Log workflow outcome (Phase 9 §2.7)
+        if: always()
+        run: |
+          ID="${{ steps.log_fired.outputs.id }}"
+          if [ -z "$ID" ]; then echo "::error::workflow_runs insert returned no id -- the §2.7 firing log is writing nowhere (see the firing step output: missing table, RLS, or Supabase down). Failing on purpose: as a skip this stayed silent for 24 days across all six workflows."; exit 1; fi
+          REASON_JSON=$(node -e "console.log(JSON.stringify(process.env.WORKFLOW_NOOP_REASON || null))")
+          # is_noop: true|false from reportNoopDecision via $GITHUB_ENV; unset or
+          # empty -> JSON null ("not determined" -- the script died before
+          # deciding). UNQUOTED on purpose: the string "null" would hit a boolean
+          # column and fail the PATCH. Never :-false -- that fabricated "did real
+          # work" for every crashed run until 2026-10-09.
+          PAYLOAD="{\"completed_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"job_status\": \"${{ job.status }}\", \"is_noop\": ${WORKFLOW_IS_NOOP:-null}, \"noop_reason\": $REASON_JSON}"
+          echo "workflow_runs outcome PATCH payload: $PAYLOAD"
+          curl -sS --fail -X PATCH "https://kbjqxaukyawcmcyjoiey.supabase.co/rest/v1/workflow_runs?id=eq.$ID" \
+            -H "apikey: sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -o /dev/null

@@ -932,6 +932,14 @@ into a number.
 > Any query counting failures reports NULL as its own bucket — pass / fail
 > / cancelled / not-recorded — same discipline as everywhere else in this
 > project.
+>
+> **is_noop has the same three-valued shape**: `true` / `false` /
+> NULL = not determined (the script died before its single
+> `reportNoopDecision` call, or the final step never ran). Until
+> 2026-10-09 only `true` was ever reported and the YAML filled the rest
+> with `:-false`, so every crashed run would have read as "did real work".
+> backup-tables and build-float-table report `false` explicitly, so NULL
+> never means "not applicable" — it means only "not determined".
 
 After a week there is a real delivery rate per schedule density, and the
 platform question answers itself. Candidates if the answer is bad:

@@ -62,6 +62,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -201,6 +202,9 @@ function readPriorBackup(filePath) {
 }
 
 async function main() {
+  // No no-op concept: every run does real work. Reported as false (not left
+  // unset) so is_noop NULL keeps one meaning -- the run died before deciding.
+  reportNoopDecision(false);
   mkdirSync(BACKUP_DIR, { recursive: true });
 
   const toWrite = [];
