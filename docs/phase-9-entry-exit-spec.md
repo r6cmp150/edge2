@@ -2043,6 +2043,37 @@ an observation. Fixed by keeping two separate records — what Roman CHOSE
 (set only by his tap) and what is in EFFECT — so an automatic state can
 never masquerade as a choice; a fresh form starts with no choice at all.
 
+
+A twelfth and a thirteenth — both the seventh's shape, both found 2026-10-09
+by deliberately going looking for it rather than by new work. Once a defect
+has a name, grepping for its pattern at other call sites finds more: three
+of the four most recent entries came from asking "where else does this
+happen?". Do that search every time an entry is added here.
+
+- **Twelfth: the Portfolio Summary.** The seventh's fix made each CARD say
+  "price unavailable", but `renderPortfolioTab` still added every
+  position into the summary totals, unpriced ones at their buy-price
+  fallback, guarded only by the whole-batch `priceFetchFailed`. With one
+  or more snapshots missing, Total Value showed cost basis and Unrealized
+  P&L showed **"+$0.00 (0.0%)"** — worse than the card version, because
+  +$0.00 doesn't read as unknown; it reads as *flat*, on the one screen
+  Roman checks to know where he stands. The same block's All-Time Realized
+  P&L summed the 22 `sell_price_unverified` trades as $0 each. Fixed:
+  totals sum PRICED positions only, in three states (all priced → as
+  before; some → partial figures labelled "N of M positions priced" with
+  the unpriced tickers named; none → "unavailable", no figure); realized
+  P&L uses `computeTradeMetrics`, i.e. the same exclusion as everywhere
+  else, and states "(270 of 292 trades) … 22 excluded, outcome unknown
+  (not $0)". Never a whole-portfolio number derived from cost basis.
+- **Thirteenth, found by that same search: the Portfolio nav badge.**
+  `renderPortfolioTab` cached each card's `currentPrice` into
+  `state.portfolioPrices` — the buy-price fallback for an unpriced
+  position — and `updateNavBadges` read it back (`|| p.buyPrice`) into
+  the sell recommendation, again guarded only by the batch-level flag, so
+  the badge's HOLD/SELL count could rest on a price nobody observed.
+  Fixed: only real prices are cached, and a position with no real price
+  adds no warning either way (its card already says CANNOT EVALUATE).
+
 Every acceptance test below is a **round trip re-selected from the
 database**. Never a code read, never a UI display, never an HTTP status
 code.

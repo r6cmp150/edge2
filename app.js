@@ -4048,7 +4048,9 @@ async function renderPortfolioTab() {
     ? `<div class="pf-stale-banner">⚠ Live prices unavailable — prices and P&L below are your buy price, not current. Pull to refresh once the connection recovers.</div>`
     : '';
 
-  let totalCost = 0, totalValue = 0;
+  let totalCost = 0, totalValue = 0; // priced positions only -- see the summary block
+  let summaryPositionCount = 0;
+  const summaryUnpricedTickers = [];
   let html = '';
 
   // Sort by urgency: how much of the position's intended hold duration has
@@ -4199,13 +4201,29 @@ async function renderPortfolioTab() {
       savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
     }
 
-    state.portfolioPrices[p.ticker] = currentPrice;
+    // Cache REAL prices only (2026-10-09, instance thirteen, found by
+    // searching for the seventh's shape): currentPrice is the buy-price
+    // fallback when priceUnavailable, and updateNavBadges used to read it
+    // back as a live price, guarded only by the batch-level flag.
+    if (priceUnavailable) delete state.portfolioPrices[p.ticker];
+    else state.portfolioPrices[p.ticker] = currentPrice;
 
     const cost  = p.shares * p.buyPrice;
     const value = p.shares * currentPrice;
+    // Summary totals count PRICED positions only (2026-10-09, instance
+    // twelve). A position with no live price has currentPrice = buyPrice, so
+    // adding it would put its cost basis into Total Value and a fabricated $0
+    // into Unrealized P&L -- the summary then read "+$0.00 (0.0%)", i.e.
+    // "flat", for positions whose cards said "price unavailable". Unpriced
+    // positions are counted and named instead, never summed.
     if (matchesEngineFilter) {
-      totalCost  += cost;
-      totalValue += value;
+      summaryPositionCount++;
+      if (priceUnavailable) {
+        summaryUnpricedTickers.push(p.ticker);
+      } else {
+        totalCost  += cost;
+        totalValue += value;
+      }
     }
 
     const pnlDollar = value - cost;
@@ -4413,15 +4431,34 @@ async function renderPortfolioTab() {
     if (matchesEngineFilter) html += cardHtml;
   });
 
+  // Three states, never a number nobody computed (instance twelve):
+  //   every position priced -> whole-portfolio figures, as before
+  //   some priced           -> PARTIAL figures over the priced ones, labelled
+  //                            "N of M positions priced", unpriced ones named
+  //   none priced           -> "unavailable", no figure at all
+  // Never a whole-portfolio number derived from cost basis.
+  const pricedCount = summaryPositionCount - summaryUnpricedTickers.length;
   const totalPnL    = totalValue - totalCost;
   const totalPnLPct = totalCost > 0 ? (totalPnL / totalCost * 100) : 0;
-  const allTimePnL  = state.sold.reduce((sum, s) => sum + s.pnlDollar, 0);
+  const noneSummaryPriced = pricedCount === 0;
+  const partialSummary = pricedCount > 0 && summaryUnpricedTickers.length > 0;
+  const partialTag = partialSummary ? ` <span class="pf-summary-partial">(${pricedCount} of ${summaryPositionCount} positions priced)</span>` : '';
+  const unpricedNote = summaryUnpricedTickers.length
+    ? `<div class="pf-summary-note">${noneSummaryPriced ? 'No position has a live price' : `${summaryUnpricedTickers.length} position${summaryUnpricedTickers.length === 1 ? '' : 's'} excluded`} — price unavailable (${summaryUnpricedTickers.join(', ')}). ${noneSummaryPriced ? 'Totals are not shown rather than estimated from cost.' : 'Totals cover the priced positions only.'}</div>`
+    : '';
+  // Realized: the same exclusion computeTradeMetrics applies (db/026) -- a
+  // trade whose sell price was fabricated has an unknown outcome, not a $0
+  // one, so it's left out of the sum and counted, not silently added as 0.
+  const realized = computeTradeMetrics(state.sold);
+  const allTimePnL  = realized.totalPnL;
 
   const sumHtml = `<div class="pf-summary">
     <div class="section-label">Portfolio Summary</div>
-    <div class="pf-summary-row"><span>Total Value</span><span class="mono">${priceFetchFailed ? '<span class="pf-now-stale">unavailable</span>' : `$${totalValue.toFixed(2)}`}</span></div>
-    <div class="pf-summary-row"><span>Unrealized P&L</span><span class="mono ${priceFetchFailed ? 'pf-now-stale' : totalPnL>=0?'pos':'neg'}">${priceFetchFailed ? 'unavailable' : `${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)} (${totalPnLPct.toFixed(1)}%)`}</span></div>
-    <div class="pf-summary-row"><span>All-Time Realized P&L</span><span class="mono ${allTimePnL>=0?'pos':'neg'}">${allTimePnL>=0?'+':''}$${allTimePnL.toFixed(2)}</span></div>
+    <div class="pf-summary-row"><span>Total Value${partialTag}</span><span class="mono">${noneSummaryPriced ? '<span class="pf-now-stale">unavailable</span>' : `$${totalValue.toFixed(2)}`}</span></div>
+    <div class="pf-summary-row"><span>Unrealized P&L${partialTag}</span><span class="mono ${noneSummaryPriced ? 'pf-now-stale' : totalPnL>=0?'pos':'neg'}">${noneSummaryPriced ? 'unavailable' : `${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)} (${totalPnLPct.toFixed(1)}%)`}</span></div>
+    ${unpricedNote}
+    <div class="pf-summary-row"><span>All-Time Realized P&L${realized.excluded ? ` <span class="pf-summary-partial">(${realized.count} of ${realized.count + realized.excluded} trades)</span>` : ''}</span><span class="mono ${allTimePnL>=0?'pos':'neg'}">${allTimePnL>=0?'+':''}$${allTimePnL.toFixed(2)}</span></div>
+    ${realized.excluded ? `<div class="pf-summary-note">${realized.excluded} sold trade${realized.excluded === 1 ? '' : 's'} excluded — sell price unverified, outcome unknown (not $0).</div>` : ''}
   </div>`;
 
   const listEl = document.getElementById('pf-list');
@@ -9212,7 +9249,11 @@ function updateNavBadges() {
     let warnCount = 0;
     if (isAfternoonMode()) {
       getHoldings().forEach(p => {
-        const price = state.portfolioPrices[p.ticker] || p.buyPrice;
+        // No real cached price -> this position can't be evaluated (the
+        // card says CANNOT EVALUATE), so it adds no warning either way.
+        // Never substitute the buy price as if it were live.
+        const price = state.portfolioPrices[p.ticker];
+        if (price == null || state.portfolioPriceFetchFailed) return;
         // Same dispatch shape as renderPortfolioTab's banner (Phase 7) --
         // kept in sync deliberately, not two independent implementations of
         // "does this position warrant a warning." See that call site's

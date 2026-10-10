@@ -2181,3 +2181,7 @@ table.analytics-trends-table {
 .pf-pending-card .pf-pending-actions { display: flex; gap: 8px; margin-top: 8px; }
 .pf-pending-stale { border-color: #ffd166; }
 .pf-stale-orders-banner { background: rgba(255, 209, 102, 0.12); border: 1px solid #ffd166; border-radius: 8px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px; }
+
+/* Portfolio Summary: partial / unavailable states (instance twelve) */
+.pf-summary-partial { font-size: 11px; color: var(--muted); font-weight: 400; }
+.pf-summary-note { font-size: 11px; color: var(--muted); line-height: 1.4; margin: -2px 0 8px; }
