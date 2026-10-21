@@ -2600,9 +2600,16 @@ function renderStockCard(s, marketClosed) {
   const daySuppressedOverlay = daySuppressed
     ? `<div class="day-suppressed-overlay">⚠ Entry window closed — DAY trade signals expire at 10am</div>`
     : '';
+  // Phase 10 entry gate: advice only. Evaluated now (view time), not when
+  // the scan ran. Recording stays open -- see the stock modal's footer.
+  const gate = entryGateNow();
+  const gateOverlay = gate.gated
+    ? `<div class="day-suppressed-overlay">⛔ Entry gate: ${gate.label}</div>`
+    : '';
 
   return `
-    <div class="stock-card${daySuppressed ? ' stock-card-suppressed' : ''}" onclick="openStockModal('${s.ticker}')">
+    <div class="stock-card${daySuppressed || gate.gated ? ' stock-card-suppressed' : ''}" onclick="openStockModal('${s.ticker}')">
+      ${gateOverlay}
       ${daySuppressedOverlay}
       ${actionBanner}
       <div class="sc-header">
@@ -2640,6 +2647,9 @@ function buildSignalActionBanner(s) {
   // the grayed-out card + overlay already communicates "entry window closed,"
   // and the new threshold (10am) is always reached before either of these.
   if (isDay && isDayTradeSuppressed(s.duration)) return '';
+  // Phase 10 entry gate (core/entry-gate.js): inside a gated window the
+  // card's gate overlay is the advice -- never a "BUY NOW" underneath it.
+  if (entryGateNow().gated) return '';
 
   if (isDay && tradingDay && ptMin >= 720) {
     return `<div class="action-banner action-missed"><strong>MISSED — TOO LATE TODAY</strong></div>`;
@@ -3152,6 +3162,16 @@ async function openStockModal(ticker) {
     const daySuppressedBanner = daySuppressed
       ? `<div class="day-suppressed-overlay" style="margin-bottom:12px">⚠ DAY trade — entry window has closed for today</div>`
       : '';
+    // Phase 10 entry gate, same scope as the DAY suppression (Signals-tab
+    // results only, never an owned position). Advice only: the footer's
+    // Add button stays enabled behind a confirm (spec §7.7).
+    const modalGate = ownedPos ? null : entryGateNow();
+    const gateBanner = modalGate && modalGate.gated
+      ? `<div class="day-suppressed-overlay" style="margin-bottom:12px">⛔ Entry gate: ${modalGate.label}</div>`
+      : '';
+    const addBlockReason = modalGate && modalGate.gated ? `Entry gate: ${modalGate.label}.`
+      : daySuppressed ? 'DAY trade — the entry window closed at 10:00 PT.'
+      : '';
 
     // Unified recommendation — only meaningful for an owned position. Uses
     // this modal's own fresh live price/RSI (not the possibly-stale
@@ -3200,6 +3220,7 @@ async function openStockModal(ticker) {
     }
 
     document.getElementById('stock-modal-body').innerHTML = `
+      ${gateBanner}
       ${daySuppressedBanner}
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
         <span class="price-mono" style="font-size:20px">$${price.toFixed(2)}</span>
@@ -3324,8 +3345,8 @@ async function openStockModal(ticker) {
     ` : pendingOrder ? `
       <button class="btn btn-ghost" style="flex:1" disabled title="Mark it filled or cancel it on the Portfolio tab">⏳ Order pending — see Portfolio</button>
       <button class="btn btn-ghost" onclick="closeModal()">✕</button>
-    ` : daySuppressed ? `
-      <button class="btn btn-ghost" style="flex:1" disabled title="Entry window closed for today">+ Add to Portfolio</button>
+    ` : addBlockReason ? `
+      <button class="btn btn-ghost" style="flex:1" onclick="addPortfolioDespiteAdvice('${ticker}', ${JSON.stringify(addBlockReason).replace(/"/g, '&quot;')})">+ Record a trade already placed</button>
       <button class="btn btn-ghost" onclick="closeModal()">✕</button>
     ` : `
       <button class="btn btn-success" style="flex:1" onclick="openAddPortfolioModal('${ticker}')">+ Add to Portfolio</button>
@@ -3555,6 +3576,20 @@ function openPositionSnapshotModal(ticker) {
 }
 
 // ── 15. PORTFOLIO TAB ──────────────────────────────────────────────
+
+// A gate on advice is never a gate on recording (phase-10 spec §7.7).
+// Inside the entry gate or after the DAY-trade 10:00 cutoff the advice is
+// "don't buy", but a trade Roman already placed must still be recordable:
+// blocking it would delete rows for exactly the trades the gate exists to
+// study, and a missing row is indistinguishable from no trade. (Until
+// 2026-10-21 the DAY cutoff disabled this button outright -- DAY buys after
+// 10:00 PT before that date are censored, spec §7.7.) Whether a recorded
+// trade fell inside a gate window is derived on read (entryGateAt on
+// buy_date/buy_time), never stored.
+function addPortfolioDespiteAdvice(ticker, reason) {
+  if (!window.confirm(`${reason}\n\nThe advice is not to buy now. Record a trade you've already placed for ${ticker}?`)) return;
+  openAddPortfolioModal(ticker);
+}
 
 function openAddPortfolioModal(ticker) {
   const price = state.signals.find(s => s.ticker === ticker)?.price || 0;

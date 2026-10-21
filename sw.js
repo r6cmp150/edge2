@@ -13,6 +13,7 @@ const APP_SHELL = [
   './core/news.js',
   './core/store.js',
   './core/orders.js',
+  './core/entry-gate.js',
   './core/float-table.js',
   './core/universe.js',
   './shell/registry.js',
