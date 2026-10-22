@@ -569,13 +569,32 @@ days, not quiet ones.
    becomes factual band descriptions: we no longer know enough to
    editorialise.
 1d. **Code version on every recorded row** (`db/028_code_version.sql`,
-   DRAFT). One `code_version` jsonb, `{app, scoring}`, on `portfolio`,
-   `trades_v2` and `signal_log`, written once at record time:
+   applied and verified 2026-10-22). One `code_version` jsonb,
+   `{app, scoring, scoring_hash}`, on `portfolio`, `trades_v2`,
+   `signal_log` and `scan_runs`, written once at record time:
    - **`app`:** the `?v=` stamp of the `app.js` actually running. A stale
      tab reports its own old stamp, which closes the order-date proxy's
      hole (§7.5).
-   - **`scoring`:** `SCORING_VERSION`, pinned by a test to a hash of the
-     formula's source.
+   - **`scoring`:** `SCORING_VERSION`, an **integer**. It's orderable, so
+     it's what queries join and filter on.
+   - **`scoring_hash`:** a hex hash of the formula's source, which the test
+     pins to `SCORING_VERSION`. It's tamper-evident: the integer answers
+     "which version", the hash answers "is that really the code". (The
+     first draft's CHECK required `scoring` to be a number while the text
+     said it was a hash. Both are kept, because they answer different
+     questions.)
+
+   **Write-once is a trigger, not a comment:** an UPDATE that changes any
+   of these columns is rejected, NULL → value included, so nothing can be
+   backfilled. **Grants:** the repo shows column-level INSERT only on
+   `workflow_runs` (db/023), but the live database isn't the repo, so the
+   new columns are granted to anon explicitly (additive). The
+   verification checks the result with `has_column_privilege`. The
+   real-write proof is the post-deploy re-select of the first real rows,
+   not a synthetic anon row: anon can't delete, so a test row would stay
+   in the analysis tables. Both migration files parse with libpg_query (the
+   Postgres parser), PL/pgSQL body included, with negative controls; they
+   haven't been run against a database.
 
    Neither is a hand-maintained constant. That's the failure the existing
    `signal_log.build_version` shows: it's filled from app.js's `VERSION`,
@@ -623,7 +642,8 @@ days, not quiet ones.
    full snapshots, so there was nothing to split.
 2. **Neutralise the two backwards terms in §7.3 AND re-derive the BUY
    thresholds in the same change** (§7.7), so buyable signals per day
-   stay near today's ~5–6 (106 over 19 dates). The intent is to change
+   stay near today's ~5–6 (105 over 18 dates, one per date and symbol;
+   `node scripts/derive-step2-thresholds.mjs`). The intent is to change
    which signals rank highest, not to turn the tap off. Shipped with both
    score histograms, the old and new lines, and buyable count and
    price-tier mix per day under each. Nothing else moves. The exit
@@ -638,6 +658,69 @@ days, not quiet ones.
    exit engine, whose inputs are render-dependent until step 2.5. **Both
    are reported, the bucket count is marked noisy, and it is not a
    decision input.**
+
+   **Derived (`node scripts/derive-step2-thresholds.mjs`, 2026-10-21).**
+   655 signals (one per date and symbol) over 18 dates. The old formula,
+   read from git, reproduces all 664 stored scores exactly.
+
+   | Line | Old count at old line | New line | New count |
+   |---|---|---|---|
+   | SOFT | ≥73: 105 | **65** | 97 (≥60: 113, ≥70: 73) |
+   | WATCH | ≥29: 529 | **20** | 487 (≥15: 580, ≥25: 442) |
+   | STRONG | ≥116: 0 | **110, by decision** | 0, not derivable |
+
+   - **WATCH 20 is the nearest available line, not an equal-count
+     match.** It undershoots the old count by 8% (487 vs 529), where 15
+     overshoots by 10% (580). Scores move in steps of 5, so nothing lands
+     closer. Leaving the line at 29 under the new formula would show 407,
+     23% quieter.
+   - **STRONG has no derivation.** No logged signal ever reached 116, and
+     under the new formula none reaches 110. The tier has never fired in
+     18 dates under either formula, so 110 is untested display logic, not
+     a calibrated boundary. Revisit it as copy: if STRONG never shows,
+     SOFT BUY carries every real recommendation while reading as a hedge.
+   - **What Roman sees each morning changes more than the buy line
+     does:** 60 signals now shown as WATCH drop below the line, and 20
+     SOFT drop to WATCH. Going the other way, 18 rise into WATCH and 12
+     WATCH rise to SOFT. That's the intended direction.
+   - **Buyable price mix** (18 dates): $1–3 goes 24 → 21, $4–9 goes
+     47 → 34, $10–20 goes 34 → 42, moving away from the cheap end as
+     intended.
+
+   **Decided before building (Roman, 2026-10-21):**
+   - **All three lines are re-derived:** STRONG, SOFT and the WATCH/display
+     line (`BASE_SCORE_THRESHOLD`, 29 today). The same histogram method is
+     used for all three, on `signal_log`'s SHOWN and BELOW_THRESHOLD rows.
+     This is not a lower bound: the logger logs every scored symbol (§7.6
+     step 1e), so the rows scoring 20–29 are in the data. A quieter WATCH
+     list caused by an unrelated term correction is the drift §7.7 exists
+     to stop.
+   - **`ELEVATED_SCORE_THRESHOLD` becomes the expression `SOFT`.** It was
+     designed as the same line (both were 50 on the 0–100 scale, which
+     the stale comment above it still says), and leaving it at 73 while
+     SOFT moves would make the adverse-conditions line stricter than
+     anyone decided. The stale comment is deleted.
+   - **The exit midpoint is floor((STRONG+SOFT)/2).** Floor keeps today's
+     convention (94 = floor(94.5)). Under 110/65 that's 87, not 88, and
+     the two are **behaviourally identical**: every score is a multiple of
+     5 before and after step 2 (all terms and macro adjustments are; all
+     664 logged EDGE scores are), so the next reachable score above
+     either is 90. Settled once, with the reason, so it isn't reopened.
+   - **The exit's top cutoff becomes `>=`**, not `>`. Today a score of
+     exactly 116 is labelled STRONG BUY and also denied the top exit
+     weight: two answers to one question from two copies of a threshold.
+     This is a **deliberate behaviour change**. On the logged data it
+     can't occur: under the new formula no signal scores 110 or more (the
+     two 110s in the data are old-formula scores; `node scripts/derive-step2-thresholds.mjs`). It's
+     changed as a rule, not because the data needs it. Both read from the
+     one `scoreLabel()`.
+   - **`signal_label` is computed from the buy's scoring version**, not
+     at sale from the current thresholds (`writeTradeToSupabase` did the
+     latter, so a position bought under 73 and sold after step 2 would be
+     labelled under 65). Keyed on db/028's `scoring` version through the
+     dated threshold table. It's the same shape as `holdSpan`'s basis
+     problem: a stored value whose meaning depended on the rule in force
+     when it was read.
 2.5. **Exit-engine inputs stop depending on when the app was open**
    (§7.7). Design only; not built. The shape is the one this project has
    used before: when an accumulated value is unreliable, stop needing it.
@@ -766,8 +849,8 @@ from the cheap and oversold end doesn't make the label boundary stricter
 on purpose — it drifts, and a boundary that moves because an unrelated
 term was deleted is not a decision anyone made. Otherwise the effect being
 measured is the drift, not the change. (Step 2 without a re-derived
-threshold would have halved the buyable set: 53 of 106 buyable signals
-over 19 dates drop to WATCH.)
+threshold would have halved the buyable set: 52 of 105 buyable signals
+over 18 dates drop to WATCH, leaving 53; `node scripts/derive-step2-thresholds.mjs`.)
 
 **A refactor is proven by two results, and both are required.** 1c
 (`scoreComponents`) is the pattern: (1) zero differences in full
@@ -800,6 +883,27 @@ spec in two turns, because it was precise and precision reads as
 verification. Two failures: reporting a figure that wasn't re-derived, and
 accepting one without asking where it came from. A stale figure in a spec
 is a value nobody observed, and it spreads faster than code does.
+
+**Extended 2026-10-21: a figure from an ad-hoc run is not quotable.** It
+goes into a script with a named command first, or it stays in the
+conversation. The rule applies to Claude's scratch output and to Roman's
+analysis equally. It had happened four times in two days, all from
+ad-hoc runs in Claude's own earlier messages, all repeated into this
+spec, and none reproducible:
+- "24,056 inputs";
+- "534 / 412" for the WATCH line (the script gives 529 / 407);
+- "106 over 19 dates", and "53 of 106 drop to WATCH" (it's 105 over 18
+  dates, and 52 drop, leaving 53);
+- "2 rows in the 110 bin" offered as the new formula's (they're old-formula
+  scores; the new formula's 110 bin is empty).
+
+Roman's part, in his words: he never once asked which command produced
+them. By the same rule, **the entry-timing tables in §1 and §3 are not
+quotable.** They came from throwaway Python in a scratchpad on 2026-10-21
+(Appendix), not a committed command. The RSI finding survives only
+because it was independently re-derived from `signal_log`, and that
+re-derivation isn't a committed script yet either. Until each table has
+a command, it is a lead, not a finding.
 
 **A versionless module is safe only while nothing it depends on changes
 its contract.** `engines/warrior/index.js` was loaded by a versionless
@@ -928,6 +1032,46 @@ so a missing decision is recorded as NULL ("not determined") instead of
 a default. A checklist item, a comment saying "remember to bump", or a
 review step is the remember-harder version, and it fails the same way.
 
+**Any label derived from a threshold must record which threshold
+produced it, or it is only valid until the threshold moves.** Found
+2026-10-21: `trades_v2.signal_label` was computed at sale from the
+thresholds in force at the sale, not those that judged the buy. Labels
+are computed from the version recorded with the score (db/028) through
+a dated threshold table, never from whatever constant is current.
+
+**Trip-wire: the write-once trigger (db/028, the project's first
+trigger).** It fires on paths nobody is thinking about. **Any new or
+changed write path to `portfolio`, `trades_v2`, `signal_log` or
+`scan_runs` must be checked against it in the same change**: does the
+path issue an UPDATE (including an upsert that resolves to one), and if
+so, can the row it sends carry a different `code_version` /
+`sale_code_version` from the stored one, NULL included? Checked
+2026-10-22 against the paths that exist:
+- **Loggers:** they write `signal_log` with
+  `resolution=ignore-duplicates` (ON CONFLICT DO NOTHING), so no update,
+  so no trigger.
+- **`scan_runs`:** insert-only; nothing updates it.
+- **The outcome filler and the split audit:** they PATCH named columns
+  only, so the version is unchanged and the trigger passes.
+- **`backgroundSavePosition` and the fill confirmation:** they send
+  `mapPositionToSupabaseRow`'s whole row. **This is the dangerous one.**
+  The mapper's newer fields (db/024, db/027; 9 in `core/store.js`) use
+  `position.x ?? null`, and a new field written that way, as in a
+  `code_version: position.codeVersion ?? null` line would null a
+  populated column on every peak-price save, and the trigger would reject
+  every one immediately after deploy. (A bare `undefined` would be
+  dropped by `JSON.stringify`, not sent as null. The risk is the
+  convention, not the serialiser.) Rule for the code step: `code_version`
+  is written **only** by `insertPositionToSupabase`, never by the shared
+  mapper. That's tested by a real round trip against the live table:
+  insert a position with a version, run a background save through the
+  real mapper, re-select, and assert that the update succeeded and the
+  version is unchanged. Then delete the row, which anon can do on
+  `portfolio`.
+
+It's the same form as the Warrior sub-import trip-wire: a condition
+checked at a known moment, not an open item nobody is watching.
+
 **A fix that splits one source of truth into two must say which readers
 get which, and check every reader.** Found 2026-10-21 on the modal fix
 itself: the approved design gave the AI prompt the modal's fresh values
@@ -951,6 +1095,10 @@ redesign, not a step; it needs §5's re-test behind it.
 ---
 
 ## Appendix — provenance
+
+**Not quotable under §7.7 (2026-10-21):** the parse and grouping below
+were ad-hoc scratchpad Python, not a committed script, so every table they
+produced (§1, §3) is a lead until a named command regenerates it.
 
 Derived by parsing all 292 trade blocks out of
 `edge-report-2026-10-21.txt` (the FULL TRADE HISTORY section) into a

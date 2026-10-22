@@ -1,5 +1,4 @@
--- db/029 (2026-10-21): log the EDGE pre-filter's rejections. DRAFT -- not
--- applied.
+-- db/029 (2026-10-21): log the EDGE pre-filter's rejections.
 --
 -- WHY: the EDGE logger's pre-filter (scripts/log-signals-edge.mjs, copying
 -- app.js runScreener) keeps $1-$20 symbols with >= min volume traded SO FAR
@@ -41,4 +40,37 @@
 -- assertColumnsExist check would otherwise abort the whole run, so no
 -- signals at all would be logged that day.
 
+-- GRANTS: same as db/028. Granted to anon explicitly (additive; a no-op
+-- where table-level INSERT exists), verified with has_column_privilege.
+-- No trigger: this column is written once, by the scan_runs INSERT, and
+-- nothing updates scan_runs rows.
+--
+-- SHAPE CHECK: an array or NULL. Element shape is the logger's contract
+-- (asserted in its own code before insert), not checked per element here.
+--
+-- Independent of db/028: either can be applied first. db/028 first is the
+-- documented order.
+
+begin;
+
 alter table scan_runs add column if not exists prefilter_rejections jsonb;
+
+alter table scan_runs drop constraint if exists scan_runs_prefilter_rejections_shape_chk;
+alter table scan_runs add  constraint scan_runs_prefilter_rejections_shape_chk
+  check (prefilter_rejections is null or jsonb_typeof(prefilter_rejections) = 'array');
+
+grant insert (prefilter_rejections) on scan_runs to anon;
+
+comment on column scan_runs.prefilter_rejections is 'EDGE pre-filter rejections for THIS scan: [{symbol, price, volume (cumulative so far today), failed: [price_below_min|price_above_max|volume_below_min|no_snapshot]}]. [] = rejected nothing. NULL = before db/029. (db/029)';
+
+commit;
+
+-- Verification: ONE query, ONE row. Expected:
+--   columns 1 | constraints 1 | anon_can_insert true | populated 0
+select
+  (select count(*) from information_schema.columns
+    where table_schema = 'public' and table_name = 'scan_runs'
+      and column_name = 'prefilter_rejections' and data_type = 'jsonb' and is_nullable = 'YES') as columns,
+  (select count(*) from pg_constraint where conname = 'scan_runs_prefilter_rejections_shape_chk') as constraints,
+  has_column_privilege('anon', 'public.scan_runs', 'prefilter_rejections', 'INSERT') as anon_can_insert,
+  (select count(*) from scan_runs where prefilter_rejections is not null) as populated;
