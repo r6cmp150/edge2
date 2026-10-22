@@ -632,6 +632,21 @@ volume-spike points were not in the mutated set.
 
 ### 7.5 Sample size is trading days, not trades
 
+> **ROMAN: one broker export answers three open questions.** One export
+> of every fill (symbol, side, quantity, price, date, time) since
+> 2026-08-01. Until it arrives, **all three stay written off, not
+> guessed**:
+> 1. **The 24 Sunday (CLOSED-session) orders:** when did each fill, and at
+>    what price? They stay `not-measured` (§5) until the export says.
+> 2. **The nine resurrected pairs** (GPGI, HTZ, VISN, RR, TDAY, GO, CXM,
+>    SOUN, SNXX): one position recorded as two sales. Which sale of each
+>    pair is real? The book reads −$682.93 keeping each first sale, or
+>    −$644.23 keeping each second (below).
+> 3. **The 17 dead-stock trades** (AREN ×3, TWO ×3, HLX ×3, GBTG ×2, BRR
+>    ×2, ATAI, CCRN, DOMO, LC): recorded after each stock had stopped
+>    trading, at its last close, sold back at the same price. Did any of
+>    them execute at all? (§7.6 step 1e½.)
+
 Roman buys in batches (17 trades on 2026-10-02). The effective n is
 distinct trading days.
 
@@ -797,7 +812,13 @@ days, not quiet ones.
    clean signals). 32 of 676 logged EDGE signals (4.7%, backup `de95a93`)
    were scored on daily histories more than one trading day old, nine of
    them SHOWN. Those nine are one stock, **PSKY, shown as a SOFT BUY
-   (score 80) on 8 days from 10-09 to 10-20 on bars ending 09-15**.
+   (score 80) on 8 days from 10-09 to 10-20 on bars ending 10-05**
+   (corrected 2026-10-22: "09-15" was read off the first PSKY row, a
+   09-15 signal on that day's own, current bar, and was wrong). PSKY's
+   full-market history stops on 10-05 and Alpaca no longer lists it; it
+   was still SHOWN on 10-21 and 10-22. It was **never traded**: no row in
+   `trades_v2` or `portfolio`. A third stale symbol, CCO (history stops
+   10-14), was stale on 5 signals through 10-22.
    **AREN had stopped trading:** its last session on either feed was
    2026-08-28 (16.9M shares, a final day), and Alpaca no longer lists the
    asset. Its IEX snapshot's "today" bar stayed frozen on that day's 131k
@@ -819,6 +840,35 @@ days, not quiet ones.
      trades.
 
    Nothing marked any of it.
+
+   **It isn't just AREN: 17 of the 22 unverified sales are trades on stocks
+   that had already stopped trading (found 2026-10-22).** Each unverified
+   trade (db/026) was classified by the stock's last full-market (SIP)
+   session against its buy date:
+   - **Dead at buy (17):** AREN ×3, TWO ×3, HLX ×3, GBTG ×2, BRR ×2, ATAI,
+     CCRN, DOMO, LC. Each has the buy price equal to the stock's last
+     close and the sale price filled in from the buy price ($0.00). These
+     **cannot be executions**. They're positions recorded on dead stocks,
+     most likely from stale signals. That's 17 of 292 rows (5.8%) in
+     `trades_v2`, **written off pending Roman's broker export**, alongside
+     the §7.5 duplicates.
+   - **Died during the hold (1):** ATAI bought 2026-09-11, its last
+     session. A real trade with an unknown exit.
+   - **Traded through the sale (4):** PLUG, ARRY, JPC, and CCO bought
+     10-01. Real trades whose sale quote was missing.
+
+   The 2026-10-21 appendix parse kept the 22 unverified out of its
+   win/loss counts (149 / 121 / 22), so its win rates exclude them. Any
+   analysis that counts `n` from `trades_v2`, or tests `pnl > 0`
+   without filtering `sell_price_unverified`, includes 17 trades that
+   didn't happen. **TWO** (Two Harbors, last session 2026-08-24, inactive)
+   was held in the app across those dates with nothing looking at it,
+   which is the held-position gap in step 1f.
+
+   **The universe needs a liveness pass.** `STOCK_UNIVERSES.OTHER` is a
+   committed static list that has never been pruned: 14 of its 239 symbols
+   are dead, so the engine has been scoring delisted stocks all along. The
+   per-scan asset check (1f) is a mitigation; pruning the list is the fix.
    - **Recorded:** each signal carries `barsAsOf` (newest bar date) and
      `barsAgeTradingDays`, stamped by the code that calls the scorer, not
      inside `scoreStock` (whose source is the pinned formula hash). It is
@@ -851,6 +901,22 @@ days, not quiet ones.
      has no end date, so during market hours its 30-day average includes
      today's partial session, which makes Warrior's baseline mildly
      clock-dependent. Recorded for Warrior; not changed here.
+   - **Only listed, tradable assets, in TWO places (2026-10-22).** 14 of the 239
+     universe symbols are dead: AREN, CCO, EEX, GETY, HCWC, KORE, ORGN,
+     PSKY, SBEV and WALD are not on Alpaca's active list, and DRCT, FLZH,
+     GDC and XXII are active but not tradable. The gate excludes them
+     using the asset list `core/universe.js` already fetches and caches
+     daily for Warrior (`_getAssetIndex`), with no second fetch. They're
+     logged as `asset_inactive` / `asset_not_tradable`. A dead stock
+     whose IEX bar froze on a heavy final day otherwise passes forever
+     (AREN, PSKY, CCO).
+     **And over open positions:** the same listed/tradable test runs on
+     every held position, **surfaced on the position card** ("Two Harbors
+     is no longer listed — this position cannot be sold at a market
+     price"), never silently. The universe check stops a buy of a dead
+     stock; the position check says that one already owned has died. TWO
+     is that second case: held across six weeks with nothing in the app
+     looking at it.
    - **Recency is part of the rule (found via AREN, 2026-10-22):** the 20
      sessions must end at the **previous trading day**. A stock that
      stopped trading keeps a heavy trailing average indefinitely (AREN's
