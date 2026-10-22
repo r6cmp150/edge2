@@ -540,10 +540,11 @@ day-clustered comparison (within-day, or day-adjusted with per-date
 win counts), not a pooled one.** This applies to `signal_log` too, where
 every signal on a date shares that day's market move.
 
-**`signal_log` covers 18 of the 28 trading days from 2026-09-11 to
-2026-10-20** (`data/backups/signal_log.json`, distinct EDGE
-`signal_date`). Any day-clustered analysis on it has **n = 18 dates, not
-28**. The missing 10 are missing because GitHub cron delivery dropped or
+**`signal_log` covers 19 of the 29 trading days from 2026-09-11 to
+2026-10-21** (`data/backups/signal_log.json`, distinct EDGE
+`signal_date`, backup `de95a93`; through 2026-10-20 it was 18 of 28). Any
+day-clustered analysis on it has **n = 19 dates, not
+29**. The missing 10 are missing because GitHub cron delivery dropped or
 delayed the logger, not because nothing happened, so they are unobserved
 days, not quiet ones.
 
@@ -642,7 +643,7 @@ days, not quiet ones.
    full snapshots, so there was nothing to split.
 2. **Neutralise the two backwards terms in §7.3 AND re-derive the BUY
    thresholds in the same change** (§7.7), so buyable signals per day
-   stay near today's ~5–6 (105 over 18 dates, one per date and symbol;
+   stay near today's ~5–6 (106 over 19 dates, one per date and symbol;
    `node scripts/derive-step2-thresholds.mjs`). The intent is to change
    which signals rank highest, not to turn the tap off. Shipped with both
    score histograms, the old and new lines, and buyable count and
@@ -660,31 +661,32 @@ days, not quiet ones.
    decision input.**
 
    **Derived (`node scripts/derive-step2-thresholds.mjs`, 2026-10-21).**
-   655 signals (one per date and symbol) over 18 dates. The old formula,
-   read from git, reproduces all 664 stored scores exactly.
+   Data pinned to backup `de95a93` (signal_log through 2026-10-21). 666
+   signals (one per date and symbol) over 19 dates. The old formula, read
+   from git, reproduces all 676 stored scores exactly.
 
    | Line | Old count at old line | New line | New count |
    |---|---|---|---|
-   | SOFT | ≥73: 105 | **65** | 97 (≥60: 113, ≥70: 73) |
-   | WATCH | ≥29: 529 | **20** | 487 (≥15: 580, ≥25: 442) |
+   | SOFT | ≥73: 106 | **65** | 98 (≥60: 114, ≥70: 73) |
+   | WATCH | ≥29: 534 | **20** | 492 (≥15: 585, ≥25: 447) |
    | STRONG | ≥116: 0 | **110, by decision** | 0, not derivable |
 
    - **WATCH 20 is the nearest available line, not an equal-count
-     match.** It undershoots the old count by 8% (487 vs 529), where 15
-     overshoots by 10% (580). Scores move in steps of 5, so nothing lands
-     closer. Leaving the line at 29 under the new formula would show 407,
+     match.** It undershoots the old count by 8% (492 vs 534), where 15
+     overshoots by 10% (585). Scores move in steps of 5, so nothing lands
+     closer. Leaving the line at 29 under the new formula would show 412,
      23% quieter.
    - **STRONG has no derivation.** No logged signal ever reached 116, and
      under the new formula none reaches 110. The tier has never fired in
-     18 dates under either formula, so 110 is untested display logic, not
+     19 dates under either formula, so 110 is untested display logic, not
      a calibrated boundary. Revisit it as copy: if STRONG never shows,
      SOFT BUY carries every real recommendation while reading as a hedge.
    - **What Roman sees each morning changes more than the buy line
      does:** 60 signals now shown as WATCH drop below the line, and 20
      SOFT drop to WATCH. Going the other way, 18 rise into WATCH and 12
      WATCH rise to SOFT. That's the intended direction.
-   - **Buyable price mix** (18 dates): $1–3 goes 24 → 21, $4–9 goes
-     47 → 34, $10–20 goes 34 → 42, moving away from the cheap end as
+   - **Buyable price mix** (19 dates): $1–3 goes 24 → 21, $4–9 goes
+     47 → 34, $10–20 goes 35 → 43, moving away from the cheap end as
      intended.
 
    **Decided before building (Roman, 2026-10-21):**
@@ -704,7 +706,7 @@ days, not quiet ones.
      convention (94 = floor(94.5)). Under 110/65 that's 87, not 88, and
      the two are **behaviourally identical**: every score is a multiple of
      5 before and after step 2 (all terms and macro adjustments are; all
-     664 logged EDGE scores are), so the next reachable score above
+     676 logged EDGE scores at `de95a93` are), so the next reachable score above
      either is 90. Settled once, with the reason, so it isn't reopened.
    - **The exit's top cutoff becomes `>=`**, not `>`. Today a score of
      exactly 116 is labelled STRONG BUY and also denied the top exit
@@ -849,14 +851,15 @@ from the cheap and oversold end doesn't make the label boundary stricter
 on purpose — it drifts, and a boundary that moves because an unrelated
 term was deleted is not a decision anyone made. Otherwise the effect being
 measured is the drift, not the change. (Step 2 without a re-derived
-threshold would have halved the buyable set: 52 of 105 buyable signals
-over 18 dates drop to WATCH, leaving 53; `node scripts/derive-step2-thresholds.mjs`.)
+threshold would have halved the buyable set: 53 of 106 buyable signals
+over 19 dates drop to WATCH, leaving 53; `node scripts/derive-step2-thresholds.mjs`.)
 
 **A refactor is proven by two results, and both are required.** 1c
 (`scoreComponents`) is the pattern: (1) zero differences in full
 `scoreStock` output between the new code and the last pre-refactor commit
 (`1c39926`, read from git), on every EDGE snapshot in the committed
-`signal_log` backup (664 × 6 macro conditions = 3,984) and on 10,000
+`signal_log` backup as it stood at 1c's commit (664 × 6 macro conditions =
+3,984; the test reads the current backup, so the count grows nightly) and on 10,000
 generated inputs (`tests/score-components.test.js`); and (2) a mutation
 showing the test can see a one-point change. For 1c, MA +10→+11 and RSI
 35–55 +15→+14 each failed both equivalence tests on the first
@@ -887,18 +890,37 @@ is a value nobody observed, and it spreads faster than code does.
 **Extended 2026-10-21: a figure from an ad-hoc run is not quotable.** It
 goes into a script with a named command first, or it stays in the
 conversation. The rule applies to Claude's scratch output and to Roman's
-analysis equally. It had happened four times in two days, all from
-ad-hoc runs in Claude's own earlier messages, all repeated into this
-spec, and none reproducible:
-- "24,056 inputs";
-- "534 / 412" for the WATCH line (the script gives 529 / 407);
-- "106 over 19 dates", and "53 of 106 drop to WATCH" (it's 105 over 18
-  dates, and 52 drop, leaving 53);
-- "2 rows in the 110 bin" offered as the new formula's (they're old-formula
-  scores; the new formula's 110 bin is empty).
+analysis equally.
 
-Roman's part, in his words: he never once asked which command produced
-them. By the same rule, **the entry-timing tables in §1 and §3 are not
+**And the command must pin its input, not just its code.** Corrected
+2026-10-22, and the correction is the more important half. On 10-21 this
+passage listed four figures as non-reproducible. Three of them were right:
+- **"534 / 412"** for the WATCH line,
+- **"106 over 19 dates"**,
+- **"53 of 106 drop to WATCH"**.
+
+All three reproduce exactly on the 2026-10-22 nightly backup (`de95a93`,
+`signal_log` through 10-21). Claude had run the derivation against a
+local copy one day staler (through 10-20), without fetching, got
+529 / 407 and 105 over 18 dates, and read the difference as
+non-reproducibility. That was Claude's error, not Roman's. Roman's
+"I never once asked which command" was a fair question to ask, but his
+figures were correct.
+
+The structural defect underneath: `data/backups/signal_log.json` is
+overwritten nightly, so "the command beside the number" gives a
+different number the next day. The derivation now reads its data from a
+pinned git revision and prints it (`DATA_REV`, default `de95a93`). The
+equivalence test's snapshot count has the same property and is described
+as "as of 1c's commit" for that reason. The rest of the record:
+- **"24,056 inputs"** is still unreproduced on any backup, and was
+  correctly withdrawn.
+- **"2 rows in the 110 bin"** is true of the *old* formula. The new
+  formula's 110 bin is empty, so the inference "after step 2 a score of
+  exactly 110 would hit the inconsistency" doesn't hold on this data.
+  The `>=` change is a rule, not a data fix.
+
+By the same rule, **the entry-timing tables in §1 and §3 are not
 quotable.** They came from throwaway Python in a scratchpad on 2026-10-21
 (Appendix), not a committed command. The RSI finding survives only
 because it was independently re-derived from `signal_log`, and that

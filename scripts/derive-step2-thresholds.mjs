@@ -4,7 +4,15 @@
 // This script is the source of every number step 2 states (spec §7.7: a
 // number that can't be reproduced on demand doesn't go in a spec).
 //
-//   node scripts/derive-step2-thresholds.mjs
+//   node scripts/derive-step2-thresholds.mjs                 (pinned data, below)
+//   node scripts/derive-step2-thresholds.mjs --data-rev HEAD  (today's backup)
+//
+// THE DATA IS PINNED, not just the code. data/backups/signal_log.json is
+// overwritten by the nightly backup, so an unpinned run gives a different
+// answer every day: the step 2 figures were first derived against a local
+// copy one day staler than the remote, and that difference was misread as
+// "the other figures don't reproduce" (spec §7.7). DATA_REV is the backup
+// commit every stated step 2 figure comes from; the output prints it.
 //
 // OLD scorer = core/edge-scoring.js at BASE_COMMIT (the last commit before
 // step 2), read from git. NEW scorer = the working tree. Both score the same
@@ -30,6 +38,8 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const BASE_COMMIT = 'b63ef1b'; // last commit with the pre-step-2 formula
+const argRev = process.argv.indexOf('--data-rev');
+const DATA_REV = argRev > -1 ? process.argv[argRev + 1] : 'de95a93'; // nightly backup 2026-10-22T10:45Z: signal_log through 2026-10-21
 const OLD_LINES = { WATCH: 29, SOFT: 73, STRONG: 116 };
 // A line no signal ever reached under the old formula has no equal-count
 // derivation: the target count is 0, and every high enough new line
@@ -51,7 +61,8 @@ function scorer(src) {
 const OLD = scorer(execSync(`git show ${BASE_COMMIT}:core/edge-scoring.js`, { cwd: ROOT, maxBuffer: 1e8 }).toString());
 const NEW = scorer(read('core/edge-scoring.js'));
 
-const raw = JSON.parse(read('data/backups/signal_log.json'));
+const raw = JSON.parse(execSync(`git show ${DATA_REV}:data/backups/signal_log.json`, { cwd: ROOT, maxBuffer: 1e9 }).toString());
+console.log(`data: data/backups/signal_log.json at ${DATA_REV}; old formula: core/edge-scoring.js at ${BASE_COMMIT}; new formula: working tree`);
 const rows = (Array.isArray(raw) ? raw : raw.rows).filter(r => r.engine_source === 'EDGE' && r.signal_snapshot?.bars?.length);
 
 let mismatches = 0;
