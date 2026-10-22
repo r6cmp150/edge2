@@ -62,3 +62,19 @@ function entryGateNow() {
   const hhmm = String(pt.getHours()).padStart(2, '0') + ':' + String(pt.getMinutes()).padStart(2, '0');
   return entryGateAt(ptDateStr(pt), hhmm);
 }
+
+// Stale price history (2026-10-22, db/031). A signal scored on daily bars
+// more than one trading day old is NOT BUYABLE, and says why. 30 of 676
+// logged snapshots were scored on histories 4+ weekdays stale (AREN for
+// weeks on bars ending 08-28), with nothing marking it. Advice only, like
+// every gate in this file: recording stays open. A signal without the
+// field (scored before this shipped) is not judged stale: unknown, and the
+// next scan stamps it.
+const STALE_BARS_MAX_AGE = 1; // trading days: today's partial bar (0) or yesterday's (1)
+function entryGateForSignal(signal) {
+  const age = signal?.barsAgeTradingDays;
+  if (age != null && age > STALE_BARS_MAX_AGE) {
+    return { gated: true, rule: 'STALE_BARS', logged: null, label: `Scored on price history from ${signal.barsAsOf} (${age} trading days old) — not buyable` };
+  }
+  return entryGateNow();
+}

@@ -792,6 +792,44 @@ days, not quiet ones.
    The "split the display and logging constant" instruction is
    **dropped**: `signal_log` already logs SHOWN and BELOW_THRESHOLD with
    full snapshots, so there was nothing to split.
+1e½. **Stale price history is marked and not buyable** (db/031, built
+   2026-10-22, ahead of the gate so the gate's effect can be measured on
+   clean signals). 32 of 676 logged EDGE signals (4.7%, backup `de95a93`)
+   were scored on daily histories more than one trading day old, nine of
+   them SHOWN. Those nine are one stock, **PSKY, shown as a SOFT BUY
+   (score 80) on 8 days from 10-09 to 10-20 on bars ending 09-15**.
+   **AREN had stopped trading:** its last session on either feed was
+   2026-08-28 (16.9M shares, a final day), and Alpaca no longer lists the
+   asset. Its IEX snapshot's "today" bar stayed frozen on that day's 131k
+   shares, so it passed the "≥100k today" pre-filter on every scan for six
+   weeks and was scored on that frozen history. **The three AREN rows in
+   `trades_v2` (bought 09-29, 10-02 and 10-05, 950 shares at $1.10) cannot
+   be executions.** They're distinct rows (not the resurrection race),
+   with the buy price equal to the last close and `sell_price_unverified`
+   set (the sale price was filled in from the buy price, so P&L is exactly
+   $0.00). **Written off from every analysis, pending Roman's broker
+   export**, the same treatment as the §7.5 duplicates. Two consequences:
+   - **Any `pnl > 0` analysis counts them as losses.** The app's report
+     excludes unverified sales (db/026); an ad-hoc analysis that doesn't
+     filter `sell_price_unverified` includes three fabricated zeros.
+   - **Their stored entry inputs are August's:** RSI 17.42, volume ratio
+     9.53 and MA distance −12.50% are identical on all three buy dates,
+     because they come from one frozen history. So they sit in the RSI < 35
+     bucket (the term step 2 neutralised) as three losses that were never
+     trades.
+
+   Nothing marked any of it.
+   - **Recorded:** each signal carries `barsAsOf` (newest bar date) and
+     `barsAgeTradingDays`, stamped by the code that calls the scorer, not
+     inside `scoreStock` (whose source is the pinned formula hash). It is
+     stored on `signal_log.bars_as_of` (backfilled exactly from each row's
+     own stored bars) and carried buy → sale as `bars_as_of_at_buy`.
+   - **The rule:** older than one trading day (today's partial bar or
+     yesterday's is current) means not buyable, saying "Scored on price
+     history from <date> (N trading days old)". It's advice only;
+     recording stays open. Trading days come from the holiday-aware
+     `tradingDaysBetween`; `businessDaysBetween` counts weekdays and
+     would flag every signal on the day after a holiday.
 1f. **Liquidity gate on trailing volume (DESIGN, not built; 2026-10-22).**
    It replaces the volume half of the EDGE pre-filter, which today means
    "IEX volume so far today ≥ 100k" (§7.3), in **both** `app.js`
@@ -813,6 +851,11 @@ days, not quiet ones.
      has no end date, so during market hours its 30-day average includes
      today's partial session, which makes Warrior's baseline mildly
      clock-dependent. Recorded for Warrior; not changed here.
+   - **Recency is part of the rule (found via AREN, 2026-10-22):** the 20
+     sessions must end at the **previous trading day**. A stock that
+     stopped trading keeps a heavy trailing average indefinitely (AREN's
+     last 20 sessions all predate 08-28). Without this, the gate would
+     pass a dead stock exactly as the IEX-today filter did.
    - **Not evaluable:** fewer than 20 completed sessions, or a failed
      fetch, means the symbol is **rejected and logged** as
      `no_volume_history` / `volume_history_unavailable`, never passed on a

@@ -2021,6 +2021,10 @@ async function runScreener() {
       const s = scoreStock(ticker, snap, bars, newsMap[ticker] || null, spyChangePct, category);
       if (s) {
         s.thresholdAtBuy = displayThreshold;
+        // db/031: how current the price history this score used is (barsAsOf,
+        // barsAgeTradingDays). A stale history makes the signal not buyable
+        // (core/entry-gate.js entryGateForSignal).
+        Object.assign(s, barsFreshness(bars, ptDateStr(getPT())));
         // buildVersion (2026-09-05): mirrors engines/warrior/gate.js's
         // gateResult.buildVersion stamp (added 2026-09-03, "the forward
         // test's value depends on knowing which build produced which
@@ -2672,7 +2676,7 @@ function renderStockCard(s, marketClosed) {
     : '';
   // Phase 10 entry gate: advice only. Evaluated now (view time), not when
   // the scan ran. Recording stays open -- see the stock modal's footer.
-  const gate = entryGateNow();
+  const gate = entryGateForSignal(s);
   const gateOverlay = gate.gated
     ? `<div class="day-suppressed-overlay">⛔ Entry gate: ${gate.label}</div>`
     : '';
@@ -2719,7 +2723,7 @@ function buildSignalActionBanner(s) {
   if (isDay && isDayTradeSuppressed(s.duration)) return '';
   // Phase 10 entry gate (core/entry-gate.js): inside a gated window the
   // card's gate overlay is the advice -- never a "BUY NOW" underneath it.
-  if (entryGateNow().gated) return '';
+  if (entryGateForSignal(s).gated) return '';
 
   if (isDay && tradingDay && ptMin >= 720) {
     return `<div class="action-banner action-missed"><strong>MISSED — TOO LATE TODAY</strong></div>`;
@@ -3262,7 +3266,7 @@ async function openStockModal(ticker) {
     // Phase 10 entry gate, same scope as the DAY suppression (Signals-tab
     // results only, never an owned position). Advice only: the footer's
     // Add button stays enabled behind a confirm (spec §7.7).
-    const modalGate = ownedPos ? null : entryGateNow();
+    const modalGate = ownedPos ? null : entryGateForSignal(s);
     const gateBanner = modalGate && modalGate.gated
       ? `<div class="day-suppressed-overlay" style="margin-bottom:12px">⛔ Entry gate: ${modalGate.label}</div>`
       : '';
@@ -3875,6 +3879,7 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
     trimmedAtrAtBuy: sig?.trimmedAtr ?? null,
     macroConditionAtBuy: sig?.macroCondition || null,
     thresholdAtBuy: sig?.thresholdAtBuy ?? BASE_SCORE_THRESHOLD,
+    barsAsOfAtBuy: sig?.barsAsOf ?? null, // db/031
     catalystSetup: sig?.catalystSetup || false,
     peakPrice:   price,
     peakPriceDate: date,
@@ -5686,6 +5691,7 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       raw_atr_at_buy: record.rawAtrAtBuy ?? null,
       trimmed_atr_at_buy: record.trimmedAtrAtBuy ?? null,
       threshold_at_buy: record.thresholdAtBuy ?? null,
+      bars_as_of_at_buy: pos.barsAsOfAtBuy ?? null, // db/031
       target_drift_pct: record.targetDriftPct ?? null,
       peak_price: record.peakPrice ?? null,
       peak_price_date: record.peakPriceDate || null,
@@ -5908,6 +5914,7 @@ async function confirmMarkSold(posId, btn) {
     trimmedAtrAtBuy: pos.trimmedAtrAtBuy ?? null,
     macroConditionAtBuy: pos.macroConditionAtBuy || null,
     thresholdAtBuy: pos.thresholdAtBuy ?? BASE_SCORE_THRESHOLD,
+    barsAsOfAtBuy: pos.barsAsOfAtBuy ?? null, // db/031
     catalystSetup: pos.catalystSetup || false,
     duration: pos.duration,
     priceRange: salePrice <= 3 ? '$1–$3' : salePrice <= 9 ? '$4–$9' : '$10–$20',
@@ -6398,6 +6405,7 @@ function mapTradesV2ToSoldShape(row) {
     trimmedAtrAtBuy: row.trimmed_atr_at_buy,
     macroConditionAtBuy: row.macro_condition,
     thresholdAtBuy: row.threshold_at_buy,
+    barsAsOfAtBuy: row.bars_as_of_at_buy ?? null, // db/031
     catalystSetup: !!row.catalyst_setup,
     duration: row.duration_classification,
     priceRange: row.price_tier,

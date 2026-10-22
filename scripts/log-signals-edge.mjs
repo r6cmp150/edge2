@@ -212,7 +212,7 @@ async function main() {
   const CODE_VERSION = codeVersionForRun(REPO_ROOT, 'log-signals-edge');
   global.VERSION = CODE_VERSION.app;
 
-  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession']);
+  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession', 'barsFreshness']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
   loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT', 'fetchMultiBars', 'checkUnresolvedSymbols']);
   loadReal('core/news.js', ['fetchNewsForTickers']);
@@ -321,6 +321,7 @@ async function main() {
     if (s) {
       s.thresholdAtBuy = displayThreshold;
       s.buildVersion = global.VERSION;
+      Object.assign(s, global.barsFreshness(bars, today)); // db/031: as-of date of the scored history
     }
     const shown = !!s && s.score >= displayThreshold && s.price >= minP2;
     return { ticker, signal: s, shown, tier: s ? (shown ? 'SHOWN' : 'BELOW_THRESHOLD') : 'NOT_EVALUATED' };
@@ -373,6 +374,7 @@ async function main() {
     first_shown_at: new Date().toISOString(),
     scan_session: scanRunId,
     code_version: CODE_VERSION, // db/028, same value as the scan_runs row
+    bars_as_of: r.signal?.barsAsOf ?? null, // db/031: NULL when the symbol had no bars (not evaluated)
     signal_snapshot: r.signal || { ticker: r.ticker, tier: r.tier },
     reference_price: global.getLivePrice(snapshots[r.ticker]) ?? null,
   }));
@@ -384,7 +386,7 @@ async function main() {
   await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'scan_runs', Object.keys(scanRun));
   await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'signal_log', [
     'signal_date', 'symbol', 'engine_source', 'tier', 'first_shown_at',
-    'scan_session', 'code_version', 'signal_snapshot', 'reference_price',
+    'scan_session', 'code_version', 'bars_as_of', 'signal_snapshot', 'reference_price',
   ]);
 
   if (!WRITE) {

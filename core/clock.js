@@ -325,3 +325,32 @@ function businessDaysBetween(startDateStr, endDateStr) {
   }
   return count;
 }
+
+// Trading days AFTER fromDateStr up to and including toDateStr, with market
+// holidays excluded (HOLIDAYS). Unlike businessDaysBetween, which counts
+// weekdays and would call the day after a holiday "two days" later.
+// Same date -> 0; the previous trading day -> 1. Dates are PT "YYYY-MM-DD".
+function tradingDaysBetween(fromDateStr, toDateStr) {
+  let n = 0;
+  const cur = new Date(fromDateStr + 'T12:00:00Z');
+  const end = new Date(toDateStr + 'T12:00:00Z');
+  while (cur < end) {
+    cur.setUTCDate(cur.getUTCDate() + 1);
+    const dow = cur.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !HOLIDAYS.has(cur.toISOString().slice(0, 10))) n++;
+  }
+  return n;
+}
+
+// How current the daily history a signal was scored on is (2026-10-22,
+// phase-10 spec §7.6, db/031). barsAsOf = the newest bar's session date;
+// barsAgeTradingDays = trading days from it to the scan date (0 = today's
+// partial bar, 1 = yesterday's). With no bars, both are null: unknown,
+// never 0.
+function barsFreshness(bars, scanDateStr) {
+  if (!bars || !bars.length) return { barsAsOf: null, barsAgeTradingDays: null };
+  let newest = bars[0].t;
+  for (const b of bars) if (b.t > newest) newest = b.t;
+  const barsAsOf = newest.slice(0, 10);
+  return { barsAsOf, barsAgeTradingDays: tradingDaysBetween(barsAsOf, scanDateStr) };
+}

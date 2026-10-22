@@ -129,6 +129,7 @@ function mapSupabasePortfolioRowToPosition(row) {
     trimmedAtrAtBuy: row.trimmed_atr_at_buy,
     macroConditionAtBuy: row.macro_condition_at_buy,
     thresholdAtBuy: row.threshold_at_buy,
+    barsAsOfAtBuy: row.bars_as_of_at_buy ?? null, // db/031: read back, so the update path resends it
     catalystSetup: !!row.catalyst_setup,
     peakPrice: row.peak_price,
     peakPriceDate: row.peak_price_date ? row.peak_price_date.split('T')[0] : row.peak_price_date,
@@ -197,6 +198,7 @@ function mapPositionToSupabaseRow(position) {
     trimmed_atr_at_buy: position.trimmedAtrAtBuy,
     macro_condition_at_buy: position.macroConditionAtBuy,
     threshold_at_buy: position.thresholdAtBuy,
+    bars_as_of_at_buy: position.barsAsOfAtBuy ?? null, // db/031
     catalyst_setup: !!position.catalystSetup,
     peak_price: position.peakPrice,
     peak_price_date: position.peakPriceDate,
