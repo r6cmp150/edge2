@@ -404,6 +404,31 @@ confounded measure disliked it, against the clean measure, is the same
 mistake in the other direction. None of §2's new weights (+25 band, −10
 for 35–42, −5 for 65–75) and none of §4's monotonic price ladder ships.
 
+**Withdrawn display copy (2026-10-21).** The RSI copy (step 1c) and all
+five volume-band notes in the score breakdown: "Healthy volume — best
+win-rate zone" is false on Roman's data (1.0–1.3× was 59.1% / −1.24%;
+0.5–1.0× was the best band at 63.2%); "Quiet accumulation — strong
+historical performer" points the right way by accident, which makes it
+more dangerous, not less (a claim that is accidentally true is still one
+nobody tested); "late entry risk", "moderate signal" and "insufficient
+liquidity signal" are the same kind of claim in quieter words. All replaced
+by factual band descriptions. The exit engine's volume labels lost their
+claims too ("Quiet accumulation", "Healthy volume", "Volume fading"). They
+now state the fact and keep the weight beside it ("Volume 0.7× — band
+0.5–1.0× (low)", +10): the claim goes, but the fact and the weight both stay
+visible, because a neutral label next to an unexplained number explains less
+than either. The weights are step 4's. Guarded by
+`tests/score-components.test.js` (withdrawn phrases).
+
+**Retracted finding: relative-strength buckets.** The 2026-10-21 analysis
+reported relative-strength buckets (relstr 15: n=153, 59.5% win; quoted as
+reported, not re-derived here). They were computed from the stored
+`rel_strength_pts`, which is written off in §7.5: for EDGE trades it holds
+the stock modal's recompute, not the value the score used. The table is
+unusable and is retracted, not quietly dropped. **Not load-bearing:**
+nothing in §1 or §7.2–7.4 depends on it. RSI, volume ratio, momentum and
+volume-spike points were not in the mutated set.
+
 ### 7.4 §3: what survives
 
 - **§3.2 AFTER_HOURS: kept, and the strongest of the four.** 28 trades
@@ -464,6 +489,26 @@ UNWRITABLE / UNKNOWN by a follow-up select) and shown in the banner. Only a
 confirmed MISSING stops the session saving the position
 (`tests/position-save-update-only.test.js`). The nine existing rows are not
 touched by the fix and stay unresolved below.
+
+**Written off: `cons_up_days`, `cons_up_pts`, `rel_strength_pts` on EDGE
+trades recorded before 2026-10-21's modal fix.** Until then,
+`openStockModal` wrote its own recompute of these fields (from its own bar
+fetch, at the time the modal was opened) onto the live `state.signals`
+entry. `finalizeAddPortfolio` stored them from that same object, and the
+EDGE add button is inside the modal. So the stored values are the modal's,
+not the ones the score was summed from. You can't tell row by row which is
+which, and the components need not add up to `signal_score`. **These columns
+are not analysable, full stop** — not "treat with caution". Measured
+where it could be: 6 EDGE trades on 2 dates match a same-day `signal_log`
+snapshot, and 1 differs (STUB 2026-09-18, rel-strength 15 stored vs 5
+scored). That shows the divergence exists, not how big it is. Every other
+stored component (RSI, volume, momentum, MA, vol-build, mean-reversion
+points) was outside the mutated set and is unaffected. Same for the exit
+engine: until the fix, its exhaustion factor ("≥4 consecutive up days",
+−20) read the mutated `consUpDays`, so a sell recommendation could depend on
+whether a modal had been opened. Recorded `fullUreFactorsAtSale` and
+`unified_recommendation_at_sale` carry that dependence and can't be
+corrected after the fact.
 
 **Which sale of each pair is real is unresolved** — it needs Roman's
 broker export (on his list). Until then every P&L figure that depends on
@@ -605,10 +650,77 @@ imports (`gate.js`, `replay.js`, `setups.js`), and of those only `gate.js`
 calls into `core/` (`persist()`, contract unchanged). No remaining code
 calls `savePositionToSupabase` to create a row; its only callers are the
 fill confirmation and `backgroundSavePosition`, both updates of a row that
-must exist. Versioning the sub-imports is open and not done here: it has
-to be one version across all three files, or `gate.js` loads as two
-module instances (index.js and replay.js would import it by different
-URLs).
+must exist. The sub-imports are not versioned. Doing it means one version
+across all three files, or `gate.js` loads as two module instances
+(index.js and replay.js would import it by different URLs). **They are not
+"safe because `persist()`'s contract is unchanged":** that is the
+reasoning that failed on index.js. **Trip-wire:** any change to a `core/`
+contract reachable from `gate.js`, `replay.js` or `setups.js` (today:
+`persist()` and the `state` keys it writes) must, in the same change,
+either version all three sub-imports to one shared version or state here
+why not. It's a condition checked at a known moment, not an open item
+nobody is watching.
+
+**Displaying something must never write to state that a decision reads.**
+A view may compute fresh values; it may not store them where the scorer,
+the exit engine, or the recorder will find them. Two independent instances
+so far, each found by accident while changing something adjacent:
+
+- The −6% floor read `currentPrice` on render. It evaluated only when the
+  portfolio rendered, on the live in-progress price, so every look could
+  catch an intraday dip: the shipped mechanism was the any-breach case,
+  −$171.51 against −$73.73 for doing nothing (phase-9 §0.3.1–0.3.2). The
+  trigger was render time. (Paraphrased: §0.3.1 has no sentence of the form
+  "the more closely he watched, the worse it performed", though that is
+  what its numbers say.)
+- `openStockModal` wrote its recompute of `consUpDays` / `consUpPts` /
+  `spyChange` / `rsVsSPY` / `relStrengthPts` (and, via `_modalStock = stock`,
+  `livePrice` / `liveRsi` / `priceFetchFailed`) onto the live
+  `state.signals` entry. The trigger was observation: opening a modal
+  changed the exit engine's exhaustion factor on a held position, the
+  components stored on the next trade (§7.5), and the card breakdown.
+  **Fixed 2026-10-21:** `_modalStock` is a copy, a real signal's breakdown
+  reads the signal, and only the unshared fallback takes fresh values.
+
+**Deliberate sweep, 2026-10-21.** Covered every assignment to a non-local
+object inside display-path functions (render / build / show / open /
+display / toggle / report / card / modal / format, in `app.js`, `core/`,
+`engines/`, `shell/`), plus every writer of each decision-read field it
+found, plus argument mutation in all `calc*` / decision functions. The
+only other writes (outside UI toggles, settings and local counters) are
+all in `renderPortfolioTab`, and all have this shape. **Open, not fixed
+here:**
+
+- `p.peakPrice` / `peakPriceDate`: the only writer is the render, so the
+  peak is the max of prices *seen while the Portfolio tab was rendered*.
+  Read by the exit engine's momentum-protection pullback, by
+  `trailingStopTriggered` on the sale, and stored as `peak_price`.
+- `p.momentumProtectionActivated`: set only if a render happens while
+  price ≥ +20%. It switches the exit engine's mode and is sticky.
+- `p.prevRSI` ← `state.ownedPrevRSI`: the RSI at the *previous render*.
+  `calcPeakRiskScore`'s "RSI declining from peak" (−30) fires on the
+  difference, so whether it fires depends on when he last looked.
+- `state.ownedPeakRSI` (max over renders → `peakRsiDuringHold` on the
+  sale), `p.rsiSuspendedAtGainPct` (first render at RSI ≥ 72),
+  `p.liveTarget` (last render → `targetDriftPct` on the sale): recorder
+  fields with the same dependence.
+- `state.portfolioPrices` / `portfolioPriceFetchFailed`: the last
+  rendered price feeds the nav badge's sell-warning count.
+
+These are guarded by a ratchet (`tests/view-no-decision-writes.test.js`
+lists them exactly; a new one fails, so the list can only shrink).
+`peakPrice` and `momentumProtectionActivated` are the serious ones: they
+decide exits and they are the −6% floor's shape again. What the sweep
+cannot see: writes made through a helper called from a render path under a
+non-display name, and anything outside these four directories.
+
+**Open design question: the exit engine should not read the absolute
+entry score.** From the 2026-10-21 review (point 4(c)): the entry score answers "is
+now a good time to buy"; a held position asks "is the thesis intact",
+whose honest form is the *delta*, score at purchase versus score now
+("Score dropped from 80 → 50" already appears as a SELL NOW factor). That
+delta is roughly invariant to formula changes because both sides move. A
+redesign, not a step; it needs §5's re-test behind it.
 
 ---
 

@@ -108,12 +108,13 @@ run('score formula: breakdown rows equal scoreComponents, total equals scoreStoc
   const pick = re => app.match(re)[0];
   const src = [
     pick(/const RSI_BAND_DESCRIPTIONS = \{[\s\S]*?\n\};/),
+    pick(/const VOL_BAND_DESCRIPTIONS = \{[\s\S]*?\n\};/),
     pick(/function rsiBandDescription\(rsi\) \{[\s\S]*?\n\}/),
     pick(/function computeScoreBreakdown\(s\) \{[\s\S]*?\n\}/),
   ].join('\n');
   const c = NEW;
   c.formatMacroConditionDetail = () => '';
-  vm.runInContext(src + '\n;globalThis.__bd = computeScoreBreakdown;', c);
+  vm.runInContext(src + '\n;globalThis.__bd = computeScoreBreakdown; globalThis.__VOL = VOL_BAND_DESCRIPTIONS;', c);
   let seed = 7;
   const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
   for (let i = 0; i < 5000; i++) {
@@ -127,6 +128,7 @@ run('score formula: breakdown rows equal scoreComponents, total equals scoreStoc
     const byKey = Object.fromEntries(rows.map(r => [r.key, r.pts]));
     assert.strictEqual(byKey.rsi, comps.rsiPts);
     assert.strictEqual(byKey.vol, comps.volPts);
+    assert.ok(rows.find(r => r.key === 'vol').label.endsWith('— ' + c.__VOL[comps.volBucket]), 'volume note is the factual band for the scored bucket');
     assert.strictEqual(byKey.sub10, comps.sub10Pts ?? undefined, 'sub10 row present exactly when the component exists');
     assert.strictEqual(total, Math.max(0, comps.raw), 'breakdown total = the formula total');
   }
@@ -134,10 +136,13 @@ run('score formula: breakdown rows equal scoreComponents, total equals scoreStoc
 
 // Spec §7.3: text Roman reads at the moment of buying must not assert
 // performance the data contradicts.
-run('score formula: no evaluative RSI copy left in the display', () => {
+run('score formula: no evaluative RSI or volume copy left in the display', () => {
   // Code only: the comments that record what the old copy said are allowed.
   const app = readSource('app.js').split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
-  for (const phrase of ['Sweet spot', 'potential bounce setup', 'Oversold bounce setup', 'Neutral-bullish — solid performer', 'Bullish momentum']) {
+  for (const phrase of ['Sweet spot', 'potential bounce setup', 'Oversold bounce setup', 'Neutral-bullish — solid performer', 'Bullish momentum',
+    // Volume (2026-10-21): the breakdown notes and the exit engine's labels.
+    'best win-rate zone', 'strong historical performer', 'late entry risk', 'moderate signal', 'insufficient liquidity signal',
+    'Quiet accumulation', 'Healthy volume', 'Volume fading']) {
     assert.ok(!app.includes(phrase), `withdrawn claim still displayed: "${phrase}"`);
   }
 });

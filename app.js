@@ -2771,6 +2771,21 @@ const RSI_BAND_DESCRIPTIONS = {
   '65-75': 'band 65–75 (high)',
   '75+': 'band above 75 (highest)',
 };
+// Volume band descriptions, same treatment as the RSI ones (2026-10-21,
+// spec §7.3): the band and its position, nothing evaluative. The old copy
+// claimed performance: "Healthy volume — best win-rate zone" on 1-2x
+// (Roman's 1.0-1.3x was 59.1% / −1.24%; 0.5-1.0x was the best band at
+// 63.2%), "Quiet accumulation — strong historical performer" on 0.5-1x
+// (pointed the right way by accident, never tested), and "late entry
+// risk" / "moderate signal" / "insufficient liquidity signal" on the
+// rest. Keyed by scoreComponents' volBucket ids.
+const VOL_BAND_DESCRIPTIONS = {
+  '3x+': 'band 3× and above (highest)',
+  '2-3x': 'band 2–3× (high)',
+  '1-2x': 'band 1–2× (middle)',
+  '0.5-1x': 'band 0.5–1× (low)',
+  'under-0.5x': 'band below 0.5× (lowest)',
+};
 function rsiBandDescription(rsi) {
   const bucket = scoreComponents({ rsi }).rsiBucket;
   return bucket ? RSI_BAND_DESCRIPTIONS[bucket] : 'RSI unavailable';
@@ -2792,13 +2807,7 @@ function computeScoreBreakdown(s) {
   const { volPts, momPts, rsiPts, maPts, volBuildPts, consUpPts } = c;
   const meanRevPts = c.meanRevPts;
   const relStrPts = c.relStrengthPts;
-  const volNote = {
-    '3x+': 'Volume spike — late entry risk',
-    '2-3x': 'Elevated volume — moderate signal',
-    '1-2x': 'Healthy volume — best win-rate zone',
-    '0.5-1x': 'Quiet accumulation — strong historical performer',
-    'under-0.5x': 'Too quiet — insufficient liquidity signal',
-  }[c.volBucket];
+  const volNote = VOL_BAND_DESCRIPTIONS[c.volBucket];
   const rsiNote = c.rsiBucket ? RSI_BAND_DESCRIPTIONS[c.rsiBucket] : 'RSI unavailable';
 
   const spySign = (s.spyChange || 0) >= 0 ? '+' : '';
@@ -2896,10 +2905,9 @@ function sbContribClass(key, pts) {
 
 function buildScoreBreakdown(s) {
   // Always called with a real state.signals entry (Signals tab cards never
-  // render from a fallback object) — s.score is authoritative and immune to
-  // any later modal-open recomputation, so use it directly rather than
-  // computeScoreBreakdown()'s own total (see buildModalScoreBreakdown for
-  // why that distinction matters).
+  // render from a fallback object) — s.score is authoritative, and since
+  // 2026-10-21 openStockModal no longer writes its recompute onto s, so the
+  // rows below are the values that score was summed from.
   const { rows } = computeScoreBreakdown(s);
   const total = s.score;
   const id   = `sb-${s.ticker}`;
@@ -2941,13 +2949,12 @@ function buildScoreBreakdown(s) {
 // back to computeScoreBreakdown()'s own fresh total as a last resort.
 //
 // Deliberately NOT computeScoreBreakdown()'s total whenever an authoritative
-// value exists: openStockModal recomputes consUpDays/consUpPts/rsVsSPY/
-// relStrengthPts from its own independent bars fetch and overwrites them on
-// this same object (for the Groq prompt's benefit) before this function
-// ever runs, so by the time computeScoreBreakdown() reads them here they
-// can differ from whatever produced the authoritative value — a single new
-// day's bar is enough to flip a "2 consecutive up days" into "4", a real
-// 5-to-15-point swing.
+// value exists. For a real signal, openStockModal passes the signal itself
+// (never written to), so rows and total agree. For an owned position with
+// no signal, it passes the local fallback object plus the modal's own fresh
+// recompute, whose rows can differ from the state.ownedScores total
+// computed at scan time: a single new day's bar is enough to flip a
+// "2 consecutive up days" into "4", a real 5-to-15-point swing.
 function buildModalScoreBreakdown(s, authoritativeTotal, authoritativeSignal) {
   const { rows, total: freshTotal } = computeScoreBreakdown(s);
   const total = authoritativeTotal != null ? authoritativeTotal : freshTotal;
@@ -3111,42 +3118,55 @@ async function openStockModal(ticker) {
         todayChange, signal: 'WATCH', news: null
       };
     })();
-    _modalStock = stock;
-    // Genuinely live price/RSI from this modal's own fresh bar fetch — distinct from
-    // stock.price/stock.rsi, which can be a stale state.signals cache entry when the
-    // ticker is also in the current Signals scan. Used for owned-stock sell-warning calc.
+
+    // Fresh values from this modal's own bar fetch. NEVER written onto
+    // `stock` (2026-10-21, phase-10 spec §7.7: displaying something must
+    // never write to state that a decision reads). `stock` is the live
+    // state.signals entry whenever one exists, and these used to be
+    // assigned onto it -- so opening a modal rewrote the consUpDays the exit
+    // engine's exhaustion factor reads, the cons_up/rel_strength fields
+    // finalizeAddPortfolio stores on the trade, and the card breakdown.
+    let modalConsUpDays = 0;
+    for (let i = sorted.length - 1; i > 0; i--) {
+      if (sorted[i].c > sorted[i-1].c) modalConsUpDays++;
+      else break;
+    }
+    const modalSpyChg  = state.spyChange || 0;
+    const modalRsVsSPY = (stock.todayChange || 0) - modalSpyChg;
+    const modalFresh = {
+      consUpDays: modalConsUpDays,
+      consUpPts: consUpPoints(modalConsUpDays), // core/edge-scoring.js, not a copy
+      spyChange: modalSpyChg,
+      rsVsSPY: modalRsVsSPY,
+      relStrengthPts: relStrengthPoints(modalRsVsSPY),
+    };
+    // A real signal's breakdown shows the values its score was summed from.
+    // Only the local fallback object (no signal; not shared; no score of its
+    // own) takes the fresh ones.
+    const breakdownStock = s ? stock : { ...stock, ...modalFresh };
+
+    // _modalStock: this modal's own COPY, for buildAIPrompt() and the
+    // owned-position block. Live price/RSI from this modal's fresh bar
+    // fetch, distinct from stock.price/stock.rsi, which can be a stale
+    // state.signals cache entry when the ticker is also in the current scan.
     //
     // Prefers the latest 1-minute bar close (same live intraday data the "1 Day"
     // chart range uses) over the daily-bars endpoint's last row: during market
     // hours that daily bar is typically still yesterday's completed session, which
     // was silently overriding a correct `price` here and fed a stale P&L sign into
     // buildAIPrompt()'s owned-position branch (CONTINUE HIGHER vs FURTHER DROP).
-    _modalStock.livePrice = _chartBarsMinute[_chartBarsMinute.length - 1]?.c || price;
-    _modalStock.liveRsi = rsi;
-    _modalStock.priceFetchFailed = modalPriceUnavailable;
-
-    // Always recompute new signal values from fresh bars
-    let modalConsUpDays = 0;
-    for (let i = sorted.length - 1; i > 0; i--) {
-      if (sorted[i].c > sorted[i-1].c) modalConsUpDays++;
-      else break;
-    }
-    const modalConsUpPts  = consUpPoints(modalConsUpDays); // core/edge-scoring.js, not a copy
-    const modalSpyChg     = state.spyChange || 0;
-    const modalRsVsSPY    = (stock.todayChange || 0) - modalSpyChg;
-    const modalRelStrPts  = relStrengthPoints(modalRsVsSPY);
-    stock.consUpDays     = modalConsUpDays;
-    stock.consUpPts      = modalConsUpPts;
-    stock.spyChange      = modalSpyChg;
-    stock.rsVsSPY        = modalRsVsSPY;
-    stock.relStrengthPts = modalRelStrPts;
+    _modalStock = {
+      ...stock,
+      ...modalFresh,
+      livePrice: _chartBarsMinute[_chartBarsMinute.length - 1]?.c || price,
+      liveRsi: rsi,
+      priceFetchFailed: modalPriceUnavailable,
+    };
 
     // Score/signal source, in priority order:
     // 1. Real state.signals entry (s exists) — stock.score/.signal are an
-    //    authoritative scoreStock() result. Must be used as-is: the
-    //    consUpDays/relStrengthPts recompute a few lines above mutates this
-    //    same object for the Groq prompt's benefit and can disagree with
-    //    what scoreStock() actually used, but never touches .score/.signal.
+    //    authoritative scoreStock() result, and stock is never written to
+    //    here, so its breakdown rows are the ones that score was summed from.
     // 2. No signals entry, but this is an owned position — state.ownedScores
     //    is refreshed for every owned ticker on every screener run (see
     //    runScreener()'s missingOwnedTickers pass), specifically so the
@@ -3167,7 +3187,7 @@ async function openStockModal(ticker) {
       modalScoreTotal = ownedScoreEntry.score;
       modalScoreSignal = ownedScoreEntry.label;
     } else {
-      modalScoreTotal = computeScoreBreakdown(stock).total;
+      modalScoreTotal = computeScoreBreakdown(breakdownStock).total;
       modalScoreSignal = modalScoreTotal >= 116 ? 'STRONG BUY' : modalScoreTotal >= 73 ? 'SOFT BUY' : 'WATCH';
     }
 
@@ -3374,7 +3394,7 @@ async function openStockModal(ticker) {
         <span class="signal-val">${stock.priceRange}</span>
       </div>
 
-      ${buildModalScoreBreakdown(stock, modalScoreTotal, modalScoreSignal)}
+      ${buildModalScoreBreakdown(breakdownStock, modalScoreTotal, modalScoreSignal)}
 
       <div class="modal-news-section">${buildModalNewsSection(ticker)}</div>
 
@@ -4800,12 +4820,19 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
     }
   }
 
-  // ── Volume ratio (current)
+  // ── Volume ratio (current). Labels state the fact; the points beside them
+  // state the weight this engine applies (2026-10-21, spec §7.3 -- the old
+  // labels "Quiet accumulation" / "Healthy volume" / "Volume fading" were
+  // claims). Bands are this engine's own (<0.5, <1.0, <=2.0), not
+  // scoreComponents' buckets, which split differently at exactly 2.0x. The
+  // weights are unchanged and are step 4's to revisit. Factor names are
+  // stored per sale (fullUreFactorsAtSale): sales before this change carry
+  // the old names.
   const volRatio = currentSignal?.volRatio;
   if (volRatio != null) {
-    if (volRatio < 0.5) add(`Volume fading at ${volRatio.toFixed(1)}x`, -10);
-    else if (volRatio < 1.0) add(`Quiet accumulation at ${volRatio.toFixed(1)}x`, 10);
-    else if (volRatio <= 2.0) add(`Healthy volume ${volRatio.toFixed(1)}x`, 15);
+    if (volRatio < 0.5) add(`Volume ${volRatio.toFixed(1)}× — band below 0.5× (lowest)`, -10);
+    else if (volRatio < 1.0) add(`Volume ${volRatio.toFixed(1)}× — band 0.5–1.0× (low)`, 10);
+    else if (volRatio <= 2.0) add(`Volume ${volRatio.toFixed(1)}× — band 1.0–2.0× (middle)`, 15);
   }
 
   // ── 20-day MA position (current)
