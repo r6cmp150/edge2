@@ -457,7 +457,13 @@ sold-position resurrection race (first fixed 2026-08-19 with a
 session-only guard, `state.deletedPositionIds`): a background
 `savePositionToSupabase` upsert from a session that still holds the sold
 position re-inserts it. So nine rows are corrupt: they inflate n by nine
-and double-count P&L.
+and double-count P&L. **Fixed 2026-10-21 at the cause, not the guard:**
+only the two add forms insert portfolio rows; every other save is
+update-only, and an update matching no row is classified (MISSING /
+UNWRITABLE / UNKNOWN by a follow-up select) and shown in the banner. Only a
+confirmed MISSING stops the session saving the position
+(`tests/position-save-update-only.test.js`). The nine existing rows are not
+touched by the fix and stay unresolved below.
 
 **Which sale of each pair is real is unresolved** — it needs Roman's
 broker export (on his list). Until then every P&L figure that depends on
@@ -563,10 +569,46 @@ showing the test can see a one-point change. For 1c, MA +10→+11 and RSI
 35–55 +15→+14 each failed both equivalence tests on the first
 differing input (checked 2026-10-21, then reverted). **The mutation half is
 the part that makes the zero mean anything:** a comparison that cannot fail
-also reports zero differences. Note what the mutation does *not* catch: the
-breakdown-equals-formula test passes under both, because display and score
-now read the same function and move together. That is the point of 1c, and
-it is also why that test alone could never prove the refactor.
+also reports zero differences.
+
+**A test that compares two readers of the same function is a wiring test,
+not a value test.** The breakdown-equals-formula test in the same file
+passed under both mutations: once display and score read one function, a
+wrong tier value moves both sides together and that test cannot see it. It
+detects only a wiring break (the display stops calling `scoreComponents`).
+It looks like coverage of the tier values and is none. Only the comparison
+against an independent reference (here, the old commit) covers values.
+
+**A number that cannot be reproduced on demand does not go in a spec.**
+Either the command that produces it is named next to it, or it comes out.
+Found 2026-10-21 on this paragraph: the first draft of the 1c proof gave
+"24,056 inputs". Claude reported that figure from an earlier session's run,
+then could not reproduce it from the committed test, which runs 3,984 +
+10,000 (`node tests/score-components.test.js` prints the snapshot count).
+The figure went from a scratch run into Roman's review and back into the
+spec in two turns, because it was precise and precision reads as
+verification. Two failures: reporting a figure that wasn't re-derived, and
+accepting one without asking where it came from. A stale figure in a spec
+is a value nobody observed, and it spreads faster than code does.
+
+**A versionless module is safe only while nothing it depends on changes
+its contract.** `engines/warrior/index.js` was loaded by a versionless
+`import()` while `core/store.js`'s add path went from upsert to
+insert-only. A cached old index.js would have called the now update-only
+`savePositionToSupabase` to create a position: the add is refused with a
+false "closed in another session" alert and the trade is never recorded.
+Fixed in the same change (the import carries `?v=`, guarded by
+`tests/warrior-degradation.test.js`). The sweep, 2026-10-21: every classic
+`<script>` in `index.html` is versioned, except the two pinned CDN
+libraries. The only versionless loads left are the Warrior engine's own
+imports (`gate.js`, `replay.js`, `setups.js`), and of those only `gate.js`
+calls into `core/` (`persist()`, contract unchanged). No remaining code
+calls `savePositionToSupabase` to create a row; its only callers are the
+fill confirmation and `backgroundSavePosition`, both updates of a row that
+must exist. Versioning the sub-imports is open and not done here: it has
+to be one version across all three files, or `gate.js` loads as two
+module instances (index.js and replay.js would import it by different
+URLs).
 
 ---
 

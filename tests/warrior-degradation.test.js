@@ -25,7 +25,9 @@ function loadWarriorEngineWithMockImport(mockImportFn) {
   const re = /async function loadWarriorEngine\(\) \{[\s\S]*?\n\}/m;
   const m = appSrc.match(re);
   if (!m) throw new Error('could not extract loadWarriorEngine from app.js');
-  const patched = m[0].replace("await import('./engines/warrior/index.js')", 'await __mockImport()');
+  const importRe = /await import\('\.\/engines\/warrior\/index\.js\?v=\d{14}'\)/;
+  if (!importRe.test(m[0])) throw new Error('loadWarriorEngine must import engines/warrior/index.js with a ?v= version (see the comment above loadWarriorEngine)');
+  const patched = m[0].replace(importRe, 'await __mockImport()');
 
   global.state = {};
   global.__mockImport = mockImportFn;

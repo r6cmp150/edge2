@@ -240,17 +240,39 @@ async function loadPortfolioFromSupabase() {
   return (data || []).map(mapSupabasePortfolioRowToPosition);
 }
 
-async function savePortfolioToSupabase(portfolio) {
-  if (!portfolio.length) return;
-  const rows = portfolio.map(mapPositionToSupabaseRow);
-  const { error } = await supabaseClient.from('portfolio').upsert(rows, { onConflict: 'position_id' });
+// Only the add forms create portfolio rows. Every other save is an update of
+// a row that must already exist (2026-10-21, phase-10 spec §7.5): this was an
+// upsert, and a background save from a session still holding a position sold
+// in another session re-created it -- the 10/01 batch's phantom rows 530-536,
+// nine positions recorded as two sales each. savePortfolioToSupabase (a bulk
+// upsert with no callers) deleted in the same change.
+async function insertPositionToSupabase(position) {
+  const row = mapPositionToSupabaseRow(position);
+  const { error } = await supabaseClient.from('portfolio').insert([row]);
   if (error) throw error;
 }
 
+// An update that matches zero rows has more than one cause, and only one of
+// them means the position is gone, so a follow-up select tells them apart
+// (failure path only). Callers may act on POSITION_MISSING; the other two
+// mean "not saved, position still real" and must never hide it. Distinguished
+// even though portfolio has no RLS today (db/NOTE_portfolio_rls_not_applied.sql)
+// -- a later policy would make UNWRITABLE reachable without touching this code.
+//   POSITION_MISSING    -- select confirms no row: closed in another session
+//   POSITION_UNWRITABLE -- the row exists; the update was refused
+//   POSITION_UNKNOWN    -- the select itself failed; can't tell which
 async function savePositionToSupabase(position) {
   const row = mapPositionToSupabaseRow(position);
-  const { error } = await supabaseClient.from('portfolio').upsert([row], { onConflict: 'position_id' });
+  const { data, error } = await supabaseClient.from('portfolio')
+    .update(row).eq('position_id', position.id).select('position_id');
   if (error) throw error;
+  if (data && data.length > 0) return;
+  const fail = (code, message) => { const e = new Error(message); e.code = code; e.positionId = position.id; e.ticker = position.ticker; return e; };
+  const check = await supabaseClient.from('portfolio')
+    .select('position_id').eq('position_id', position.id).limit(1);
+  if (check.error) throw fail('POSITION_UNKNOWN', `${position.ticker}: update matched no row and the existence check failed (${check.error.message}) -- not saved, not re-created`);
+  if (!check.data || check.data.length === 0) throw fail('POSITION_MISSING', `${position.ticker}: position ${position.id} is no longer in Supabase (closed in another session) -- not re-created`);
+  throw fail('POSITION_UNWRITABLE', `${position.ticker}: position ${position.id} exists but the update changed no row -- not saved`);
 }
 
 async function deletePositionFromSupabase(positionId) {

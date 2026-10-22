@@ -820,6 +820,7 @@ let state = {
   warriorPreMarketVolumeCache: null, // { date, historyBySymbol: {symbol: [{date,volume}]} } — core/universe.js, pre-market-specific RVOL baseline (2026-09-04), daily cache — persisted
   warriorPreMarketRvolObservations: [], // [{capturedAt,date,symbol,ratio,todayPreMarketVolume,avgPreMarketVolume,daysInAverage}] — engines/warrior/gate.js, accumulates across mornings so a real pre-market RVOL threshold can eventually be set from data instead of the unvalidated placeholder — persisted, capped (see gate.js's _trimPreMarketRvolObservations)
   persistFailure: null, // { key, message, at } — core/store.js's persist(), set on ANY localStorage write failure (quota exhaustion, etc), cleared on the next successful persist() — surfaced via updateMarketBanner, not silent
+  positionSaveFailures: {}, // { [positionId]: { ticker, code, message, at } } — backgroundSavePosition(), keyed by core/store.js's three zero-row codes; surfaced via updateMarketBanner. MISSING stays until reload; UNWRITABLE/UNKNOWN clear on that position's next successful save — session only, not persisted
   // warriorEdgarCikMapCache/warriorFloatCache RETIRED 2026-09-04: they backed
   // core/edgar.js's live client-side EDGAR fetch, which a real boot check
   // proved CORS-blocks entirely from a browser (see core/edgar.js's own
@@ -980,6 +981,28 @@ function updateMarketBanner() {
     `;
     return;
   }
+  // Position save failures (2026-10-21, core/store.js savePositionToSupabase)
+  // take the banner for the same reason: the data is right but this tab is
+  // showing something it couldn't save, or a position that no longer exists.
+  const saveFails = Object.values(state.positionSaveFailures);
+  if (saveFails.length) {
+    const f = saveFails[saveFails.length - 1];
+    const more = saveFails.length > 1 ? ` (+${saveFails.length - 1} more)` : '';
+    const text = {
+      POSITION_MISSING: [`${f.ticker} was closed in another session`, 'Refresh to update.'],
+      POSITION_UNWRITABLE: [`Couldn't save ${f.ticker}`, 'The position exists but the update was refused — changes since the last save are not stored.'],
+      POSITION_UNKNOWN: [`Couldn't confirm ${f.ticker} was saved`, "Supabase didn't answer the check — reload to see what's stored."],
+    }[f.code] || [`Couldn't save ${f.ticker}`, f.message];
+    el.style.color = 'var(--red)';
+    el.innerHTML = `
+      <div>
+        <span class="market-status-dot" style="background:var(--red)"></span>
+        <strong>${text[0]}${more}</strong>
+      </div>
+      <span class="market-countdown">${text[1]}</span>
+    `;
+    return;
+  }
   const ms = getMarketStatus();
   el.style.color = ms.color;
   el.innerHTML = `
@@ -989,6 +1012,26 @@ function updateMarketBanner() {
     </div>
     <span class="market-countdown">${ms.countdown}</span>
   `;
+}
+
+// renderPortfolioTab()'s passive saves (peak price, momentum protection,
+// RSI-suspend snapshot). Only a CONFIRMED-absent row (POSITION_MISSING) may
+// stop this session saving the position; UNWRITABLE, UNKNOWN and a plain
+// error mean "not saved, still real" and must never hide it. Every failure
+// reaches the banner, not just the console.
+function backgroundSavePosition(p) {
+  savePositionToSupabase(p).then(() => {
+    const prior = state.positionSaveFailures[p.id];
+    if (prior && prior.code !== 'POSITION_MISSING') {
+      delete state.positionSaveFailures[p.id];
+      updateMarketBanner();
+    }
+  }).catch(e => {
+    console.error('Supabase portfolio update failed:', e.message);
+    if (e.code === 'POSITION_MISSING') state.deletedPositionIds.add(p.id);
+    state.positionSaveFailures[p.id] = { ticker: p.ticker, code: e.code || null, message: e.message, at: new Date().toISOString() };
+    updateMarketBanner();
+  });
 }
 
 
@@ -3859,7 +3902,7 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
   // rather than silently losing the add.
   if (btn) btn.disabled = true;
   try {
-    await savePositionToSupabase(position);
+    await insertPositionToSupabase(position);
   } catch(e) {
     alert('Could not save position to Supabase: ' + e.message);
     if (btn) btn.disabled = false;
@@ -4207,7 +4250,8 @@ async function renderPortfolioTab() {
     // Update peak + Momentum Protection state (Rule 1). Activation is sticky —
     // once true it never reverts, even if price later pulls back under +20%,
     // so RSI/target suspension (Rule 2) doesn't flicker on and off.
-    // Supabase writes below are fire-and-forget (errors logged, not thrown) —
+    // Supabase writes below are fire-and-forget (backgroundSavePosition:
+    // failures go to the market banner, not thrown) —
     // these are passive background refinements during a render, not a user
     // action, so blocking the whole Portfolio tab on a network round-trip
     // per position per field would be a real UX regression. Unlike
@@ -4224,12 +4268,12 @@ async function renderPortfolioTab() {
       p.peakPrice = currentPrice;
       p.peakPriceDate = new Date().toISOString().split('T')[0];
       if (state.deletedPositionIds.has(p.id)) return;
-      savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
+      backgroundSavePosition(p);
     }
     if (!priceUnavailable && !p.momentumProtectionActivated && p.peakPrice >= p.buyPrice * 1.20) {
       p.momentumProtectionActivated = true;
       if (state.deletedPositionIds.has(p.id)) return;
-      savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
+      backgroundSavePosition(p);
     }
     // Rule 5 support: first time RSI hits the (soon-to-be-suspended) 72+ threshold
     // while protected, snapshot the gain% at that instant — sticky, never overwritten —
@@ -4237,7 +4281,7 @@ async function renderPortfolioTab() {
     if (!priceUnavailable && p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
       p.rsiSuspendedAtGainPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
       if (state.deletedPositionIds.has(p.id)) return;
-      savePositionToSupabase(p).catch(e => console.error('Supabase portfolio update failed:', e.message));
+      backgroundSavePosition(p);
     }
 
     // Cache REAL prices only (2026-10-09, instance thirteen, found by
@@ -6166,7 +6210,7 @@ ${correlationText}`;
 // still own portfolio and settings until the later wiring step.
 //
 // mapSupabasePortfolioRowToPosition/mapPositionToSupabaseRow/
-// loadPortfolioFromSupabase/savePortfolioToSupabase/savePositionToSupabase/
+// loadPortfolioFromSupabase/insertPositionToSupabase/savePositionToSupabase/
 // deletePositionFromSupabase/loadSettingsFromSupabase/saveSettingsToSupabase
 // moved to core/store.js (Phase 0 extraction).
 
@@ -9439,9 +9483,19 @@ async function runDataLoadAndInit() {
 // getEngine('WARRIOR') (shell/registry.js), never a stored handle. That's
 // what makes "does anything outside this one function reach Warrior code"
 // a mechanical grep instead of a judgement call (Phase 2 acceptance).
+//
+// Versioned like every <script> tag (2026-10-21). It was versionless, which
+// was safe only while nothing it depends on changed: when core/store.js's
+// add path became insert-only, a cached old index.js would still have called
+// the now update-only savePositionToSupabase for a NEW position -- the add
+// fails with a false "closed in another session" and the trade is never
+// recorded. Bump this whenever engines/warrior/index.js changes, or any
+// core/*.js function it calls changes its contract. (Its own imports --
+// gate.js, replay.js, setups.js -- are still versionless; see phase-10 spec
+// §7.7.)
 async function loadWarriorEngine() {
   try {
-    const warrior = await import('./engines/warrior/index.js');
+    const warrior = await import('./engines/warrior/index.js?v=20261021020000');
     warrior.register();
     state.warrior = { status: 'loaded' };
   } catch (err) {

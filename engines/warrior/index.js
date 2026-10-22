@@ -17,7 +17,7 @@
 // getUniverse/renderWarriorTab/getRequestStats/diffRequestStats/
 // getAvailableBudget/showModal/closeModal (Step 4, Phase 7 -- candidate
 // card tap opens the same shared modal shell every other detail view uses)/
-// savePositionToSupabase/updateNavBadges/switchTab (Step 6, Phase 7 -- the
+// insertPositionToSupabase/updateNavBadges/switchTab (Step 6, Phase 7 -- the
 // buy action writes through the same engine-agnostic core/store.js
 // mapper confirmAddPortfolio already uses, and hands off to the shell's
 // own post-add refresh exactly like confirmAddPortfolio does, rather than
@@ -614,7 +614,7 @@ async function _confirmAddPosition(symbol, btn) {
 
   if (btn) btn.disabled = true;
   try {
-    await savePositionToSupabase(position);
+    await insertPositionToSupabase(position);
   } catch(e) {
     alert('Could not save position to Supabase: ' + e.message);
     if (btn) btn.disabled = false;
