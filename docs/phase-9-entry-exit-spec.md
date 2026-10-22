@@ -127,9 +127,14 @@ Roman's real sells (BTDR sold at −7.2%, then +29.2% five days later) and
 forced the question back onto the floor's own replay.
 
 **Redone against real daily bars** (`scripts/replay-floor-with-recovery.mjs`),
-same 37-trade basis (`data/backups/trades.json`), cost basis = the real
-`buy_price`, split/data-error guarded the same way `sell-timing.mjs`
-already is. Two trigger definitions, reported separately because they
+on the 33 of 37 trades in `data/backups/trades.json` with no split in the
+hold, cost basis = the real `buy_price`. **One command per question**
+(re-run 2026-10-21): floor totals come from `node
+scripts/replay-floor-grid.mjs` (its −6% rows); the post-trigger
+"hold 5 more days" counterfactual comes from `node
+scripts/replay-floor-with-recovery.mjs`, the only thing that script adds.
+Both take their trade set, triggers and floor dollars from
+`scripts/lib/floor-replay.mjs`, so they can't disagree on those. Two trigger definitions, reported separately because they
 answer different questions and must not be blended into one number:
 
 - **Any breach** (daily low OR close ≤ −6% — the theoretical upper bound,
@@ -137,20 +142,25 @@ answer different questions and must not be blended into one number:
   watching at the exact low): **15 of 33 split-checked trades** crossed,
   not 4. Floor-applied: **−$167.66**, against **−$69.88** for doing
   nothing on the same basis: **$97.78 worse**. Under this definition the
-  floor is a net negative on his real book. (`node
-  scripts/replay-floor-grid.mjs`, −6% `any` row; re-run 2026-10-21.)
+  floor is a net negative on his real book. Holding 5 more trading days
+  past each trigger instead: −$152.41 (recovery script).
   *Superseded 2026-10-21:* the figures first published here came from
-  this script on 37 trades with no split check, and no longer regenerate.
-  Alpaca's history now carries a split for BIZD in its hold, which turns
-  it into a phantom 16th crosser there. That script's any-breach total is
-  not used. The $97.78 gap is unchanged across every run.
+  this script on 37 trades and no longer regenerate. Its own split check
+  guarded only the hold-5 counterfactual, so a split-adjusted hold still
+  set a trigger and the floor total. Alpaca's history now carries a split
+  for BIZD in its hold, which made BIZD a phantom 16th crosser. The
+  script now uses the shared check on the whole hold. The $97.78 gap is
+  unchanged across every run.
 - **Close only** (daily close ≤ −6% — approximates what checking the app
   normally would actually have shown him, since `calcUnifiedRecommendation`
-  only evaluates when the portfolio renders, not continuously): **8 of 37
-  trades** crossed, not 4. Floor-applied: **−$71.86**. Actual: −$73.73.
+  only evaluates when the portfolio renders, not continuously): **8 of 33
+  trades** crossed, not 4. Floor-applied: **−$68.01**. Actual: −$69.88.
   **Real improvement: $1.87 — not $70.57.** Holding 5 more days past each
-  trigger instead: −$133.21 (worse than the floor either way, so the
-  floor still beats holding under this definition, by $61.34).
+  trigger instead: −$129.36 (worse than the floor either way, so the
+  floor still beats holding under this definition, by $61.34; recovery
+  script). None of the four split-excluded trades crossed −6% on a
+  close, so the margins are unchanged and the levels shift by their
+  −$3.85.
 
 **Roman's own guess (TENX, KEEL, BTDR, PGEN, n=4) was the realized-loss
 definition** — "which trades ended up losing more than 6%" — a different
@@ -162,7 +172,7 @@ small loss by the time Roman actually sold — a real floor would have cut
 every one of them at the bottom, not let them recover.
 
 **Does the floor still win once recovery is counted? Barely, and only
-under the realistic definition.** Close-only: yes, by $1.87 across 37
+under the realistic definition.** Close-only: yes, by $1.87 across 33
 trades — a real but nearly negligible edge, not the $70+ headline this
 spec asserted all day. Any-breach: no — it would have cost $97.78 more
 than doing nothing.
@@ -274,6 +284,10 @@ mult  basis       n  trig   book_total    vs_actual   biggest_contributor
   from catching real losers better than `close` does — trading one
   failure mode (cutting recoverable dips) for a different, real one
   (zero protection against a fast one-to-two-day collapse).
+  *Survived regeneration (2026-10-21, 33-trade basis):* +$47.12 exactly,
+  the only variant of this mechanism that ever beat doing nothing, and by
+  more than close-only's $1.87. Recorded, not acted on: n=2 triggered, and
+  it misses KEEL by construction.
 - **TENX is the single largest swing in almost every cell that shows a
   gain, in either direction** — most of this grid, at n≈33, is close to
   "did this rule happen to catch TENX," not a statement about the rule.
@@ -1331,7 +1345,7 @@ examples instead of running the full data.**
 
 1. **The floor figure was optimistic, not settled.** "Moves −$73.73 to
    −$3.16" assumed a clean exit at the cap and never asked what happened
-   after. Redone honestly (§0.3.1) against real bars, same 37 trades: the
+   after. Redone honestly (§0.3.1) against real bars, on the 33 split-free trades: the
    realistic (close-only) definition shows an improvement of **$1.87**,
    not $70.57, and one trade (BTDR) accounts for 92% of even that thin
    margin. **Superseded again the same day (§0.3.2): "close-only" was

@@ -58,9 +58,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadReplayBasis, findTrigger, floorDollar } from './lib/floor-replay.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const SPLIT_RATIO_EPSILON = 0.02;
 const PCT_THRESHOLDS = [-4, -5, -6, -8, -10, -12, -15];
 const ATR_MULTIPLIERS = [1.5, 2, 2.5];
 const BASES = ['close', 'any', 'persist2'];
@@ -71,40 +71,6 @@ function readEnvLocal() {
   for (const line of raw.split(/\r?\n/)) { const m = line.match(/^([A-Z_]+)=(.*)$/); if (m) kv[m[1]] = m[2]; }
   return { alpacaKeyId: kv.APCA_API_KEY_ID, alpacaSecretKey: kv.APCA_API_SECRET_KEY };
 }
-function barDate(b) { return (b.t || '').split('T')[0]; }
-function detectSplitInWindow(allBars, rawBars, startIdx, lastIdx) {
-  for (let i = startIdx; i <= lastIdx; i++) {
-    const a = allBars[i]?.c, r = rawBars[i]?.c;
-    if (a == null || r == null || a === 0) continue;
-    if (Math.abs(r / a - 1) > SPLIT_RATIO_EPSILON) return true;
-  }
-  return false;
-}
-
-// Trigger detection for one trade against one threshold PRICE (already
-// resolved to a real dollar level, whether from a pct or an ATR
-// multiple) and one basis. Returns the triggering bar index, or null.
-function findTrigger(allBars, entryIdx, sellIdx, thresholdPrice, basis) {
-  if (basis === 'close') {
-    for (let idx = entryIdx; idx <= sellIdx; idx++) if (allBars[idx].c <= thresholdPrice + 1e-9) return idx;
-    return null;
-  }
-  if (basis === 'any') {
-    for (let idx = entryIdx; idx <= sellIdx; idx++) {
-      if (allBars[idx].l <= thresholdPrice + 1e-9) return idx;
-      if (allBars[idx].c <= thresholdPrice + 1e-9) return idx;
-    }
-    return null;
-  }
-  if (basis === 'persist2') {
-    for (let idx = entryIdx + 1; idx <= sellIdx; idx++) {
-      if (allBars[idx].c <= thresholdPrice + 1e-9 && allBars[idx - 1].c <= thresholdPrice + 1e-9) return idx;
-    }
-    return null;
-  }
-  throw new Error(`unknown basis ${basis}`);
-}
-
 async function main() {
   const { alpacaKeyId, alpacaSecretKey } = readEnvLocal();
   global.state = { settings: { alpacaKey: alpacaKeyId, alpacaSecret: alpacaSecretKey } };
@@ -116,43 +82,19 @@ async function main() {
   const trades = JSON.parse(readFileSync(path.join(REPO_ROOT, 'data', 'backups', 'trades.json'), 'utf8'));
   console.log(`Loaded ${trades.length} trades from data/backups/trades.json.`);
 
-  const perTrade = [];
-  for (const t of trades) {
-    // 35 calendar days before buy_date -- comfortably >15 trading days for
-    // the ATR lookback (calcTrimmedATR needs the 15 bars ENDING at entry).
-    const fetchStart = new Date(new Date(t.buy_date + 'T00:00:00Z').getTime() - 35 * 86400000).toISOString().slice(0, 10);
-    const fetchEndWanted = new Date(new Date(t.sell_date + 'T00:00:00Z').getTime() + 3 * 86400000).toISOString().slice(0, 10);
-    let allBars, rawBars;
-    try {
-      const [allData, rawData] = await Promise.all([
-        global.alpacaGet(`/stocks/${t.ticker}/bars`, { timeframe: '1Day', start: fetchStart, limit: 1000, sort: 'asc', feed: 'sip', adjustment: 'all', ...global.sipSafeEndParams(fetchEndWanted) }),
-        global.alpacaGet(`/stocks/${t.ticker}/bars`, { timeframe: '1Day', start: fetchStart, limit: 1000, sort: 'asc', feed: 'sip', adjustment: 'raw', ...global.sipSafeEndParams(fetchEndWanted) }),
-      ]);
-      allBars = (allData.bars || []).sort((a, b) => new Date(a.t) - new Date(b.t));
-      rawBars = (rawData.bars || []).sort((a, b) => new Date(a.t) - new Date(b.t));
-    } catch (e) {
-      perTrade.push({ ticker: t.ticker, trade: t, error: e.message });
-      continue;
+  // Trade set, alignment and split exclusion: scripts/lib/floor-replay.mjs,
+  // shared with replay-floor-with-recovery.mjs. 35 calendar days before
+  // buy_date -- comfortably >15 trading days for the ATR lookback
+  // (calcTrimmedATR needs the 15 bars ENDING at entry).
+  const basis = await loadReplayBasis(trades, { alpacaGet: global.alpacaGet, sipSafeEndParams: global.sipSafeEndParams, preBuyDays: 35, postSellDays: 3 });
+  const perTrade = basis.perTrade;
+  for (const r of perTrade) {
+    if (r.error) continue;
+    r.trimmedAtrAtBuy = null;
+    if (r.entryIdx >= 14) {
+      r.trimmedAtrAtBuy = global.calcTrimmedATR(r.allBars.slice(0, r.entryIdx + 1));
+      if (!(r.trimmedAtrAtBuy > 0)) r.trimmedAtrAtBuy = null; // 0/NaN from calcTrimmedATR's own <15-bar guard treated as "not computable," not a real zero-volatility reading
     }
-    const entryIdx = allBars.findIndex(b => barDate(b) === t.buy_date);
-    const sellIdx = allBars.findIndex(b => barDate(b) === t.sell_date);
-    if (entryIdx === -1 || sellIdx === -1) {
-      perTrade.push({ ticker: t.ticker, trade: t, error: `bar not found (entryIdx=${entryIdx}, sellIdx=${sellIdx})` });
-      continue;
-    }
-    // Split guard over the HOLD window only (buy_date..sell_date) -- the
-    // window every basis's trigger detection actually reads from. A
-    // split in this range corrupts the trigger day/price for EVERY cell,
-    // not just one, so it's a per-trade exclusion computed once.
-    const splitInHold = allBars.length > sellIdx && rawBars.length > sellIdx && detectSplitInWindow(allBars, rawBars, entryIdx, sellIdx);
-
-    let trimmedAtrAtBuy = null;
-    if (entryIdx >= 14) {
-      trimmedAtrAtBuy = global.calcTrimmedATR(allBars.slice(0, entryIdx + 1));
-      if (!(trimmedAtrAtBuy > 0)) trimmedAtrAtBuy = null; // 0/NaN from calcTrimmedATR's own <15-bar guard treated as "not computable," not a real zero-volatility reading
-    }
-
-    perTrade.push({ ticker: t.ticker, trade: t, allBars, entryIdx, sellIdx, splitInHold, trimmedAtrAtBuy });
   }
 
   const errors = perTrade.filter(r => r.error);
@@ -175,13 +117,13 @@ async function main() {
       const idx = findTrigger(r.allBars, r.entryIdx, r.sellIdx, thresholdPrice, basis);
       if (idx == null) { bookTotal += r.trade.pnl_dollars; continue; }
       triggeredCount++;
-      const floorDollar = r.trade.shares * (thresholdPrice - r.trade.buy_price);
-      const delta = floorDollar - r.trade.pnl_dollars;
+      const floorD = floorDollar(r.trade, thresholdPrice);
+      const delta = floorD - r.trade.pnl_dollars;
       totalDelta += delta;
-      bookTotal += floorDollar;
-      triggeredList.push({ ticker: r.ticker, delta, floorDollar, actualDollar: r.trade.pnl_dollars });
+      bookTotal += floorD;
+      triggeredList.push({ ticker: r.ticker, delta, floorDollar: floorD, actualDollar: r.trade.pnl_dollars });
       if (biggestSwing == null || Math.abs(delta) > Math.abs(biggestSwing.delta)) {
-        biggestSwing = { ticker: r.ticker, delta, floorDollar, actualDollar: r.trade.pnl_dollars };
+        biggestSwing = { ticker: r.ticker, delta, floorDollar: floorD, actualDollar: r.trade.pnl_dollars };
       }
     }
     const pctOfDelta = biggestSwing && totalDelta !== 0 ? (biggestSwing.delta / totalDelta) * 100 : null;

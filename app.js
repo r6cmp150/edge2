@@ -4636,9 +4636,10 @@ const MAX_HOLD_DAYS = { DAY: 1, '3-DAY': 3, WEEK: 5 };
 // CORRECTED 2026-09-16 (§0.3.1) -- the original replay assumed a clean
 // exit at the cap and never asked what happened after; the honest number
 // is much smaller and came from redoing it against real bars, not from
-// reasoning about it. Realistic (close-only) definition, same 37 trades:
+// reasoning about it. Realistic (close-only) definition, the 33 split-free
+// trades (node scripts/replay-floor-grid.mjs, -6% close row, re-run 2026-10-21):
 // 8 trades actually crossed -6% on a closing price (not the 4 originally
-// guessed), floor-applied -$71.86 vs actual -$73.73 -- a real improvement
+// guessed), floor-applied -$68.01 vs actual -$69.88 -- a real improvement
 // of $1.87, not $70.57, and one trade (BTDR, a real +$4.75 forced to a
 // floor -$17.42) accounts for 92% of even that thin margin. The floor
 // still wins under this definition; under a theoretical continuous/
@@ -4703,7 +4704,7 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
   // safe precisely because it didn't predict. The replay itself turned
   // out to be the problem: it assumed a clean exit at the cap and never
   // asked what the stock did afterward. Redone honestly against real
-  // bars, same 37-trade basis: the mechanism this function used to run
+  // bars, the 33 split-free trades: the mechanism this function used to run
   // (fires on ANY live price dip past the line, since position.currentPrice
   // is whatever an IEX snapshot shows at render time -- no persistence, no
   // close-only gate) would have cost $97.78 MORE than doing nothing at
@@ -7822,7 +7823,7 @@ function renderSettingsTab() {
       <div class="settings-row">
         <div>
           <div class="settings-label">Max Loss Floor</div>
-          <div class="settings-hint">This is a line you're marking for yourself, not a cut trigger — it doesn't act on anything. calcUnifiedRecommendation no longer hard-returns on it; the stock modal and Portfolio card report your live distance from it ("1.2pp past your -6% floor") in the same plain-facts register as everything else there, never as an instruction. Why: replayed honestly against real bars (an assumed clean exit is not the same as knowing what actually happened next), the mechanism this setting used to enforce automatically — cutting the instant a live price dipped past the line — lost money relative to doing nothing at every threshold from -4% through -10%, the range it was actually chosen from. At -6% specifically: -$97.78 versus doing nothing on the same 37 trades that originally suggested this was worth +$70.57. That original number was wrong by roughly 38x — it assumed the trade was simply over at the cut, never asked what the stock did afterward. Full threshold × trigger-definition × ATR-scaled grid, and the correction itself: docs/phase-9-entry-exit-spec.md §0.3.1.</div>
+          <div class="settings-hint">This is a line you're marking for yourself, not a cut trigger — it doesn't act on anything. calcUnifiedRecommendation no longer hard-returns on it; the stock modal and Portfolio card report your live distance from it ("1.2pp past your -6% floor") in the same plain-facts register as everything else there, never as an instruction. Why: replayed honestly against real bars (an assumed clean exit is not the same as knowing what actually happened next), the mechanism this setting used to enforce automatically — cutting the instant a live price dipped past the line — lost money relative to doing nothing at every threshold from -4% through -10%, the range it was actually chosen from. At -6% specifically: -$97.78 versus doing nothing on the 33 split-free trades of the set that originally suggested this was worth +$70.57. That original number was wrong by roughly 38x — it assumed the trade was simply over at the cut, never asked what the stock did afterward. Full threshold × trigger-definition × ATR-scaled grid, and the correction itself: docs/phase-9-entry-exit-spec.md §0.3.1.</div>
         </div>
         <input id="set-max-loss-pct" class="settings-number" type="number"
           min="0" max="100" step="0.5" value="${s.maxLossPct ?? 6}">

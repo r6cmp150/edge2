@@ -32,15 +32,22 @@ function barDate(b) {
   return (b.t || '').split('T')[0];
 }
 
-// True if any bar in [0..lastIdx] shows raw and adjustment=all diverging
+// True if any bar in [startIdx..lastIdx] (startIdx defaults to 0) shows
+// raw and adjustment=all diverging
 // by more than SPLIT_RATIO_EPSILON -- i.e. a split or dividend adjustment
 // landed somewhere inside that range. Both arrays must already be the
 // SAME trading days at the SAME array positions (same fetch window, same
 // pagination) -- this does not re-align by date, it trusts the caller's
 // arrays are position-matched, exactly like this file's existing
 // ret_1d/3d/5d array-position lookups trust their own daily-bars fetch.
-export function detectSplitInWindow(allBars, rawBars, lastIdx) {
-  for (let i = 0; i <= lastIdx; i++) {
+//
+// The ONLY split check in scripts/ (2026-10-21, phase-10 §7.7 duplicate
+// rule): replay-floor-grid.mjs and replay-floor-with-recovery.mjs each had
+// a local copy, and the recovery script's guarded only its counterfactual,
+// so a split-adjusted hold still set its trigger and floor total (BIZD, a
+// phantom 16th crosser).
+export function detectSplitInWindow(allBars, rawBars, lastIdx, startIdx = 0) {
+  for (let i = startIdx; i <= lastIdx; i++) {
     const a = allBars[i]?.c;
     const r = rawBars[i]?.c;
     if (a == null || r == null || a === 0) continue;

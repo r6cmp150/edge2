@@ -73,9 +73,22 @@
 // pre-filter runScreener() itself applies before scoring, not a bug
 // introduced here), fetch_failed_count (bars fetches that failed,
 // fetchMultiBars' own droppedSymbols), aborted/abort_reason. A ticker
-// that fails the pre-filter gets no signal_log row at all, by explicit
-// design (three tiers only, not a fourth "filtered" tier) -- the
-// universe_count/evaluated_count gap is where that fact lives instead.
+// that fails the pre-filter gets no signal_log row at all (three tiers
+// only, not a fourth "filtered" tier).
+//
+// OVERTURNED 2026-10-21 (phase-10 spec §7.6 step 1e, db/029): "the
+// universe_count/evaluated_count gap is where that fact lives" was decided
+// before the censoring cost was understood. A count can't say which
+// symbols were rejected, at what price or volume, or for which test. The
+// test is on cumulative volume so far today, so the pool changes with the
+// clock (228 of 239 rejected at a 07:28 PT scan), and that confounds the
+// phase-10 §3.4 entry-time finding. Rejections are to be logged PER SCAN
+// on scan_runs.prefilter_rejections: symbol, price, volume and every
+// failed test, with no bars, news or score, so zero extra requests. Still
+// not a signal_log tier: its (date, symbol, engine, tier) key would keep
+// only the first rejection per day. Don't re-reverse this without reading
+// §7.6 step 1e. PENDING: db/029 must be applied before this script writes
+// the column (assertColumnsExist would abort the run).
 //
 // SETUP_TRIGGERS: left untouched for EDGE. EDGE has no setup concept --
 // no rows written, not an empty analogue invented to look symmetrical

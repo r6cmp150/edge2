@@ -1,0 +1,44 @@
+-- db/029 (2026-10-21): log the EDGE pre-filter's rejections. DRAFT -- not
+-- applied.
+--
+-- WHY: the EDGE logger's pre-filter (scripts/log-signals-edge.mjs, copying
+-- app.js runScreener) keeps $1-$20 symbols with >= min volume traded SO FAR
+-- TODAY. Everything it rejects leaves no row: a 07:28 PT scan rejected
+-- 228 of 239 (Actions run 39617114090), and db/014's prefiltered_count
+-- says only HOW MANY. Because the volume test is cumulative, the pool
+-- changes with the clock, which confounds the phase-10 §3.4 entry-time
+-- finding (phase-10 §7.3). A missing row is indistinguishable from a true
+-- negative, so the filter's own selectivity is currently unmeasurable.
+--
+-- SEMANTICS, FIXED HERE SO NOBODY RE-DERIVES THEM:
+--   prefilter_rejections = jsonb array, one element per rejected symbol in
+--     THIS scan:
+--       {"symbol": "ABCD", "price": 0.87, "volume": 41200,
+--        "failed": ["price_below_min", "volume_below_min"]}
+--     price  = getLivePrice(snapshot) at the moment of rejection (the value
+--              the filter tested), NULL if the snapshot had none.
+--     volume = snapshot.dailyBar.v at that moment: cumulative volume so far
+--              today, the value the filter tested.
+--     failed = EVERY test the symbol failed, not just the first:
+--              price_below_min | price_above_max | volume_below_min |
+--              no_snapshot. Listing all of them matters: "rejected for
+--              volume" and "rejected for price and volume" answer the §7.3
+--              confound differently.
+--   The scan timestamp is the scan_runs row's own started_at. The rejections
+--   are per scan, so a symbol rejected at 07:28 and accepted at 10:00 shows
+--   both facts.
+--   NULL = a scan before this column existed. [] = a scan that rejected
+--   nothing: a real, recorded zero, not a missing value.
+--
+-- NOT a fourth signal_log tier: signal_log's unique key (signal_date,
+-- symbol, engine_source, tier) would keep only the FIRST rejection per
+-- symbol per day, discarding the per-scan picture this exists for, and
+-- every signal_log reader assumes a scored snapshot. No bars, news or score
+-- are stored: zero extra requests, a few hundred bytes per symbol. Forward
+-- returns for a sample of rejects are fetched later, off the scan path.
+--
+-- ORDER: apply before the logger change that writes it. The logger's
+-- assertColumnsExist check would otherwise abort the whole run, so no
+-- signals at all would be logged that day.
+
+alter table scan_runs add column if not exists prefilter_rejections jsonb;

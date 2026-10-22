@@ -1,0 +1,65 @@
+-- db/028 (2026-10-21): which code recorded this row. DRAFT -- not applied.
+--
+-- WHY: the fourth time "which code produced this row" has cost an
+-- analysis (phase-10 spec §7.6 step 1d):
+--   1. scoreAtBuy changed meaning across the normalisation boundary, and
+--      nothing on a row said which side it was on.
+--   2. signal_log rows from before and after a scoring change pool unless
+--      something separates them (phase-10 step 2).
+--   3. "Which code recorded this trade": the stock-modal fix (phase-10
+--      §7.5) wrote off stored cons_up/rel_strength fields, and the only
+--      cutoff available was the ORDER date, a proxy that a tab left open
+--      across the deploy breaks.
+--   4. The column that was supposed to answer this already exists on
+--      signal_log and scan_runs (build_version, db/001, db/010) and
+--      identifies nothing. It is filled from app.js's VERSION constant,
+--      which nobody bumps: 588 EDGE rows from 2026-09-16 to 2026-10-20 all
+--      say v2.18.0, across 17 commits to app.js / core/edge-scoring.js.
+--
+-- SEMANTICS, FIXED HERE SO NOBODY RE-DERIVES THEM:
+--   code_version = {"app": "<stamp>", "scoring": <int>} written ONCE, by
+--     the code that records the row, at the moment it records it. Never
+--     updated afterwards.
+--   app     = the ?v= stamp of the app.js the recording code actually ran.
+--     Browser: read from the loaded <script src="app.js?v=...">, so a tab
+--     left open across a deploy reports the OLD stamp it is really
+--     running. Cron scripts: the same stamp read from index.html at their
+--     own checkout. Never a hand-maintained constant.
+--   scoring = SCORING_VERSION in core/edge-scoring.js, an integer pinned by
+--     tests/score-components.test.js to a hash of the formula's source, so
+--     the formula cannot change without it changing.
+--   NULL    = recorded before this column existed, or by code that predates
+--     it. Never backfilled: no stored fact says which code wrote an old
+--     row, and a guessed version is a value nobody observed.
+--
+-- WHICH MOMENT, PER TABLE:
+--   portfolio.code_version  = the BUY recording (insertPositionToSupabase).
+--   trades_v2.code_version  = copied from the position at sale, so it is the
+--     BUY's recording version: the version that produced the stored
+--     components, signal fields and score.
+--   trades_v2.sale_code_version = the code that ran the SALE
+--     (confirmMarkSold), which produced unified_recommendation_at_sale,
+--     the full URE factors and every other sale-time field. Two columns
+--     because filing sale-time values under the buy's version would be a
+--     wrong label on a value. Same {app, scoring} shape.
+--   signal_log.code_version = the scan that logged the row.
+--   scan_runs.code_version  = the same scan (one row per logger run;
+--     carries db/029's pre-filter rejections, which need it too).
+--
+-- signal_log.build_version and scan_runs.build_version are left in place
+-- and documented as uninformative after 2026-09-15. Nothing reads them;
+-- nothing writes them once the logger switches to code_version.
+--
+-- GRANTS: none needed. INSERT on these tables uses the default table-level
+-- privileges (no migration narrows INSERT), and code_version is
+-- write-once, so no UPDATE grant is added for any role.
+--
+-- ORDER OF OPERATIONS: apply this file BEFORE deploying code that writes
+-- code_version. An insert naming a column that doesn't exist fails, and
+-- for portfolio that is the add-position path.
+
+alter table portfolio  add column if not exists code_version jsonb;
+alter table trades_v2  add column if not exists code_version jsonb;
+alter table trades_v2  add column if not exists sale_code_version jsonb;
+alter table signal_log add column if not exists code_version jsonb;
+alter table scan_runs  add column if not exists code_version jsonb;

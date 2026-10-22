@@ -420,6 +420,24 @@ visible, because a neutral label next to an unexplained number explains less
 than either. The weights are step 4's. Guarded by
 `tests/score-components.test.js` (withdrawn phrases).
 
+**Confound on §3.4 (and §3.5's time effect): the candidate pool changes
+with the clock.** The scan's pre-filter (`runScreener`, copied by
+`scripts/log-signals-edge.mjs`) keeps $1–$20 symbols with ≥100k shares
+traded *so far today*, which is cumulative volume. So the pool is a
+function of time of day. A 07:28 PT logger scan removed 228 of 239
+symbols (Actions run 39617114090). An early scan offers only the names
+with unusual early volume; a mid-morning scan offers most of the
+universe. Roman's trades came from that same scan, so "7:00–7:15 is the
+worst entry window" may not be about time at all. It may mean "stocks with
+unusual volume in the first 45 minutes are bad", a different claim with a
+different fix, and **the two can't be separated in the current data**,
+because the population changes with the clock. The same applies to §3.5's
+"the first hour degrades even the good band". **The RSI finding is not
+affected:** RSI is measured within whatever pool was offered, and §3.5's
+45–55 band wins in every time window (72.7% / 81.0% / 78.6%). Pre-filter
+rejections are now to be logged (§7.6 step 1e), which makes the pool's
+composition measurable per scan.
+
 **Retracted finding: relative-strength buckets.** The 2026-10-21 analysis
 reported relative-strength buckets (relstr 15: n=153, 59.5% win; quoted as
 reported, not re-derived here). They were computed from the stored
@@ -522,6 +540,13 @@ day-clustered comparison (within-day, or day-adjusted with per-date
 win counts), not a pooled one.** This applies to `signal_log` too, where
 every signal on a date shares that day's market move.
 
+**`signal_log` covers 18 of the 28 trading days from 2026-09-11 to
+2026-10-20** (`data/backups/signal_log.json`, distinct EDGE
+`signal_date`). Any day-clustered analysis on it has **n = 18 dates, not
+28**. The missing 10 are missing because GitHub cron delivery dropped or
+delayed the logger, not because nothing happened, so they are unobserved
+days, not quiet ones.
+
 ### 7.6 Build order (replaces §6)
 
 1. **Hard gate on buyable signals (advice only — §7.7):** no orders
@@ -543,6 +568,59 @@ every signal on a date shares that day's market move.
    historically best win rate", "Oversold — potential bounce setup")
    becomes factual band descriptions: we no longer know enough to
    editorialise.
+1d. **Code version on every recorded row** (`db/028_code_version.sql`,
+   DRAFT). One `code_version` jsonb, `{app, scoring}`, on `portfolio`,
+   `trades_v2` and `signal_log`, written once at record time:
+   - **`app`:** the `?v=` stamp of the `app.js` actually running. A stale
+     tab reports its own old stamp, which closes the order-date proxy's
+     hole (§7.5).
+   - **`scoring`:** `SCORING_VERSION`, pinned by a test to a hash of the
+     formula's source.
+
+   Neither is a hand-maintained constant. That's the failure the existing
+   `signal_log.build_version` shows: it's filled from app.js's `VERSION`,
+   which says `v2.18.0` on all 588 EDGE rows from 2026-09-16 to 10-20,
+   across 17 commits to the scoring code. It identifies nothing after
+   2026-09-15.
+
+   **Two columns on `trades_v2`:** `code_version` (the buy's, copied from
+   the position) and **`sale_code_version`** (the code that ran the
+   sale, which produced the recommendation and factors at sale). Filing
+   sale-time fields under the buy's version would put a wrong label on a
+   value.
+
+   **Order: db/028 is applied before step 2**, and before any code that
+   writes it (a missing column breaks the add-position insert). Step 2's
+   rows then carry a real version from the start. Separating them by
+   bumping `VERSION` would work exactly once, because it's the first bump
+   in 17 commits, and it must not become the pattern.
+1e. **Log the pre-filter's rejections, not scored rows** (`db/029`,
+   DRAFT). Per scan: symbol, price, cumulative volume, and which test
+   failed (price < $1, price > $20, volume < min). No bars, no news, no
+   score. The pre-filter already holds every one of those values when it
+   rejects, so it costs **zero extra requests** and a few hundred bytes a
+   symbol. It makes the filter's own selectivity measurable; today 228
+   symbols a scan leave no trace, and a missing row can't be told from a
+   true negative. Whether the rejects would have been good trades needs
+   forward returns, fetched later for a sample of days, off the scan
+   path.
+
+   **Stored on `scan_runs`** (one jsonb array per scan), not as a fourth
+   `signal_log` tier: `signal_log`'s unique key (date, symbol, engine,
+   tier) would keep only the *first* rejection per symbol per day and drop
+   the per-scan picture this exists for. Every `signal_log` reader also
+   assumes a scored snapshot.
+
+   **This overturns the logger's "three tiers only, not a fourth
+   'filtered' tier" decision**, explicitly, in the logger's header: that
+   decision was made before the censoring cost was understood, and it
+   said the universe/evaluated count gap was where the fact lived. A count
+   can't say which symbols, at what price or volume, or which test they
+   failed.
+
+   The "split the display and logging constant" instruction is
+   **dropped**: `signal_log` already logs SHOWN and BELOW_THRESHOLD with
+   full snapshots, so there was nothing to split.
 2. **Neutralise the two backwards terms in §7.3 AND re-derive the BUY
    thresholds in the same change** (§7.7), so buyable signals per day
    stay near today's ~5–6 (106 over 19 dates). The intent is to change
@@ -554,7 +632,12 @@ every signal on a date shares that day's market move.
    0.6×SOFT), and the residual is measured on the positions actually
    held during the `signal_log` window: how far each one's score moves,
    and how many change recommendation bucket. That ties the cutoffs to the
-   thresholds and calibrates nothing.
+   thresholds and calibrates nothing, so step 2.5 doesn't block it. The
+   score movement is clean, because it's the entry score, which the
+   render-written values don't touch. The bucket count runs through the
+   exit engine, whose inputs are render-dependent until step 2.5. **Both
+   are reported, the bucket count is marked noisy, and it is not a
+   decision input.**
 2.5. **Exit-engine inputs stop depending on when the app was open**
    (§7.7). Design only; not built. The shape is the one this project has
    used before: when an accumulated value is unreliable, stop needing it.
@@ -568,7 +651,7 @@ every signal on a date shares that day's market move.
    |---|---|---|
    | `peakPrice`: max price seen at a render | **hold high**: max of (buy-day minute highs after the fill instant, or the order time when unfilled; the `order` basis rule) ∪ (daily highs for complete sessions in between) ∪ (today's minute highs) ∪ (the live price now, a real observation) | Daily bars (180d) and today's SIP minute bars are already fetched per render for every holding. New: one buy-day minute-bar request per position held past its buy day. Past days never change, so it's cached for the session. N positions → N requests on the first render, 0 after. |
    | `momentumProtectionActivated`: sticky flag set if a render saw ≥ +20% | **derived**: hold high ≥ buy × 1.20. Sticky for free, because the hold high is monotonic over the hold. | none beyond the hold high |
-   | `prevRSI`: RSI at the previous render | **RSI from the daily closes ending at the previous completed session**. "Declining from peak" then means declining in the data | none (same daily bars) |
+   | `prevRSI`: RSI at the previous render | **RSI from the daily closes ending at the previous completed session**, day over day. The factor is **renamed "RSI declining"**: it no longer claims "from peak", because a name that asserts more than the code computes is the volume-copy defect. The hold-high RSI is **stored as a measured column**, so the peak version can be tested later on data rather than chosen on intuition. | none (same daily bars) |
 
    **When bars are unavailable: NULL and not-evaluated, never the last
    rendered price.** A failed or partial fetch makes the hold high NULL,
@@ -576,20 +659,35 @@ every signal on a date shares that day's market move.
    has a truncated high). With the hold high NULL, momentum protection is
    NOT EVALUATED. The exit engine branches on it (trailing stop and RSI
    suspension apply only in protection), so it can't silently pick a
-   branch. Proposed: the recommendation is CANNOT EVALUATE, the §3.4
-   posture, naming what's missing. A split during the hold (bars are
+   branch. **Decided: only the dependent rules are not evaluated**; the
+   rest still evaluate. The recommendation states what it couldn't see,
+   using the Portfolio Summary pattern: "computed from 7 of 9 factors —
+   momentum protection not evaluated (no bars for 2026-10-14)". A factor
+   is never silently omitted and never given a neutral value. A
+   whole-recommendation CANNOT EVALUATE on one missing input would make
+   the app useless on any data hiccup, and Roman would decide without
+   it, which is the route-around failure the recording gate exists to
+   prevent. A split during the hold (bars are
    `adjustment=all`; `buy_price` is not) is also NOT EVALUATED, using the
    same split-in-hold check `scripts/replay-floor-grid.mjs` applies. The
    IEX fallback is labelled as in phase-9 §2.0.1, because it can
    understate the high.
 
-   **Decisions for Roman before building:** (i) whether the peak counts
-   regular-session prices only, matching the intraday panel, or extended
-   hours too, which a render can see today; (ii) `prevRSI` as the previous
-   session's RSI (above, "turning") versus the hold's peak RSI ("has
-   been above 70 and is lower now", which keeps firing); (iii) whether
-   CANNOT EVALUATE is the whole recommendation, or only the
-   protection-dependent rules with the rest still evaluated.
+   **Decided (Roman, 2026-10-21):**
+   - **(i) Regular session only.** The peak feeds the trailing stop and
+     the pullback factors, which all ask "could Roman have sold near that
+     price". An extended-hours print on a thin book isn't a price he
+     could have realised, and letting one set the high manufactures a
+     pullback that never happened. This is the SIP-over-IEX argument
+     again. An extended-hours high may be computed separately for
+     research, but it never enters a decision.
+   - **(ii) Day over day, renamed**, with the hold-high RSI stored. The
+     hold-wide peak was rejected because it latches, which is what made
+     momentum protection unmeasurable, and because the −30 weight has
+     never been validated: its definition shouldn't be picked on
+     intuition.
+   - **(iii) Only the dependent rules are not evaluated**, with the count
+     and the reason shown.
 
    **Also follows, scoped with it:** the render stops writing
    `peakPrice` / `momentumProtectionActivated` / `rsiSuspendedAtGainPct`,
@@ -791,6 +889,44 @@ fixed one must be removed from the list, and nothing can be added
 quietly. It turns "known, open" from a sentence in a spec into a check
 that runs. Use it whenever a defect is found in more places than one
 change can fix.
+
+**A fix believed done is not a fix shipped.** A spec may not record
+something as fixed without naming the call sites the fix covers. "Fixed
+by §X" is a claim about every consumer of the value, and it must be
+checked against them, especially when §X works by deleting the old
+mechanism, because the deletion removes the evidence that anything was
+left behind. Found 2026-10-21:
+- Phase-9 §1.4 named the decision risk of the render-written
+  `peakPrice` and said "Fixed by §2".
+- §2.0 then deleted `position_bars`, on sound reasoning, and built the
+  on-demand replacement for the display panel only.
+- The three exit-engine inputs never moved. The document asserted a fix
+  that didn't exist for five weeks, and the deletion removed the thing
+  that would have made the gap visible.
+
+The defect family again, applied to a remediation rather than a value.
+(Roman wrote §1.4, §2.0 and the word "Fixed", and has said so.)
+
+The same day turned up a smaller instance of the duplicate rule in
+`scripts/`. Three copies of the split check existed (`lib/sell-timing.mjs`,
+`replay-floor-grid.mjs`, `replay-floor-with-recovery.mjs`), and the
+recovery script's guarded only its counterfactual, so a split-adjusted
+hold still set its trigger. Now there is one, `detectSplitInWindow` in
+`scripts/lib/sell-timing.mjs`. The grid's output is byte-identical
+before and after, and disabling the shared check changes both scripts'
+results (mutation-checked).
+
+**Make a value impossible to forget, not easier to remember.**
+`build_version` existed, its write existed, and its value was wrong for
+a month (`v2.18.0` across 17 commits to the scoring code) because it
+depended on a human bumping a constant. The fix reads `app` from the
+running `app.js`'s own `?v=` stamp and pins `scoring` to a hash of the
+formula's source (db/028), so there is no step left to forget. It's the
+same move as `reportNoopDecision` (2026-10-09). That replaced a pair of
+calls each script had to remember to make with one call at the decision,
+so a missing decision is recorded as NULL ("not determined") instead of
+a default. A checklist item, a comment saying "remember to bump", or a
+review step is the remember-harder version, and it fails the same way.
 
 **A fix that splits one source of truth into two must say which readers
 get which, and check every reader.** Found 2026-10-21 on the modal fix
