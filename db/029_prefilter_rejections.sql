@@ -12,17 +12,23 @@
 -- SEMANTICS, FIXED HERE SO NOBODY RE-DERIVES THEM:
 --   prefilter_rejections = jsonb array, one element per rejected symbol in
 --     THIS scan:
---       {"symbol": "ABCD", "price": 0.87, "volume": 41200,
+--       {"symbol": "ABCD", "price": 0.87, "iex_volume": 41200,
 --        "failed": ["price_below_min", "volume_below_min"]}
 --     price  = getLivePrice(snapshot) at the moment of rejection (the value
 --              the filter tested), NULL if the snapshot had none.
---     volume = snapshot.dailyBar.v at that moment: cumulative volume so far
---              today, the value the filter tested.
+--     iex_volume = snapshot.dailyBar.v at that moment: cumulative volume so
+--              far today ON THE IEX FEED, the value the filter tested.
+--              (Corrected 2026-10-22, before any row was written: the draft
+--              called it "volume". fetchSnapshots requests feed:'iex', one
+--              venue, a median 6.3% of consolidated volume, range 3.7-27.7%;
+--              node scripts/probe-iex-vs-sip-volume.mjs, 2026-10-21 bars.)
 --     failed = EVERY test the symbol failed, not just the first:
 --              price_below_min | price_above_max | volume_below_min |
---              no_snapshot. Listing all of them matters: "rejected for
---              volume" and "rejected for price and volume" answer the §7.3
---              confound differently.
+--              no_price | no_volume | no_snapshot. no_price/no_volume name
+--              missing data that the old filter read as 0 (same pass/fail).
+--              Listing all of them matters: "rejected for volume" and
+--              "rejected for price and volume" answer the §7.3 confound
+--              differently.
 --   The scan timestamp is the scan_runs row's own started_at. The rejections
 --   are per scan, so a symbol rejected at 07:28 and accepted at 10:00 shows
 --   both facts.

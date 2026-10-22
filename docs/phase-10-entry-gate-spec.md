@@ -157,6 +157,17 @@ goes to die.
 
 ### 3.4 No entries in the first hour (6:30–7:30 PT)
 
+> **Not a finding (2026-10-22): shipped, and its evidence is currently
+> unfalsifiable.** The time-of-day effect below has two independent
+> confounds (§7.3). (1) **Pool size:** the pre-filter tests volume *so far
+> today*, so an early scan offers only a handful of symbols. (2) **Venue
+> artifact:** that volume is IEX-only, a median 6.3% of the market
+> (3.7–27.7%), so the early pool is selected partly on each stock's IEX
+> share. The symbols an early entry would be judged against left no trace
+> until rejection logging began (§7.6 step 1e, 2026-10-22). Cite this
+> rule as a precaution in force, never as evidence that early entries are
+> bad.
+
 | Window | n | Win | Avg | P&L | minus worst trade |
 |---|---|---|---|---|---|
 | 6:45–7:00 | 5 | 100% | +1.14% | +$13 | — *(too thin to use)* |
@@ -454,6 +465,19 @@ visible, because a neutral label next to an unexplained number explains less
 than either. The weights are step 4's. Guarded by
 `tests/score-components.test.js` (withdrawn phrases).
 
+**And the volume test reads ONE VENUE (found 2026-10-22).** The
+pre-filter's "≥100k shares so far today" uses a snapshot fetched with
+`feed:'iex'`. On 2026-10-21's full-day bars IEX carried a median 6.3% of
+consolidated volume (range 3.7–27.7%, 15 symbols; `node
+scripts/probe-iex-vs-sip-volume.mjs`). So the threshold is about 1.6M
+consolidated shares at the median, and its strictness varies sevenfold
+between stocks by venue share: ALOY, TDAY and GPGI traded over 1M shares
+and were filtered out. The pool is therefore a function of the clock
+**and** of each stock's IEX share. Not fixed: recent SIP data is
+embargoed 15 minutes on this subscription, so changing the feed is a
+decision for Roman, not a patch. Step 1e logs the tested value as
+`iex_volume`.
+
 **Confound on §3.4 (and §3.5's time effect): the candidate pool changes
 with the clock.** The scan's pre-filter (`runScreener`, copied by
 `scripts/log-signals-edge.mjs`) keeps $1–$20 symbols with ≥100k shares
@@ -586,7 +610,8 @@ days, not quiet ones.
 
 1. **Hard gate on buyable signals (advice only — §7.7):** no orders
    placed AFTER_HOURS; no orders placed while the market is CLOSED; no
-   entries 7:00–7:30 PT. Time-and-place rules, no prediction. Evaluated
+   entries 7:00–7:30 PT (**a precaution, not a finding:** its evidence
+   is confounded by pool size and the IEX venue artifact, see §3.4). Time-and-place rules, no prediction. Evaluated
    at view time, not scan time. EDGE only. 6:30–7:00 and PRE_MARKET are
    open and logged. Recording stays open behind a confirm; whether a
    trade was placed inside a gate window is derived on read from

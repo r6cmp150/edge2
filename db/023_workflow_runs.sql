@@ -9,7 +9,16 @@
 -- DECLARED vs ACTUAL is the whole point. declared_cron is which cron
 -- entry github.event.schedule says triggered this run (only meaningful
 -- when trigger_type='schedule' -- workflow_dispatch has no cron to compare
--- against). actual_fired_at is captured by the FIRST step in each job,
+-- against).
+--
+-- NOTE (2026-10-22, comment only; the schema is unchanged): a run with no
+-- cron has declared_cron in TWO forms. Until 2026-10-22 the workflows sent
+-- '' (an empty string) on a workflow_dispatch; from then on they send NULL.
+-- As of 2026-10-22, 7 workflow_dispatch rows exist: 6 with '' (five on
+-- 2026-10-09, one on 2026-10-22, run 39818465247) and 1 already NULL.
+-- They're left as written: each is a fact about its run. A delay query must
+-- exclude both, e.g. `where nullif(declared_cron, '') is not null`, or it
+-- computes a delay against a cron that doesn't exist. actual_fired_at is captured by the FIRST step in each job,
 -- before checkout, before anything that could add its own delay --
 -- as close to "GitHub actually started the container" as a step
 -- running inside that container can get.
