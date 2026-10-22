@@ -792,6 +792,103 @@ days, not quiet ones.
    The "split the display and logging constant" instruction is
    **dropped**: `signal_log` already logs SHOWN and BELOW_THRESHOLD with
    full snapshots, so there was nothing to split.
+1f. **Liquidity gate on trailing volume (DESIGN, not built; 2026-10-22).**
+   It replaces the volume half of the EDGE pre-filter, which today means
+   "IEX volume so far today ≥ 100k" (§7.3), in **both** `app.js`
+   `runScreener` and `scripts/log-signals-edge.mjs`, through one shared
+   function (they're two copies of one rule today).
+   - **Rule:** price $1–$20 (live price, unchanged), and the **average
+     consolidated (SIP) share volume over the last 20 completed sessions**
+     ≥ FLOOR. Shares or dollars, and the FLOOR, are set later from
+     measurement.
+   - **Data:** SIP daily bars ending **yesterday** (completed sessions only:
+     no partial day, no embargo), `adjustment=all`. Fetched once per day
+     for the universe (239 symbols, about 3 requests) and cached for the
+     day. The live price comes from the snapshot already fetched.
+   - **Reuse, not a copy:** `core/universe.js` `_getSip30DayAvgVolume`
+     (Warrior's relative-volume baseline) already fetches SIP daily bars and
+     caches an average daily. The bar fetch becomes one shared helper with
+     a `completedOnly` option; Warrior's call keeps its current semantics
+     exactly (an equivalence test). **Finding, not fixed:** that function
+     has no end date, so during market hours its 30-day average includes
+     today's partial session, which makes Warrior's baseline mildly
+     clock-dependent. Recorded for Warrior; not changed here.
+   - **Not evaluable:** fewer than 20 completed sessions, or a failed
+     fetch, means the symbol is **rejected and logged** as
+     `no_volume_history` / `volume_history_unavailable`, never passed on a
+     guess. If the whole daily fetch fails, the scan still runs (the
+     observer must not break the observed): it falls back to the current
+     IEX-today rule, and that scan records which rule it used.
+     Recording the rule needs `scan_runs.prefilter_rule` (`trailing_20d` /
+     `iex_today_fallback`), a small migration, shown before building.
+   - **Rejection logging** carries over: `failed` gains
+     `avg_volume_below_min` and the row gains `avg_volume_20d`.
+   - **Unusual activity today stays in the score** (the volume-ratio and
+     volume-spike terms). The gate no longer decides on it.
+   - **What it changes:** the pool stops being a function of the clock, so
+     §3.4 becomes testable. Scans score more symbols (about 88–164 instead
+     of 2–42), which costs more bars and news requests per scan; that is
+     measured with the number.
+   - **Sequence (Roman):** this design, then the buyable-count-per-day
+     measurement under the new universe, then the number.
+
+   **Buyable per day, measured (2026-10-22, `node
+   scripts/measure-gate-buyable.mjs`).** Every universe symbol is re-scored
+   with the v2 formula at 07:00, 07:30, 10:00 and 12:00 PT on 7 dates
+   (10-13 to 10-21), from rebuilt live inputs. **Validated first:**
+   re-scoring 130 real logged signals with the formula they ran reproduces
+   118 exactly (91%, mean difference 0.9 points). Scans in the first two
+   minutes after the open are scored apart (10 of 56 exact), because there
+   the live snapshot still held yesterday's bar.
+
+   | pool | buyable per day (median) | over 7 days | pool size at 07:30 |
+   |---|---|---|---|
+   | live (IEX today ≥100k) | 3 | 29 | 16 |
+   | trailing ≥100k | 11 | 84 | 157 |
+   | trailing ≥250k | 9 | 72 | 139 |
+   | trailing ≥500k | 7 | 55 | 117 |
+   | trailing ≥1M | 5 | 43 | 89 |
+   | trailing ≥2M | 3 | 30 | 58 |
+
+   - **The score is the binding constraint, not the pool.** A tenfold
+     larger pool at 07:30 yields about 1→3 buyable per scan.
+   - **Step 2's intent was about 5–6 buyable a day** (106 over 19 logged
+     dates). The **1M trailing floor** (5/day here) holds that rate. 500k
+     (7/day) loosens it, and 100k (11/day) roughly triples it.
+   - **The early window stops being empty:** at 07:00, live has a pool of 9;
+     every trailing floor has 58–157 symbols scored, which is what makes
+     §3.4 testable.
+   - **DECIDED (Roman, 2026-10-22): FLOOR = 1,000,000 shares, the
+     20-completed-session full-market (SIP) average.** It's chosen for
+     continuity, not for the buyable rate. 2M matches the live rate more
+     exactly (3/day against 3/day), but it keeps only **60%** of the
+     symbols the live filter has ever let through; 1M keeps **90%**.
+     Excluding 40% of the names Roman has actually traded would be a
+     different universe disguised as a continuity choice. 1M also matches
+     the historical pool directly (about 88 against 84 distinct), and
+     5/day sits inside step 2's 5–6 target.
+   - **Why not wider:** the score is the limiting factor, and it barely
+     discriminates outcomes (the report: 54% win at 29–72 against 56% at
+     73–115). A bigger pool buys higher-scoring candidates whose higher
+     scores don't predict better outcomes. With a $1,500 budget and about
+     five slots, 11 buyable a day is more than Roman can act on, and his
+     2+ day holds are where $828 went. More choices he can't take are a
+     cost, not an option.
+   - **Liquidity isn't the binding constraint at his size either:** $300
+     of a $5 stock is 60 shares, so almost anything above a 100k daily
+     average is plenty. **So this floor doesn't protect against
+     illiquidity; it's a pool-size dial**, set for continuity until
+     something says otherwise.
+   - **Condition for revisiting it (so it isn't 1M by inertia): if the
+     score ever discriminates outcomes, widen the pool.** That's a §5
+     question, the same re-test the RSI floor is waiting on.
+   - Whatever is built, the rejection log then shows it working on real
+     scans.
+   - **Found while validating:** 30 of 676 logged snapshots (4.4%) were
+     scored on IEX bar histories 4+ weekdays stale (AREN: 09-15 to 10-14,
+     scored on bars ending 08-28), with nothing marking it. That's the
+     defect family: a score on data no one would call current. Not fixed;
+     `scoreStock` should mark or refuse a stale history.
 2. **Neutralise the two backwards terms in §7.3 AND re-derive the BUY
    thresholds in the same change** (§7.7), so buyable signals per day
    stay near today's ~5–6 (106 over 19 dates, one per date and symbol;

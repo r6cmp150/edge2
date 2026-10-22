@@ -29,10 +29,10 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { edgeUniverse, alpacaHeaders, fetchBars } from './lib/alpaca-bars.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const env = Object.fromEntries(readFileSync(path.join(ROOT, '.env.local'), 'utf8').split(/\r?\n/).map(l => l.match(/^([A-Z_]+)=(.*)$/)).filter(Boolean).map(m => [m[1], m[2]]));
-const H = { 'APCA-API-KEY-ID': env.APCA_API_KEY_ID, 'APCA-API-SECRET-KEY': env.APCA_API_SECRET_KEY };
+const H = alpacaHeaders(ROOT);
 const SUPA_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
 const SUPA_KEY = readFileSync(path.join(ROOT, 'core', 'store.js'), 'utf8').match(/sb_publishable_[A-Za-z0-9_]+/)[0];
 
@@ -43,44 +43,12 @@ const MIN_PRICE = 1, MAX_PRICE = 20, MIN_VOL = 100000, LAG_MIN = 15;
 const PDT_OFFSET_H = 7; // all DATES are in PDT
 
 // Universe: the same text-anchored block the logger evaluates.
-const appLines = readFileSync(path.join(ROOT, 'app.js'), 'utf8').split('\n').map(l => l.replace(/\r$/, ''));
-const a = appLines.indexOf('const STOCK_UNIVERSES = {');
-const b = appLines.indexOf('};', a);
-const STOCK_UNIVERSES = new Function(appLines.slice(a, b + 1).join('\n') + '\nreturn STOCK_UNIVERSES;')();
-const UNIVERSE = STOCK_UNIVERSES.OTHER;
+const UNIVERSE = edgeUniverse(ROOT);
 
 const ptToUtc = (date, hhmm) => new Date(`${date}T${hhmm}:00Z`).getTime() + PDT_OFFSET_H * 3600e3;
 
-async function getAll(url) {
-  const out = {};
-  let token = null, pages = 0;
-  do {
-    const res = await fetch(url + (token ? `&page_token=${token}` : ''), { headers: H });
-    const body = await res.json();
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${JSON.stringify(body).slice(0, 160)}`);
-    for (const [s, bars] of Object.entries(body.bars || {})) (out[s] ||= []).push(...bars);
-    token = body.next_page_token; pages++;
-  } while (token);
-  return { bars: out, pages };
-}
-async function minuteBars(feed, date) {
-  const all = {};
-  for (let i = 0; i < UNIVERSE.length; i += 100) {
-    const syms = UNIVERSE.slice(i, i + 100).join(',');
-    const { bars } = await getAll(`https://data.alpaca.markets/v2/stocks/bars?symbols=${syms}&timeframe=1Min&start=${date}T08:00:00Z&end=${date}T19:30:00Z&feed=${feed}&limit=10000&adjustment=raw&sort=asc`);
-    Object.assign(all, bars);
-  }
-  return all;
-}
-async function dailyBars(feed, date) {
-  const all = {};
-  for (let i = 0; i < UNIVERSE.length; i += 100) {
-    const syms = UNIVERSE.slice(i, i + 100).join(',');
-    const { bars } = await getAll(`https://data.alpaca.markets/v2/stocks/bars?symbols=${syms}&timeframe=1Day&start=${date}&end=${date}&feed=${feed}&limit=10000&adjustment=raw`);
-    Object.assign(all, bars);
-  }
-  return all;
-}
+const minuteBars = (feed, date) => fetchBars(H, UNIVERSE, { timeframe: '1Min', start: `${date}T08:00:00Z`, end: `${date}T19:30:00Z`, feed });
+const dailyBars = (feed, date) => fetchBars(H, UNIVERSE, { timeframe: '1Day', start: date, end: date, feed });
 
 // volume of a symbol's bars with start time in [fromMs, toMs]
 const sumVol = (bars, fromMs, toMs) => (bars || []).reduce((s, x) => { const t = Date.parse(x.t); return t >= fromMs && t <= toMs ? s + x.v : s; }, 0);
