@@ -548,7 +548,67 @@ every signal on a date shares that day's market move.
    stay near today's ~5–6 (106 over 19 dates). The intent is to change
    which signals rank highest, not to turn the tap off. Shipped with both
    score histograms, the old and new lines, and buyable count and
-   price-tier mix per day under each. Nothing else moves.
+   price-tier mix per day under each. Nothing else moves. The exit
+   engine's score cutoffs move with the thresholds in the same change, as
+   functions of them, not literals (STRONG, (STRONG+SOFT)/2, SOFT,
+   0.6×SOFT), and the residual is measured on the positions actually
+   held during the `signal_log` window: how far each one's score moves,
+   and how many change recommendation bucket. That ties the cutoffs to the
+   thresholds and calibrates nothing.
+2.5. **Exit-engine inputs stop depending on when the app was open**
+   (§7.7). Design only; not built. The shape is the one this project has
+   used before: when an accumulated value is unreliable, stop needing it.
+   Bars are retrievable on demand (phase-9 §2.0, the reason
+   `position_bars` was deleted). That deletion assumed the app would
+   derive a position's path instead, but the derivation was built only
+   for the display panel. The three exit-engine inputs phase-9 §1.4 named
+   were never moved off the render, and §1.4 still says "Fixed by §2".
+
+   | Today (render-written) | Becomes (derived on demand) | Extra requests |
+   |---|---|---|
+   | `peakPrice`: max price seen at a render | **hold high**: max of (buy-day minute highs after the fill instant, or the order time when unfilled; the `order` basis rule) ∪ (daily highs for complete sessions in between) ∪ (today's minute highs) ∪ (the live price now, a real observation) | Daily bars (180d) and today's SIP minute bars are already fetched per render for every holding. New: one buy-day minute-bar request per position held past its buy day. Past days never change, so it's cached for the session. N positions → N requests on the first render, 0 after. |
+   | `momentumProtectionActivated`: sticky flag set if a render saw ≥ +20% | **derived**: hold high ≥ buy × 1.20. Sticky for free, because the hold high is monotonic over the hold. | none beyond the hold high |
+   | `prevRSI`: RSI at the previous render | **RSI from the daily closes ending at the previous completed session**. "Declining from peak" then means declining in the data | none (same daily bars) |
+
+   **When bars are unavailable: NULL and not-evaluated, never the last
+   rendered price.** A failed or partial fetch makes the hold high NULL,
+   never the max of whatever arrived (phase-9 §2.0.2: a truncated series
+   has a truncated high). With the hold high NULL, momentum protection is
+   NOT EVALUATED. The exit engine branches on it (trailing stop and RSI
+   suspension apply only in protection), so it can't silently pick a
+   branch. Proposed: the recommendation is CANNOT EVALUATE, the §3.4
+   posture, naming what's missing. A split during the hold (bars are
+   `adjustment=all`; `buy_price` is not) is also NOT EVALUATED, using the
+   same split-in-hold check `scripts/replay-floor-grid.mjs` applies. The
+   IEX fallback is labelled as in phase-9 §2.0.1, because it can
+   understate the high.
+
+   **Decisions for Roman before building:** (i) whether the peak counts
+   regular-session prices only, matching the intraday panel, or extended
+   hours too, which a render can see today; (ii) `prevRSI` as the previous
+   session's RSI (above, "turning") versus the hold's peak RSI ("has
+   been above 70 and is lower now", which keeps firing); (iii) whether
+   CANNOT EVALUATE is the whole recommendation, or only the
+   protection-dependent rules with the rest still evaluated.
+
+   **Also follows, scoped with it:** the render stops writing
+   `peakPrice` / `momentumProtectionActivated` / `rsiSuspendedAtGainPct`,
+   so the three `backgroundSavePosition` calls in `renderPortfolioTab`
+   go away. That's the surface the resurrection race used. At sale,
+   `peak_price` and `momentum_protection` get the derived values. The
+   recorder fields with the same dependence (`ownedPeakRSI` →
+   `peakRsiDuringHold`, `rsiSuspendedAtGainPct`, `liveTarget` →
+   `targetDriftPct`) derive from the same bars at sale time. Each fix
+   removes a line from the ratchet test.
+
+   **Already in the record:** stored `peak_price` and `momentum_protection`
+   on every trade so far are render-dependent. phase-9 §1.4 and the
+   report's WINNER EXIT TIMING caveat name it as an *analysis* limit. Both
+   miss that the same value has been a live input to exit decisions,
+   which is worse than no caveat, because it makes the problem look
+   understood. "Trades where Momentum Protection activated: 0" was never
+   evidence about the market. The feature could only fire if a render
+   happened while a position was up 20%.
 3. **Report-gap fix** (Appendix): ENTRY TIMING prints all four session
    values, every weekday present in the data, and a not-recorded bucket,
    with counts that sum to the total — both copies in `app.js`.
@@ -558,6 +618,13 @@ every signal on a date shares that day's market move.
    positions he holds for days are the ones that failed on day 0? Check
    against `signal_log` rows matched to a trade. If the drift is real
    but unreachable by his actual behaviour, that is the headline.
+5. **Exit-engine re-derivation** (its cutoffs, its weights, and the delta
+   redesign in §7.7). **Blocked on two preconditions:** the §5 re-test
+   (step 4) **and step 2.5.** Re-deriving cutoffs on top of three
+   render-dependent inputs would be calibrating against browsing habits.
+   **Until step 2.5 ships, the exit engine has no validated inputs**:
+   momentum-protection mode, the trailing-stop exit, and the −30 "RSI
+   declining from peak" factor are functions of when the app was open.
 
 Then re-run §7.2 properly on `signal_log`. If the oversold floor survives,
 it becomes a score weight. Nothing else does yet.
@@ -669,8 +736,10 @@ so far, each found by accident while changing something adjacent:
 - The −6% floor read `currentPrice` on render. It evaluated only when the
   portfolio rendered, on the live in-progress price, so every look could
   catch an intraday dip: the shipped mechanism was the any-breach case,
-  −$171.51 against −$73.73 for doing nothing (phase-9 §0.3.1–0.3.2). The
-  trigger was render time. (Paraphrased: §0.3.1 has no sentence of the form
+  −$167.66 against −$69.88 for doing nothing, $97.78 worse, on the 33
+  split-checked trades (`node scripts/replay-floor-grid.mjs`, −6% `any`
+  row, re-run 2026-10-21; phase-9 §0.3.1–0.3.2). The trigger was render
+  time. (Paraphrased: §0.3.1 has no sentence of the form
   "the more closely he watched, the worse it performed", though that is
   what its numbers say.)
 - `openStockModal` wrote its recompute of `consUpDays` / `consUpPts` /
@@ -707,10 +776,31 @@ here:**
 - `state.portfolioPrices` / `portfolioPriceFetchFailed`: the last
   rendered price feeds the nav badge's sell-warning count.
 
-These are guarded by a ratchet (`tests/view-no-decision-writes.test.js`
-lists them exactly; a new one fails, so the list can only shrink).
-`peakPrice` and `momentumProtectionActivated` are the serious ones: they
-decide exits and they are the −6% floor's shape again. What the sweep
+`peakPrice`, `momentumProtectionActivated` and `prevRSI` are the serious
+ones. All three feed the exit engine, so momentum-protection mode, the
+trailing-stop exit and a −30 factor depend on when Roman had the app open.
+The −6% floor was not one bad mechanism; it was a symptom of this
+architecture, and these are the same shape in three more places, with
+bigger weights. Fix shape and sequencing: step 2.5 (§7.6), which blocks
+the exit-engine re-derivation (step 5).
+
+**A known defect that can't be fixed yet gets a ratchet: a list that can
+only shrink.** The render-time writes above are pinned exactly in
+`tests/view-no-decision-writes.test.js`. A new one fails the test, a
+fixed one must be removed from the list, and nothing can be added
+quietly. It turns "known, open" from a sentence in a spec into a check
+that runs. Use it whenever a defect is found in more places than one
+change can fix.
+
+**A fix that splits one source of truth into two must say which readers
+get which, and check every reader.** Found 2026-10-21 on the modal fix
+itself: the approved design gave the AI prompt the modal's fresh values
+and the card the scored ones. The prompt's own exit recommendation then
+used a different exhaustion input from the one displayed above it, which
+is the display-versus-truth problem 1c eliminated, reintroduced one step
+later by the fix's own instruction. Fixed the same day: the prompt
+follows the breakdown's rule (fresh values only when there's no real
+signal). What the sweep
 cannot see: writes made through a helper called from a render path under a
 non-display name, and anything outside these four directories.
 

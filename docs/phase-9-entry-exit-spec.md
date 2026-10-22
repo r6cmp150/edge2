@@ -134,11 +134,16 @@ answer different questions and must not be blended into one number:
 
 - **Any breach** (daily low OR close ≤ −6% — the theoretical upper bound,
   true only if a real continuous stop existed or Roman happened to be
-  watching at the exact low): **15 of 37 trades** crossed, not 4.
-  Floor-applied: **−$171.51** — WORSE than doing nothing at all
-  (−$73.73). Holding 5 more trading days past each trigger instead:
-  −$156.26, still worse than actual. Under this definition the floor is a
-  net negative on his real book.
+  watching at the exact low): **15 of 33 split-checked trades** crossed,
+  not 4. Floor-applied: **−$167.66**, against **−$69.88** for doing
+  nothing on the same basis: **$97.78 worse**. Under this definition the
+  floor is a net negative on his real book. (`node
+  scripts/replay-floor-grid.mjs`, −6% `any` row; re-run 2026-10-21.)
+  *Superseded 2026-10-21:* the figures first published here came from
+  this script on 37 trades with no split check, and no longer regenerate.
+  Alpaca's history now carries a split for BIZD in its hold, which turns
+  it into a phantom 16th crosser there. That script's any-breach total is
+  not used. The $97.78 gap is unchanged across every run.
 - **Close only** (daily close ≤ −6% — approximates what checking the app
   normally would actually have shown him, since `calcUnifiedRecommendation`
   only evaluates when the portfolio renders, not continuously): **8 of 37
@@ -203,51 +208,55 @@ actual number for the actual code.
 
 **The full grid, redone across a real menu, not just −6%**
 (`scripts/replay-floor-grid.mjs`), because the −6% choice itself came
-from the same flawed original methodology. 37 trades → 34 usable (3
-excluded for a real split-in-hold: MSTU, DAMD ×2 — a narrower, stricter
-window check than §0.3.1 used, so the actual-total baseline here is
-−$74.13, not −$73.73; both are correct for what each checks).
+from the same flawed original methodology. 37 trades → 33 usable (4
+excluded for a real split-in-hold: MSTU, BIZD, DAMD ×2). Re-run 2026-10-21
+(`node scripts/replay-floor-grid.mjs`). The run first published here had 34
+usable trades: Alpaca's history did not yet carry BIZD's split, and those
+figures no longer regenerate, so they are removed. Every percentage cell's
+vs_actual is unchanged except the two −15% cells, which differ by $0.01.
+Book totals all shift by BIZD's own −$4.25. Only the ATR `any` cells,
+which BIZD triggered, move beyond that.
 `trimmed_atr_at_buy` is empty for all 37 rows in `trades.json` (checked
 directly) — the ATR cells recompute the identical quantity fresh from
 real bars via the real `calcTrimmedATR`, a proxy for the missing column,
 not the stored value.
 
 ```
-PERCENTAGE-THRESHOLD GRID — Actual (no cap), 34 trades: $-74.13
-pct    basis      n  trig  book_total    vs_actual   biggest_contributor
- -4%  close      34   10   $ -36.55    +$ 37.58   TENX +$46.68 (124%)
- -4%  any        34   21   $-174.52    -$100.39   TENX +$46.68 (-46%)
- -4%  persist2   34    3   $ -17.10    +$ 57.03   TENX +$46.68 (82%)
- -5%  close      34    9   $ -68.47    +$  5.66   TENX +$44.35 (784%)
- -5%  any        34   17   $-178.19    -$104.06   TENX +$44.35 (-43%)
- -5%  persist2   34    3   $ -24.41    +$ 49.72   TENX +$44.35 (89%)
- -6%  close      34    8   $ -72.26    +$  1.87   TENX +$42.02 (2248%)
- -6%  any        34   15   $-171.91    -$ 97.78   TENX +$42.02 (-43%)   <- SHIPPED
- -6%  persist2   34    2   $ -27.01    +$ 47.12   TENX +$42.02 (89%)
- -8%  close      34    5   $ -74.05    +$  0.08   TENX +$37.36 (47897%)
- -8%  any        34    8   $-117.16    -$ 43.03   TENX +$37.36 (-87%)
- -8%  persist2   34    2   $ -35.47    +$ 38.66   TENX +$37.36 (97%)
--10%  close      34    3   $ -61.12    +$ 13.01   TENX +$32.70 (251%)
--10%  any        34    6   $-113.87    -$ 39.74   TENX +$32.70 (-82%)
--10%  persist2   34    1   $ -41.43    +$ 32.70   TENX +$32.70 (100%)
--12%  close      34    2   $ -37.57    +$ 36.56   TENX +$28.04 (77%)
--12%  any        34    4   $ -72.55    +$  1.58   PACB -$28.68 (-1815%)
--12%  persist2   34    1   $ -46.09    +$ 28.04   TENX +$28.04 (100%)
--15%  close      34    2   $ -50.31    +$ 23.82   TENX +$21.05 (88%)
--15%  any        34    2   $ -50.31    +$ 23.82   TENX +$21.05 (88%)
--15%  persist2   34    1   $ -53.08    +$ 21.05   TENX +$21.05 (100%)
+PERCENTAGE-THRESHOLD GRID — Actual (no cap), 33 trades: $-69.88
+ pct  basis       n  trig   book_total    vs_actual   biggest_contributor
+ -4%  close      33   10   $  -32.30    +$ 37.58   TENX +$46.68 (124%)
+ -4%  any        33   21   $ -170.27    -$100.39   TENX +$46.68 (-46%)
+ -4%  persist2   33    3   $  -12.85    +$ 57.03   TENX +$46.68 (82%)
+ -5%  close      33    9   $  -64.22    +$  5.66   TENX +$44.35 (784%)
+ -5%  any        33   17   $ -173.94    -$104.06   TENX +$44.35 (-43%)
+ -5%  persist2   33    3   $  -20.16    +$ 49.72   TENX +$44.35 (89%)
+ -6%  close      33    8   $  -68.01    +$  1.87   TENX +$42.02 (2248%)
+ -6%  any        33   15   $ -167.66    -$ 97.78   TENX +$42.02 (-43%)   <- SHIPPED
+ -6%  persist2   33    2   $  -22.76    +$ 47.12   TENX +$42.02 (89%)
+ -8%  close      33    5   $  -69.80    +$  0.08   TENX +$37.36 (47897%)
+ -8%  any        33    8   $ -112.91    -$ 43.03   TENX +$37.36 (-87%)
+ -8%  persist2   33    2   $  -31.22    +$ 38.66   TENX +$37.36 (97%)
+-10%  close      33    3   $  -56.87    +$ 13.01   TENX +$32.70 (251%)
+-10%  any        33    6   $ -109.62    -$ 39.74   TENX +$32.70 (-82%)
+-10%  persist2   33    1   $  -37.18    +$ 32.70   TENX +$32.70 (100%)
+-12%  close      33    2   $  -33.32    +$ 36.56   TENX +$28.04 (77%)
+-12%  any        33    4   $  -68.30    +$  1.58   PACB $-28.68 (-1815%)
+-12%  persist2   33    1   $  -41.84    +$ 28.04   TENX +$28.04 (100%)
+-15%  close      33    2   $  -46.06    +$ 23.83   TENX +$21.05 (88%)
+-15%  any        33    2   $  -46.06    +$ 23.83   TENX +$21.05 (88%)
+-15%  persist2   33    1   $  -48.83    +$ 21.05   TENX +$21.05 (100%)
 
-ATR-SCALED GRID — Actual (no cap), 34 trades: $-74.13
-mult   basis      n  trig  book_total    vs_actual   biggest_contributor
-1.5x  close      34    5   $-104.35    -$ 30.22   PURR -$35.80 (118%)
-1.5x  any        34    9   $-164.43    -$ 90.30   PURR -$35.80 (40%)
-1.5x  persist2   34    1   $ -72.59    +$  1.54   PGEN +$1.54 (100%)
- 2x   close      34    0   $ -74.13    +$  0.00   (none triggered)
- 2x   any        34    3   $-111.54    -$ 37.41   PACB -$30.46 (81%)
- 2x   persist2   34    0   $ -74.13    +$  0.00   (none triggered)
-2.5x  close      34    0   $ -74.13    +$  0.00   (none triggered)
-2.5x  any        34    1   $ -82.56    -$  8.43   PGEN -$8.43 (100%)
-2.5x  persist2   34    0   $ -74.13    +$  0.00   (none triggered)
+ATR-SCALED GRID — Actual (no cap), 33 trades: $-69.88
+mult  basis       n  trig   book_total    vs_actual   biggest_contributor
+1.5x  close      33    5   $ -100.10    -$ 30.22   PURR $-35.80 (118%)
+1.5x  any        33    8   $ -158.62    -$ 88.74   PURR $-35.80 (40%)
+1.5x  persist2   33    1   $  -68.34    +$  1.54   PGEN +$1.54 (100%)
+  2x  close      33    0   $  -69.88    +$  0.00   (none triggered)
+  2x  any        33    2   $ -103.78    -$ 33.90   PACB $-30.46 (90%)
+  2x  persist2   33    0   $  -69.88    +$  0.00   (none triggered)
+2.5x  close      33    0   $  -69.88    +$  0.00   (none triggered)
+2.5x  any        33    1   $  -78.31    -$  8.43   PGEN $-8.43 (100%)
+2.5x  persist2   33    0   $  -69.88    +$  0.00   (none triggered)
 ```
 
 **What the grid actually shows, stated plainly:**
@@ -266,7 +275,7 @@ mult   basis      n  trig  book_total    vs_actual   biggest_contributor
   failure mode (cutting recoverable dips) for a different, real one
   (zero protection against a fast one-to-two-day collapse).
 - **TENX is the single largest swing in almost every cell that shows a
-  gain, in either direction** — most of this grid, at n≈34, is close to
+  gain, in either direction** — most of this grid, at n≈33, is close to
   "did this rule happen to catch TENX," not a statement about the rule.
   The extreme percentages in the table (2248%, 47897%, −1815%) are the
   tell: those cells have 0–2 triggered trades.
@@ -277,7 +286,7 @@ mult   basis      n  trig  book_total    vs_actual   biggest_contributor
 **The decision, stated by Roman: the max-loss line stops being a
 mechanism at all.** Not "pick a better threshold or basis from the
 grid" — every cell above, even the good-looking ones, is thin evidence at
-n≈34 with one trade (TENX, or BTDR in §0.3.1) usually deciding the sign.
+n≈33 with one trade (TENX, or BTDR in §0.3.1) usually deciding the sign.
 Instead: `calcUnifiedRecommendation` no longer hard-returns on the
 max-loss line under ANY definition. It becomes a reported fact — a
 measured distance from a line Roman set for himself, shown in the
@@ -504,6 +513,13 @@ opened the app.
 
 Fixed by §2. Until §2 exists, no peak-derived figure in the report should
 be presented without a caveat.
+
+*Correction 2026-10-21 (phase-10 §7.6 step 2.5): not fixed.* §2.0 dropped
+`position_bars` because bars can be fetched on demand, but the derivation
+it relied on was built only for the intraday display panel. `peakPrice`,
+`momentumProtectionActivated` and `prevRSI` are still written only by the
+render, and all three are still live exit-engine inputs. The report caveat
+above covers the analysis risk, not the decision risk.
 
 ### 1.5 The backup job protects the dead table
 

@@ -3146,9 +3146,15 @@ async function openStockModal(ticker) {
     const breakdownStock = s ? stock : { ...stock, ...modalFresh };
 
     // _modalStock: this modal's own COPY, for buildAIPrompt() and the
-    // owned-position block. Live price/RSI from this modal's fresh bar
-    // fetch, distinct from stock.price/stock.rsi, which can be a stale
-    // state.signals cache entry when the ticker is also in the current scan.
+    // owned-position block. Built from breakdownStock, so it follows the
+    // breakdown's rule: a real signal keeps its scored consUpDays etc. The
+    // prompt's calcUnifiedRecommendation then gets the same exhaustion input
+    // as the card and the modal's own recommendation block. (The first
+    // version of this fix gave the prompt the fresh values, which handed the
+    // AI a different recommendation from the one displayed above it.) Live
+    // price/RSI come from this modal's fresh bar fetch, distinct from
+    // stock.price/stock.rsi, which can be a stale state.signals cache entry
+    // when the ticker is also in the current scan.
     //
     // Prefers the latest 1-minute bar close (same live intraday data the "1 Day"
     // chart range uses) over the daily-bars endpoint's last row: during market
@@ -3156,8 +3162,7 @@ async function openStockModal(ticker) {
     // was silently overriding a correct `price` here and fed a stale P&L sign into
     // buildAIPrompt()'s owned-position branch (CONTINUE HIGHER vs FURTHER DROP).
     _modalStock = {
-      ...stock,
-      ...modalFresh,
+      ...breakdownStock,
       livePrice: _chartBarsMinute[_chartBarsMinute.length - 1]?.c || price,
       liveRsi: rsi,
       priceFetchFailed: modalPriceUnavailable,
@@ -6827,6 +6832,21 @@ ${perTradeLines.join('\n')}`;
 // capture project). Gated on volSpikePts as a stand-in for "has buy-time
 // breakdown data" since all breakdown fields are captured together in
 // confirmAddPortfolio() — presence of one implies presence of all.
+// Spec §7.5 (2026-10-21): cons_up_days / cons_up_pts / rel_strength_pts on
+// EDGE trades ordered before the stock-modal fix hold openStockModal's
+// recompute, not the values the score was summed from. They are written off,
+// never bucketed or printed as if measured, and always COUNTED, never
+// silently dropped. No stored marker says which code recorded a trade, so the
+// cutoff is the ORDER date (the fix, c72c647, deployed 2026-10-21 18:15 PT).
+// That is a proxy: a tab left open across the deploy runs the old code
+// until it reloads. A missing buyDate can't be placed, so it's written off
+// (the asymmetric-safe side).
+const MODAL_COMPONENTS_FIXED_FROM = '2026-10-22';
+function modalComponentsWrittenOff(s) {
+  return (s.engineSource || 'EDGE') === 'EDGE' && !(s.buyDate && s.buyDate >= MODAL_COMPONENTS_FIXED_FROM);
+}
+const MODAL_WRITE_OFF_REASON = "stored value is the stock modal's recompute, not the scored one (spec §7.5)";
+
 function buildIndividualSignalPerformanceSection(sold) {
   const withBreakdown = sold.filter(s => s.volSpikePts != null);
   if (withBreakdown.length < 10) return '';
@@ -6868,11 +6888,19 @@ ${bucket(byPts('volBuildPts', 0),  'No (0 pts):')}`;
 ${bucket(byPts('meanReversionPts', 20), 'Yes (+20 pts):')}
 ${bucket(byPts('meanReversionPts', 0),  'No (0 pts):')}`;
 
-  const relStrengthBlock = `  Relative strength vs SPY:
-${bucket(byPts('relStrengthPts', 15), 'Got +15 (outperform 2%+):')}
-${bucket(byPts('relStrengthPts', 10), 'Got +10 (outperform 1%+):')}
-${bucket(byPts('relStrengthPts', 5),  'Got +5 (outperform >0%):')}
-${bucket(byPts('relStrengthPts', 0),  'Got 0 (underperform):')}`;
+  // Measured rows only (see modalComponentsWrittenOff); the written-off
+  // count is printed with its reason, never omitted.
+  const relMeasured = withBreakdown.filter(s => !modalComponentsWrittenOff(s));
+  const relWrittenOff = withBreakdown.length - relMeasured.length;
+  const relByPts = points => relMeasured.filter(s => s.relStrengthPts === points);
+  const relStrengthBlock = `  Relative strength vs SPY (orders from ${MODAL_COMPONENTS_FIXED_FROM} only):
+    ${relMeasured.length} measured | ${relWrittenOff} written off — ${MODAL_WRITE_OFF_REASON}
+${relMeasured.length ? [
+  bucket(relByPts(15), 'Got +15 (outperform 2%+):'),
+  bucket(relByPts(10), 'Got +10 (outperform 1%+):'),
+  bucket(relByPts(5),  'Got +5 (outperform >0%):'),
+  bucket(relByPts(0),  'Got 0 (underperform):'),
+].join('\n') : '    No measured trades yet.'}`;
 
   const macroAdjBlock = `  Macro adjustment applied:
 ${bucket(withBreakdown.filter(s => s.macroAdjustmentPts > 0), 'Positive adjustment:')}
@@ -7644,8 +7672,8 @@ ${ureFactorAccuracySection}
     Above 20-day MA:   ${fmtPts(s.maPts)}
     Volume build:      ${fmtPts(s.volBuildPts)}
     Mean reversion:    ${fmtPts(s.meanReversionPts)}
-    Consecutive days:  ${fmtPts(s.consUpPts)} (${s.consUpDays!=null?s.consUpDays:'N/A'} days)
-    Relative strength: ${fmtPts(s.relStrengthPts)}${relStrengthBucketLabel(s.relStrengthPts)}
+    Consecutive days:  ${modalComponentsWrittenOff(s) ? `written off — ${MODAL_WRITE_OFF_REASON}` : `${fmtPts(s.consUpPts)} (${s.consUpDays!=null?s.consUpDays:'N/A'} days)`}
+    Relative strength: ${modalComponentsWrittenOff(s) ? 'written off (same reason)' : `${fmtPts(s.relStrengthPts)}${relStrengthBucketLabel(s.relStrengthPts)}`}
     Catalyst setup:    ${fmtPts(s.catalystSetup ? 10 : 0)}
     Sub-$10 timing:    ${fmtPts(s.subTenEntryAdjustment)}
     Raw total:         ${s.rawScoreAtBuy!=null?`${s.rawScoreAtBuy}/${RAW_SCORE_MAX} (approximate)`:'N/A'}

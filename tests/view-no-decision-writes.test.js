@@ -37,7 +37,10 @@ run('openStockModal writes nothing onto the signal, the stock object or _modalSt
     assert.deepStrictEqual(writesTo(src, root), [], `openStockModal assigns onto ${root}`);
   }
   assert.ok(!/_modalStock\s*=\s*stock\s*;/.test(code(src)), '_modalStock must be a copy, never the shared object');
-  assert.ok(/_modalStock = \{\s*\.\.\.stock,/.test(src), '_modalStock is built as a copy of stock');
+  // Same rule as the breakdown, so the AI prompt's recommendation gets the
+  // same inputs as the card and the modal's recommendation block.
+  assert.ok(/_modalStock = \{\s*\.\.\.breakdownStock,/.test(src), '_modalStock is a copy built from breakdownStock');
+  assert.ok(!/_modalStock = \{[^}]*\.\.\.modalFresh/.test(src), 'the prompt never gets fresh values a real signal did not score with');
   // A real signal's breakdown reads the signal itself; only the fallback
   // object takes the modal's fresh recompute.
   assert.ok(/const breakdownStock = s \? stock : \{ \.\.\.stock, \.\.\.modalFresh \};/.test(src), 'breakdownStock rule');
