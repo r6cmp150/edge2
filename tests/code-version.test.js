@@ -89,3 +89,27 @@ run('readCodeVersion never throws: unreadable parts give explicit, CHECK-valid v
   assert.ok(shape(b.codeVersion) && b.codeVersion.scoring_hash === 'unavailable' && b.problems.length === 2, 'a missing checkout degrades, never throws');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// state.ownedScores (phase-10 step 2): persisted across deploys, so a stored
+// score is used only if the CURRENT formula produced it. Every reader goes
+// through currentOwnedScore(); an unversioned or other-version entry is
+// "not evaluated" with its reason, never a number from another formula.
+run('ownedScores: versioned on write, read only through currentOwnedScore, stale entries not evaluated', () => {
+  const app = readSource('app.js');
+  const body = code(app);
+  const directReads = (body.match(/state\.ownedScores\[[^\]]+\](?!\s*=)/g) || []);
+  assert.strictEqual(directReads.length, 1, `only currentOwnedScore may read state.ownedScores directly, found: ${directReads.join(', ')}`);
+  const writes = body.match(/state\.ownedScores\[ticker\] = \{[^}]*\}/g) || [];
+  assert.ok(writes.length === 2 && writes.every(w => /scoringVersion: SCORING_VERSION/.test(w)), 'both writers record the scoring version');
+  global.SCORING_VERSION = 2;
+  global.state = { ownedScores: { A: { score: 70, label: 'SOFT BUY', scoringVersion: 2 }, B: { score: 80, label: 'SOFT BUY' }, C: { score: 90, label: 'SOFT BUY', scoringVersion: 1 } } };
+  // eslint-disable-next-line no-eval
+  eval(fn('app.js', 'currentOwnedScore') + '\nglobal.__cos = currentOwnedScore;');
+  assert.strictEqual(global.__cos('A').score, 70, 'a current-version entry is used');
+  for (const t of ['B', 'C']) {
+    const r = global.__cos(t);
+    assert.ok(r.score === null && /not|unrecorded|v1/.test(r.notEvaluatedReason), `${t}: a stale entry is not evaluated, with a reason (${r.notEvaluatedReason})`);
+  }
+  assert.strictEqual(global.__cos('Z'), null, 'no entry is no entry');
+  assert.ok(/if \(currentSignal\?\.notEvaluatedReason\) add\(`Current score not evaluated/.test(app), 'the exit engine says it, rather than silently skipping the score factors');
+});

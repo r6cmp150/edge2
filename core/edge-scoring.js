@@ -167,7 +167,10 @@ function scoreComponents(x) {
   let rsiPts = 0, rsiBucket = null;
   if (x.rsi >= 55 && x.rsi <= 65) { rsiPts = 20; rsiBucket = '55-65'; }
   else if (x.rsi >= 35 && x.rsi < 55) { rsiPts = 15; rsiBucket = '35-55'; }
-  else if (x.rsi < 35) { rsiPts = 10; rsiBucket = 'under-35'; }
+  // RSI < 35 scored +10 until phase-10 step 2 (spec §7.3): it paid points
+  // for an outcome that loses money on both datasets. The bucket stays, so
+  // the breakdown still names the band; the points are 0.
+  else if (x.rsi < 35) { rsiPts = 0; rsiBucket = 'under-35'; }
   else if (x.rsi > 65 && x.rsi <= 75) { rsiPts = 0; rsiBucket = '65-75'; }
   else if (x.rsi > 75) { rsiPts = -10; rsiBucket = '75+'; }
 
@@ -180,15 +183,16 @@ function scoreComponents(x) {
 
   // Sub-$10 entry timing (Change C): null at $10+ (no such component, not a
   // zero-point one).
+  // Phase-10 step 2 (spec §7.3, §4): the bonus branches (+10 at RSI < 45,
+  // +5 at RSI 45-55, +5 at vol < 1.5x, so +5 / +10 / +15 combined) are
+  // neutralised; they paid for cheapness the data says loses money. The
+  // penalty branches are unchanged. Each test was already exclusive of the
+  // bonus branch it replaces, so dropping the else-ifs changes nothing else.
   let sub10Pts = null;
   if (x.price < 10) {
     sub10Pts = 0;
-    if (x.rsi < 45) sub10Pts += 10;
-    else if (x.rsi >= 45 && x.rsi <= 55) sub10Pts += 5;
-    else if (x.rsi > 60) sub10Pts -= 10;
-
-    if (x.volRatio < 1.5) sub10Pts += 5;
-    else if (x.volRatio > 2.5) sub10Pts -= 10;
+    if (x.rsi > 60) sub10Pts -= 10;
+    if (x.volRatio > 2.5) sub10Pts -= 10;
   }
 
   const raw = volPts + momPts + rsiPts + maPts + volBuildPts + catalystPts
@@ -216,11 +220,11 @@ function relStrengthPoints(rsVsSPY) {
 // recomputes it from this file and fails if it doesn't match, and pins the
 // version -> hash history. So the formula can't change without both
 // changing: nothing here depends on someone remembering to bump it.
-//   1 = the formula as of b63ef1b (scores unchanged), expressed through
-//       scoreLabel() and this threshold table. Phase-10 step 2 will be
-//       version 2: two terms, one table row, this constant.
-const SCORING_VERSION = 1;
-const SCORING_HASH = 'ce367ebf81eb4741a52f6b845b1ddada7962e450bdba892f3282e82ffb54ab86';
+//   1 = the formula through b63ef1b (before phase-10 step 2)
+//   2 = phase-10 step 2: RSI < 35 and the sub-$10 bonuses neutralised;
+//       lines re-derived (scripts/derive-step2-thresholds.mjs)
+const SCORING_VERSION = 2;
+const SCORING_HASH = '8e10b278942271cdfb1944320de39b969a4585748edf9130c294545a9e7515e2';
 
 // The label thresholds of each scoring version (spec §7.7: a label derived
 // from a threshold must record which threshold produced it). A score is
@@ -231,6 +235,7 @@ const SCORING_HASH = 'ce367ebf81eb4741a52f6b845b1ddada7962e450bdba892f3282e82ffb
 // and the exit engine's top cutoff).
 const SCORE_THRESHOLDS_BY_VERSION = {
   1: { watch: 29, soft: 73, strong: 116 },
+  2: { watch: 20, soft: 65, strong: 110 },
 };
 
 // 'STRONG BUY' | 'SOFT BUY' | 'WATCH', or null when the score or the

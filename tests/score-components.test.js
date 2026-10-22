@@ -30,12 +30,21 @@ const BASE_COMMIT = '1c39926'; // last commit with the inline (pre-scoreComponen
 // replaces this with its two stated terms, computed from the OLD output's
 // own inputs (RSI < 35: -10; price < 10: the sub-$10 bonuses, -10 at
 // RSI < 45 / -5 at RSI 45-55, and -5 at vol < 1.5x).
-function expectedScoreDelta(/* a */) { return 0; }
+function expectedScoreDelta(a) {
+  let d = 0;
+  if (a.rsi < 35) d -= 10;
+  if (a.price < 10) {
+    if (a.rsi < 45) d -= 10;
+    else if (a.rsi >= 45 && a.rsi <= 55) d -= 5;
+    if (a.volRatio < 1.5) d -= 5;
+  }
+  return d;
+}
 
 // The label lines of the version under test, stated independently of the
 // code (spec §7.6 step 2). Version 1: SOFT 73, STRONG 116. Step 2 changes
 // this to 65 / 110 in the same diff as the formula.
-const DECIDED_LINES = { soft: 73, strong: 116 };
+const DECIDED_LINES = { soft: 65, strong: 110 };
 
 const strip = s => s.replace(/^export\s*\{[\s\S]*?\};?\s*$/m, '').replace(/^export (function|const)/gm, '$1');
 function context(scoringSrc) {
@@ -180,6 +189,7 @@ run('score formula: no evaluative RSI or volume copy left in the display', () =>
 // stamped with b63ef1b's own hash, so nothing refers to it.
 const SCORING_HISTORY = {
   1: 'ce367ebf81eb4741a52f6b845b1ddada7962e450bdba892f3282e82ffb54ab86', // b63ef1b's formula via scoreLabel (1d)
+  2: '8e10b278942271cdfb1944320de39b969a4585748edf9130c294545a9e7515e2', // phase-10 step 2
 };
 run('scoring identity: SCORING_HASH matches the source, and the version history is pinned', async () => {
   const { scoringHash } = await import('../scripts/lib/scoring-hash.mjs');

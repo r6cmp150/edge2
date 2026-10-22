@@ -723,23 +723,32 @@ days, not quiet ones.
      47 → 34, $10–20 goes 35 → 43, moving away from the cheap end as
      intended.
 
-   **4(b) residual: SUBSTANTIAL, step 2 stopped before deploy
-   (2026-10-22)** (`node scripts/measure-step2-residual.mjs`; trades_v2
-   at `de95a93`, 236 EDGE trades held in the window, 464 end-of-day
-   position-days rebuilt from each ticker's own bars, no news or macro
-   for either formula):
-   - **Score movement (clean): 74% of held position-days move.** 22.4%
-     move by the full −25, 9.3% by −20, 14.9% by −15, 19.2% by −10, 8.4%
-     by −5; 25.9% are unchanged. 181 of 236 trades have at least one moved
-     day.
-   - **Exit-cutoff bucket changes (NOISY, not a decision input):** 160 of
-     464 position-days (34.5%), on 111 trades; 123 move weaker, 37
-     stronger.
+   **4(b): what step 2 does to the exit engine's absolute-score tier
+   factor, measured and accepted (2026-10-22)**
+   (`node scripts/measure-step2-residual.mjs`; trades_v2 at `de95a93`,
+   236 EDGE trades held in the window, 464 end-of-day position-days
+   rebuilt from each ticker's own bars, no news or macro for either
+   formula):
+   - **Score movement:** 74% of held position-days move. 22.4% move by
+     −25, 9.3% by −20, 14.9% by −15, 19.2% by −10, 8.4% by −5, and 25.9%
+     are unchanged. 181 of 236 trades have at least one moved day.
+   - **Tier-factor bucket changes:** 160 of 464 position-days (34.5%), on
+     111 trades. **123 move weaker, 37 stronger.**
 
-   By the rule set for 4(b), that's not "a handful", so 4(c) comes first.
-   Tying the cutoffs to the thresholds handles the level shift, but the
-   composition-dependent part (cheap and oversold names lose up to 25)
-   moves a third of held position-days across an exit bucket.
+   **This is the formula correction reaching the exit engine, not drift.**
+   After step 2 the tier factor is internally consistent: a v2 live
+   score against cutoffs that are expressions of v2's thresholds. The
+   change is composition-dependent: the formula takes up to 25 points
+   off cheap and oversold names and none off a $12 stock at RSI 50, so no
+   choice of threshold removes it. The §7.7 threshold rule is satisfied,
+   not violated: the cutoffs are re-derived in the same change. The
+   direction is the intended one: positions now believed to be worse buys
+   get weaker hold signals.
+
+   **The tier factor itself is unvalidated:** it has never been tested
+   against anything. Step 2 changes its output on about a third of held
+   position-days in the direction the formula change implies. That's step
+   5's problem, and it arrives there with this measurement already taken.
 
    **Found while building:** the exit engine's "Score dropped / improved"
    delta compares the stored buy score with the score now. Across a
@@ -758,7 +767,8 @@ days, not quiet ones.
    `scoreComponents`, `SCORING_VERSION` 1 → 2 with its hash, one row
    (`2: { watch: 20, soft: 65, strong: 110 }`) in the threshold table, and
    the test's stated delta and decided lines. When it ships, the measured
-   effect is the formula change and nothing else. It waits on 4(c).
+   effect is the formula change and nothing else. Shipped 2026-10-22, after
+   4(b) was re-read as the intended correction (below).
 
    **4(c) starting point, audited: re-score the buy instead of comparing
    a stored number with a live one.** Then both sides of the delta come
@@ -789,79 +799,43 @@ days, not quiet ones.
    re-score every future buy. Until it does, the same-version-only delta
    (built in 1d) is the fallback: not evaluated, with the reason.
 
-   **4(c) design (2026-10-22; designed, not built).** It starts from the
-   re-scored snapshot, and the EDGE signal-object gap changes it in two
-   ways:
+   **4(c): the version-translation design was NOT built (2026-10-22).**
+   It proposed evaluating held positions in their buy's scoring version
+   through a declared version-to-version delta. It was stopped for three
+   reasons:
+   1. **The residual it targeted is the intended correction** (above).
+      Only the delta factor had a real mismatch (a stored v1 score
+      against a live v2 score), and the same-version-only guard already
+      ships for that.
+   2. **A declared delta is a second copy of the formula.** Step 2's delta
+      isn't a scalar: it's −25 for a cheap oversold name and 0 for a $12
+      stock at RSI 50, so the declaration must encode composition, which
+      is the duplicate-logic rule. If cross-version evaluation is ever
+      genuinely needed, the answer is a versioned scorer,
+      `scoreStock(inputs, version)`, which can't drift because it *is*
+      the old formula. Not a delta table.
+   3. **It would preserve behaviour nobody has validated.** Both exit
+      models were rejected on evidence, three exit inputs are
+      render-dependent until step 2.5, and the tier factor has never been
+      tested. Building machinery to hold an unvalidated factor
+      numerically still is the opposite of this project's most reliable
+      move: when a value is unreliable, stop needing it.
 
-   1. **Re-scoring the BUY fixes only the delta factor, and 4(b)'s
-      residual is not in the delta.** The 34.5% of held position-days
-      that change bucket come from the **absolute tier factor**
-      ("Current score N — support/weak signal", +50 … −25), which
-      compares the live score with the cutoffs. A position held across
-      step 2 has its live score drop by up to 25 under v2 while it was
-      bought under v1, so the tier moves even though nothing about the
-      stock did. Re-scoring the buy leaves that untouched.
-   2. **So re-score the other side: evaluate a held position entirely in
-      the scoring version it was bought under.** The *now* side is the
-      one with complete inputs (the live signal carries RSI, price,
-      volume ratio, every flag, and its bars), so the EDGE snapshot gap
-      doesn't constrain it. For a position bought under version b and
-      evaluated while the app runs version c:
-      - `nowScore_b = nowScore_c + transition(c → b, live inputs)`, where
-        each version step declares its transition. v1 ↔ v2 is exactly
-        step 2's stated delta (RSI < 35: 10; price < 10 bonuses, using the
-        live signal price; volume ratio < 1.5: 5). That's the same
-        function the equivalence test states, moved into
-        `core/edge-scoring.js` as the single declaration, and the test
-        keeps checking the formula against it.
-      - The tier factor uses `nowScore_b` against **version b's**
-        thresholds (`scoreThresholds(b)`), and the delta factor compares
-        `scoreAtBuy` with `nowScore_b`. Both sides are then version b,
-        **by construction, for every position, with no stored snapshot
-        needed.**
-      - A position bought under v2 is evaluated under v2 throughout.
-        Positions with no `code_version` are b = 1.
-      - **When a transition can't be computed** (a missing live input,
-        or a future step that changes a bar-derived detection with no
-        declared transition), the score factors are **not evaluated**,
-        and the recommendation says so (the 2.5 rule: "computed from N
-        of M factors — score factors not evaluated, bought under v1"). The
-        same-version-only fallback stays for exactly that case.
-      - **Gap found while designing:** when an owned ticker isn't in the
-        current signals, the exit engine's live score comes from
-        `state.ownedScores`, and that holds only `{score, label}`. It
-        has no inputs, so no transition can be computed, and no version.
-        It's also **persisted in localStorage**, so after a deploy it can
-        hold a score from the previous formula, unmarked: version mixing
-        on its own. The 4(c) build stores `{score, label,
-        scoringVersion, rsi, price, volRatio}` there, and treats an
-        entry without `scoringVersion` as not evaluated rather than
-        guessing its version.
-   3. **What this does to step 2:** positions held across the deploy are
-      unaffected by construction, so the 4(b) residual in held positions
-      is zero by design. **It must be re-measured, not assumed**:
-      `measure-step2-residual.mjs` would score v2 positions under v2 and
-      v1 positions under v1 and should show no bucket changes for v1
-      buys. Step 2 ships after that re-measurement.
-   4. **What it does NOT do:** it doesn't settle 4(c)'s actual question,
-      whether the exit engine should read the absolute entry score at
-      all. Replacing the tier factor with the delta is still a redesign
-      that needs the §5 re-test, and it is blocked on step 2.5 like
-      every exit-engine re-derivation (step 5). This design removes the
-      *formula-change* drift so step 2 can ship. It doesn't calibrate
-      anything.
-   5. **Where the EDGE snapshot gap still bites:** re-scoring a stored
-      buy *forward* into a newer version (for analysis: "would this
-      trade have qualified under v2?"). That still needs the §5
-      signal-object item, and that's why that item comes first among
-      the §5 work.
+   **4(c)'s real question stays open, as step 5's:** should the exit
+   engine read the absolute entry score at all, or only the delta (score
+   at buy versus now)? That's a redesign behind the §5 re-test and step
+   2.5, not something to answer with code now. The §5 signal-object
+   item is what would let a stored buy be re-scored by a versioned
+   scorer when that question is taken up.
 
-   **Build order for 4(c), each step shown before building:** (a) move
-   the v1 → v2 transition into core as one declaration, with the
-   equivalence test asserting the formula against it; (b) version-pin the
-   exit engine's two score factors, with not-evaluated reasons; (c)
-   re-measure the 4(b) residual with v1 buys evaluated under v1; (d) then
-   step 2 (the held branch).
+   **Shipped with step 2: `state.ownedScores` is versioned.** It was
+   `{score, label}`, persisted in localStorage across deploys, with no
+   version: a stored value that silently mixed formulas. Entries now
+   carry `scoringVersion`, and every reader goes through
+   `currentOwnedScore()`. An unversioned or other-version entry is not
+   evaluated, with the reason shown on the card and in the exit engine,
+   never used as a number. It heals itself at the next scan, which
+   refreshes every owned ticker.
 
    **Decided before building (Roman, 2026-10-21):**
    - **All three lines are re-derived:** STRONG, SOFT and the WATCH/display
@@ -982,6 +956,12 @@ days, not quiet ones.
    **Until step 2.5 ships, the exit engine has no validated inputs**:
    momentum-protection mode, the trailing-stop exit, and the −30 "RSI
    declining from peak" factor are functions of when the app was open.
+   **Also arriving here, already measured:** the absolute-score tier
+   factor ("Current score N — support/weak signal") is unvalidated, and
+   step 2 changed its output on 34.5% of held position-days (123 weaker,
+   37 stronger; `node scripts/measure-step2-residual.mjs`, step 2 §4(b)).
+   With it comes 4(c)'s open question: should the exit engine read the
+   absolute entry score at all, or only the delta?
 
 Then re-run §7.2 properly on `signal_log`. If the oversold floor survives,
 it becomes a score weight. Nothing else does yet.

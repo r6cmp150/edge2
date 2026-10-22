@@ -846,7 +846,7 @@ let state = {
   lastScanDroppedCount: 0, // symbols dropped from the last scan's bars fetch by a chunk-level error (Bug 3) — persisted
   selectedUniverse: 'OTHER',
   notifications: {},     // push notification state — persisted
-  ownedScores: {},        // ticker → {score, label} snapshotted at each screener run, for owned positions that no longer clear the display threshold — persisted
+  ownedScores: {},        // ticker → {score, label, scoringVersion} snapshotted at each screener run, for owned positions that no longer clear the display threshold — persisted, so read ONLY through currentOwnedScore() (a stored score from another formula is not evaluated, never used)
   ownedPrevRSI: {},       // ticker → RSI from the previous portfolio render, for detecting "declining from peak" in calcPeakRiskScore — persisted
   ownedPeakRSI: {},       // ticker → highest RSI seen across the current hold, for peakRsiDuringHold on the sold record — persisted
   preMarketGroqCache: {}, // ticker → {pairs}|{raw} Groq pre-market read — session only, tap-triggered
@@ -1493,6 +1493,19 @@ async function resolveMacroConditionWithGroq(changes) {
 // it is now that expression and can't be left behind when SOFT moves. Under
 // adverse conditions, when there are fewest signals, a stale 73 would have
 // been 8 points stricter than anyone decided.
+// state.ownedScores is read ONLY through here (phase-10 step 2). Its entries
+// are scores from past scans, persisted in localStorage across deploys, so an
+// entry is only usable if the CURRENT formula produced it. Anything else
+// (every entry written before this fix has no scoringVersion) comes back as a
+// not-evaluated marker with its reason, never as a number from another
+// formula. The next scan refreshes every owned ticker, so it heals itself.
+function currentOwnedScore(ticker) {
+  const e = state.ownedScores[ticker];
+  if (!e) return null;
+  if (e.scoringVersion === SCORING_VERSION) return e;
+  return { score: null, label: null, notEvaluatedReason: `stored score is from ${e.scoringVersion ? 'scoring v' + e.scoringVersion : 'an unrecorded scoring version'}, current is v${SCORING_VERSION}; refreshed at the next scan` };
+}
+
 const BASE_SCORE_THRESHOLD = scoreThresholds().watch;
 const ELEVATED_SCORE_THRESHOLD = scoreThresholds().soft;
 const SECTOR_WEAKNESS_THRESHOLD_CATEGORIES = {
@@ -2015,7 +2028,7 @@ async function runScreener() {
       // here, before the threshold/price filters below can drop them, so the
       // Portfolio tab's Score Now always reflects the most recent scan.
       if (s && getOwnedPosition(ticker)) {
-        state.ownedScores[ticker] = { score: s.score, label: s.signal };
+        state.ownedScores[ticker] = { score: s.score, label: s.signal, scoringVersion: SCORING_VERSION };
         updatedOwnedTickers.add(ticker);
       }
       const shown = !!s && s.score >= displayThreshold && s.price >= minP2;
@@ -2054,7 +2067,7 @@ async function runScreener() {
           const bars = extraBars[ticker] || [];
           const tickerCategory = findTickerCategory(ticker) || category;
           const s = scoreStock(ticker, snap, bars, newsMap[ticker] || null, spyChangePct, tickerCategory);
-          if (s) state.ownedScores[ticker] = { score: s.score, label: s.signal };
+          if (s) state.ownedScores[ticker] = { score: s.score, label: s.signal, scoringVersion: SCORING_VERSION };
         });
       } catch(e) {
         console.warn('Owned-ticker score refresh failed:', e.message);
@@ -3191,12 +3204,12 @@ async function openStockModal(ticker) {
     // 3. Neither — a ticker with no signal and no ownedScores history at
     //    all. Only here does a best-effort fresh computeScoreBreakdown()
     //    total apply, since there's nothing authoritative to defer to.
-    const ownedScoreEntry = state.ownedScores[ticker];
+    const ownedScoreEntry = currentOwnedScore(ticker);
     let modalScoreTotal, modalScoreSignal;
     if (s) {
       modalScoreTotal = stock.score;
       modalScoreSignal = stock.signal;
-    } else if (ownedScoreEntry) {
+    } else if (ownedScoreEntry && ownedScoreEntry.score != null) {
       modalScoreTotal = ownedScoreEntry.score;
       modalScoreSignal = ownedScoreEntry.label;
     } else {
@@ -3257,7 +3270,7 @@ async function openStockModal(ticker) {
     const unifiedModalBlock = ownedPos
       ? buildUnifiedRecommendationModalBlock(calcUnifiedRecommendation(
           { ...ownedPos, currentPrice: _modalStock.livePrice, rsi: _modalStock.liveRsi, priceFetchFailed: modalPriceUnavailable },
-          s || state.ownedScores[ticker] || null,
+          s || currentOwnedScore(ticker) || null,
           state.macroContext
         ))
       : '';
@@ -4369,7 +4382,7 @@ async function renderPortfolioTab() {
         : neutralEngineExitFallback(p, { price: currentPrice });
       portBanner = buildRegisteredEngineExitBanner(exitResult);
     } else {
-      const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
+      const currentSignal = state.signals.find(s => s.ticker === p.ticker) || currentOwnedScore(p.ticker) || null;
       const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);
       portBanner = buildUnifiedPortfolioBanner(unifiedResult);
     }
@@ -4435,14 +4448,17 @@ async function renderPortfolioTab() {
     // per position on every render would be a much larger change, so instead
     // the "(last scan)" label makes the cache explicit rather than silently
     // showing a number that might not match what the modal shows right now.
-    const ownedScore = state.ownedScores[p.ticker];
+    const storedOwned = currentOwnedScore(p.ticker);
+    const ownedScore = storedOwned && storedOwned.score != null ? storedOwned : null;
     const liveSignal = state.signals.find(s => s.ticker === p.ticker);
     const nowScore = ownedScore
       ? ownedScore
       : liveSignal ? { score: liveSignal.score, label: liveSignal.signal } : null;
     const scoreNowDisplay = nowScore
       ? `${nowScore.score} <span class="pf-score-label ${scoreLabel(nowScore.score) === 'STRONG BUY' ? 'pf-score-green' : 'pf-score-yellow'}">${nowScore.label}</span>${ownedScore ? ' <span class="pf-score-stale">(last scan)</span>' : ''}`
-      : `<span class="pf-score-na">—</span>`;
+      : storedOwned?.notEvaluatedReason
+        ? `<span class="pf-score-na">— not evaluated (${storedOwned.notEvaluatedReason})</span>`
+        : `<span class="pf-score-na">—</span>`;
 
     // Duration urgency — same maxHoldDays map used for the card sort order above.
     // Guarded the same way as portfolioUrgencyRatio above: maxHoldDays[p.duration]
@@ -4815,6 +4831,7 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
   // can't change a decision. All >=: a score at exactly the STRONG line now
   // gets the top weight its STRONG BUY label implies (it used to be > 116
   // here and >= 116 on the label).
+  if (currentSignal?.notEvaluatedReason) add(`Current score not evaluated — ${currentSignal.notEvaluatedReason}`, 0);
   const nowScore = currentSignal?.score;
   if (nowScore != null) {
     const t = scoreThresholds();
@@ -5764,7 +5781,7 @@ function computeUnifiedSaleFields(pos, salePrice) {
       fullPeakRiskFactorsAtSale: null,
     };
   }
-  const currentSignal = state.signals.find(s => s.ticker === pos.ticker) || state.ownedScores[pos.ticker] || null;
+  const currentSignal = state.signals.find(s => s.ticker === pos.ticker) || currentOwnedScore(pos.ticker) || null;
   const ur = calcUnifiedRecommendation({ ...pos, currentPrice: salePrice, rsi: pos.rsiAtBuy }, currentSignal, state.macroContext);
   // Independent of composite/hardFloor — tracked across the whole hold by
   // renderPortfolioTab (Change 2), falls back to rsiAtBuy if this ticker was
@@ -9466,7 +9483,7 @@ function updateNavBadges() {
           if (exitResult.status === 'SELL_NOW' || exitResult.status === 'SELL_SOON') warnCount++;
           return;
         }
-        const currentSignal = state.signals.find(s => s.ticker === p.ticker) || state.ownedScores[p.ticker] || null;
+        const currentSignal = state.signals.find(s => s.ticker === p.ticker) || currentOwnedScore(p.ticker) || null;
         const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy, priceFetchFailed: state.portfolioPriceFetchFailed }, currentSignal, state.macroContext);
         if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(result.label)) warnCount++;
       });
