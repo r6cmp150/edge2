@@ -93,3 +93,24 @@ run('entry gate: recording is never disabled -- the Add button only ever confirm
   global.__add('SNAP', 'Entry gate: 7:00–7:30 PT — not a buy window.');
   assert.strictEqual(opened, 'SNAP', 'confirming opens the normal add form');
 });
+
+// Same rule for a held ticker or a pending order: a second lot is
+// recordable behind a confirm, never a disabled button.
+run('recording: "In Portfolio" and "Order pending" record another lot behind a confirm', () => {
+  const src = readSource('app.js');
+  const footer = src.match(/getElementById\('stock-modal-footer'\)\.innerHTML = [\s\S]*?`;\n/);
+  assert.ok(footer, 'stock modal footer found');
+  assert.ok(!/\bdisabled\b/.test(footer[0]), 'no disabled button anywhere in the stock modal footer');
+  assert.strictEqual((footer[0].match(/recordAnotherLot\(/g) || []).length, 2, 'both held and pending route through recordAnotherLot');
+  const fn = src.match(/function recordAnotherLot\([^)]*\) \{[\s\S]*?\n\}/);
+  let opened = null;
+  global.openAddPortfolioModal = t => { opened = t; };
+  // eslint-disable-next-line no-eval
+  eval(fn[0] + '\nglobal.__lot = recordAnotherLot;');
+  global.window.confirm = () => false; global.__lot('GO', 'You already hold 75 shares of GO.');
+  assert.strictEqual(opened, null);
+  global.window.confirm = () => true; global.__lot('GO', 'You already hold 75 shares of GO.');
+  assert.strictEqual(opened, 'GO');
+  // The add form never pre-fills a price nobody observed.
+  assert.ok(/price != null \? price\.toFixed\(2\) : ''/.test(src), 'add form price is empty, not 0.00, when there is no signal price');
+});

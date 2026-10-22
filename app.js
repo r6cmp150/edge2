@@ -2714,37 +2714,49 @@ function buildCardNewsSnippet(s) {
   </div>`;
 }
 
+// RSI band descriptions for display (2026-10-21, phase-10 spec §7.2/§7.3):
+// the band and its position, nothing evaluative. The old copy ("Sweet spot
+// — historically best win rate" on 55-65, "Oversold — potential bounce
+// setup" under 35) asserted performance Roman's own data contradicts; we no
+// longer know enough to editorialise. Keyed by core/edge-scoring.js's
+// rsiBucket ids, so a band boundary can't change here without changing
+// there.
+const RSI_BAND_DESCRIPTIONS = {
+  'under-35': 'band below 35 (lowest)',
+  '35-55': 'band 35–55 (middle)',
+  '55-65': 'band 55–65 (upper-middle)',
+  '65-75': 'band 65–75 (high)',
+  '75+': 'band above 75 (highest)',
+};
+function rsiBandDescription(rsi) {
+  const bucket = scoreComponents({ rsi }).rsiBucket;
+  return bucket ? RSI_BAND_DESCRIPTIONS[bucket] : 'RSI unavailable';
+}
+
 function computeScoreBreakdown(s) {
-  // Change 9 (Scoring Formula v2) — must mirror scoreStock()'s volume buckets exactly.
-  let volPts = 0;
-  let volNote = 'Too quiet — insufficient liquidity signal';
-  if (s.volRatio >= 3) { volPts = -10; volNote = 'Volume spike — late entry risk'; }
-  else if (s.volRatio >= 2) { volPts = 10; volNote = 'Elevated volume — moderate signal'; }
-  else if (s.volRatio >= 1) { volPts = 20; volNote = 'Healthy volume — best win-rate zone'; }
-  else if (s.volRatio >= 0.5) { volPts = 15; volNote = 'Quiet accumulation — strong historical performer'; }
-
-  let momPts = 0;
-  if (s.todayChange >= 4) momPts = 20;
-  else if (s.todayChange >= 2) momPts = 10;
-
-  // Change 8 (Scoring Formula v2) — must mirror scoreStock()'s RSI buckets exactly.
-  let rsiPts = 0;
-  let rsiNote = 'Overbought — caution';
-  if (s.rsi >= 55 && s.rsi <= 65) { rsiPts = 20; rsiNote = 'Sweet spot — historically best win rate'; }
-  else if (s.rsi >= 35 && s.rsi < 55) { rsiPts = 15; rsiNote = 'Neutral-bullish — solid performer'; }
-  else if (s.rsi < 35) { rsiPts = 10; rsiNote = 'Oversold — potential bounce setup'; }
-  else if (s.rsi > 65 && s.rsi <= 75) { rsiPts = 0; rsiNote = 'Elevated — no scoring bonus'; }
-  else if (s.rsi > 75) { rsiPts = -10; rsiNote = 'Overbought — caution'; }
-
-  const maPts      = s.price > s.ma20 ? 10 : 0;
-  const volBuildPts = s.volBuild ? 15 : 0;
-  const meanRevPts  = s.meanReversion ? 20 : 0;
-
-  // Use pre-computed values from signal, fall back to recomputing
+  // Points come from core/edge-scoring.js's scoreComponents -- the same
+  // function scoreStock sums -- never a local copy of the buckets (spec
+  // §7.7). Only the display text lives here. Inputs as before: the
+  // signal's own rsVsSPY/consUpDays when present, recomputed for a
+  // fallback object that has none.
   const rsVsSPY       = s.rsVsSPY       ?? (s.todayChange - (s.spyChange || 0));
-  const relStrPts     = s.relStrengthPts ?? (rsVsSPY >= 2 ? 15 : rsVsSPY >= 1 ? 10 : rsVsSPY > 0 ? 5 : 0);
   const consUpDays    = s.consUpDays     ?? 0;
-  const consUpPts     = s.consUpPts      ?? (consUpDays >= 4 ? 15 : consUpDays === 3 ? 10 : consUpDays === 2 ? 5 : 0);
+  const c = scoreComponents({
+    volRatio: s.volRatio, todayChange: s.todayChange, rsi: s.rsi, price: s.price, ma20: s.ma20,
+    volBuild: s.volBuild, meanReversion: s.meanReversion, catalystSetup: s.catalystSetup,
+    consUpDays, rsVsSPY,
+  });
+  const { volPts, momPts, rsiPts, maPts, volBuildPts, consUpPts } = c;
+  const meanRevPts = c.meanRevPts;
+  const relStrPts = c.relStrengthPts;
+  const volNote = {
+    '3x+': 'Volume spike — late entry risk',
+    '2-3x': 'Elevated volume — moderate signal',
+    '1-2x': 'Healthy volume — best win-rate zone',
+    '0.5-1x': 'Quiet accumulation — strong historical performer',
+    'under-0.5x': 'Too quiet — insufficient liquidity signal',
+  }[c.volBucket];
+  const rsiNote = c.rsiBucket ? RSI_BAND_DESCRIPTIONS[c.rsiBucket] : 'RSI unavailable';
 
   const spySign = (s.spyChange || 0) >= 0 ? '+' : '';
   const rsSign  = rsVsSPY >= 0 ? '+' : '';
@@ -2760,18 +2772,11 @@ function computeScoreBreakdown(s) {
     { key: 'rev',    short: 'reversal',  label: `Mean reversion`,                                                               pts: meanRevPts, fired: meanRevPts > 0 },
   ];
 
-  // Sub-$10 entry timing (Change C) — must mirror scoreStock()'s buckets exactly.
-  // Only shown for sub-$10 stocks (both $1-$3 and $4-$9 tiers); no row at all
-  // at $10+, same conditional-push pattern as the macro/catalyst rows below.
-  if (s.price < 10) {
-    let sub10Pts = 0;
-    if (s.rsi < 45) sub10Pts += 10;
-    else if (s.rsi >= 45 && s.rsi <= 55) sub10Pts += 5;
-    else if (s.rsi > 60) sub10Pts -= 10;
-
-    if (s.volRatio < 1.5) sub10Pts += 5;
-    else if (s.volRatio > 2.5) sub10Pts -= 10;
-
+  // Sub-$10 entry timing (Change C): scoreComponents returns null at $10+ --
+  // no row at all then, same conditional-push pattern as the macro/catalyst
+  // rows below.
+  if (c.sub10Pts != null) {
+    const sub10Pts = c.sub10Pts;
     const sub10Label = sub10Pts > 0 ? 'Early entry bonus' : sub10Pts < 0 ? 'Late entry penalty' : 'Neutral entry timing';
     rows.push({
       key: 'sub10', short: 'entry timing',
@@ -2790,7 +2795,7 @@ function computeScoreBreakdown(s) {
     rows.push({
       key: 'catalyst', short: 'catalyst',
       label: `✓ Catalyst setup detected`,
-      pts: 10,
+      pts: c.catalystPts,
       fired: true,
       neutral: false,
     });
@@ -3083,10 +3088,10 @@ async function openStockModal(ticker) {
       if (sorted[i].c > sorted[i-1].c) modalConsUpDays++;
       else break;
     }
-    const modalConsUpPts  = modalConsUpDays >= 4 ? 15 : modalConsUpDays === 3 ? 10 : modalConsUpDays === 2 ? 5 : 0;
+    const modalConsUpPts  = consUpPoints(modalConsUpDays); // core/edge-scoring.js, not a copy
     const modalSpyChg     = state.spyChange || 0;
     const modalRsVsSPY    = (stock.todayChange || 0) - modalSpyChg;
-    const modalRelStrPts  = modalRsVsSPY >= 2 ? 15 : modalRsVsSPY >= 1 ? 10 : modalRsVsSPY > 0 ? 5 : 0;
+    const modalRelStrPts  = relStrengthPoints(modalRsVsSPY);
     stock.consUpDays     = modalConsUpDays;
     stock.consUpPts      = modalConsUpPts;
     stock.spyChange      = modalSpyChg;
@@ -3128,10 +3133,7 @@ async function openStockModal(ticker) {
     const sigBadge = sigBadgeClass(modalScoreSignal);
     const riskCls  = stock.risk <= 3 ? 'risk-low' : stock.risk <= 6 ? 'risk-mid' : 'risk-hi';
 
-    const rsiLabel = stock.rsi > 75 ? 'Overbought — caution'
-      : stock.rsi < 35 ? 'Oversold bounce setup'
-      : stock.rsi > 60 ? 'Bullish momentum'
-      : 'Neutral';
+    const rsiLabel = rsiBandDescription(stock.rsi); // factual band, no claim (spec §7.3)
 
     // When opened from Portfolio, Price Levels + duration reflect the actual position
     // (recorded at purchase), not a fresh recalculation — RSI/volume/score/chart still do.
@@ -3315,7 +3317,7 @@ async function openStockModal(ticker) {
       </div>
       ${stock.meanReversion ? `<div class="signal-row">
         <span class="signal-key">Mean Reversion</span>
-        <span class="signal-val" style="color:var(--purple);font-size:11px;max-width:60%;text-align:right">Oversold bounce setup — price significantly below average and momentum turning up</span>
+        <span class="signal-val" style="color:var(--purple);font-size:11px;max-width:60%;text-align:right">Price 8–15% below its 20-day average, RSI under 45 and turning up</span>
       </div>` : ''}
       <div class="signal-row">
         <span class="signal-key">Duration</span>
@@ -3339,11 +3341,17 @@ async function openStockModal(ticker) {
       </div>
     `;
 
+    // Holding or pending: still recordable as a SEPARATE lot behind a
+    // confirm (spec §7.7 -- one position per ticker was never intended, and
+    // a disabled button here silently censored add-on buys).
+    const lotReason = ownedPos
+      ? `You already hold ${ownedPos.shares} shares of ${ticker} (bought ${ownedPos.buyDate}).`
+      : pendingOrder ? `An order for ${ticker} is already pending (placed ${pendingOrder.buyDate}).` : '';
     document.getElementById('stock-modal-footer').innerHTML = ownedPos ? `
-      <button class="btn btn-ghost" style="flex:1" disabled>✓ In Portfolio</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="recordAnotherLot('${ticker}', ${JSON.stringify(lotReason).replace(/"/g, '&quot;')})">✓ In Portfolio · + Record another buy</button>
       <button class="btn btn-ghost" onclick="closeModal()">✕</button>
     ` : pendingOrder ? `
-      <button class="btn btn-ghost" style="flex:1" disabled title="Mark it filled or cancel it on the Portfolio tab">⏳ Order pending — see Portfolio</button>
+      <button class="btn btn-ghost" style="flex:1" title="Mark it filled or cancel it on the Portfolio tab" onclick="recordAnotherLot('${ticker}', ${JSON.stringify(lotReason).replace(/"/g, '&quot;')})">⏳ Order pending · + Record another order</button>
       <button class="btn btn-ghost" onclick="closeModal()">✕</button>
     ` : addBlockReason ? `
       <button class="btn btn-ghost" style="flex:1" onclick="addPortfolioDespiteAdvice('${ticker}', ${JSON.stringify(addBlockReason).replace(/"/g, '&quot;')})">+ Record a trade already placed</button>
@@ -3591,8 +3599,19 @@ function addPortfolioDespiteAdvice(ticker, reason) {
   openAddPortfolioModal(ticker);
 }
 
+// Same rule for a ticker Roman already holds or has a pending order in: a
+// second buy is a separate lot (its own row, its own fill and sale), never
+// merged into the first. Until 2026-10-21 both buttons were disabled.
+function recordAnotherLot(ticker, reason) {
+  if (!window.confirm(`${reason}\n\nRecord another, separate buy of ${ticker}?`)) return;
+  openAddPortfolioModal(ticker);
+}
+
 function openAddPortfolioModal(ticker) {
-  const price = state.signals.find(s => s.ticker === ticker)?.price || 0;
+  // No signal price (e.g. a second lot of a held ticker that's no longer in
+  // the scan) -> an EMPTY field, never "0.00" (spec §7.7's family: a
+  // number nobody observed).
+  const price = state.signals.find(s => s.ticker === ticker)?.price ?? null;
   // PT date, not new Date().toISOString() -- that's the UTC date, which
   // pre-filled TOMORROW for any add after 5pm PT (CLAUDE.md's getPT rule).
   const today = ptDateStr(getPT());
@@ -3610,7 +3629,7 @@ function openAddPortfolioModal(ticker) {
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" id="pf-price-label">Price paid per share</label>
-          <input id="pf-price" class="form-input" type="number" step="0.01" value="${price.toFixed(2)}">
+          <input id="pf-price" class="form-input" type="number" step="0.01" value="${price != null ? price.toFixed(2) : ''}">
         </div>
         <div class="form-group">
           <label class="form-label">Order date</label>
@@ -3626,32 +3645,10 @@ function openAddPortfolioModal(ticker) {
   orderEntryRefresh('pf');
 }
 
-// Buy-time signal-component derivation for trade-record capture (data
-// capture only — duplicates scoreStock()'s bucket logic rather than
-// refactoring it, since scoring itself must not change). Keep these in
-// sync with scoreStock() (app.js ~2178-2271) if any bucket ever changes.
-function deriveVolSpikePts(volRatio) {
-  if (volRatio == null) return null;
-  if (volRatio >= 3) return -10;
-  if (volRatio >= 2) return 10;
-  if (volRatio >= 1) return 20;
-  if (volRatio >= 0.5) return 15;
-  return 0;
-}
-function derivePriceMomentumPts(todayChange) {
-  if (todayChange == null) return null;
-  if (todayChange >= 4) return 20;
-  if (todayChange >= 2) return 10;
-  return 0;
-}
-function deriveRsiPts(rsi) {
-  if (rsi == null) return null;
-  if (rsi >= 55 && rsi <= 65) return 20;
-  if (rsi >= 35 && rsi < 55) return 15;
-  if (rsi < 35) return 10;
-  if (rsi > 65 && rsi <= 75) return 0;
-  return -10; // rsi > 75
-}
+// Buy-time component capture reads scoreComponents (core/edge-scoring.js)
+// -- the function the score itself is summed from. Until 2026-10-21 this
+// was a hand-synced copy (deriveVolSpikePts/derivePriceMomentumPts/
+// deriveRsiPts); spec §7.7.
 
 // Phase 9 §4.1 (2026-09-16): computed from Roman's own closed trades,
 // not hardcoded -- checked live while building this and the numbers had
@@ -3753,6 +3750,13 @@ async function computeEntryMeasurementFields(ticker, price, sig) {
 
 async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
   const sig = state.signals.find(s => s.ticker === ticker);
+  // Every *Pts field below comes from the one formula the score was summed
+  // from (core/edge-scoring.js scoreComponents), never a local copy.
+  const sigComps = sig ? scoreComponents({
+    volRatio: sig.volRatio, todayChange: sig.todayChange, rsi: sig.rsi, price: sig.price, ma20: sig.ma20,
+    volBuild: sig.volBuild, meanReversion: sig.meanReversion, catalystSetup: sig.catalystSetup,
+    consUpDays: sig.consUpDays, rsVsSPY: sig.rsVsSPY,
+  }) : null;
   const entryMeasurement = await computeEntryMeasurementFields(ticker, price, sig);
 
   const position = {
@@ -3805,12 +3809,12 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
     // captured from this version forward. Kept as a separate field (rather
     // than deleted) for continuity with trades captured before this change,
     // where it really was a distinct back-calculated approximation.
-    priceMomentumPts: sig ? derivePriceMomentumPts(sig.todayChange) : null,
-    volSpikePts:      sig ? deriveVolSpikePts(sig.volRatio) : null,
-    rsiPts:           sig ? deriveRsiPts(sig.rsi) : null,
-    maPts:            sig ? (sig.price > sig.ma20 ? 10 : 0) : null,
-    volBuildPts:      sig ? (sig.volBuild ? 15 : 0) : null,
-    meanReversionPts: sig ? (sig.meanReversion ? 20 : 0) : null,
+    priceMomentumPts: sigComps && sig.todayChange != null ? sigComps.momPts : null,
+    volSpikePts:      sigComps && sig.volRatio != null ? sigComps.volPts : null,
+    rsiPts:           sigComps && sig.rsi != null ? sigComps.rsiPts : null,
+    maPts:            sigComps ? sigComps.maPts : null,
+    volBuildPts:      sigComps ? sigComps.volBuildPts : null,
+    meanReversionPts: sigComps ? sigComps.meanRevPts : null,
     consUpDays:       sig?.consUpDays ?? null,
     consUpPts:        sig?.consUpPts ?? null,
     relStrengthPts:   sig?.relStrengthPts ?? null,

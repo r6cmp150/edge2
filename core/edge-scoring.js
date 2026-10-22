@@ -136,6 +136,77 @@ function calcRiskScore(price, atr, rsi, volRatio, hasNegNews) {
   return Math.min(10, Math.max(1, r));
 }
 
+// THE EDGE score formula (2026-10-21, phase-10 spec §7.7: "when a change
+// requires editing the same logic in two places, the change is to delete
+// one of them"). Every point value and bucket boundary lives here and
+// nowhere else: scoreStock sums it, app.js's score breakdown displays it,
+// and rsi_pts on a new trade is read from it. Before this the breakdown
+// carried a full duplicate of every bucket ("must mirror scoreStock()
+// exactly" -- by hand) and app.js had a third copy of the RSI tiers.
+//
+// Pure: inputs in, points out. The detection that produces the boolean
+// inputs (vol build, mean reversion, catalyst) stays in scoreStock; this
+// only prices them. Bucket ids are descriptive keys for display copy --
+// stable names, not claims about performance.
+//
+// x = { volRatio, todayChange, rsi, price, ma20, volBuild, meanReversion,
+//       catalystSetup, consUpDays, rsVsSPY }
+function scoreComponents(x) {
+  // Volume (−10 to +20). Change 9 (Scoring Formula v2).
+  let volPts = 0, volBucket = 'under-0.5x';
+  if (x.volRatio >= 3) { volPts = -10; volBucket = '3x+'; }
+  else if (x.volRatio >= 2) { volPts = 10; volBucket = '2-3x'; }
+  else if (x.volRatio >= 1) { volPts = 20; volBucket = '1-2x'; }
+  else if (x.volRatio >= 0.5) { volPts = 15; volBucket = '0.5-1x'; }
+
+  // Price momentum (0–20).
+  const momPts = x.todayChange >= 4 ? 20 : x.todayChange >= 2 ? 10 : 0;
+
+  // RSI (−10 to +20). Change 8 (Scoring Formula v2). A NaN RSI matches no
+  // bucket and scores 0, exactly as the inline chain always did.
+  let rsiPts = 0, rsiBucket = null;
+  if (x.rsi >= 55 && x.rsi <= 65) { rsiPts = 20; rsiBucket = '55-65'; }
+  else if (x.rsi >= 35 && x.rsi < 55) { rsiPts = 15; rsiBucket = '35-55'; }
+  else if (x.rsi < 35) { rsiPts = 10; rsiBucket = 'under-35'; }
+  else if (x.rsi > 65 && x.rsi <= 75) { rsiPts = 0; rsiBucket = '65-75'; }
+  else if (x.rsi > 75) { rsiPts = -10; rsiBucket = '75+'; }
+
+  const maPts = x.price > x.ma20 ? 10 : 0;
+  const volBuildPts = x.volBuild ? 15 : 0;
+  const meanRevPts = x.meanReversion ? 20 : 0;
+  const catalystPts = x.catalystSetup ? 10 : 0;
+  const consUpPts = consUpPoints(x.consUpDays);
+  const relStrengthPts = relStrengthPoints(x.rsVsSPY);
+
+  // Sub-$10 entry timing (Change C): null at $10+ (no such component, not a
+  // zero-point one).
+  let sub10Pts = null;
+  if (x.price < 10) {
+    sub10Pts = 0;
+    if (x.rsi < 45) sub10Pts += 10;
+    else if (x.rsi >= 45 && x.rsi <= 55) sub10Pts += 5;
+    else if (x.rsi > 60) sub10Pts -= 10;
+
+    if (x.volRatio < 1.5) sub10Pts += 5;
+    else if (x.volRatio > 2.5) sub10Pts -= 10;
+  }
+
+  const raw = volPts + momPts + rsiPts + maPts + volBuildPts + catalystPts
+    + meanRevPts + consUpPts + relStrengthPts + (sub10Pts ?? 0);
+  return { volPts, volBucket, momPts, rsiPts, rsiBucket, maPts, volBuildPts, meanRevPts,
+    catalystPts, consUpPts, relStrengthPts, sub10Pts, raw };
+}
+
+// Consecutive up days (0–15) and relative strength vs SPY (0–15): exposed
+// separately because the stock modal recomputes just these two from fresh
+// bars for its Groq prompt.
+function consUpPoints(days) {
+  return days >= 4 ? 15 : days === 3 ? 10 : days === 2 ? 5 : 0;
+}
+function relStrengthPoints(rsVsSPY) {
+  return rsVsSPY >= 2 ? 15 : rsVsSPY >= 1 ? 10 : rsVsSPY > 0 ? 5 : 0;
+}
+
 function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = null) {
   const price = getLivePrice(snap);
   const prevClose = snap.prevDailyBar?.c || price;
@@ -165,28 +236,9 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
   const swingHigh10 = last10ExclToday.length ? Math.max(...last10ExclToday.map(b => b.h)) : null;
   const { entry, target, stop, cappedBy } = calcEntryTargetStop(price, trimmedAtr, duration, { high52, swingHigh10, ma20 });
 
-  let score = 0;
-  // Volume spike (−10 to +20) — Change 9 (Scoring Formula v2): flipped so 1-2x
-  // (75% win rate, best zone) scores highest; 3x+ (50% win rate, -4.7% avg,
-  // worst performer — late retail pile-in) is now penalized instead of rewarded.
-  if (volRatio >= 3) score -= 10;
-  else if (volRatio >= 2) score += 10;
-  else if (volRatio >= 1) score += 20;
-  else if (volRatio >= 0.5) score += 15;
-  // else (<0.5x): 0 pts — too quiet for a reliable liquidity signal
-  // Price momentum (0–20)
-  if (todayChange >= 4) score += 20;
-  else if (todayChange >= 2) score += 10;
-  // RSI (−10 to +20) — Change 8 (Scoring Formula v2): buckets re-derived from
-  // 28-trade analysis. RSI 65-75 no longer rewarded (0% win rate in data);
-  // RSI 75+ now penalized. Does not affect the separate Mean Reversion signal below.
-  if (rsi >= 55 && rsi <= 65) score += 20;
-  else if (rsi >= 35 && rsi < 55) score += 15;
-  else if (rsi < 35) score += 10;
-  else if (rsi > 65 && rsi <= 75) score += 0;
-  else if (rsi > 75) score -= 10;
-  // Above 20-day MA
-  if (price > ma20) score += 10;
+  // Points for volume, momentum, RSI and the 20-day MA, like every other
+  // component, are priced by scoreComponents() below -- this function only
+  // detects the setups those points depend on.
 
   // News: compute hasNegNews for risk/display — no longer affects score
   let hasNegNews = false;
@@ -219,7 +271,6 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
     const n = vols.length;
     if (vols[n-1] > vols[n-2]) {
       volBuild = true;
-      score += 15;
     }
   }
   const volBuildNearMiss = !volBuild ? { consecutiveDays: consRisingVolDays, volRatio } : null;
@@ -236,7 +287,6 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
   const risingFromOversold = rsi > rsi3ago && rsi < 55;
   const volBuilding2Days = consRisingVolDays >= 2;
   const catalystSetup = near52wLow && risingFromOversold && volBuilding2Days;
-  if (catalystSetup) score += 10;
 
   // Mean Reversion: price 8–15% below 20MA, RSI < 45 and turning up (0–20)
   let meanReversion = false;
@@ -245,7 +295,6 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
     const rsi2ago = calcRSI(closes.slice(0, -2));
     if (rsi > rsi2ago) {
       meanReversion = true;
-      score += 20;
     }
   }
   const meanReversionNearMiss = !meanReversion ? { pctBelowMA: maPct, rsi } : null;
@@ -256,19 +305,9 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
     if (sorted[i].c > sorted[i-1].c) consUpDays++;
     else break;
   }
-  let consUpPts = 0;
-  if (consUpDays >= 4) consUpPts = 15;
-  else if (consUpDays === 3) consUpPts = 10;
-  else if (consUpDays === 2) consUpPts = 5;
-  score += consUpPts;
 
   // Relative strength vs SPY (0–15 pts)
   const rsVsSPY = todayChange - spyChangePct;
-  let relStrengthPts = 0;
-  if (rsVsSPY >= 2) relStrengthPts = 15;
-  else if (rsVsSPY >= 1) relStrengthPts = 10;
-  else if (rsVsSPY > 0) relStrengthPts = 5;
-  score += relStrengthPts;
 
   const signalsFired = [];
   if (volBuild) signalsFired.push('VOL_BUILD');
@@ -281,17 +320,13 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
   // on top of the existing formula, tier-specific to sub-$10 stocks only (both
   // $1-$3 and $4-$9 ranges). Does not affect RAW_SCORE_MAX — see the comment
   // on that constant's definition for why these stack on top of it instead.
-  let sub10Pts = 0;
-  if (price < 10) {
-    if (rsi < 45) sub10Pts += 10;
-    else if (rsi >= 45 && rsi <= 55) sub10Pts += 5;
-    else if (rsi > 60) sub10Pts -= 10;
-
-    if (volRatio < 1.5) sub10Pts += 5;
-    else if (volRatio > 2.5) sub10Pts -= 10;
-
-    score += sub10Pts;
-  }
+  const comps = scoreComponents({ volRatio, todayChange, rsi, price, ma20, volBuild, meanReversion,
+    catalystSetup, consUpDays, rsVsSPY });
+  const { consUpPts, relStrengthPts } = comps;
+  // The stored/returned sub10Pts has always been 0 (not absent) at $10+;
+  // kept exactly so signal snapshots don't change shape in this refactor.
+  const sub10Pts = comps.sub10Pts ?? 0;
+  let score = comps.raw;
 
   // Macro Market Overlay (Step 3): category-specific adjustment applied on top
   // of the raw accumulated score above, which is otherwise untouched. Floored

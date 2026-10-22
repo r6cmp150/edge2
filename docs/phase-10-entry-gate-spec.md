@@ -553,6 +553,21 @@ measured is the drift, not the change. (Step 2 without a re-derived
 threshold would have halved the buyable set: 53 of 106 buyable signals
 over 19 dates drop to WATCH.)
 
+**A refactor is proven by two results, and both are required.** 1c
+(`scoreComponents`) is the pattern: (1) zero differences in full
+`scoreStock` output between the new code and the last pre-refactor commit
+(`1c39926`, read from git), on every EDGE snapshot in the committed
+`signal_log` backup (664 × 6 macro conditions = 3,984) and on 10,000
+generated inputs (`tests/score-components.test.js`); and (2) a mutation
+showing the test can see a one-point change. For 1c, MA +10→+11 and RSI
+35–55 +15→+14 each failed both equivalence tests on the first
+differing input (checked 2026-10-21, then reverted). **The mutation half is
+the part that makes the zero mean anything:** a comparison that cannot fail
+also reports zero differences. Note what the mutation does *not* catch: the
+breakdown-equals-formula test passes under both, because display and score
+now read the same function and move together. That is the point of 1c, and
+it is also why that test alone could never prove the refactor.
+
 ---
 
 ## Appendix — provenance
