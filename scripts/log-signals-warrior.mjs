@@ -119,14 +119,13 @@ async function main() {
     newsFailedSymbols: [], newsLookbackHours: null, newsUnavailable: false, newsTruncatedSymbols: [],
   };
   global.persist = () => {};
-  // app.js's real VERSION const, read directly rather than duplicated --
-  // a hardcoded copy here would silently drift from the real build the
-  // moment app.js's own VERSION changes, defeating the entire point of
-  // stamping it.
-  const appSrc = readFileSync(path.join(REPO_ROOT, 'app.js'), 'utf8');
-  const versionMatch = appSrc.match(/^const VERSION = '([^']+)'/m);
-  global.VERSION = versionMatch ? versionMatch[1] : null;
-  if (!global.VERSION) throw new Error('Could not read VERSION from app.js -- refusing to log signals with no buildVersion.');
+  // db/028 code version, read once at startup. It NEVER throws: it used to
+  // refuse to log if app.js's VERSION constant was missing, which is the
+  // observer breaking the observed. global.VERSION is the real app.js
+  // stamp, the same value app.js's VERSION now holds in the browser, and
+  // gate.js stamps it as buildVersion.
+  const CODE_VERSION = codeVersionForRun(REPO_ROOT, 'log-signals-warrior');
+  global.VERSION = CODE_VERSION.app;
 
   // assertPageNotSuspiciouslyFull/HISTORICAL_BAR_ADJUSTMENT (2026-09-10,
   // found live on the first real OPEN-session run): both were added to
@@ -224,10 +223,10 @@ async function main() {
   // ── universe: committed movers-snapshot preferred, self-fetch as a
   // named, stamped fallback ──
   const scanRunId = randomUUID();
-  // db/028: which code ran this scan. `scoring` is the EDGE formula version
-  // deployed with this build: Warrior rows don't use it, but it's a true
-  // fact about the code, and the CHECK requires it.
-  const CODE_VERSION = codeVersionForRun(REPO_ROOT, 'log-signals-warrior'); // never throws
+  // db/028: CODE_VERSION (read at startup) is written on every row.
+  // `scoring` is the EDGE formula version deployed with this build: Warrior
+  // rows don't use it, but it's a true fact about the code, and the CHECK
+  // requires it.
   const today = global.ptDateStr(global.getPT());
   let candidates, universeSource, universeSnapshotCapturedAt;
 

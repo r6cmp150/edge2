@@ -224,7 +224,13 @@ async function newPinSubmit() {
 
 // ── 1. CONSTANTS ────────────────────────────────────────────────
 
-const VERSION = 'v2.18.0'; // 2026-09-15. Phase 9 §3.4's -6% max-loss hard floor (structurally unreachable by any future model, see calcUnifiedRecommendation's own comment on why); Models A/B (§3.2/§3.3) built, replayed against Roman's real 37 trades, and rejected — neither ships (§3.9); the render-time intraday position panel that replaces them (§3.9.2/§7): real bar-derived facts ("up 2.1% now, high of 3.4% at 10:42"), not a probability, shown on both the stock modal and the Portfolio card, with an explicit three-state failure mode (FAILED/NO_DATA never rendered as a plausible-looking number) and the SIP recency gap disclosed rather than filled with a weaker IEX figure in the same slot.
+// The build this page is actually running: the ?v= stamp of the app.js it
+// loaded (core/store.js currentCodeVersion, loaded before this file), never a
+// hand-maintained string. It was 'v2.18.0', unchanged from 2026-09-15 across
+// every later deploy, and printed in every report header as if it were
+// provenance. 'unavailable' if the tag can't be read. Whether it's the newest
+// DEPLOYED build is a separate question: checkBuildStatus().
+const VERSION = currentCodeVersion().app;
 // ALPACA_BASE moved to core/api-client.js (Phase 0 extraction).
 // Own tagged client (2026-08-30, engine-tagging fix) — app.js's one direct
 // alpacaGet call site (fetchSellTimingBars) uses this instead of the bare
@@ -4082,6 +4088,10 @@ async function renderPortfolioTab() {
       <div class="empty-icon">💼</div>
       <p>No open positions yet.<br>Find a signal and tap "+ Add to Portfolio".</p>
     </div>`;
+    // The build line belongs on this screen whether or not anything is held:
+    // it's the screen Roman opens, and an empty portfolio is a normal state.
+    container.insertAdjacentHTML('beforeend', '<div class="build-status" data-build-status></div>');
+    renderBuildStatus(); checkBuildStatus();
     return;
   }
 
@@ -4095,7 +4105,9 @@ async function renderPortfolioTab() {
   ${weekendBanner}
   ${pendingHtml}
   <div id="pf-list"><div class="empty-state"><span class="spinner"></span></div></div>
-  <div id="pf-summary"></div>`;
+  <div id="pf-summary"></div>
+  <div class="build-status" data-build-status></div>`;
+  renderBuildStatus(); checkBuildStatus(); // footer: last result now, a fresh check at most once a minute
 
   // Fetch live prices
   const tickers = holdings.map(p => p.ticker);
@@ -7080,6 +7092,7 @@ ${separationLines}`;
 }
 
 async function generateClaudeReport() {
+  await checkBuildStatus({ force: true }); // the header states which build produced every figure below
   const btn = document.getElementById('report-btn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Fetching data…'; }
 
@@ -7336,7 +7349,7 @@ Break-even win rate at this ratio: ${breakEvenWinRatePct!=null?breakEvenWinRateP
 
   let report = `EDGE TRADE SIGNALS — CLAUDE ANALYSIS REPORT
 Generated: ${dateStr}
-App Version: ${VERSION}
+${buildProvenanceLine()}
 ${dataSourceNote}
 
 === INSTRUCTIONS FOR CLAUDE ===
@@ -7375,7 +7388,7 @@ ${(()=>{
 })()}
 
 === APP CONFIGURATION AT TIME OF REPORT ===
-Version: ${VERSION}
+${buildProvenanceLine()}
 Budget: $${state.settings.budget}
 Min Volume Threshold: ${(state.settings.minVolume||100000).toLocaleString()}
 Include Under $2: ${state.settings.includeUnder2?'Yes':'No'}
@@ -8082,8 +8095,11 @@ function renderSettingsTab() {
     <div class="settings-section mt12">
       <div class="settings-section-title">App Info</div>
       <div class="settings-row">
-        <span class="settings-label">Version</span>
-        <span class="mono muted">${VERSION}</span>
+        <span class="settings-label">Build</span>
+        <span class="build-status" data-build-status></span>
+      </div>
+      <div class="settings-row">
+        <button class="btn btn-ghost btn-sm" onclick="checkBuildStatus({ force: true })">Check for a newer build</button>
       </div>
       <div class="settings-row">
         <button class="btn btn-ghost btn-sm" onclick="exportAllData(this)">Export All Data</button>
@@ -8103,12 +8119,13 @@ function renderSettingsTab() {
       </div>
     </div>
 
-    <div class="app-version">EDGE Trade Signals ${VERSION}<br>
+    <div class="app-version">EDGE Trade Signals · build ${VERSION} · scoring v${SCORING_VERSION}<br>
       <a href="https://alpaca.markets" target="_blank">Get Alpaca Keys</a> ·
       <a href="https://console.groq.com/keys" target="_blank">Get Groq Key</a>
     </div>
   `;
   loadDatabaseUsage();
+  renderBuildStatus(); // fill the Build row with the last check (current / stale / unknown)
 }
 
 const DB_ROW_LIMIT = 50000;
@@ -8279,7 +8296,7 @@ function buildSupabaseArchiveReport(trades, snapshotRows) {
 
   let report = `EDGE2 — SUPABASE DATABASE ARCHIVE
 Generated: ${dateStr}
-App Version: ${VERSION}
+${buildProvenanceLine()}
 
 === ARCHIVE SUMMARY ===
 Total trades archived: ${trades.length}
@@ -9216,6 +9233,79 @@ function _showUpdateAvailableBanner() {
   if (el) el.classList.remove('hidden');
 }
 
+// ── BUILD STATUS (2026-10-22) ──
+// Is the app.js this page loaded the newest one deployed? The page knows its
+// own stamp (VERSION); the deployed index.html names the newest. Checked by
+// fetching index.html with cache:'no-store' AND a unique query, so neither the
+// browser's HTTP cache (GitHub Pages sends max-age=600) nor the service
+// worker's offline fallback can answer for the network: offline, the SW has
+// no cached entry for the unique URL, so the check fails and says so.
+//
+// This replaces the 'updatefound' banner as the real detector: that one
+// fires only when sw.js itself changes, and sw.js changes only when someone
+// remembers to bump CACHE_NAME (still 'v2.16.0'), so it has fired for no
+// deploy since.
+//
+// Three states, never 'current' by default:
+//   current -- the deployed index.html names this page's stamp
+//   stale   -- it names a newer one (both shown)
+//   unknown -- the check didn't run, failed, or can't be trusted (why)
+let _buildStatus = { state: 'unknown', running: VERSION, reason: 'not checked yet' };
+let _buildCheckedAt = 0;
+async function checkBuildStatus({ force = false } = {}) {
+  if (!force && Date.now() - _buildCheckedAt < 60000) return _buildStatus;
+  _buildCheckedAt = Date.now();
+  const running = VERSION;
+  let next;
+  if (running === 'unavailable') {
+    next = { state: 'unknown', running, reason: "this page's app.js has no ?v= stamp" };
+  } else {
+    try {
+      const res = await fetch(`./index.html?build-check=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const m = (await res.text()).match(/<script src="app\.js\?v=([^"&]+)"/);
+      if (!m) throw new Error('the deployed index.html has no app.js?v= tag');
+      const latest = m[1];
+      if (latest === running) next = { state: 'current', running };
+      // Stamps are fixed-width yyyymmddhhmmss, so string order is time order.
+      // A server copy OLDER than this page means that answer is itself stale.
+      else if (/^\d{14}$/.test(latest) && /^\d{14}$/.test(running) && latest < running) {
+        next = { state: 'unknown', running, reason: `the server reported an older build (${latest}), so its copy may be cached; check again in a few minutes` };
+      } else next = { state: 'stale', running, latest };
+    } catch (e) {
+      next = { state: 'unknown', running, reason: `couldn't reach the server (${e.message})` };
+    }
+  }
+  _buildStatus = next;
+  renderBuildStatus();
+  if (next.state === 'stale') _showUpdateAvailableBanner();
+  return next;
+}
+
+function buildStatusText(st = _buildStatus) {
+  const sv = `scoring v${SCORING_VERSION}`;
+  if (st.state === 'current') return { cls: 'build-ok', text: `Build ${st.running} · ${sv} · latest` };
+  if (st.state === 'stale') return { cls: 'build-stale', text: `Running ${st.running}, latest is ${st.latest} — close the app fully and reopen. If this still shows after reopening, use Settings → Force Update App.` };
+  return { cls: 'build-unknown', text: `Build ${st.running} · ${sv} · not confirmed latest: ${st.reason}` };
+}
+
+// One line for report headers: a report asserts provenance for every figure in it.
+function buildProvenanceLine(st = _buildStatus) {
+  const base = `App build: ${st.running} · scoring v${SCORING_VERSION} (formula ${String(SCORING_HASH).slice(0, 12)})`;
+  if (st.state === 'current') return `${base} · latest deployed at report time`;
+  if (st.state === 'stale') return `${base} · NOT the latest: ${st.latest} was deployed at report time`;
+  return `${base} · not confirmed latest: ${st.reason}`;
+}
+
+// Fills every element marked data-build-status (Portfolio footer, Settings).
+function renderBuildStatus() {
+  const { cls, text } = buildStatusText();
+  document.querySelectorAll('[data-build-status]').forEach(el => {
+    el.className = `build-status ${cls}`;
+    el.textContent = text;
+  });
+}
+
 // updatefound/controllerchange listener (2026-09-03, standard PWA
 // practice) -- previously this app's ONLY remedy for a stale cached bundle
 // was the manual "Force Update App" settings button, which nobody would
@@ -9576,6 +9666,11 @@ async function runDataLoadAndInit() {
   startNotificationChecks();
   renderSignalsTab();
   updateNavBadges();
+  // Build status (current / stale / unknown): at startup, and whenever the app
+  // comes back to the foreground. An installed app resumed from the
+  // background doesn't reload, so it's exactly where a stale build hides.
+  checkBuildStatus({ force: true });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkBuildStatus(); });
   // Fire-and-forget, deliberately after first paint: nothing about the
   // notification permission prompt should be able to block the app's first
   // render. startNotificationChecks()'s first check fires 3s later and

@@ -2185,3 +2185,10 @@ table.analytics-trends-table {
 /* Portfolio Summary: partial / unavailable states (instance twelve) */
 .pf-summary-partial { font-size: 11px; color: var(--muted); font-weight: 400; }
 .pf-summary-note { font-size: 11px; color: var(--muted); line-height: 1.4; margin: -2px 0 8px; }
+
+/* Build status (2026-10-22): which app.js this page runs, and whether it's the
+   newest deployed. Three states; the stale one has to be noticed. */
+.build-status { display: block; text-align: center; padding: 10px 16px 18px; font-size: 11px; line-height: 1.4; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.settings-row .build-status { text-align: right; padding: 0; }
+.build-status.build-stale { color: var(--yellow, #e0a800); font-weight: 600; }
+.build-status.build-unknown { font-style: italic; }

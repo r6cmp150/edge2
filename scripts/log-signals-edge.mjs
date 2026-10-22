@@ -184,9 +184,13 @@ async function main() {
   global.persist = () => {};
 
   const appJsSrc = readFileSync(path.join(REPO_ROOT, 'app.js'), 'utf8');
-  const versionMatch = appJsSrc.match(/const VERSION = '([^']+)'/);
-  if (!versionMatch) throw new Error('Could not read VERSION from app.js -- refusing to log signals with no buildVersion.');
-  global.VERSION = versionMatch[1];
+  // db/028 code version, read once at startup. It NEVER throws (it used to
+  // refuse to log if app.js's VERSION constant was missing, which is the
+  // observer breaking the observed). global.VERSION is the real app.js
+  // stamp, the same value app.js's VERSION now holds in the browser, and it
+  // feeds the snapshot's buildVersion field.
+  const CODE_VERSION = codeVersionForRun(REPO_ROOT, 'log-signals-edge');
+  global.VERSION = CODE_VERSION.app;
 
   loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
@@ -232,7 +236,6 @@ async function main() {
   if (noopReason !== null) return;
 
   const scanRunId = randomUUID();
-  const CODE_VERSION = codeVersionForRun(REPO_ROOT, 'log-signals-edge'); // db/028; never throws (see code-version.mjs)
   const today = global.ptDateStr(global.getPT());
 
   console.log(`log-signals-edge: universe = ${TICKERS.length} candidates (source: static-universe-list, STOCK_UNIVERSES.OTHER)`);
