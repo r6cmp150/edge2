@@ -478,6 +478,42 @@ embargoed 15 minutes on this subscription, so changing the feed is a
 decision for Roman, not a patch. Step 1e logs the tested value as
 `iex_volume`.
 
+**Measured before deciding (2026-10-22, `node
+scripts/measure-prefilter-feed.mjs`; 239 symbols, 7 dates 2026-10-13 to
+10-21, medians, rebuilt from 1-minute bars).** The proposal is full-market
+(SIP) cumulative volume, lagged 15 minutes, as a lower bound, with price
+unchanged. Pass counts:
+
+| PT | live (IEX ≥100k) | proposal (SIP, T−15m) | SIP at T (reference) |
+|---|---|---|---|
+| 06:35 | 2 | **0** | 32 |
+| 06:40 | 3 | **0** | 43 |
+| 06:45 | 3 | 18 | 48 |
+| 07:00 | 6 | 48 | 60 |
+| 07:28 | 12 | 74 | 83 |
+| 07:30 | 13 | 76 | 84 |
+| 08:00 | 17 | 94 | 100 |
+| 10:00 | 31 | 123 | 124 |
+| 12:00 | 42 | 135 | 136 |
+
+- **The switch is a different app.** Around 07:30 the candidate pool goes
+  from about 12 symbols to about 75, and from about 31 to 123 by 10:00.
+  Roman should see these numbers before it changes under him.
+- **The lower bound bites hard in the first 15 minutes.** A 15-minute
+  lag reaches back before the open, so from 06:30 to 06:44 the proposal
+  passes **nothing**, worse than IEX's 2–3. By 07:00 it excludes 14
+  names that real volume would pass, 6 by 08:00, and 1–2 from 10:00. That
+  is exactly the window §3.4 flags, so the proposal as stated would
+  empty it rather than measure it.
+- **Calibration:** the rebuilt live rule matches 15 of 16 real logged
+  scans to within 1–3 symbols (consistently a little stricter, mean −2.5).
+  The 16th, 2026-10-16 at 06:30 (56 logged, 14 rebuilt), was taken within
+  the first minute, while the live snapshot still held **yesterday's**
+  daily bar, so at the open the live filter passes yesterday's liquid
+  names. That's another clock artifact in the live rule, and minute bars
+  can't reproduce it.
+- **Not decided.** The existing filter stays, with rejections now logged.
+
 **Confound on §3.4 (and §3.5's time effect): the candidate pool changes
 with the clock.** The scan's pre-filter (`runScreener`, copied by
 `scripts/log-signals-edge.mjs`) keeps $1–$20 symbols with ≥100k shares
