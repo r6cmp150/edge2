@@ -789,6 +789,80 @@ days, not quiet ones.
    re-score every future buy. Until it does, the same-version-only delta
    (built in 1d) is the fallback: not evaluated, with the reason.
 
+   **4(c) design (2026-10-22; designed, not built).** It starts from the
+   re-scored snapshot, and the EDGE signal-object gap changes it in two
+   ways:
+
+   1. **Re-scoring the BUY fixes only the delta factor, and 4(b)'s
+      residual is not in the delta.** The 34.5% of held position-days
+      that change bucket come from the **absolute tier factor**
+      ("Current score N — support/weak signal", +50 … −25), which
+      compares the live score with the cutoffs. A position held across
+      step 2 has its live score drop by up to 25 under v2 while it was
+      bought under v1, so the tier moves even though nothing about the
+      stock did. Re-scoring the buy leaves that untouched.
+   2. **So re-score the other side: evaluate a held position entirely in
+      the scoring version it was bought under.** The *now* side is the
+      one with complete inputs (the live signal carries RSI, price,
+      volume ratio, every flag, and its bars), so the EDGE snapshot gap
+      doesn't constrain it. For a position bought under version b and
+      evaluated while the app runs version c:
+      - `nowScore_b = nowScore_c + transition(c → b, live inputs)`, where
+        each version step declares its transition. v1 ↔ v2 is exactly
+        step 2's stated delta (RSI < 35: 10; price < 10 bonuses, using the
+        live signal price; volume ratio < 1.5: 5). That's the same
+        function the equivalence test states, moved into
+        `core/edge-scoring.js` as the single declaration, and the test
+        keeps checking the formula against it.
+      - The tier factor uses `nowScore_b` against **version b's**
+        thresholds (`scoreThresholds(b)`), and the delta factor compares
+        `scoreAtBuy` with `nowScore_b`. Both sides are then version b,
+        **by construction, for every position, with no stored snapshot
+        needed.**
+      - A position bought under v2 is evaluated under v2 throughout.
+        Positions with no `code_version` are b = 1.
+      - **When a transition can't be computed** (a missing live input,
+        or a future step that changes a bar-derived detection with no
+        declared transition), the score factors are **not evaluated**,
+        and the recommendation says so (the 2.5 rule: "computed from N
+        of M factors — score factors not evaluated, bought under v1"). The
+        same-version-only fallback stays for exactly that case.
+      - **Gap found while designing:** when an owned ticker isn't in the
+        current signals, the exit engine's live score comes from
+        `state.ownedScores`, and that holds only `{score, label}`. It
+        has no inputs, so no transition can be computed, and no version.
+        It's also **persisted in localStorage**, so after a deploy it can
+        hold a score from the previous formula, unmarked: version mixing
+        on its own. The 4(c) build stores `{score, label,
+        scoringVersion, rsi, price, volRatio}` there, and treats an
+        entry without `scoringVersion` as not evaluated rather than
+        guessing its version.
+   3. **What this does to step 2:** positions held across the deploy are
+      unaffected by construction, so the 4(b) residual in held positions
+      is zero by design. **It must be re-measured, not assumed**:
+      `measure-step2-residual.mjs` would score v2 positions under v2 and
+      v1 positions under v1 and should show no bucket changes for v1
+      buys. Step 2 ships after that re-measurement.
+   4. **What it does NOT do:** it doesn't settle 4(c)'s actual question,
+      whether the exit engine should read the absolute entry score at
+      all. Replacing the tier factor with the delta is still a redesign
+      that needs the §5 re-test, and it is blocked on step 2.5 like
+      every exit-engine re-derivation (step 5). This design removes the
+      *formula-change* drift so step 2 can ship. It doesn't calibrate
+      anything.
+   5. **Where the EDGE snapshot gap still bites:** re-scoring a stored
+      buy *forward* into a newer version (for analysis: "would this
+      trade have qualified under v2?"). That still needs the §5
+      signal-object item, and that's why that item comes first among
+      the §5 work.
+
+   **Build order for 4(c), each step shown before building:** (a) move
+   the v1 → v2 transition into core as one declaration, with the
+   equivalence test asserting the formula against it; (b) version-pin the
+   exit engine's two score factors, with not-evaluated reasons; (c)
+   re-measure the 4(b) residual with v1 buys evaluated under v1; (d) then
+   step 2 (the held branch).
+
    **Decided before building (Roman, 2026-10-21):**
    - **All three lines are re-derived:** STRONG, SOFT and the WATCH/display
      line (`BASE_SCORE_THRESHOLD`, 29 today). The same histogram method is
