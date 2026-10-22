@@ -9278,7 +9278,13 @@ async function checkBuildStatus({ force = false } = {}) {
   }
   _buildStatus = next;
   renderBuildStatus();
-  if (next.state === 'stale') _showUpdateAvailableBanner();
+  if (next.state === 'stale') {
+    _showUpdateAvailableBanner();
+    // Ask the browser to re-fetch sw.js now. Its CACHE_NAME carries the build
+    // stamp, so a new deploy installs a new worker without waiting for the
+    // next navigation.
+    try { _swRegistration?.update?.()?.catch?.(() => {}); } catch (_) {}
+  }
   return next;
 }
 

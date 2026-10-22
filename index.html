@@ -103,7 +103,11 @@
     </div>
   </div>
 
-  <!-- Bump ?v= to match VERSION in app.js on every release — these scripts are
+  <!-- Bump a file's ?v= whenever that file changes. When app.js's ?v= changes, sw.js's
+       CACHE_NAME must become 'edge2-<the same stamp>': tests/sw-cache-name.test.js fails
+       until it does (that's what makes each deploy install a new service worker,
+       fire the update banner, and drop the previous deploy's cache). VERSION in
+       app.js is READ from the app.js tag below; it is not edited by hand. These scripts are
        served with a 10-minute browser cache (GitHub Pages default), and mobile
        browsers/PWAs can hold onto it well past that without a cache-busting
        query change.
@@ -133,6 +137,6 @@
   <script src="core/universe.js?v=20260915180000"></script>
   <script src="core/edge-scoring.js?v=20261022020000"></script>
   <script src="shell/registry.js?v=20260915180000"></script>
-  <script src="app.js?v=20261022030000"></script>
+  <script src="app.js?v=20261022040000"></script>
 </body>
 </html>

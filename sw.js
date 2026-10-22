@@ -1,43 +1,48 @@
 // EDGE2 service worker — app-shell caching for offline support and PWA
-// installability. Bump CACHE_NAME whenever VERSION changes in app.js (same
-// pattern as the "Bump ?v=" cache-busting comment in index.html) so old
-// caches get cleared on activate rather than accumulating.
-const CACHE_NAME = 'edge2-cache-v2.16.0';
-const APP_SHELL = [
-  './',
-  './index.html',
-  './core/clock.js',
-  './core/indicators.js',
-  './core/api-client.js',
-  './core/market-data.js',
-  './core/news.js',
-  './core/store.js',
-  './core/orders.js',
-  './core/entry-gate.js',
-  './core/float-table.js',
-  './core/universe.js',
-  './shell/registry.js',
-  './app.js',
-  './styles.css',
-  './manifest.json',
-  './icon.svg',
-];
-// engines/warrior/index.js is deliberately NOT listed here. cache.addAll()
-// below is all-or-nothing — if any one URL in this list 404s, the whole
-// service worker install fails. Phase 2's acceptance explicitly requires
-// the app to keep working when that file is missing or broken; putting it
-// in a list where its absence would take down offline caching for
-// everything else would work against that, not support it. It's fetched
-// live via dynamic import() same as any other request, and gets the same
-// network-first/cache-fallback treatment as everything else below once a
-// successful fetch has happened at least once.
+// installability.
+//
+// CACHE_NAME CARRIES THE app.js BUILD STAMP (2026-10-22). It used to be
+// 'edge2-cache-v2.16.0', with a comment asking whoever changed VERSION to bump
+// it; nobody did after v2.16.0. That had two effects. sw.js never changed, so
+// the browser never found a new worker and the "New version available" banner
+// (app.js registerServiceWorker, 'updatefound') never fired: every "reload the
+// app" instruction rested on a mechanism that couldn't detect staleness. And
+// the cache was never discarded, so every versioned file from every deploy
+// since September accumulated. With the stamp here, each deploy changes these
+// bytes, which is what makes the browser install a new worker (and fire the
+// banner), and activate() drops the previous deploy's cache.
+// There's no build step to inject it, so tests/sw-cache-name.test.js FAILS if
+// this name and index.html's app.js?v= stamp disagree: a guard that refuses
+// the divergence, not a reminder.
+const CACHE_NAME = 'edge2-20261022040000';
+
+// Unversioned entry points. The versioned scripts and styles are read from
+// index.html at install (below), so the cache holds exactly what this deploy
+// loads and nothing is listed by hand. The old hand list named unversioned
+// paths the page never requests, and had no core/edge-scoring.js at all.
+const STATIC_SHELL = ['./', './index.html', './manifest.json', './icon.svg'];
+// engines/warrior/index.js is deliberately NOT precached: it's loaded by a
+// dynamic import(), never a <script> tag, so a missing or broken Warrior file
+// can't take down the install. It gets the same network-first/cache-fallback
+// treatment as everything else below once a successful fetch has happened.
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    const urls = new Set(STATIC_SHELL);
+    try {
+      // This deploy's own local <script src> / <link href> URLs, ?v= included,
+      // so the app opens offline straight after an update.
+      const html = await (await fetch('./index.html', { cache: 'no-store' })).text();
+      for (const m of html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)="([^"]+)"/g)) {
+        if (!/^(?:[a-z]+:)?\/\//i.test(m[1])) urls.add('./' + m[1].replace(/^\.\//, ''));
+      }
+    } catch (_) { /* installed offline: the static shell only */ }
+    // One at a time, not addAll: addAll is all-or-nothing, and one missing
+    // file must not stop the new worker installing (that would block updates).
+    await Promise.allSettled([...urls].map(u => cache.add(u)));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {

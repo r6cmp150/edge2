@@ -1258,6 +1258,53 @@ so, can the row it sends carry a different `code_version` /
 It's the same form as the Warrior sub-import trip-wire: a condition
 checked at a known moment, not an open item nobody is watching.
 
+**The update banner was the same failure (found 2026-10-22).** The
+"New version available" banner fires only when `sw.js` changes, and
+`sw.js` changed only when someone remembered to bump its cache name by
+hand, which stopped at `edge2-cache-v2.16.0`. So no new worker was ever
+installed, the banner fired for no deploy since, the old cache was never
+discarded (every versioned file from every deploy since September piled
+up in it), and every "reload the app" instruction that day, Roman's
+included, rested on a mechanism that couldn't detect staleness. It
+looked maintained because the code that used it existed: `build_version`'s
+family. **Fixed:** `CACHE_NAME` is `edge2-<the app.js ?v= stamp>`, so
+each deploy changes `sw.js`, installs a new worker, fires the banner and
+drops the previous cache. The worker reads its precache list from
+`index.html` at install instead of a hand list. There's no build step,
+so `tests/sw-cache-name.test.js` fails whenever the pair disagree.
+Verified in a real browser: a changed `sw.js` installed a new worker,
+fired the banner, and deleted both the previous cache and a planted
+`edge2-cache-v2.16.0`.
+
+**Build staleness, stated plainly so nobody tries to "fix" it:** GitHub
+Pages serves `index.html` (and everything else) with
+`Cache-Control: max-age=600`, and Pages sets that, not us. A reload
+within ten minutes of a deploy can get the cached `index.html`, which
+points at the old `app.js`. That is almost certainly why some of
+2026-10-22's reloads did nothing. It can't be changed from the repo. The
+honest handling is the build check (Portfolio footer, Settings): it
+fetches `index.html` with `cache: 'no-store'` and a one-off query, so it
+bypasses that cache and reports **stale** correctly even when the page
+itself is stale. Three states, never "latest" by default: **current**,
+**stale** (both stamps, "close the app fully and reopen"), **unknown**
+(with why: offline, an HTTP error, no tag, or a server copy older than
+the page). After a stale result, the app asks the browser to re-fetch
+`sw.js` immediately.
+
+**Trip-wire: the loggers read `app.js` and core files by text and by
+name.** An incidental dependency there stops a whole day's logging the
+moment someone edits an unrelated line: the loggers refused to run if
+`const VERSION = '…'` was missing, a constant nobody would think of as
+load-bearing. **Sweep, 2026-10-22:** the only text anchors are the EDGE
+logger's two `loadFromAppJs` extractions (`const STOCK_UNIVERSES = {`
+and `const BASE_SCORE_THRESHOLD = scoreThresholds().watch;`). The Warrior
+logger no longer reads `app.js` text. `tests/code-version.test.js` now
+checks **every** `loadFromAppJs` call (start anchor present exactly
+once, end anchor after it), including ones added later. **Not covered:**
+the name lists the loggers pass to `loadReal` (each expects that name to
+exist in a core file); a renamed core function fails the logger at run
+time, not in a test.
+
 **A fix that splits one source of truth into two must say which readers
 get which, and check every reader.** Found 2026-10-21 on the modal fix
 itself: the approved design gave the AI prompt the modal's fresh values

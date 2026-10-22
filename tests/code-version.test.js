@@ -113,3 +113,20 @@ run('ownedScores: versioned on write, read only through currentOwnedScore, stale
   assert.strictEqual(global.__cos('Z'), null, 'no entry is no entry');
   assert.ok(/if \(currentSignal\?\.notEvaluatedReason\) add\(`Current score not evaluated/.test(app), 'the exit engine says it, rather than silently skipping the score factors');
 });
+
+// Every text anchor the EDGE logger reads app.js by (2026-10-22 sweep). Each
+// loadFromAppJs(appJsSrc, first, last, ...) call throws at runtime if its
+// first line isn't in app.js exactly once, or its last line never follows,
+// and a throw there stops all EDGE logging. So every call is checked here,
+// including ones added later, not one anchor at a time after it breaks.
+run('every loadFromAppJs anchor in the EDGE logger resolves in app.js', () => {
+  const logger = readSource('scripts/log-signals-edge.mjs');
+  const calls = [...logger.matchAll(/loadFromAppJs\(appJsSrc,\s*'([^']+)',\s*'([^']+)'/g)].map(m => [m[1], m[2]]);
+  assert.ok(calls.length >= 2, `found ${calls.length} anchored extractions`);
+  const lines = readSource('app.js').split('\n').map(l => l.replace(/\r$/, ''));
+  for (const [first, last] of calls) {
+    const at = lines.map((l, i) => (l === first ? i : -1)).filter(i => i >= 0);
+    assert.strictEqual(at.length, 1, `app.js must contain "${first}" exactly once (found ${at.length})`);
+    assert.ok(lines.slice(at[0] + 1).some(l => l === last), `"${last}" must follow "${first}" in app.js`);
+  }
+});
