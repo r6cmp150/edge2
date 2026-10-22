@@ -1300,10 +1300,13 @@ logger's two `loadFromAppJs` extractions (`const STOCK_UNIVERSES = {`
 and `const BASE_SCORE_THRESHOLD = scoreThresholds().watch;`). The Warrior
 logger no longer reads `app.js` text. `tests/code-version.test.js` now
 checks **every** `loadFromAppJs` call (start anchor present exactly
-once, end anchor after it), including ones added later. **Not covered:**
-the name lists the loggers pass to `loadReal` (each expects that name to
-exist in a core file); a renamed core function fails the logger at run
-time, not in a test.
+once, end anchor after it), including ones added later. The sweep's last hole, the name lists
+passed to `loadReal`, is closed by `tests/script-dependencies.test.js`:
+every name in every `loadReal(file, [names])` call across `scripts/`
+(71 names, in both loggers, `fill-outcomes.mjs` and the split audit)
+must be declared at the top level of its target file. A renamed core
+function now fails a test instead of the next cron run. Mutation-checked
+by renaming `getLivePrice`: it failed, naming both loggers.
 
 **A fix that splits one source of truth into two must say which readers
 get which, and check every reader.** Found 2026-10-21 on the modal fix
