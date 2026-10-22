@@ -53,3 +53,13 @@ export function codeVersionForRun(root, who) {
   }
   return codeVersion;
 }
+
+// db/030: which kind of trigger started this run. github.event_name inside
+// GitHub Actions ('schedule', 'workflow_dispatch', ...), 'local' outside it.
+// Never throws and never guesses: 'unavailable' if Actions didn't set it. It
+// makes a hand-dispatched scan excludable from delivery and time-of-day
+// analyses by construction.
+export function triggerTypeForRun() {
+  if (process.env.GITHUB_ACTIONS !== 'true') return 'local';
+  return process.env.GITHUB_EVENT_NAME || 'unavailable';
+}

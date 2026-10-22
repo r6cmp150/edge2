@@ -46,7 +46,7 @@ run('trades_v2: the buy version is copied, the sale writes its own, and the labe
 run('loggers write code_version from scripts/lib/code-version.mjs and no longer write build_version', () => {
   for (const f of ['scripts/log-signals-edge.mjs', 'scripts/log-signals-warrior.mjs']) {
     const src = code(readSource(f));
-    assert.ok(src.includes("import { codeVersionForRun } from './lib/code-version.mjs'"), `${f} imports codeVersionForRun (the never-throwing wrapper)`);
+    assert.ok(/import \{[^}]*\bcodeVersionForRun\b[^}]*\} from '\.\/lib\/code-version\.mjs'/.test(src), `${f} imports codeVersionForRun (the never-throwing wrapper)`);
     assert.strictEqual((src.match(/code_version: CODE_VERSION/g) || []).length, 2, `${f} writes code_version on the scan_runs row and on every signal_log row`);
     assert.ok(!/build_version:/.test(src), `${f} no longer writes the stale build_version`);
     assert.ok(/resolution=ignore-duplicates/.test(src), `${f}: the signal_log upsert must stay ignore-duplicates; a merge would UPDATE and hit the write-once trigger after any mid-day deploy (§7.7 trip-wire)`);
@@ -128,5 +128,23 @@ run('every loadFromAppJs anchor in the EDGE logger resolves in app.js', () => {
     const at = lines.map((l, i) => (l === first ? i : -1)).filter(i => i >= 0);
     assert.strictEqual(at.length, 1, `app.js must contain "${first}" exactly once (found ${at.length})`);
     assert.ok(lines.slice(at[0] + 1).some(l => l === last), `"${last}" must follow "${first}" in app.js`);
+  }
+});
+
+// db/030: scan_runs records which kind of trigger started the scan, so a
+// hand-dispatched scan is excludable by construction. Never throws.
+run('both loggers record trigger_type on scan_runs (schedule / workflow_dispatch / local)', async () => {
+  const { triggerTypeForRun } = await import('../scripts/lib/code-version.mjs');
+  const saved = { a: process.env.GITHUB_ACTIONS, e: process.env.GITHUB_EVENT_NAME };
+  try {
+    delete process.env.GITHUB_ACTIONS; assert.strictEqual(triggerTypeForRun(), 'local');
+    process.env.GITHUB_ACTIONS = 'true'; process.env.GITHUB_EVENT_NAME = 'workflow_dispatch'; assert.strictEqual(triggerTypeForRun(), 'workflow_dispatch');
+    delete process.env.GITHUB_EVENT_NAME; assert.strictEqual(triggerTypeForRun(), 'unavailable');
+  } finally {
+    if (saved.a === undefined) delete process.env.GITHUB_ACTIONS; else process.env.GITHUB_ACTIONS = saved.a;
+    if (saved.e === undefined) delete process.env.GITHUB_EVENT_NAME; else process.env.GITHUB_EVENT_NAME = saved.e;
+  }
+  for (const f of ['scripts/log-signals-edge.mjs', 'scripts/log-signals-warrior.mjs']) {
+    assert.ok(/trigger_type: triggerTypeForRun\(\),/.test(readSource(f)), `${f} writes trigger_type on its scan_runs row`);
   }
 });

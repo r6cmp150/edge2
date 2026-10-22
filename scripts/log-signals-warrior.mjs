@@ -58,7 +58,7 @@ import { assertColumnsExist } from './lib/schema-check.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
 import { scheduledScanGate, SPACING_MIN } from './lib/scan-gate.mjs';
-import { codeVersionForRun } from './lib/code-version.mjs';
+import { codeVersionForRun, triggerTypeForRun } from './lib/code-version.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -414,6 +414,7 @@ async function main() {
     aborted,
     abort_reason: abortReason,
     code_version: CODE_VERSION, // db/028; build_version (stale VERSION) no longer written
+    trigger_type: triggerTypeForRun(), // db/030: schedule / workflow_dispatch / local
   };
 
   const candidatesBySymbol = new Map(candidates.map(c => [c.symbol, c]));

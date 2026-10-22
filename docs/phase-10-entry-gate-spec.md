@@ -514,6 +514,62 @@ unchanged. Pass counts:
   can't reproduce it.
 - **Not decided.** The existing filter stays, with rejections now logged.
 
+**The real problem: today's cumulative volume is the wrong variable for
+a liquidity gate (Roman, 2026-10-22).** At 06:35 there have been five
+minutes of trading, and no feed, lagged or not, can say from that whether
+a stock is liquid. The variable is undefined early in the session by
+construction, which is why every version of the filter is a function of
+the clock. (The 10-16 06:30 scan, still on yesterday's full-day bar, was
+accidentally doing the right thing for one minute.) So the filter's two
+jobs are split:
+- **Liquidity gate:** *trailing* average volume, which is
+  clock-independent, venue-independent (SIP, completed days only, no
+  embargo) and defined at 06:30 as well as at 12:00.
+- **Unusual activity today:** this belongs in the score (the volume
+  terms), not in a pre-filter deciding what the engine may look at.
+
+If the pool stops depending on elapsed volume, it stops being a function
+of the clock, and §3.4 becomes testable instead of unfalsifiable.
+
+**Measured (`node scripts/measure-prefilter-trailing.mjs`; SIP daily bars;
+22 evaluation dates 2026-09-22 to 10-21, each on its prior 20 sessions;
+$1–$20 on the prior close; 4 symbols lack 20 sessions and are not
+evaluable).** The "keeps" column is the share of the 84 symbols the live
+filter ever let through (EDGE `signal_log` at `de95a93`):
+
+| floor | passes (min / median / max of 239) | median day-to-day change | keeps |
+|---|---|---|---|
+| 100k shares | 154 / 164 / 170 | 4 symbols | 83 (99%) |
+| 250k shares | 137 / 143 / 146 | 2 | 83 (99%) |
+| 500k shares | 115 / 119 / 122 | 2 | 82 (98%) |
+| 1M shares | 84 / 88 / 91 | 2 | 76 (90%) |
+| 2M shares | 50 / 58 / 59 | 1 | 50 (60%) |
+| $1M a day | 141 / 147 / 150 | 1 | 81 (96%) |
+| $5M a day | 91 / 95 / 99 | 1 | 72 (86%) |
+
+- **The stability test passes:** 1–4 symbols move per day at any floor,
+  and the count is identical at every scan time by construction.
+- **Intent:** "100,000 shares" as a 20-day consolidated average passes
+  about 164 symbols, all day. The live filter's *effective* strictness
+  (about 1.6M consolidated, §7.3 above) corresponds to roughly a 1M floor,
+  about 88 symbols. Close to the set it has actually let through (84
+  distinct over 19 dates), but stable all day instead of 2 at 06:35 and
+  42 at noon.
+- **Cost:** SIP daily bars for 239 symbols are 3 requests, fetched once
+  per day (completed sessions don't change intraday). Scoring a bigger
+  pool costs more bars and news requests per scan, to be measured with
+  the number.
+- **Number not chosen:** it's to be set from the logged rows under the
+  new variable, once that's built.
+
+**Scans now record their trigger (db/030, 2026-10-22).** A hand-dispatched
+scan was indistinguishable in `scan_runs` and `signal_log` from a
+scheduled one; the only trace was in `workflow_runs`. `scan_runs.trigger_type`
+holds `schedule` / `workflow_dispatch` / `local`, so a dispatched scan is
+excludable by construction. This is the general form of the FORCED_TEST
+lesson, without a third session value. Earlier rows stay NULL; the two
+known dispatched scans are named in db/030.
+
 **Confound on §3.4 (and §3.5's time effect): the candidate pool changes
 with the clock.** The scan's pre-filter (`runScreener`, copied by
 `scripts/log-signals-edge.mjs`) keeps $1–$20 symbols with ≥100k shares
