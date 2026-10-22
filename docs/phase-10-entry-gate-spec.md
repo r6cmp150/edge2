@@ -302,6 +302,40 @@ this exists.** With it, the RSI finding can be re-tested against a
 dependent variable Roman's own exits cannot contaminate — and so can the
 next twenty ideas, at no extra cost.
 
+### Store EDGE's full signal object at buy (added 2026-10-22; at least as valuable as the path columns, arguably first)
+
+Warrior stores its full signal object on every position
+(`signal_snapshot`). **EDGE stores nothing: `signal_snapshot` is NULL on
+all 292 EDGE trades** (`trades_v2` at `de95a93`). So no EDGE trade can
+be re-scored for anything bar-derived, any momentum or
+relative-strength change, or the up-days term. That's true now and
+retrospectively, because the inputs were never kept: only point buckets
+were stored for momentum and relative strength, and the up-days and
+relative-strength values are written off before 2026-10-21 (§7.5). 245
+of 292 can be *partially* re-scored, and only because
+`entry_vs_signal_price_pct` happens to let the signal price be
+recovered.
+
+The path columns above give a clean **dependent** variable; this gives
+the **inputs** to test against it. Without both, every future entry
+question needs a fresh two-month wait for data. The fix is to write the
+EDGE signal object (score inputs, components, and the bars it was scored
+on, about 14.5 KB) into `signal_snapshot` at buy, as Warrior does. It is
+also what makes 4(c)'s re-scored delta fully version-independent (§7.6
+step 2). Until it exists, the same-version-only delta is the fallback.
+
+### Store exit factors as a stable id plus display text (added 2026-10-22)
+
+`full_ure_factors_at_sale` stores each factor by its **display text**
+("RSI in sweet spot at 58", "Quiet accumulation at 0.7x"). So every
+copy edit splits the factor-accuracy report. That has happened twice:
+the volume labels on 2026-10-21, the RSI labels on 2026-10-22. The
+display text is being used as an analysis key. Factors should be stored
+as `{id, text, points}` with a stable `id` (`rsi_band_55_65`,
+`volume_band_low`), so a wording change stays a wording change. It's the
+same shape as a label that doesn't record its threshold (§7.7): a stored
+value whose meaning depends on something that changes independently.
+
 ---
 
 ## 6. What to ship, and in what order
@@ -689,6 +723,72 @@ days, not quiet ones.
      47 → 34, $10–20 goes 35 → 43, moving away from the cheap end as
      intended.
 
+   **4(b) residual: SUBSTANTIAL, step 2 stopped before deploy
+   (2026-10-22)** (`node scripts/measure-step2-residual.mjs`; trades_v2
+   at `de95a93`, 236 EDGE trades held in the window, 464 end-of-day
+   position-days rebuilt from each ticker's own bars, no news or macro
+   for either formula):
+   - **Score movement (clean): 74% of held position-days move.** 22.4%
+     move by the full −25, 9.3% by −20, 14.9% by −15, 19.2% by −10, 8.4%
+     by −5; 25.9% are unchanged. 181 of 236 trades have at least one moved
+     day.
+   - **Exit-cutoff bucket changes (NOISY, not a decision input):** 160 of
+     464 position-days (34.5%), on 111 trades; 123 move weaker, 37
+     stronger.
+
+   By the rule set for 4(b), that's not "a handful", so 4(c) comes first.
+   Tying the cutoffs to the thresholds handles the level shift, but the
+   composition-dependent part (cheap and oversold names lose up to 25)
+   moves a third of held position-days across an exit bucket.
+
+   **Found while building:** the exit engine's "Score dropped / improved"
+   delta compares the stored buy score with the score now. Across a
+   formula change only one side moves, because the buy score is stored, so
+   every position held across the deploy would show a drop its stock never
+   made. That contradicts 4(c)'s "roughly invariant because both sides
+   move", which holds only when both scores come from one version. The
+   built code compares only same-version scores and shows the factor as
+   not evaluated otherwise.
+
+   **Re-sequenced (Roman, 2026-10-22).** The threshold refactor ships
+   *now*, with the version writer, at **scoring version 1**, where it
+   changes no score and no label (full output identical to the
+   pre-refactor commit on every logged snapshot and 10,000 generated
+   inputs). **Step 2 is held as the smallest possible diff:** two terms in
+   `scoreComponents`, `SCORING_VERSION` 1 → 2 with its hash, one row
+   (`2: { watch: 20, soft: 65, strong: 110 }`) in the threshold table, and
+   the test's stated delta and decided lines. When it ships, the measured
+   effect is the formula change and nothing else. It waits on 4(c).
+
+   **4(c) starting point, audited: re-score the buy instead of comparing
+   a stored number with a live one.** Then both sides of the delta come
+   from one version, by construction. What an EDGE trade stores (292
+   trades, `trades_v2` at `de95a93`):
+   - **Stored, usable:** `rsi_at_buy`, `volume_ratio_at_buy`,
+     `ma_pct_at_buy` (gives price vs MA20), `vol_build_pts` and
+     `mean_reversion_pts` (give the two booleans), `catalyst_setup`, and
+     `macro_condition` / `macro_adjustment_pts`. The signal price comes
+     from `entry_vs_signal_price_pct`, on 245 of 292 only; `buy_price` is
+     the order price, and the sub-$10 test uses the signal price.
+   - **Missing or unusable:**
+     - **`cons_up_days` and `rel_strength_pts`:** written off before the
+       2026-10-21 modal fix (§7.5).
+     - **Raw `todayChange` and `rsVsSPY`:** only their point buckets are
+       stored.
+     - **The bars:** `signal_snapshot` is NULL for every EDGE trade; only
+       Warrior stores one.
+
+   So the re-score works for a formula change that **re-prices inputs
+   already stored**. Step 2 is such a change (RSI, signal price, volume
+   ratio), for the 245 trades with a recorded signal price. It **can't**
+   re-score a change to the momentum or relative-strength buckets, the
+   up-days term, or any setup detected from bars. **That is a
+   §5-shaped gap, recorded as one, not worked around:** EDGE should
+   store its full signal object at buy (`signal_snapshot`, as Warrior
+   already does, about 14.5 KB with bars). Then every future formula can
+   re-score every future buy. Until it does, the same-version-only delta
+   (built in 1d) is the fallback: not evaluated, with the reason.
+
    **Decided before building (Roman, 2026-10-21):**
    - **All three lines are re-derived:** STRONG, SOFT and the WATCH/display
      line (`BASE_SCORE_THRESHOLD`, 29 today). The same histogram method is
@@ -919,6 +1019,16 @@ as "as of 1c's commit" for that reason. The rest of the record:
   formula's 110 bin is empty, so the inference "after step 2 a score of
   exactly 110 would hit the inconsistency" doesn't hold on this data.
   The `>=` change is a rule, not a data fix.
+
+**A failed reproduction is itself a claim, and it has to pin the same
+inputs.** A figure that doesn't reproduce against *different* data isn't
+an unreproducible figure. It's two different measurements, and the
+mismatch says nothing about the original. Here the reproducibility rule was
+used to delete three correct numbers: Claude's "doesn't reproduce" was run
+against a staler copy, and Roman accepted the retraction without asking
+which data either side had used. Both a figure and a failure to reproduce
+it name their command **and the revision of the data it read**; a
+comparison between runs is valid only when the two match.
 
 By the same rule, **the entry-timing tables in §1 and §3 are not
 quotable.** They came from throwaway Python in a scratchpad on 2026-10-21

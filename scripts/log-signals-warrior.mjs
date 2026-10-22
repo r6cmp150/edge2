@@ -58,6 +58,7 @@ import { assertColumnsExist } from './lib/schema-check.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
 import { scheduledScanGate, SPACING_MIN } from './lib/scan-gate.mjs';
+import { codeVersionForRun } from './lib/code-version.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -223,6 +224,10 @@ async function main() {
   // ── universe: committed movers-snapshot preferred, self-fetch as a
   // named, stamped fallback ──
   const scanRunId = randomUUID();
+  // db/028: which code ran this scan. `scoring` is the EDGE formula version
+  // deployed with this build: Warrior rows don't use it, but it's a true
+  // fact about the code, and the CHECK requires it.
+  const CODE_VERSION = codeVersionForRun(REPO_ROOT, 'log-signals-warrior'); // never throws
   const today = global.ptDateStr(global.getPT());
   let candidates, universeSource, universeSnapshotCapturedAt;
 
@@ -409,7 +414,7 @@ async function main() {
     request_count: requests == null ? null : requests + (setupsResult.requests || 0),
     aborted,
     abort_reason: abortReason,
-    build_version: global.VERSION,
+    code_version: CODE_VERSION, // db/028; build_version (stale VERSION) no longer written
   };
 
   const candidatesBySymbol = new Map(candidates.map(c => [c.symbol, c]));
@@ -420,7 +425,7 @@ async function main() {
     tier: r.tier,
     first_shown_at: new Date().toISOString(),
     scan_session: scanRunId,
-    build_version: r.buildVersion || global.VERSION,
+    code_version: CODE_VERSION, // db/028
     signal_snapshot: r,
     reference_price: candidatesBySymbol.get(r.symbol)?.price ?? null,
     // universe_rank (db/018): 1-based position in Alpaca's own returned
@@ -475,7 +480,7 @@ async function main() {
   await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'scan_runs', Object.keys(scanRun));
   await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'signal_log', signalRows.length ? Object.keys(signalRows[0]) : [
     'signal_date', 'symbol', 'engine_source', 'tier', 'first_shown_at',
-    'scan_session', 'build_version', 'signal_snapshot', 'reference_price', 'universe_rank',
+    'scan_session', 'code_version', 'signal_snapshot', 'reference_price', 'universe_rank',
   ]);
   await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'setup_triggers', [
     'signal_date', 'symbol', 'engine_source', 'setup_id', 'triggered_at', 'scan_session',

@@ -42,6 +42,7 @@ const verbs = client => client.calls.map(c => c.ops.find(o => ['update', 'insert
 function loadStore(client) {
   global.supabaseClient = client;
   global.mapPositionToSupabaseRow = p => ({ position_id: p.id, ticker: p.ticker });
+  global.currentCodeVersion = () => ({ app: 'test', scoring: 2, scoring_hash: 'h' }); // db/028 writer (tests/code-version.test.js covers it)
   // eslint-disable-next-line no-eval
   eval([fnSrc('core/store.js', 'insertPositionToSupabase'), fnSrc('core/store.js', 'savePositionToSupabase')].join('\n')
     + '\nglobal.__insert = insertPositionToSupabase; global.__save = savePositionToSupabase;');
@@ -85,11 +86,15 @@ await run('an update error is thrown as-is, without a zero-row code', async () =
   assert.deepStrictEqual(verbs(client), ['update'], 'no existence check when the update itself failed');
 });
 
-await run('the add path inserts', async () => {
+await run('the add path inserts, with code_version on the inserted row', async () => {
   const client = mockClient(() => ({ data: null, error: null }));
   loadStore(client);
-  await global.__insert(POS);
+  const pos = { ...POS };
+  await global.__insert(pos);
   assert.deepStrictEqual(verbs(client), ['insert']);
+  const inserted = client.calls[0].ops.find(o => o[0] === 'insert')[1][0];
+  assert.deepStrictEqual(inserted.code_version, { app: 'test', scoring: 2, scoring_hash: 'h' }, 'db/028: the insert carries the version');
+  assert.deepStrictEqual(pos.codeVersion, inserted.code_version, 'the in-memory position keeps it, so the sale can copy it');
 });
 
 // backgroundSavePosition (app.js): only a confirmed MISSING touches

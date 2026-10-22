@@ -207,6 +207,44 @@ function relStrengthPoints(rsVsSPY) {
   return rsVsSPY >= 2 ? 15 : rsVsSPY >= 1 ? 10 : rsVsSPY > 0 ? 5 : 0;
 }
 
+// Formula identity (phase-10 spec §7.6 step 1d, db/028 code_version).
+// SCORING_VERSION is the integer every recorded row carries (orderable, the
+// thing queries filter on). SCORING_HASH is a sha-256 of this formula's own
+// source (scripts/lib/scoring-hash.mjs: the macro table and lookup, the
+// point functions, scoreStock, the threshold table and scoreLabel, with
+// comments and whitespace normalised). tests/score-components.test.js
+// recomputes it from this file and fails if it doesn't match, and pins the
+// version -> hash history. So the formula can't change without both
+// changing: nothing here depends on someone remembering to bump it.
+//   1 = the formula as of b63ef1b (scores unchanged), expressed through
+//       scoreLabel() and this threshold table. Phase-10 step 2 will be
+//       version 2: two terms, one table row, this constant.
+const SCORING_VERSION = 1;
+const SCORING_HASH = 'ce367ebf81eb4741a52f6b845b1ddada7962e450bdba892f3282e82ffb54ab86';
+
+// The label thresholds of each scoring version (spec §7.7: a label derived
+// from a threshold must record which threshold produced it). A score is
+// always labelled with the thresholds of the formula that produced it,
+// never whatever is current, so a v1 score keeps its v1 label after a v2
+// deploy. watch = the display (WATCH) line; soft and strong label the
+// score. All comparisons are >= (step 2 decision: one rule for the label
+// and the exit engine's top cutoff).
+const SCORE_THRESHOLDS_BY_VERSION = {
+  1: { watch: 29, soft: 73, strong: 116 },
+};
+
+// 'STRONG BUY' | 'SOFT BUY' | 'WATCH', or null when the score or the
+// version is unknown. Never a guess: an unknown version has no thresholds.
+function scoreLabel(score, version = SCORING_VERSION) {
+  const t = SCORE_THRESHOLDS_BY_VERSION[version];
+  if (!t || score == null || Number.isNaN(score)) return null;
+  return score >= t.strong ? 'STRONG BUY' : score >= t.soft ? 'SOFT BUY' : 'WATCH';
+}
+
+function scoreThresholds(version = SCORING_VERSION) {
+  return SCORE_THRESHOLDS_BY_VERSION[version] || null;
+}
+
 function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = null) {
   const price = getLivePrice(snap);
   const prevClose = snap.prevDailyBar?.c || price;
@@ -349,7 +387,7 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
 
   const risk = calcRiskScore(price, atr, rsi, volRatio, hasRecentNegNews);
   const priceRange = price <= 3 ? '$1–$3' : price <= 9 ? '$4–$9' : '$10–$20';
-  const signal = score >= 116 ? 'STRONG BUY' : score >= 73 ? 'SOFT BUY' : 'WATCH';
+  const signal = scoreLabel(score); // this version's thresholds (SCORE_THRESHOLDS_BY_VERSION)
 
   return {
     ticker, company: COMPANY_NAMES[ticker] || ticker,

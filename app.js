@@ -1473,20 +1473,28 @@ async function resolveMacroConditionWithGroq(changes) {
 
 // getMacroAdjustment moved to core/edge-scoring.js (2026-09-05 extraction) -- loaded as a classic <script> before this file, see index.html.
 
-// Dynamic signal threshold:
+// Dynamic signal (display) threshold:
 // Rule 1 — sector-specific: on a SECTOR_WEAKNESS_* day, raise the display
-// threshold to 50 for the category(ies) that condition targets; every other
-// category stays at the base 20. RETAIL is grouped with TECH under
-// SECTOR_WEAKNESS_TECH per spec ("Tech/Retail category stocks only").
-// HEALTHCARE is the existing Biotech proxy (see MACRO_ADJUSTMENTS above).
-// Rule 2 — broad: on RISK_OFF or GEOPOLITICAL, raise the threshold to 50 for
-// every category, no exceptions.
+// threshold to the ELEVATED line for the category(ies) that condition
+// targets; every other category stays at the BASE line. RETAIL is grouped
+// with TECH under SECTOR_WEAKNESS_TECH per spec ("Tech/Retail category
+// stocks only"). HEALTHCARE is the existing Biotech proxy.
+// Rule 2 — broad: on RISK_OFF or GEOPOLITICAL, raise the threshold to the
+// ELEVATED line for every category, no exceptions.
 // Rule 3 — every other condition (BROAD_RALLY, MOMENTUM_DAY, TECH_ROTATION_OUT,
-// CHOPPY, null) is a no-op and falls through to the base 20.
+// CHOPPY, null) is a no-op and falls through to the BASE line.
 // Evaluated once per scan against the single scan-wide category, not per
 // stock — see call site in runScreener().
-const BASE_SCORE_THRESHOLD = 29;
-const ELEVATED_SCORE_THRESHOLD = 73;
+//
+// Both lines are the current scoring version's own thresholds
+// (core/edge-scoring.js SCORE_THRESHOLDS_BY_VERSION), never literals (phase-10
+// step 2): BASE is the WATCH line, and ELEVATED is the SOFT line. ELEVATED
+// was designed as the SOFT line (both were 50 on the old 0–100 scale), so
+// it is now that expression and can't be left behind when SOFT moves. Under
+// adverse conditions, when there are fewest signals, a stale 73 would have
+// been 8 points stricter than anyone decided.
+const BASE_SCORE_THRESHOLD = scoreThresholds().watch;
+const ELEVATED_SCORE_THRESHOLD = scoreThresholds().soft;
 const SECTOR_WEAKNESS_THRESHOLD_CATEGORIES = {
   SECTOR_WEAKNESS_TECH: ['TECH', 'RETAIL'],
   SECTOR_WEAKNESS_BIOTECH: ['HEALTHCARE'],
@@ -2958,7 +2966,7 @@ function buildScoreBreakdown(s) {
 function buildModalScoreBreakdown(s, authoritativeTotal, authoritativeSignal) {
   const { rows, total: freshTotal } = computeScoreBreakdown(s);
   const total = authoritativeTotal != null ? authoritativeTotal : freshTotal;
-  const signal = authoritativeSignal || (total >= 116 ? 'STRONG BUY' : total >= 73 ? 'SOFT BUY' : 'WATCH');
+  const signal = authoritativeSignal || scoreLabel(total);
   const sigCls = signal === 'STRONG BUY' ? 'msb-strong'
                : signal === 'SOFT BUY' ? 'msb-soft' : 'msb-watch';
 
@@ -3193,7 +3201,7 @@ async function openStockModal(ticker) {
       modalScoreSignal = ownedScoreEntry.label;
     } else {
       modalScoreTotal = computeScoreBreakdown(breakdownStock).total;
-      modalScoreSignal = modalScoreTotal >= 116 ? 'STRONG BUY' : modalScoreTotal >= 73 ? 'SOFT BUY' : 'WATCH';
+      modalScoreSignal = scoreLabel(modalScoreTotal);
     }
 
     const chgCls  = stock.todayChange >= 0 ? 'change-pos' : 'change-neg';
@@ -4411,8 +4419,9 @@ async function renderPortfolioTab() {
 
     // Score at purchase — same STRONG BUY/SOFT BUY/WATCH thresholds as the live
     // scoring formula (scoreStock), applied to the score snapshotted at buy time.
-    const scoreBuyLabel = p.scoreAtBuy >= 116 ? 'STRONG BUY' : p.scoreAtBuy >= 73 ? 'SOFT BUY' : 'WATCH';
-    const scoreBuyCls   = p.scoreAtBuy >= 116 ? 'pf-score-green' : 'pf-score-yellow';
+    // Labelled with the thresholds of the version that scored the buy (spec §7.7).
+    const scoreBuyLabel = scoreLabel(p.scoreAtBuy, p.codeVersion?.scoring ?? 1) || '—';
+    const scoreBuyCls   = scoreBuyLabel === 'STRONG BUY' ? 'pf-score-green' : 'pf-score-yellow';
 
     // Score now — state.ownedScores is snapshotted every screener run for owned
     // tickers specifically (see runScreener), even when they no longer clear the
@@ -4432,7 +4441,7 @@ async function renderPortfolioTab() {
       ? ownedScore
       : liveSignal ? { score: liveSignal.score, label: liveSignal.signal } : null;
     const scoreNowDisplay = nowScore
-      ? `${nowScore.score} <span class="pf-score-label ${nowScore.score >= 116 ? 'pf-score-green' : 'pf-score-yellow'}">${nowScore.label}</span>${ownedScore ? ' <span class="pf-score-stale">(last scan)</span>' : ''}`
+      ? `${nowScore.score} <span class="pf-score-label ${scoreLabel(nowScore.score) === 'STRONG BUY' ? 'pf-score-green' : 'pf-score-yellow'}">${nowScore.label}</span>${ownedScore ? ' <span class="pf-score-stale">(last scan)</span>' : ''}`
       : `<span class="pf-score-na">—</span>`;
 
     // Duration urgency — same maxHoldDays map used for the card sort order above.
@@ -4785,22 +4794,48 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
 
   // ── RSI (current)
   if (rsi != null) {
-    if (rsi > 75) add(`RSI overbought at ${rsi.toFixed(0)}`, -25);
-    else if (rsi >= 65) add(`RSI elevated at ${rsi.toFixed(0)}`, -10);
-    else if (rsi >= 55) add(`RSI in sweet spot at ${rsi.toFixed(0)}`, 20);
-    else if (rsi >= 35) add(`RSI neutral-bullish at ${rsi.toFixed(0)}`, 15);
+    // Labels state the band; the points beside them are this engine's
+    // weights, unchanged (step 5's to revisit). "sweet spot" and
+    // "neutral-bullish" were the withdrawn RSI claims, missed by a
+    // case-sensitive guard (spec §7.3). These are this engine's own bands
+    // (>75, >=65, >=55, >=35), which differ from scoreComponents' at
+    // exactly 55 and 65.
+    if (rsi > 75) add(`RSI ${rsi.toFixed(0)} — band above 75`, -25);
+    else if (rsi >= 65) add(`RSI ${rsi.toFixed(0)} — band 65–75`, -10);
+    else if (rsi >= 55) add(`RSI ${rsi.toFixed(0)} — band 55–65`, 20);
+    else if (rsi >= 35) add(`RSI ${rsi.toFixed(0)} — band 35–55`, 15);
   }
 
   // ── Current signal score (tier + drift vs score at buy)
+  // Cutoffs are functions of the current scoring version's thresholds, not
+  // literals (phase-10 step 2): STRONG, floor((STRONG+SOFT)/2), SOFT,
+  // ceil(0.6 x SOFT). Under version 1 these are exactly the old 116 / 94 /
+  // 73 / 44 (tests/score-components.test.js checks it). floor and ceil
+  // reproduce those literals, and scores are multiples of 5, so the rounding
+  // can't change a decision. All >=: a score at exactly the STRONG line now
+  // gets the top weight its STRONG BUY label implies (it used to be > 116
+  // here and >= 116 on the label).
   const nowScore = currentSignal?.score;
   if (nowScore != null) {
-    if (nowScore > 116) add(`Current score ${nowScore} — support signal`, 50);
-    else if (nowScore >= 94) add(`Current score ${nowScore} — support signal`, 30);
-    else if (nowScore >= 73) add(`Current score ${nowScore} — support signal`, 15);
-    else if (nowScore >= 44) add(`Current score ${nowScore} — weak signal`, -10);
+    const t = scoreThresholds();
+    if (nowScore >= t.strong) add(`Current score ${nowScore} — support signal`, 50);
+    else if (nowScore >= Math.floor((t.strong + t.soft) / 2)) add(`Current score ${nowScore} — support signal`, 30);
+    else if (nowScore >= t.soft) add(`Current score ${nowScore} — support signal`, 15);
+    else if (nowScore >= Math.ceil(0.6 * t.soft)) add(`Current score ${nowScore} — weak signal`, -10);
     else add(`Current score ${nowScore} — weak signal`, -25);
 
-    if (position.scoreAtBuy != null) {
+    // The delta compares the score at buy with the score now, so it is
+    // only meaningful within ONE scoring version. A position bought under
+    // version 1 and scored now under version 2 would show a drop the
+    // stock never made (step 2 takes up to 25 points off cheap/oversold
+    // names, and the stored buy score doesn't move). Across versions this
+    // factor is not evaluated, and says so; it's never silently omitted
+    // and never given a neutral value. A position with no code_version was
+    // bought under version 1 (recorded before db/028's writer shipped).
+    const buyVersion = position.codeVersion?.scoring ?? 1;
+    if (position.scoreAtBuy != null && buyVersion !== SCORING_VERSION) {
+      add(`Score change not evaluated — bought under scoring v${buyVersion}, now v${SCORING_VERSION}`, 0);
+    } else if (position.scoreAtBuy != null) {
       if (nowScore > position.scoreAtBuy) {
         add(`Score improved from ${position.scoreAtBuy} → ${nowScore}`, 20);
       } else if (position.scoreAtBuy - nowScore > 29) {
@@ -5573,7 +5608,15 @@ function selectDecision(dec) {
 // SELECT-only for anon from this point on (db/004).
 async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
   try {
-    const signalLabel = pos.scoreAtBuy >= 116 ? 'STRONG BUY' : pos.scoreAtBuy >= 73 ? 'SOFT BUY' : 'WATCH';
+    // The label of the BUY's score under the BUY's thresholds (spec §7.7:
+    // a label derived from a threshold must record which threshold
+    // produced it). This used to read the current thresholds at sale, so a
+    // position bought under 73 and sold after step 2 would have been
+    // labelled under 65. A position with no code_version was recorded
+    // before db/028's writer shipped, which is the same deploy as step 2,
+    // so its score is a version-1 score.
+    const buyScoringVersion = pos.codeVersion?.scoring ?? 1;
+    const signalLabel = scoreLabel(pos.scoreAtBuy, buyScoringVersion);
     const { data, error } = await supabaseClient.from('trades_v2').insert([{
       ticker: pos.ticker,
       company: pos.company,
@@ -5665,6 +5708,12 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       order_type: pos.orderType ?? null,
       filled_at: pos.filledAt ?? null,
       sell_order_type: record.sellOrderType ?? null,
+      // db/028. code_version = the BUY's (copied; NULL for a position
+      // recorded before the writer shipped, never guessed).
+      // sale_code_version = the code running this sale, which produced
+      // every sale-time field in this row.
+      code_version: pos.codeVersion ?? null,
+      sale_code_version: currentCodeVersion(),
     }]).select('id');
     if (error) { console.error('Supabase trade write failed:', error.message); return; }
     // record is the same object reference already sitting in state.sold —
@@ -5841,6 +5890,7 @@ async function confirmMarkSold(posId, btn) {
     peakPrice: pos.peakPrice,
     peakPriceDate: pos.peakPriceDate || null,
     momentumProtectionActivated: !!pos.momentumProtectionActivated,
+    codeVersion: pos.codeVersion ?? null, // db/028: the buy's version, for labelling this trade later
     trailingStopTriggered,
     rsiSuspendedAtGainPct: pos.rsiSuspendedAtGainPct ?? null,
     sellTime: (() => {
@@ -6301,6 +6351,7 @@ function mapTradesV2ToSoldShape(row) {
     sellPriceUnverified: !!row.sell_price_unverified,
     source: row.source,
     engineSource: row.engine_source,
+    codeVersion: row.code_version ?? null, // db/028: the BUY's version; report labels use its thresholds
     scoreAtBuy: row.signal_score,
     rsiAtBuy: row.rsi_at_buy,
     volRatioAtBuy: row.volume_ratio_at_buy,
@@ -6848,6 +6899,25 @@ function modalComponentsWrittenOff(s) {
 }
 const MODAL_WRITE_OFF_REASON = "stored value is the stock modal's recompute, not the scored one (spec §7.5)";
 
+// Score buckets for the report, by LABEL, each trade labelled with the
+// thresholds of the scoring version that scored its buy (spec §7.7; a
+// position with no code_version was bought under version 1). Score RANGES
+// mean different things across versions (step 2 moved every line), so the
+// report never pools them. Trades below their version's WATCH line are
+// counted on their own line, never omitted.
+function scoreLabelStatsLines(sold, winRatePct) {
+  const bucketOf = s => {
+    const t = scoreThresholds(s.codeVersion?.scoring ?? 1);
+    if (!t || s.scoreAtBuy == null) return 'score not recorded';
+    return s.scoreAtBuy >= t.strong ? 'STRONG BUY' : s.scoreAtBuy >= t.soft ? 'SOFT BUY' : s.scoreAtBuy >= t.watch ? 'WATCH' : 'below the WATCH line';
+  };
+  return ['STRONG BUY', 'SOFT BUY', 'WATCH', 'below the WATCH line', 'score not recorded'].map(label => {
+    const t = sold.filter(s => bucketOf(s) === label);
+    const wr = t.length ? winRatePct(t) : null;
+    return `${label}: ${t.length} trades | ${wr != null ? wr.toFixed(0) : '—'}% win rate`;
+  });
+}
+
 function buildIndividualSignalPerformanceSection(sold) {
   const withBreakdown = sold.filter(s => s.volSpikePts != null);
   if (withBreakdown.length < 10) return '';
@@ -7209,10 +7279,6 @@ Break-even win rate at this ratio: ${breakEvenWinRatePct!=null?breakEvenWinRateP
     return `${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
   };
 
-  const scoreStats = (lo, hi) => {
-    const t = sold.filter(s => s.scoreAtBuy >= lo && s.scoreAtBuy <= hi);
-    return `Score ${lo}–${hi}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate`;
-  };
 
   const rsiBucket = (lo, hi, label) => {
     const t = sold.filter(s => (s.rsiAtBuy||0) >= lo && (s.rsiAtBuy||0) < hi);
@@ -7364,9 +7430,7 @@ Performance by duration classification:
   ${durStats('WEEK','Est. 4–5 market days')}
 
 Performance by signal score at purchase:
-  ${scoreStats(29,72)}
-  ${scoreStats(73,115)}
-  ${scoreStats(116,Infinity)}
+  ${scoreLabelStatsLines(sold, winRatePct).join('\n  ')}
 
 ${cumulativePnlSection}
 
@@ -7436,8 +7500,8 @@ ${macroSectorWeaknessStats(          'SECTOR_WEAKNESS_*:   ')}
 ${macroCondStats('CHOPPY',            'CHOPPY:              ')}
 
 Threshold at time of purchase:
-${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) >= ELEVATED_SCORE_THRESHOLD, 'Trades bought under elevated threshold (73+):')}
-${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) < ELEVATED_SCORE_THRESHOLD, 'Trades bought under normal threshold (29+):  ')}
+${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) >= ELEVATED_SCORE_THRESHOLD, 'Trades bought under the elevated threshold:')}
+${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) < ELEVATED_SCORE_THRESHOLD, 'Trades bought under the normal threshold:   ')}
 
 ${(()=>{
   // Change 4 (Data & Reporting) — entry timing, sub-$10 adjustment, Groq
@@ -7703,7 +7767,7 @@ displayed score IS this raw sum plus the macro adjustment below — it can
 exceed ${RAW_SCORE_MAX} when that adjustment is positive, and floors at 0
 when negative signals and a negative macro adjustment combine.
 
-Labels: 116+=STRONG BUY | 73–115=SOFT BUY | 29–72=WATCH | <29=excluded
+Labels (scoring v${SCORING_VERSION}): ${scoreThresholds().strong}+=STRONG BUY | ${scoreThresholds().soft}–${scoreThresholds().strong - 1}=SOFT BUY | ${scoreThresholds().watch}–${scoreThresholds().soft - 1}=WATCH | <${scoreThresholds().watch}=excluded. Each trade is labelled with the thresholds of the scoring version that scored its buy (v1: 116 / 73 / 29).
 
 Note for Claude: scores were normalized to a 0-100 scale in earlier app
 versions. Trades from before this version show a 0-100 scoreAtBuy; trades
@@ -8111,11 +8175,6 @@ function buildSupabaseArchiveReport(trades, snapshotRows) {
     const tw = t.filter(x => x.pnl_pct > 0);
     return `${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
   };
-  const scoreStats = (lo, hi) => {
-    const t = trades.filter(x => (x.signal_score??0) >= lo && (x.signal_score??0) <= hi);
-    const tw = t.filter(x => x.pnl_pct > 0);
-    return `Score ${lo}–${hi}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate`;
-  };
   const rsiBucket = (lo, hi, label) => {
     const t = trades.filter(x => (x.rsi_at_buy||0) >= lo && (x.rsi_at_buy||0) < hi);
     const tw = t.filter(x => x.pnl_pct > 0);
@@ -8255,9 +8314,10 @@ Performance by duration classification:
   ${durStats('WEEK','Est. 4–5 market days')}
 
 Performance by signal score at purchase:
-  ${scoreStats(29,72)}
-  ${scoreStats(73,115)}
-  ${scoreStats(116,Infinity)}
+  ${scoreLabelStatsLines(
+      trades.map(x => ({ scoreAtBuy: x.signal_score, codeVersion: x.code_version ?? null, pnlPct: x.pnl_pct })),
+      t => t.length ? (t.filter(x => x.pnlPct > 0).length / t.length) * 100 : null,
+    ).join('\n  ')}
 
 === MACRO CONDITION AT TIME OF PURCHASE ===
 ${macroCondStats('RISK_OFF',          'RISK_OFF:            ')}

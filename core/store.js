@@ -167,6 +167,9 @@ function mapSupabasePortfolioRowToPosition(row) {
     // orderType = PENDING ORDER (core/orders.js isPendingOrder).
     orderType: row.order_type,
     filledAt: row.filled_at,
+    // db/028: read back so a sale can copy the BUY's version to trades_v2.
+    // Deliberately NOT written back by mapPositionToSupabaseRow below.
+    codeVersion: row.code_version ?? null,
   };
 }
 
@@ -246,10 +249,36 @@ async function loadPortfolioFromSupabase() {
 // in another session re-created it -- the 10/01 batch's phantom rows 530-536,
 // nine positions recorded as two sales each. savePortfolioToSupabase (a bulk
 // upsert with no callers) deleted in the same change.
+//
+// code_version (db/028) is written HERE and nowhere else in the portfolio
+// path. It is not in mapPositionToSupabaseRow: that mapper also feeds the
+// update-only savePositionToSupabase, and db/028's write-once trigger
+// rejects any update that changes the column, NULL included. With the
+// mapper's `x ?? null` convention, a code_version line there would null
+// the column on every peak-price save and fail every one (phase-10 §7.7
+// trip-wire). The position object keeps it, so the sale can copy it.
 async function insertPositionToSupabase(position) {
-  const row = mapPositionToSupabaseRow(position);
+  if (!position.codeVersion) position.codeVersion = currentCodeVersion();
+  const row = { ...mapPositionToSupabaseRow(position), code_version: position.codeVersion };
   const { error } = await supabaseClient.from('portfolio').insert([row]);
   if (error) throw error;
+}
+
+// db/028 code_version for a row this browser is recording NOW. app is the
+// ?v= stamp of the <script src="app.js?v=..."> this page actually loaded, so
+// a tab left open across a deploy reports the old stamp it's really running.
+// It's never a hand-maintained constant (build_version was, and said v2.18.0
+// for a month). 'unavailable' is an explicit, honest value if the tag can't
+// be read; recording must never fail because of a version lookup. scoring /
+// scoring_hash are core/edge-scoring.js's test-pinned identity.
+function currentCodeVersion() {
+  let app = 'unavailable';
+  try {
+    const el = document.querySelector('script[src*="app.js?v="]');
+    const m = el && el.getAttribute('src').match(/[?&]v=([^&#]+)/);
+    if (m) app = m[1];
+  } catch (_) { /* no DOM: leave 'unavailable' */ }
+  return { app, scoring: SCORING_VERSION, scoring_hash: SCORING_HASH };
 }
 
 // An update that matches zero rows has more than one cause, and only one of

@@ -113,6 +113,7 @@ import { assertColumnsExist } from './lib/schema-check.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
 import { scheduledScanGate, SPACING_MIN } from './lib/scan-gate.mjs';
+import { codeVersionForRun } from './lib/code-version.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -192,7 +193,7 @@ async function main() {
   loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT', 'fetchMultiBars', 'checkUnresolvedSymbols']);
   loadReal('core/news.js', ['fetchNewsForTickers']);
   loadReal('core/indicators.js', ['calcRSI', 'calcATR', 'calcTrimmedATR', 'calcMA', 'calcAvgVolume']);
-  loadReal('core/edge-scoring.js', ['scoreStock']);
+  loadReal('core/edge-scoring.js', ['scoreStock', 'scoreThresholds']); // scoreThresholds: the display lines below read it
 
   // STOCK_UNIVERSES -- text-anchored, see loadFromAppJs.
   loadFromAppJs(appJsSrc, 'const STOCK_UNIVERSES = {', '};', ['STOCK_UNIVERSES']);
@@ -200,7 +201,7 @@ async function main() {
 
   // Display-threshold logic -- text-anchored, see loadFromAppJs.
   loadFromAppJs(appJsSrc,
-    'const BASE_SCORE_THRESHOLD = 29;', '}',
+    'const BASE_SCORE_THRESHOLD = scoreThresholds().watch;', '}',
     ['BASE_SCORE_THRESHOLD', 'ELEVATED_SCORE_THRESHOLD', 'SECTOR_WEAKNESS_THRESHOLD_CATEGORIES', 'BROAD_ELEVATED_CONDITIONS', 'getDisplayThreshold']);
 
   const marketStatus = global.getMarketStatus();
@@ -231,6 +232,7 @@ async function main() {
   if (noopReason !== null) return;
 
   const scanRunId = randomUUID();
+  const CODE_VERSION = codeVersionForRun(REPO_ROOT, 'log-signals-edge'); // db/028; never throws (see code-version.mjs)
   const today = global.ptDateStr(global.getPT());
 
   console.log(`log-signals-edge: universe = ${TICKERS.length} candidates (source: static-universe-list, STOCK_UNIVERSES.OTHER)`);
@@ -310,7 +312,11 @@ async function main() {
     fetch_failed_count: barsDroppedSymbols.length,
     aborted: false,
     abort_reason: null,
-    build_version: global.VERSION,
+    // db/028: which code ran this scan. build_version (app.js VERSION,
+    // hand-maintained, stuck at v2.18.0 since 2026-09-15) is no longer
+    // written; scripts/lib/code-version.mjs reads the stamp and computes
+    // the scoring hash from this checkout.
+    code_version: CODE_VERSION,
   };
 
   const signalRows = scoredAll.map(r => ({
@@ -320,7 +326,7 @@ async function main() {
     tier: r.tier,
     first_shown_at: new Date().toISOString(),
     scan_session: scanRunId,
-    build_version: global.VERSION,
+    code_version: CODE_VERSION, // db/028, same value as the scan_runs row
     signal_snapshot: r.signal || { ticker: r.ticker, tier: r.tier },
     reference_price: global.getLivePrice(snapshots[r.ticker]) ?? null,
   }));
@@ -332,7 +338,7 @@ async function main() {
   await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'scan_runs', Object.keys(scanRun));
   await assertColumnsExist(SUPABASE_URL, SUPABASE_ANON_KEY, 'signal_log', [
     'signal_date', 'symbol', 'engine_source', 'tier', 'first_shown_at',
-    'scan_session', 'build_version', 'signal_snapshot', 'reference_price',
+    'scan_session', 'code_version', 'signal_snapshot', 'reference_price',
   ]);
 
   if (!WRITE) {
