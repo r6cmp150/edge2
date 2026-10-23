@@ -153,10 +153,18 @@ async function _getAssetIndex(client = _coreClient) {
   const cache = state.universeAssetCache;
   // outsideIndex (2026-10-22): a cache written before it existed can't tell
   // "not tradable" from "not listed" (getAssetListing), so it's refetched.
-  if (cache && cache.fetchedAt && cache.outsideIndex && (Date.now() - new Date(cache.fetchedAt).getTime()) < ASSET_CACHE_MAX_AGE_MS) {
+  // The shape is checked, not assumed (2026-10-22): this cache comes back
+  // from localStorage, which can hold anything a past version or a partial
+  // write left. A cache that isn't { assets: [...], outsideIndex: {...} } is
+  // refetched, never read.
+  if (cache && cache.fetchedAt && Array.isArray(cache.assets) && _isPlainObject(cache.outsideIndex)
+      && (Date.now() - new Date(cache.fetchedAt).getTime()) < ASSET_CACHE_MAX_AGE_MS) {
     return cache.assets;
   }
   const raw = await client.alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);
+  // A response that isn't a list is a failed fetch (a plain Error, so
+  // callers treat it as one), never cached as an empty asset list.
+  if (!Array.isArray(raw)) throw new Error(`/v2/assets returned ${raw === null ? 'null' : typeof raw}, not a list`);
   const isIndexed = a => a.tradable && ALLOWED_EXCHANGES.has(a.exchange);
   const assets = (raw || [])
     .filter(isIndexed)
@@ -185,11 +193,20 @@ async function _getAssetIndex(client = _coreClient) {
 // didn't error would otherwise call every symbol delisted (Alpaca returns
 // about 14,400 active us_equity assets; 1,000 is far below any real day).
 const ASSET_LIST_MIN_PLAUSIBLE = 1000;
+// Missing, unreadable, malformed or short all end the same way: a plain
+// Error, so the caller records "unknown". None of them becomes an empty
+// set, which would read every symbol as asset_inactive.
 async function getAssetListing(symbols, client = _coreClient) {
   const assets = await _getAssetIndex(client);
-  const outsideIndex = state.universeAssetCache?.outsideIndex || {};
+  const outsideIndex = state.universeAssetCache?.outsideIndex;
+  if (!Array.isArray(assets) || !_isPlainObject(outsideIndex)) throw new Error('asset list unreadable: listing unknown');
   const listSize = assets.length + Object.keys(outsideIndex).length;
-  if (listSize < ASSET_LIST_MIN_PLAUSIBLE) throw new Error(`asset list implausibly short (${listSize} assets): listing unknown`);
+  if (listSize < ASSET_LIST_MIN_PLAUSIBLE) {
+    // Not trusted, so not kept: the next call refetches instead of reading
+    // the same short list for 24 hours.
+    state.universeAssetCache = null;
+    throw new Error(`asset list implausibly short (${listSize} assets): listing unknown`);
+  }
   const indexed = new Set(assets.map(a => a.symbol));
   const bySymbol = {};
   for (const sym of symbols) {
@@ -199,6 +216,8 @@ async function getAssetListing(symbols, client = _coreClient) {
   }
   return bySymbol;
 }
+
+function _isPlainObject(x) { return x !== null && typeof x === 'object' && !Array.isArray(x); }
 
 function _assetIndexBySymbol(assets) {
   const map = {};

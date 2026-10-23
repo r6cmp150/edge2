@@ -242,6 +242,74 @@ run('a short asset list is unknown, not "everything delisted"', async () => {
   assert.ok(/implausibly short/.test(rule.asset_check_unavailable));
 });
 
+run('a missing, malformed or non-list asset list is unknown too, and never stops the scan', async () => {
+  load(() => {});
+  const bars = { A: sessions(global.previousTradingDay(TODAY), 25, 2000000) };
+  const fresh = new Date().toISOString();
+  // What localStorage can hand back: nothing, or a shape no version wrote on purpose.
+  const caches = [
+    ['absent (empty localStorage)', null],
+    ['assets missing', { fetchedAt: fresh, outsideIndex: {} }],
+    ['assets not an array', { fetchedAt: fresh, assets: {}, outsideIndex: {} }],
+    ['outsideIndex an array', { fetchedAt: fresh, assets: [], outsideIndex: [] }],
+    ['outsideIndex null', { fetchedAt: fresh, assets: [], outsideIndex: null }],
+  ];
+  for (const [label, cache] of caches) {
+    // A bad cache is refetched; the fetch here returns a real list, so it must end "listed".
+    load(alpaca({ assets: [asset('A')], bars }), { universeAssetCache: cache });
+    assert.deepStrictEqual(await global.getAssetListing(['A']), { A: 'listed' }, label + ': refetched, not read');
+  }
+  // And when the refetch itself returns no list: unknown, the scan still runs.
+  for (const [label, body] of [['null', null], ['an object', { message: 'forbidden' }], ['an empty list', []]]) {
+    load(async (path, params) => path === '/v2/assets' ? body : { bars: { A: bars.A }, next_page_token: null },
+      { universeAssetCache: null });
+    const { candidates, rule } = await global.runEdgePrefilter(['A'], { A: snapAt(5) }, { today: TODAY, minIexVolume: 100000 });
+    assert.deepStrictEqual(candidates.map(([x]) => x), ['A'], `/v2/assets returning ${label}: nothing is marked delisted`);
+    assert.strictEqual(rule.requires_listed_tradable, false, label);
+    assert.ok(rule.asset_check_unavailable, label);
+    assert.strictEqual(global.state.universeAssetCache, null, `${label}: a non-list or short list is not kept as the cache`);
+  }
+});
+
+run('a dead holding takes the priceUnavailable path: no P&L, CANNOT EVALUATE, no sale pre-fill', () => {
+  const app = readSource('app.js');
+  const start = app.indexOf('async function renderPortfolioTab() {');
+  const tab = app.slice(start, app.indexOf('\n}\n', start));
+  const has = s => tab.includes(s);
+  assert.ok(has("const notTradingNow = !!listing && listing !== 'listed';"));
+  assert.ok(has('const priceUnavailable = priceFetchFailed || !getLivePrice(snap) || notTradingNow;'),
+    'the existing flag, not new logic: P&L "—", summary excludes it, recommendation CANNOT EVALUATE, Mark as sold not pre-filled');
+  assert.ok(tab.indexOf('const listing = heldListing') < tab.indexOf('const priceUnavailable ='), 'listing is known before the flag is set');
+  assert.ok(has("let intradayPanel = notTradingNow ? { state: 'INACTIVE' }"), "the intraday line says it stopped trading, not 'connection issue'");
+  // The consumers the flag already drives (unchanged; asserted so a refactor can't drop one).
+  assert.ok(has('priceFetchFailed: priceUnavailable }'), 'recommendation: CANNOT EVALUATE');
+  assert.ok(has("openMarkSoldModal('${p.id}', ${priceUnavailable ? 'null' : currentPrice})"), 'Mark as sold: no pre-filled price');
+  assert.ok(has('if (priceUnavailable) {\n        summaryUnpricedTickers.push(p.ticker);'), 'summary: named, never summed');
+  // A registered engine (Warrior) is not asked for exit advice on a price
+  // that isn't live: its evaluateExit would answer HOLDING, still a verdict.
+  assert.ok(has("const exitResult = priceUnavailable\n        ? { status: 'CANNOT_EVALUATE',"), 'engine exit advice gated on priceUnavailable');
+  const bStart = app.indexOf('function buildRegisteredEngineExitBanner(');
+  // eslint-disable-next-line no-eval
+  eval(app.slice(bStart, app.indexOf('\n}\n', bStart) + 2) + '\nglobal.__banner = buildRegisteredEngineExitBanner;');
+  const html = global.__banner({ status: 'CANNOT_EVALUATE', reasons: ['Live price unavailable this render — cannot evaluate exit'] });
+  assert.ok(html.includes('<strong>CANNOT EVALUATE</strong>') && html.includes('ur-hold-mixed') && !/HOLDING|SELL/.test(html),
+    "renders as EDGE's CANNOT EVALUATE does (same class), with no verdict");
+  // The nav badge's own engine call is safe through the same flag: the card
+  // drops the cached price, and the badge skips a holding without one.
+  assert.ok(has('if (priceUnavailable) delete state.portfolioPrices[p.ticker];'));
+  const nStart = app.indexOf('function updateNavBadges() {');
+  assert.ok(app.slice(nStart, app.indexOf('\n}\n', nStart)).includes('if (price == null || state.portfolioPriceFetchFailed) return;'));
+});
+
+run('the fallback volume control is shown read-only, with the reason', () => {
+  const app = readSource('app.js');
+  const i = app.indexOf('Fallback volume threshold (today, IEX)');
+  const row = app.slice(i, app.indexOf('.join(', i));
+  assert.ok(row.includes('Applies only when the daily volume fetch fails; the live rule is a 1M-share average over the last 20 sessions'));
+  assert.ok(row.includes('aria-disabled="true"') && row.includes('pointer-events:none'));
+  assert.ok(!row.includes('onclick=') && !app.includes('function setMinVol'), 'nothing can change it');
+});
+
 run('previousTradingDay: weekends and holidays', () => {
   load(() => {});
   assert.strictEqual(global.previousTradingDay('2026-10-22'), '2026-10-21');

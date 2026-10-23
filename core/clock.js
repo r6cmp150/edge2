@@ -3,13 +3,25 @@
 // Moved from app.js (Phase 0 extraction) — see the breadcrumb comments left
 // at each original call site.
 
+// Full-day market closures. tests/calendar-horizon.test.js FAILS when the
+// latest entry is less than 90 days ahead, so the next year's dates get
+// added every autumn instead of the table silently running out (it ended
+// at 2026-12-25 until 2026-10-22). Source for 2025-2027: Alpaca's
+// /v2/calendar, every weekday it doesn't list as a session. That check also
+// found 2025-01-09 (the national day of mourning for President Carter),
+// which this table never had. So it was never complete, not just short:
+// adding a year also means re-checking the years already here (see
+// tests/calendar-horizon.test.js's header for the check and the planned
+// scripts/check-market-calendar.mjs).
 const HOLIDAYS = new Set([
   '2024-01-01','2024-01-15','2024-02-19','2024-03-29','2024-05-27',
   '2024-06-19','2024-07-04','2024-09-02','2024-11-28','2024-12-25',
-  '2025-01-01','2025-01-20','2025-02-17','2025-04-18','2025-05-26',
+  '2025-01-01','2025-01-09','2025-01-20','2025-02-17','2025-04-18','2025-05-26',
   '2025-06-19','2025-07-04','2025-09-01','2025-11-27','2025-12-25',
   '2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25',
-  '2026-06-19','2026-07-03','2026-09-07','2026-11-26','2026-12-25'
+  '2026-06-19','2026-07-03','2026-09-07','2026-11-26','2026-12-25',
+  '2027-01-01','2027-01-18','2027-02-15','2027-03-26','2027-05-31',
+  '2027-06-18','2027-07-05','2027-09-06','2027-11-25','2027-12-24'
 ]);
 
 const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -212,9 +224,13 @@ function hoursSincePreviousClose(now = new Date()) {
 // the duplication this file's classifySession() comment warns about
 // ended here. A future backfill that needs to be early-close-aware is a
 // NEW migration against 020's already-applied state, not an edit to 020.
+// Kept as far ahead as HOLIDAYS (tests/calendar-horizon.test.js). 2027 has
+// one (Alpaca /v2/calendar): Christmas Eve is a full closure that year, and
+// July 3 falls on a Saturday.
 const EARLY_CLOSES = {
   '2026-11-27': 600, // day after Thanksgiving
   '2026-12-24': 600, // Christmas Eve
+  '2027-11-26': 600, // day after Thanksgiving
 };
 
 // classifySession -- the four-value session classifier (phase-9-entry-

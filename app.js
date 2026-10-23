@@ -4316,7 +4316,14 @@ async function renderPortfolioTab() {
     // two places priceFetchFailed never reached before (the "Now" label
     // and Mark as Sold's pre-fill), which is exactly the gap that let
     // this corrupt real trade records.
-    const priceUnavailable = priceFetchFailed || !getLivePrice(snap);
+    // A holding that isn't listed or isn't tradable (phase-10 step 1f,
+    // 2026-10-22) takes this same path: its snapshot still carries a last
+    // trade, but that's the price from before it stopped trading, not a
+    // live one. So P&L reads unavailable and the recommendation can't
+    // evaluate, the same as a missing quote; the banner says why.
+    const listing = heldListing ? heldListing[p.ticker] : null;
+    const notTradingNow = !!listing && listing !== 'listed';
+    const priceUnavailable = priceFetchFailed || !getLivePrice(snap) || notTradingNow;
     const rsi = closes.length >= 15 ? calcRSI(closes) : p.rsiAtBuy;
     const trimmedAtr = bars.length >= 15 ? calcTrimmedATR(bars) : 0;
 
@@ -4326,7 +4333,8 @@ async function renderPortfolioTab() {
     // showing "Up 0.0% today" off a fabricated flat price, the same
     // fabricated-zero this per-position flag exists to prevent everywhere
     // else on this card.
-    let intradayPanel = priceUnavailable
+    let intradayPanel = notTradingNow ? { state: 'INACTIVE' }
+      : priceUnavailable
       ? { state: 'FAILED' }
       : computeIntradayPanel({
           buyPrice: p.buyPrice,
@@ -4337,14 +4345,13 @@ async function renderPortfolioTab() {
           maxLossPct: state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT,
           todayOnly: true,
         });
-    const listing = heldListing ? heldListing[p.ticker] : null;
     if (intradayPanel.state === 'NO_DATA') {
       const assetStatus = intradayAssetStatusByTicker[p.ticker];
-      if ((listing && listing !== 'listed') || (assetStatus && !assetStatus.failed && (assetStatus.tradable === false || assetStatus.status === 'inactive'))) {
+      if ((assetStatus && !assetStatus.failed && (assetStatus.tradable === false || assetStatus.status === 'inactive'))) {
         intradayPanel = { state: 'INACTIVE' };
       }
     }
-    const listingBanner = listing && listing !== 'listed'
+    const listingBanner = notTradingNow
       ? `<div class="pf-stale-banner">⚠ ${listingWarningText(p.ticker, listing)}</div>`
       : '';
     const intradayLineHtml = renderIntradayLineCard(intradayPanel);
@@ -4452,9 +4459,17 @@ async function renderPortfolioTab() {
     let portBanner;
     if (p.engineSource && p.engineSource !== 'EDGE') {
       const dispatchedEngine = getEngine(p.engineSource);
-      const exitResult = (dispatchedEngine && dispatchedEngine.evaluateExit)
-        ? dispatchedEngine.evaluateExit(p, { price: currentPrice })
-        : neutralEngineExitFallback(p, { price: currentPrice });
+      // priceUnavailable (2026-10-23): currentPrice is then the buy-price
+      // fallback or a dead stock's last trade, so the engine is not asked at
+      // all. Passing null instead wouldn't do: Warrior's evaluateExit answers
+      // a missing price with HOLDING, which is still a verdict. This is the
+      // same three-state rule as EDGE's CANNOT EVALUATE (calcUnifiedRecommendation),
+      // stated by the shell for every registered engine, never per engine.
+      const exitResult = priceUnavailable
+        ? { status: 'CANNOT_EVALUATE', reasons: ['Live price unavailable this render — cannot evaluate exit'] }
+        : (dispatchedEngine && dispatchedEngine.evaluateExit)
+          ? dispatchedEngine.evaluateExit(p, { price: currentPrice })
+          : neutralEngineExitFallback(p, { price: currentPrice });
       portBanner = buildRegisteredEngineExitBanner(exitResult);
     } else {
       const currentSignal = state.signals.find(s => s.ticker === p.ticker) || currentOwnedScore(p.ticker) || null;
@@ -8018,11 +8033,10 @@ function renderSettingsTab() {
       </div>
       <div class="settings-row" style="flex-direction:column;align-items:stretch;">
         <div class="settings-label">Fallback volume threshold (today, IEX)</div>
-        <div class="settings-hint">The scan's normal gate is a 1M-share average over the last 20 sessions. This applies only if that history can't be fetched.</div>
-        <div class="segmented mt4">
+        <div class="settings-hint">Applies only when the daily volume fetch fails; the live rule is a 1M-share average over the last 20 sessions. Shown, not editable: a control that changes nothing on almost every scan would read as one that works.</div>
+        <div class="segmented mt4" aria-disabled="true" style="opacity:.45;pointer-events:none">
           ${[100000,250000,500000].map(v =>
-            `<div class="seg-btn ${(s.minVolume||100000)===v?'active':''}"
-              onclick="setMinVol(${v})">${v===100000?'100K':v===250000?'250K':'500K+'}</div>`
+            `<div class="seg-btn ${(s.minVolume||100000)===v?'active':''}">${v===100000?'100K':v===250000?'250K':'500K+'}</div>`
           ).join('')}
         </div>
       </div>
@@ -8675,17 +8689,10 @@ function toggleDeveloperTools(checked) {
   if (state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') renderWarriorTab();
 }
 
-async function setMinVol(val) {
-  const prev = state.settings.minVolume;
-  state.settings.minVolume = val;
-  try {
-    await saveSettingsToSupabase(state.settings);
-  } catch(e) {
-    state.settings.minVolume = prev;
-    alert('Could not save setting to Supabase: ' + e.message);
-  }
-  renderSettingsTab();
-}
+// setMinVol removed 2026-10-22: settings.minVolume is now only the
+// pre-filter fallback's threshold (phase-10 step 1f), shown read-only in
+// Settings. The stored value (Supabase settings.min_volume) is kept and
+// still read by that fallback.
 
 async function testConnections() {
   const el = document.getElementById('test-results');

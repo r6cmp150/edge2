@@ -981,6 +981,63 @@ days, not quiet ones.
        `/v2/assets/{ticker}` check stays only as the fallback: it 404s
        on a removed symbol (AREN), which it couldn't tell from a
        connection failure, so it never flagged one.
+     - **A dead holding's price: three states, recorded as such.** Until
+       2026-10-22 it was an *undiscovered* instance of the "number nobody
+       computed" family (instance twelve's shape: the Portfolio Summary
+       showing +$0.00 beside cards marked unavailable). TWO's card showed
+       "Now" at its last trade, with P&L and a recommendation computed from
+       that frozen close. At `587fe33` it became a *known* instance **left
+       in**: the banner said the price wasn't live while the number beside
+       it still read as one. That's a different and worse thing, because
+       Roman reads the number, not the banner. **Fixed next**, with no new
+       logic: a holding that isn't listed or isn't tradable sets the
+       existing `priceUnavailable` flag, so P&L reads unavailable, the
+       summary names it rather than summing it, the recommendation is
+       CANNOT EVALUATE, Mark as sold isn't pre-filled, and the banner says
+       why. **Same family, fixed 2026-10-23, before Warrior's first live
+       use:** a Warrior holding's card asked `evaluateExit(p, { price:
+       currentPrice })` on the buy-price fallback or a dead stock's last
+       trade, without consulting `priceUnavailable`. Passing null wouldn't
+       do, because `evaluateExit` answers a missing price with HOLDING,
+       which is still a verdict. So with the flag set, the shell doesn't ask
+       the engine and shows CANNOT EVALUATE, in the same style as EDGE's.
+       The nav badge's own engine call was already safe through the flag:
+       the card drops the cached price, and the badge skips a holding
+       without one.
+     - **The calendar is guarded, not noted (2026-10-22).** HOLIDAYS ended
+       at 2026-12-25, and it feeds `classifySession`, `getMarketStatus`,
+       `tradingDaysBetween` (the stale-bars age) and every trading-day
+       walk, so on 2027-01-01 the app would have treated a closed market as
+       open. 2027's closures and early close were added from Alpaca's
+       `/v2/calendar`, which also showed that **2025-01-09** (the national
+       day of mourning for President Carter) was never in the table.
+       `tests/calendar-horizon.test.js` now fails whenever HOLIDAYS'
+       last date is less than 90 days ahead, or EARLY_CLOSES stops short of
+       HOLIDAYS' last year.
+       **The table was never complete, not just short.** A horizon guard
+       catches the end but not a hole in the middle, and 2025-01-09 was a
+       hole for almost two years. **Planned, not built:**
+       `scripts/check-market-calendar.mjs`, one command that diffs HOLIDAYS
+       and EARLY_CLOSES against Alpaca's `/v2/calendar` for every year each
+       table covers, to be run whenever the horizon guard fires, so that
+       adding next year also verifies the years already there. (A test
+       can't call Alpaca, which is why it's a script.) The same diff, run
+       by hand on 2026-10-23: HOLIDAYS is complete for 2024–2027, and
+       EARLY_CLOSES starts at 2026, so 2024–2025's six early closes are
+       absent. That has no live effect, because no stored data predates
+       2026; they get added if anything ever classifies a session from
+       those years. The guard's failure message points here.
+     - **No list is "unknown", whatever form it takes.** An absent cache,
+       a malformed one (whatever localStorage hands back), a `/v2/assets`
+       response that isn't a list, and a short list all end as "listing
+       unknown", recorded on the rule. None becomes an empty set, which
+       would mark every symbol delisted, and none is kept as the cache.
+       Before this, a fresh-looking cache whose `assets` wasn't an array
+       raised a TypeError that `runEdgePrefilter` rethrows as a programmer
+       error, which would have stopped the scan.
+     - **The fallback's volume control is read-only** in Settings, with
+       the reason. It was relabelled but still clickable, a control that
+       changes nothing on almost every scan.
      - **Add confirm:** the same lookup; a not-listed or not-tradable
        ticker gets a warning with "Add anyway", beside the after-hours
        warning, and never blocks.
