@@ -177,22 +177,11 @@ function loadFromAppJs(appJsSrc, expectedFirst, expectedLast, exposeNames) {
   eval(block + '\n' + exposeLine);
 }
 
-// The EDGE pre-filter as ONE predicate (2026-10-22, phase-10 spec §7.6 step
-// 1e). Returns every test the snapshot fails; [] means it is a candidate.
-// The same rule as app.js runScreener (price minPrice..maxPrice, cumulative
-// volume so far today >= minVol). Missing data is named (no_price,
-// no_volume) instead of being read as 0. That changes only the logged
-// reason, not who passes: a missing value failed the old comparisons too.
-function prefilterFailures(snap, { minPrice, maxPrice, minVol }) {
-  const failed = [];
-  const p = global.getLivePrice(snap);
-  if (p == null || !Number.isFinite(p)) failed.push('no_price');
-  else { if (p < minPrice) failed.push('price_below_min'); if (p > maxPrice) failed.push('price_above_max'); }
-  const v = snap.dailyBar?.v;
-  if (v == null) failed.push('no_volume');
-  else if (!(v >= minVol)) failed.push('volume_below_min');
-  return failed;
-}
+// The EDGE pre-filter (phase-10 spec §7.6 steps 1e and 1f) lives in
+// core/universe.js (runEdgePrefilter / edgePrefilterFailures), shared with
+// app.js runScreener: one predicate decides who passes and what is logged
+// for who doesn't, and the rule actually applied is written on the
+// scan_runs row (prefilter_rule, db/032).
 
 async function main() {
   global.state = {
@@ -200,6 +189,8 @@ async function main() {
     macroContext: null, // KNOWN GAP -- see header comment
     ownedScores: {},
     portfolio: [],
+    universeAssetCache: null, // core/universe.js asset list, fetched once per run
+    edgeLiquidityCache: null,
   };
   global.persist = () => {};
 
@@ -212,9 +203,10 @@ async function main() {
   const CODE_VERSION = codeVersionForRun(REPO_ROOT, 'log-signals-edge');
   global.VERSION = CODE_VERSION.app;
 
-  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession', 'barsFreshness']);
+  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession', 'barsFreshness', 'previousTradingDay']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
   loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT', 'fetchMultiBars', 'checkUnresolvedSymbols']);
+  loadReal('core/universe.js', ['runEdgePrefilter', 'edgePrefilterFailures', 'getEdgeLiquidity', 'getAssetListing', '_getAssetIndex', '_fetchSipDailyBars']);
   loadReal('core/news.js', ['fetchNewsForTickers']);
   loadReal('core/indicators.js', ['calcRSI', 'calcATR', 'calcTrimmedATR', 'calcMA', 'calcAvgVolume']);
   loadReal('core/edge-scoring.js', ['scoreStock', 'scoreThresholds']); // scoreThresholds: the display lines below read it
@@ -263,33 +255,22 @@ async function main() {
   const snapshots = await global.fetchSnapshots(TICKERS);
   global.checkUnresolvedSymbols(TICKERS, snapshots);
 
-  const minVol = global.state.settings.minVolume || 100000;
-  const minPrice = 1; // matches app.js runScreener's own minPrice (both ternary branches evaluate to 1 there -- replicated as-is, not fixed here, since changing live EDGE filter behavior wasn't asked for)
-  // One predicate decides both who passes and what is logged for who
-  // doesn't, so the two can't disagree (step 1e).
-  const filterLimits = { minPrice, maxPrice: 20, minVol };
-  const candidates = Object.entries(snapshots).filter(([, snap]) => prefilterFailures(snap, filterLimits).length === 0);
-  // Every universe symbol that is not a candidate, with the values the filter
-  // tested and EVERY test it failed. Zero extra requests (the snapshot
-  // already holds them); no bars, news or score. The pool is a function of
-  // the clock (cumulative volume), which confounds spec §3.4, and this makes
-  // its composition measurable per scan.
-  const candidateSet = new Set(candidates.map(([t]) => t));
-  const prefilterRejections = TICKERS.filter(t => !candidateSet.has(t)).map(t => {
-    const snap = snapshots[t];
-    if (!snap) return { symbol: t, price: null, iex_volume: null, failed: ['no_snapshot'] };
-    const p = global.getLivePrice(snap);
-    // iex_volume, not volume: fetchSnapshots requests feed:'iex', one venue
-    // (a median 6.3% of consolidated volume; scripts/probe-iex-vs-sip-volume.mjs).
-    // The key names what was measured (tests/prefilter-rejections.test.js).
-    return { symbol: t, price: Number.isFinite(p) ? p : null, iex_volume: snap.dailyBar?.v ?? null, failed: prefilterFailures(snap, filterLimits) };
+  // Pre-filter (step 1f): price $1-$20, listed and tradable, 20-session SIP
+  // average >= 1M; minVolume is only the IEX-today fallback's threshold.
+  // Candidates and rejections come from the one predicate, and the rule
+  // actually applied goes on the scan_runs row.
+  const { candidates, rejections: prefilterRejections, rule: prefilterRule } = await global.runEdgePrefilter(TICKERS, snapshots, {
+    today, minIexVolume: global.state.settings.minVolume || 100000,
   });
   if (prefilterRejections.length !== TICKERS.length - candidates.length) {
     // Never blocks logging: report it and keep going.
     console.log(`::error title=log-signals-edge: rejection count mismatch::${prefilterRejections.length} rejections vs ${TICKERS.length - candidates.length} prefiltered`);
   }
+  if (prefilterRule.rule !== 'trailing_sip_avg' || prefilterRule.asset_check_unavailable) {
+    console.log(`::warning title=log-signals-edge: pre-filter degraded::${JSON.stringify(prefilterRule)}`);
+  }
   const rejectionReasons = prefilterRejections.flatMap(r => r.failed).reduce((m, k) => (m[k] = (m[k] || 0) + 1, m), {});
-  console.log(`log-signals-edge: pre-filter rejected ${prefilterRejections.length} of ${TICKERS.length}; failed tests: ${JSON.stringify(rejectionReasons)}`);
+  console.log(`log-signals-edge: pre-filter (${prefilterRule.rule}) rejected ${prefilterRejections.length} of ${TICKERS.length}; failed tests: ${JSON.stringify(rejectionReasons)}`);
 
   const ctickers = candidates.map(([t]) => t);
   const { results: allBars, droppedSymbols: barsDroppedSymbols } = await global.fetchMultiBars(ctickers, 10000);
@@ -354,6 +335,7 @@ async function main() {
     prefiltered_count: TICKERS.length - candidates.length,
     // db/029: which symbols, at what price and volume, failing which tests.
     prefilter_rejections: prefilterRejections,
+    prefilter_rule: prefilterRule, // db/032: the rule this scan applied, with its parameters
     evaluated_count: scoredAll.length,
     fetch_failed_count: barsDroppedSymbols.length,
     aborted: false,

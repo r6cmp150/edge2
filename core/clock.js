@@ -342,6 +342,18 @@ function tradingDaysBetween(fromDateStr, toDateStr) {
   return n;
 }
 
+// The trading day before dateStr (YYYY-MM-DD): weekends and HOLIDAYS skipped.
+// Date arithmetic on the date string at UTC noon, never on a getPT() Date
+// (CLAUDE.md). Used by the EDGE liquidity gate as a CROSS-CHECK only: the
+// gate takes its recency date from the bars themselves (core/universe.js
+// getEdgeLiquidity), so a gap in HOLIDAYS can't make it reject every symbol.
+function previousTradingDay(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  do { d.setUTCDate(d.getUTCDate() - 1); }
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6 || HOLIDAYS.has(d.toISOString().slice(0, 10)));
+  return d.toISOString().slice(0, 10);
+}
+
 // How current the daily history a signal was scored on is (2026-10-22,
 // phase-10 spec §7.6, db/031). barsAsOf = the newest bar's session date;
 // barsAgeTradingDays = trading days from it to the scan date (0 = today's

@@ -850,6 +850,8 @@ let state = {
   _confirmCb: null,
   lastPassedCount: 0,
   lastScanDroppedCount: 0, // symbols dropped from the last scan's bars fetch by a chunk-level error (Bug 3) — persisted
+  lastPrefilterRule: null, // scan_runs.prefilter_rule shape, from the last runEdgePrefilter -- session only, not persisted
+  edgeLiquidityCache: null, // { date, bySymbol, requiredThrough } -- core/universe.js getEdgeLiquidity, one PT day, session only
   selectedUniverse: 'OTHER',
   notifications: {},     // push notification state — persisted
   ownedScores: {},        // ticker → {score, label, scoringVersion} snapshotted at each screener run, for owned positions that no longer clear the display threshold — persisted, so read ONLY through currentOwnedScore() (a stored score from another formula is not evaluated, never used)
@@ -1944,14 +1946,15 @@ async function runScreener() {
     const snapshots = await fetchSnapshots(TICKERS, updateScanProgress);
     checkUnresolvedSymbols(TICKERS, snapshots);
 
-    // 2. Filter price + volume
-    const minVol = state.settings.minVolume || 100000;
-    const minPrice = state.settings.includeUnder2 ? 1 : 1;
-    const candidates = Object.entries(snapshots).filter(([, snap]) => {
-      const p = getLivePrice(snap);
-      const v = snap.dailyBar?.v || 0;
-      return p >= minPrice && p <= 20 && v >= minVol;
+    // 2. Pre-filter (phase-10 §7.6 step 1f): price $1-$20, listed and
+    // tradable, and a 20-completed-session SIP average volume >= 1M. The
+    // one predicate the logger uses too (core/universe.js runEdgePrefilter).
+    // settings.minVolume is now only the fallback's threshold (today's IEX
+    // volume), used when the daily-bar fetch fails outright.
+    const { candidates, rule: prefilterRule } = await runEdgePrefilter(TICKERS, snapshots, {
+      today: ptDateStr(getPT()), minIexVolume: state.settings.minVolume || 100000,
     });
+    state.lastPrefilterRule = prefilterRule;
 
     state.lastPassedCount = candidates.length;
     persist('lastPassedCount');
@@ -2195,6 +2198,19 @@ function buildDroppedSuffixHtml() {
   return ` — <span class="ss-dropped">${n} could not be checked</span>`;
 }
 
+// The pre-filter rule the last scan actually ran (step 1f), said only when
+// it isn't the normal one: a fallback pool must not look like the normal
+// pool. Session-only state, so nothing shows before this session's scan.
+function buildPrefilterRuleSuffixHtml() {
+  const r = state.lastPrefilterRule;
+  if (!r) return '';
+  const notes = [];
+  if (r.rule === 'iex_today_fallback') notes.push("20-day volume history unavailable, so this pool used today's IEX volume (the old rule)");
+  if (r.asset_check_unavailable) notes.push('the listed/tradable check could not run');
+  if (r.volume_history_failed_symbols) notes.push(`${r.volume_history_failed_symbols} without volume history`);
+  return notes.map(t => ` — <span class="ss-dropped">${t}</span>`).join('');
+}
+
 function renderSignalsTab() {
   const container = document.getElementById('tab-content');
   updateBudgetBar();
@@ -2243,7 +2259,7 @@ function renderSignalsTab() {
       <p>Tap Refresh to run your first scan.</p>
     </div>`;
   } else if (!state.signals.length) {
-    html += `<div class="scan-summary">Market is quiet — no signals above threshold.${buildDroppedSuffixHtml()}</div>`;
+    html += `<div class="scan-summary">Market is quiet — no signals above threshold.${buildDroppedSuffixHtml()}${buildPrefilterRuleSuffixHtml()}</div>`;
     html += `<div class="empty-state">
       <div class="empty-icon">🔇</div>
       <p>Market is quiet right now. Try refreshing later.</p>
@@ -2258,7 +2274,7 @@ function renderSignalsTab() {
     const w   = unowned.filter(s => s.signal === 'WATCH').length;
     const total = TICKERS.length;
     const universe = state.selectedUniverse || 'OTHER';
-    html += `<div class="scan-summary">Scanned ${total} stocks <span class="ss-universe">[${universe}]</span> — <span class="ss-strong">${sb} strong buy</span>, <span class="ss-soft">${sfb} soft buy</span>, <span class="ss-watch">${w} watch</span>${buildDroppedSuffixHtml()}</div>`;
+    html += `<div class="scan-summary">Scanned ${total} stocks <span class="ss-universe">[${universe}]</span> — <span class="ss-strong">${sb} strong buy</span>, <span class="ss-soft">${sfb} soft buy</span>, <span class="ss-watch">${w} watch</span>${buildDroppedSuffixHtml()}${buildPrefilterRuleSuffixHtml()}</div>`;
 
     const filtered = getFilteredSignals();
     if (!filtered.length) {
@@ -3312,9 +3328,16 @@ async function openStockModal(ticker) {
       // unresolved case) if the asset-status check itself can't be
       // confirmed either way.
       if (intradayPanel.state === 'NO_DATA') {
-        const assetStatus = await fetchAssetStatus(ticker);
-        if (!assetStatus.failed && (assetStatus.tradable === false || assetStatus.status === 'inactive')) {
-          intradayPanel = { state: 'INACTIVE' };
+        // The list-based check first (it knows a removed symbol, which the
+        // per-ticker endpoint 404s on); the per-ticker one if it's unknown.
+        const listing = (await fetchHeldListing([ticker]))?.[ticker];
+        if (listing) {
+          if (listing !== 'listed') intradayPanel = { state: 'INACTIVE' };
+        } else {
+          const assetStatus = await fetchAssetStatus(ticker);
+          if (!assetStatus.failed && (assetStatus.tradable === false || assetStatus.status === 'inactive')) {
+            intradayPanel = { state: 'INACTIVE' };
+          }
         }
       }
       intradayPanelHtml = renderIntradayPanelModal(intradayPanel);
@@ -3775,6 +3798,21 @@ function buildAfterHoursWarningText() {
   return `After-hours entry. Your ${worstLabel} bought after the close or before the open (${worstStr}).${midClause} spread is wide, the book is thin, and you can't act on a gap before the open.`;
 }
 
+// Listing status for held or about-to-be-held tickers (phase-10 step 1f):
+// core/universe.js getAssetListing over the one cached asset list. null =
+// unknown (no keys, or the list couldn't be fetched), never "listed".
+async function fetchHeldListing(tickers) {
+  if (!state.settings.alpacaKey || !tickers.length) return null;
+  try { return await getAssetListing(tickers); }
+  catch (e) { console.warn('Listing check failed:', e.message); return null; }
+}
+
+function listingWarningText(ticker, listing) {
+  return listing === 'asset_not_tradable'
+    ? `${ticker} is listed but Alpaca marks it NOT TRADABLE. An order may not fill, and a price shown for it isn't a live market.`
+    : `${ticker} is not on Alpaca's list of active stocks: it has been delisted, merged or halted. Its last price is from before it stopped trading, so it can't be bought or sold at that price.`;
+}
+
 async function confirmAddPortfolio(ticker, btn) {
   const shares = parseFloat(document.getElementById('pf-shares').value);
   const price  = parseFloat(document.getElementById('pf-price').value);
@@ -3801,8 +3839,16 @@ async function confirmAddPortfolio(ticker, btn) {
   const nowPtForSession = getPT();
   const nowHHMMForSession = `${String(nowPtForSession.getHours()).padStart(2,'0')}:${String(nowPtForSession.getMinutes()).padStart(2,'0')}`;
   const buySessionForWarning = classifySession(date, nowHHMMForSession);
-  if (buySessionForWarning === 'AFTER_HOURS' || buySessionForWarning === 'PRE_MARKET') {
-    showConfirm(buildAfterHoursWarningText(), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');
+  // Listing (phase-10 step 1f, 2026-10-22): warn, never block, the same
+  // rule as the after-hours warning. 17 trades were recorded on stocks
+  // that had already stopped trading; this is where Roman sees it before
+  // one more is. Unknown (the list couldn't be fetched) says nothing.
+  const warnings = [];
+  const listing = await fetchHeldListing([ticker]);
+  if (listing && listing[ticker] !== 'listed') warnings.push(listingWarningText(ticker, listing[ticker]));
+  if (buySessionForWarning === 'AFTER_HOURS' || buySessionForWarning === 'PRE_MARKET') warnings.push(buildAfterHoursWarningText());
+  if (warnings.length) {
+    showConfirm(warnings.join('\n\n'), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');
     return;
   }
   await finalizeAddPortfolio(ticker, shares, price, date, btn, order);
@@ -4165,8 +4211,16 @@ async function renderPortfolioTab() {
   // still sitting in the portfolio). Batched here, once per ticker,
   // rather than inside sortedPortfolio.forEach below — that loop is a
   // plain synchronous forEach and can't await per card.
+  // Held-position listing check (phase-10 step 1f, 2026-10-22), for EVERY
+  // holding, from the one cached asset list: TWO was held for six weeks
+  // after it stopped trading with nothing here looking at it. The
+  // per-ticker check below ran only when today's minute bars were empty,
+  // and /v2/assets/{ticker} returns 404 for a removed symbol (AREN), which
+  // it couldn't tell from a connection failure. It stays as the fallback
+  // when the list itself can't be fetched.
+  const heldListing = await fetchHeldListing(tickers);
   const intradayAssetStatusByTicker = {};
-  if (!priceFetchFailed) {
+  if (!priceFetchFailed && !heldListing) {
     const noDataTickers = holdings.filter(p => {
       const cp = getLivePrice(snapshots[p.ticker]) || p.buyPrice;
       const panel = computeIntradayPanel({
@@ -4283,12 +4337,16 @@ async function renderPortfolioTab() {
           maxLossPct: state.settings.maxLossPct ?? DEFAULT_MAX_LOSS_PCT,
           todayOnly: true,
         });
+    const listing = heldListing ? heldListing[p.ticker] : null;
     if (intradayPanel.state === 'NO_DATA') {
       const assetStatus = intradayAssetStatusByTicker[p.ticker];
-      if (assetStatus && !assetStatus.failed && (assetStatus.tradable === false || assetStatus.status === 'inactive')) {
+      if ((listing && listing !== 'listed') || (assetStatus && !assetStatus.failed && (assetStatus.tradable === false || assetStatus.status === 'inactive'))) {
         intradayPanel = { state: 'INACTIVE' };
       }
     }
+    const listingBanner = listing && listing !== 'listed'
+      ? `<div class="pf-stale-banner">⚠ ${listingWarningText(p.ticker, listing)}</div>`
+      : '';
     const intradayLineHtml = renderIntradayLineCard(intradayPanel);
 
     // Snapshot the prior render's RSI before overwriting — calcPeakRiskScore
@@ -4517,6 +4575,7 @@ async function renderPortfolioTab() {
       : '';
 
     const cardHtml = `<div class="portfolio-card">
+      ${listingBanner}
       ${portBanner}
       ${fridayFlag}
       <div class="pf-header">
@@ -7958,7 +8017,8 @@ function renderSettingsTab() {
         </label>
       </div>
       <div class="settings-row" style="flex-direction:column;align-items:stretch;">
-        <div class="settings-label">Minimum Volume Threshold</div>
+        <div class="settings-label">Fallback volume threshold (today, IEX)</div>
+        <div class="settings-hint">The scan's normal gate is a 1M-share average over the last 20 sessions. This applies only if that history can't be fetched.</div>
         <div class="segmented mt4">
           ${[100000,250000,500000].map(v =>
             `<div class="seg-btn ${(s.minVolume||100000)===v?'active':''}"

@@ -880,7 +880,7 @@ days, not quiet ones.
      recording stays open. Trading days come from the holiday-aware
      `tradingDaysBetween`; `businessDaysBetween` counts weekdays and
      would flag every signal on the day after a holiday.
-1f. **Liquidity gate on trailing volume (DESIGN, not built; 2026-10-22).**
+1f. **Liquidity gate on trailing volume (BUILT 2026-10-22, floor 1M; see "As built" at the end of this step).**
    It replaces the volume half of the EDGE pre-filter, which today means
    "IEX volume so far today ≥ 100k" (§7.3), in **both** `app.js`
    `runScreener` and `scripts/log-signals-edge.mjs`, through one shared
@@ -897,10 +897,13 @@ days, not quiet ones.
      (Warrior's relative-volume baseline) already fetches SIP daily bars and
      caches an average daily. The bar fetch becomes one shared helper with
      a `completedOnly` option; Warrior's call keeps its current semantics
-     exactly (an equivalence test). **Finding, not fixed:** that function
+     exactly (an equivalence test). **Finding:** that function
      has no end date, so during market hours its 30-day average includes
      today's partial session, which makes Warrior's baseline mildly
-     clock-dependent. Recorded for Warrior; not changed here.
+     clock-dependent. **Fixed with the gate (Roman, 2026-10-22):** the
+     shared fetch's completed-sessions-only option is the fix for both;
+     the equivalence test shows the request and arithmetic are unchanged
+     apart from dropping today's bar.
    - **Only listed, tradable assets, in TWO places (2026-10-22).** 14 of the 239
      universe symbols are dead: AREN, CCO, EEX, GETY, HCWC, KORE, ORGN,
      PSKY, SBEV and WALD are not on Alpaca's active list, and DRCT, FLZH,
@@ -928,8 +931,8 @@ days, not quiet ones.
      guess. If the whole daily fetch fails, the scan still runs (the
      observer must not break the observed): it falls back to the current
      IEX-today rule, and that scan records which rule it used.
-     Recording the rule needs `scan_runs.prefilter_rule` (`trailing_20d` /
-     `iex_today_fallback`), a small migration, shown before building.
+     Recording the rule needs `scan_runs.prefilter_rule` (db/032, applied:
+     `trailing_sip_avg` / `iex_today_fallback`, with parameters).
    - **Rejection logging** carries over: `failed` gains
      `avg_volume_below_min` and the row gains `avg_volume_20d`.
    - **Unusual activity today stays in the score** (the volume-ratio and
@@ -940,6 +943,61 @@ days, not quiet ones.
      measured with the number.
    - **Sequence (Roman):** this design, then the buyable-count-per-day
      measurement under the new universe, then the number.
+   - **As built (2026-10-22, held for review).** `core/universe.js`:
+     `runEdgePrefilter` (both fetches, the rule, candidates and
+     rejections), `edgePrefilterFailures` (the one predicate),
+     `getEdgeLiquidity` (20 completed SIP sessions over a 45-calendar-day
+     window, cached per PT day), `getAssetListing` (from the one 24h asset
+     list) and `_fetchSipDailyBars` (shared with Warrior's
+     `_getSip30DayAvgVolume`). Called by `app.js` `runScreener` and
+     `scripts/log-signals-edge.mjs` alike; the logger writes
+     `prefilter_rule`. Differences from the design above:
+     - **Recency comes from the tape, not the calendar.** The 20 sessions
+       must reach the newest completed session any universe symbol has,
+       recorded as `requires_through`, with the HOLIDAYS-based
+       `previousTradingDay` beside it as a cross-check (a warning when
+       they differ). Reason: **`core/clock.js` HOLIDAYS ends at
+       2026-12-25.** With a calendar rule, the first 2027 holiday
+       (01-01) would make every symbol "stale" the next trading day and
+       empty the pool. That table needs its 2027 dates; it's a separate
+       item, and this rule no longer depends on it.
+     - **Rejection names:** `asset_inactive`, `asset_not_tradable`,
+       `no_volume_history` (fewer than 20 sessions, or a session without
+       a volume), `volume_history_unavailable` (that symbol's fetch
+       failed), `avg_volume_below_min`, `volume_history_stale`, plus the
+       existing price tests and `no_snapshot`. Rows gain
+       `avg_volume_20d` (SIP) and `volume_history_through`.
+     - **Failure handling:** no daily bars at all → the old IEX-today rule
+       (`iex_today_fallback`, with `reason`); some symbols lost →
+       those are rejected, and the rule carries
+       `volume_history_failed_symbols`; no asset list → the listing test
+       is skipped and the rule says `requires_listed_tradable: false`
+       with `asset_check_unavailable`. The app's scan line says so too.
+       `settings.minVolume` is now only the fallback's threshold
+       (relabelled in Settings).
+     - **Held positions:** one list-based lookup over every holding, a
+       banner on the card when a holding isn't listed or isn't tradable,
+       and the intraday line reads INACTIVE. The per-ticker
+       `/v2/assets/{ticker}` check stays only as the fallback: it 404s
+       on a removed symbol (AREN), which it couldn't tell from a
+       connection failure, so it never flagged one.
+     - **Add confirm:** the same lookup; a not-listed or not-tradable
+       ticker gets a warning with "Add anyway", beside the after-hours
+       warning, and never blocks.
+     - **First real run (dry run, 2026-10-22 23:5x PT, live Alpaca):**
+       82 of 239 pass (the measurement estimated about 89 at 1M); all 14
+       dead symbols are rejected. Recency alone catches CCO, GETY, HCWC,
+       PSKY and WALD; the asset check catches all 14, including DRCT,
+       FLZH, GDC and XXII, which still traded through 10-21 but which
+       Alpaca won't trade. Tests: `tests/edge-liquidity-gate.test.js`,
+       `tests/prefilter-rejections.test.js` and
+       `tests/rvol-fetchers.test.js`, with 19 mutations, all caught.
+     - **A short asset list is "unknown", not "everything delisted".**
+       Absence from the list is the evidence for `asset_inactive`, so a
+       response under 1,000 assets that didn't error (Alpaca returns
+       about 14,400) is treated as a failed list, and the listing test is
+       skipped and recorded. It's not allowed to empty the pool or put a
+       delisted banner on every holding.
 
    **Buyable per day, measured (2026-10-22, `node
    scripts/measure-gate-buyable.mjs`).** Every universe symbol is re-scored

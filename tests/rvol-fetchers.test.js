@@ -104,8 +104,10 @@ async function test30DayAvgVolumeComputesAverageAndCaches() {
     callLog.push({ path, params: { ...params } });
     assert.strictEqual(params.feed, 'sip');
     assert.strictEqual(params.timeframe, '1Day');
-    // 3 daily bars for A: volumes 100, 200, 300 -> avg 200.
-    return { bars: { A: [{ v: 100 }, { v: 200 }, { v: 300 }] }, next_page_token: null };
+    // 3 daily bars for A: volumes 100, 200, 300 -> avg 200. Dated, and in
+    // the past: since 2026-10-22 the average keeps completed sessions only,
+    // and an undated bar can't be shown to be complete.
+    return { bars: { A: [{ t: '2026-09-01T04:00:00Z', v: 100 }, { t: '2026-09-02T04:00:00Z', v: 200 }, { t: '2026-09-03T04:00:00Z', v: 300 }] }, next_page_token: null };
   };
   const { getSip30DayAvgVolume } = loadUniverse(mock);
 
@@ -129,6 +131,39 @@ async function test30DayAvgVolumeChunkSizeProvenSinglePage() {
   const worstCaseBars = chunkSize * 30; // 30-day lookback
   console.log(`RVOL_DAILY_AVG_CHUNK_SIZE=${chunkSize}, worst-case bars at 30 days = ${worstCaseBars}`);
   assert.ok(worstCaseBars < 10000, `chunk size ${chunkSize} does not provably stay single-page over 30 days (${worstCaseBars} >= 10000)`);
+}
+
+// Warrior's RVOL baseline, before and after completedOnly (2026-10-22). The
+// shared daily-bar fetch must leave the request and the arithmetic exactly
+// as they were, and change one thing: today's partial bar is no longer in
+// the average. OLD below is the pre-fix formula, verbatim (every returned
+// bar, sum of v over count), so this is an equivalence test, not a
+// re-statement of the new code.
+async function test30DayAvgVolumeEquivalentExceptTodaysPartialBar() {
+  const OLD = bars => bars.reduce((s, b) => s + (b.v || 0), 0) / bars.length;
+  const OLD_PARAM_KEYS = ['symbols', 'timeframe', 'start', 'limit', 'sort', 'feed', 'adjustment'];
+  loadUniverse(async () => ({ bars: {}, next_page_token: null })); // exposes the real core/clock.js
+  const today = global.ptDateStr(global.getPT());
+  const past = ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24'].map((d, i) => ({ t: d + 'T04:00:00Z', v: 1000 * (i + 1) }));
+  const partial = { t: today + 'T04:00:00Z', v: 37 }; // a few minutes of today's session
+  for (const [label, bars, expected] of [
+    ['before the open (no bar for today)', past, OLD(past)],
+    ["during the session (today's partial bar returned)", [...past, partial], OLD(past)],
+  ]) {
+    const seen = [];
+    const { getSip30DayAvgVolume } = loadUniverse(async (path, params) => { seen.push(params); return { bars: { A: bars }, next_page_token: null }; });
+    const r = await getSip30DayAvgVolume(['A']);
+    console.log(`${label}: avg=${r.avgVolumes.A} | old formula over the same response=${OLD(bars)} | expected=${expected}`);
+    assert.strictEqual(r.avgVolumes.A, expected, label);
+    assert.deepStrictEqual(Object.keys(seen[0]).sort(), [...OLD_PARAM_KEYS].sort(), 'the request carries exactly the old parameters');
+    assert.deepStrictEqual({ timeframe: seen[0].timeframe, limit: seen[0].limit, sort: seen[0].sort, feed: seen[0].feed, adjustment: seen[0].adjustment },
+      { timeframe: '1Day', limit: 10000, sort: 'asc', feed: 'sip', adjustment: 'all' });
+  }
+  // A cache written before the fix holds a partial-session average: dropped, not reused.
+  const { getSip30DayAvgVolume } = loadUniverse(async () => ({ bars: { A: past }, next_page_token: null }), { warrior30DayVolumeCache: { date: today, avgVolumes: { A: 999 } } });
+  const r = await getSip30DayAvgVolume(['A']);
+  assert.strictEqual(r.avgVolumes.A, OLD(past), 'a pre-fix cache entry for today is refetched');
+  assert.strictEqual(r.requests, 1);
 }
 
 // ── Pre-market-specific RVOL baseline (2026-09-04) ──────────────────────
@@ -232,6 +267,7 @@ async function testPreMarketVolumeHistoryFailedSymbolsMeansZeroUsableDays() {
   await run('rvol-fetchers: cumulative-volume chunk size is provably single-page over a full session', testCumulativeVolumeChunkSizeProvenSinglePage);
   await run('rvol-fetchers: 30-day avg volume computes correctly and caches per day', test30DayAvgVolumeComputesAverageAndCaches);
   await run('rvol-fetchers: 30-day-avg chunk size is provably single-page over 30 days', test30DayAvgVolumeChunkSizeProvenSinglePage);
+  await run("rvol-fetchers: 30-day avg is the old computation, minus today's partial bar", test30DayAvgVolumeEquivalentExceptTodaysPartialBar);
   await run('rvol-fetchers: _lastNTradingDayStrs skips weekends and holidays', testLastNTradingDayStrsSkipsWeekendsAndHolidays);
   await run('rvol-fetchers: pre-market volume history chunk size is provably single-page for one day', testPreMarketVolumeHistoryChunkSizeProvenSinglePage);
   await run('rvol-fetchers: pre-market volume history fetches once per trading day and caches', testPreMarketVolumeHistoryFetchesOncePerTradingDayAndCaches);

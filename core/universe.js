@@ -151,17 +151,53 @@ function _isEligibleInstrument(asset) {
 // file has nothing to reach.
 async function _getAssetIndex(client = _coreClient) {
   const cache = state.universeAssetCache;
-  if (cache && cache.fetchedAt && (Date.now() - new Date(cache.fetchedAt).getTime()) < ASSET_CACHE_MAX_AGE_MS) {
+  // outsideIndex (2026-10-22): a cache written before it existed can't tell
+  // "not tradable" from "not listed" (getAssetListing), so it's refetched.
+  if (cache && cache.fetchedAt && cache.outsideIndex && (Date.now() - new Date(cache.fetchedAt).getTime()) < ASSET_CACHE_MAX_AGE_MS) {
     return cache.assets;
   }
   const raw = await client.alpacaGet('/v2/assets', { status: 'active', asset_class: 'us_equity' }, ALPACA_TRADING_BASE);
+  const isIndexed = a => a.tradable && ALLOWED_EXCHANGES.has(a.exchange);
   const assets = (raw || [])
-    .filter(a => a.tradable && ALLOWED_EXCHANGES.has(a.exchange))
+    .filter(isIndexed)
     .map(a => ({ symbol: a.symbol, exchange: a.exchange, name: a.name, isEligibleInstrument: _isEligibleInstrument(a) }));
-  state.universeAssetCache = { fetchedAt: new Date().toISOString(), assets };
+  // Every OTHER active asset, symbol -> tradable (2026-10-22): an ETF held on
+  // ARCA or BATS is listed even though Warrior's index leaves it out, and an
+  // active-but-untradable asset is a different fact from a delisted one.
+  // From this same one call: no second fetch.
+  const outsideIndex = {};
+  (raw || []).forEach(a => { if (!isIndexed(a)) outsideIndex[a.symbol] = !!a.tradable; });
+  state.universeAssetCache = { fetchedAt: new Date().toISOString(), assets, outsideIndex };
   persist('universeAssetCache');
   console.log(`core/universe.js: refreshed asset list — ${raw.length} total active us_equity, ${assets.length} tradable on ${[...ALLOWED_EXCHANGES].join('/')}`);
   return assets;
+}
+
+// Listing status (2026-10-22, phase-10 §7.6 step 1f): 'listed',
+// 'asset_inactive' (not on Alpaca's active list: delisted, merged, or
+// removed) or 'asset_not_tradable' (listed, but Alpaca won't trade it), for
+// any symbols, from the one 24h asset list above. Used twice: EDGE's
+// universe check (don't buy a dead stock) and the held-position check (one
+// already owned has died). Throws if the list can't be fetched; callers
+// decide what "unknown" means for them, and it never means "listed".
+// It also throws on an implausibly short list: "absent from the list" is
+// the evidence for asset_inactive, so an empty or truncated response that
+// didn't error would otherwise call every symbol delisted (Alpaca returns
+// about 14,400 active us_equity assets; 1,000 is far below any real day).
+const ASSET_LIST_MIN_PLAUSIBLE = 1000;
+async function getAssetListing(symbols, client = _coreClient) {
+  const assets = await _getAssetIndex(client);
+  const outsideIndex = state.universeAssetCache?.outsideIndex || {};
+  const listSize = assets.length + Object.keys(outsideIndex).length;
+  if (listSize < ASSET_LIST_MIN_PLAUSIBLE) throw new Error(`asset list implausibly short (${listSize} assets): listing unknown`);
+  const indexed = new Set(assets.map(a => a.symbol));
+  const bySymbol = {};
+  for (const sym of symbols) {
+    if (indexed.has(sym)) bySymbol[sym] = 'listed';
+    else if (sym in outsideIndex) bySymbol[sym] = outsideIndex[sym] ? 'listed' : 'asset_not_tradable';
+    else bySymbol[sym] = 'asset_inactive';
+  }
+  return bySymbol;
 }
 
 function _assetIndexBySymbol(assets) {
@@ -560,45 +596,28 @@ const RVOL_DAILY_AVG_CHUNK_SIZE = 30;
 async function _getSip30DayAvgVolume(symbols, client = _coreClient) {
   const today = ptDateStr(getPT());
   let cache = state.warrior30DayVolumeCache;
-  if (!cache || cache.date !== today) cache = { date: today, avgVolumes: {} };
+  // completedOnly (2026-10-22): the average is over COMPLETED sessions.
+  // Until then this fetch had no end date, so during market hours the
+  // 30-day average included today's partial session, and the RVOL
+  // denominator depended on when the day's first fetch happened. A cache
+  // written before the fix holds such an average: discarded, not mixed in.
+  if (!cache || cache.date !== today || cache.completedOnly !== true) cache = { date: today, completedOnly: true, avgVolumes: {} };
 
   const missing = symbols.filter(sym => !(sym in cache.avgVolumes));
   let requests = 0;
-  const failedBatches = [];
+  let failedSymbols = [];
   if (missing.length) {
     const start = (() => { const d = new Date(); d.setDate(d.getDate() - RVOL_DAILY_AVG_LOOKBACK_DAYS); return d.toISOString().split('T')[0]; })();
-    await Promise.all(chunk(missing, RVOL_DAILY_AVG_CHUNK_SIZE).map(async batch => {
-      try {
-        const barsBySymbol = {};
-        let pageToken;
-        do {
-          const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: 10000, sort: 'asc', feed: 'sip', adjustment: HISTORICAL_BAR_ADJUSTMENT };
-          if (pageToken) params.page_token = pageToken;
-          const data = await client.alpacaGet('/stocks/bars', params);
-          requests++;
-          let pageRowCount = 0;
-          if (data.bars) {
-            for (const sym of Object.keys(data.bars)) {
-              pageRowCount += data.bars[sym].length;
-              (barsBySymbol[sym] = barsBySymbol[sym] || []).push(...data.bars[sym]);
-            }
-          }
-          pageToken = data.next_page_token || null;
-          assertPageNotSuspiciouslyFull('_getSip30DayAvgVolume', pageRowCount, params.limit, pageToken);
-        } while (pageToken);
-        batch.forEach(sym => {
-          const bars = barsBySymbol[sym];
-          if (bars && bars.length) {
-            const totalVol = bars.reduce((s, b) => s + (b.v || 0), 0);
-            cache.avgVolumes[sym] = totalVol / bars.length;
-          }
-        });
-      } catch (e) {
-        _rethrowIfProgrammerError(e);
-        console.warn(`_getSip30DayAvgVolume: batch error for ${batch.length} symbols: ${e.message}`);
-        failedBatches.push(batch);
+    const r = await _fetchSipDailyBars(missing, { start, completedBefore: today, chunkSize: RVOL_DAILY_AVG_CHUNK_SIZE, label: '_getSip30DayAvgVolume' }, client);
+    requests = r.requests;
+    failedSymbols = r.failedSymbols;
+    missing.forEach(sym => {
+      const bars = r.barsBySymbol[sym];
+      if (bars && bars.length) {
+        const totalVol = bars.reduce((s, b) => s + (b.v || 0), 0);
+        cache.avgVolumes[sym] = totalVol / bars.length;
       }
-    }));
+    });
   }
   state.warrior30DayVolumeCache = cache;
   persist('warrior30DayVolumeCache');
@@ -608,7 +627,198 @@ async function _getSip30DayAvgVolume(symbols, client = _coreClient) {
   // pillar without this. Not persisted (a real fetch failure should retry
   // next call, same as it already silently does today via the "missing"
   // filter above); this call's own failures only.
-  return { avgVolumes: cache.avgVolumes, requests, failedSymbols: failedBatches.flat() };
+  return { avgVolumes: cache.avgVolumes, requests, failedSymbols };
+}
+
+// ── Shared SIP daily-bar fetch (2026-10-22, phase-10 §7.6 step 1f) ───────
+// One fetcher for both daily-volume consumers: Warrior's RVOL baseline
+// (_getSip30DayAvgVolume above) and EDGE's liquidity gate
+// (getEdgeLiquidity below). completedBefore (a PT date string) keeps only
+// bars dated BEFORE it, so an average can't include today's partial
+// session. A daily bar's date is t.slice(0, 10) (Alpaca stamps it at
+// midnight ET in UTC), the same reading core/clock.js barsFreshness uses.
+// With completedBefore set, a bar without a t is dropped: a bar that can't
+// be dated can't be shown to be complete.
+// CLAUDE.md pagination rule: next_page_token followed to exhaustion, and
+// each caller's chunk size carries its own single-page proof as well.
+async function _fetchSipDailyBars(symbols, { start, completedBefore = null, chunkSize, label }, client = _coreClient) {
+  const barsBySymbol = {};
+  let requests = 0;
+  const failedSymbols = [];
+  await Promise.all(chunk(symbols, chunkSize).map(async batch => {
+    try {
+      const got = {};
+      let pageToken;
+      do {
+        const params = { symbols: batch.join(','), timeframe: '1Day', start, limit: 10000, sort: 'asc', feed: 'sip', adjustment: HISTORICAL_BAR_ADJUSTMENT };
+        if (pageToken) params.page_token = pageToken;
+        const data = await client.alpacaGet('/stocks/bars', params);
+        requests++;
+        let pageRowCount = 0;
+        if (data.bars) {
+          for (const sym of Object.keys(data.bars)) {
+            pageRowCount += data.bars[sym].length;
+            (got[sym] = got[sym] || []).push(...data.bars[sym]);
+          }
+        }
+        pageToken = data.next_page_token || null;
+        assertPageNotSuspiciouslyFull(label, pageRowCount, params.limit, pageToken);
+      } while (pageToken);
+      for (const sym of Object.keys(got)) {
+        barsBySymbol[sym] = completedBefore == null ? got[sym]
+          : got[sym].filter(b => typeof b.t === 'string' && b.t.slice(0, 10) < completedBefore);
+      }
+    } catch (e) {
+      _rethrowIfProgrammerError(e);
+      console.warn(`${label}: batch error for ${batch.length} symbols: ${e.message}`);
+      failedSymbols.push(...batch);
+    }
+  }));
+  return { barsBySymbol, requests, failedSymbols };
+}
+
+// ── EDGE liquidity gate (2026-10-22, phase-10 §7.6 step 1f) ──────────────
+// Replaces "IEX volume so far today >= 100k", which made the pool a
+// function of the clock (and of one venue's share of the tape), and passed
+// a dead stock forever when its IEX bar froze on a heavy final day (AREN,
+// PSKY, CCO). The rule: price $1-$20 (live), listed and tradable, and the
+// average SIP share volume over the last 20 COMPLETED sessions >= 1M, with
+// those sessions reaching the latest completed market session.
+// FLOOR 1,000,000 shares: Roman, 2026-10-22, from the buyable-per-day
+// measurement (spec §7.6 1f, with its revisit condition).
+const EDGE_LIQUIDITY_SESSIONS = 20;
+const EDGE_LIQUIDITY_MIN_AVG_SHARES = 1000000;
+const EDGE_PREFILTER_PRICE_MIN = 1;
+const EDGE_PREFILTER_PRICE_MAX = 20;
+// 45 calendar days hold enough completed sessions: the 44 days before today
+// contain at least 30 weekdays, at most 3 of them holidays, so >= 27 >= 20.
+// Single-page proof: 45 calendar days hold at most 33 weekdays, so a chunk
+// of 100 symbols returns at most 3,300 bars < the 10,000 limit (and
+// next_page_token is followed regardless).
+const EDGE_LIQUIDITY_LOOKBACK_CALENDAR_DAYS = 45;
+const EDGE_LIQUIDITY_CHUNK_SIZE = 100;
+
+// Per symbol: sessions (completed bars in the window), through (newest
+// completed bar's date) and avgVolume20d (mean of the last 20, or null when
+// there are fewer than 20 or any of them lacks a volume: not computed is
+// not 0). requiredThrough is the newest `through` across the symbols, i.e.
+// the latest completed session according to the market's own tape, not
+// the HOLIDAYS table (which a missing year would turn into "every symbol
+// stale"). The calendar's previousTradingDay is returned beside it as a
+// cross-check. Cached for the PT day in memory (not persisted): completed
+// sessions don't change during the day. A day with a failed batch isn't
+// cached, so the failure retries on the next scan.
+async function getEdgeLiquidity(symbols, today, client = _coreClient) {
+  const calendarPrevious = previousTradingDay(today);
+  const cached = state.edgeLiquidityCache;
+  if (cached && cached.date === today && symbols.every(s => s in cached.bySymbol)) {
+    return { bySymbol: cached.bySymbol, requiredThrough: cached.requiredThrough, calendarPrevious, requests: 0, failedSymbols: [] };
+  }
+  const d = new Date(today + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() - EDGE_LIQUIDITY_LOOKBACK_CALENDAR_DAYS);
+  const r = await _fetchSipDailyBars(symbols, { start: d.toISOString().slice(0, 10), completedBefore: today, chunkSize: EDGE_LIQUIDITY_CHUNK_SIZE, label: 'getEdgeLiquidity' }, client);
+  const failed = new Set(r.failedSymbols);
+  const bySymbol = {};
+  let requiredThrough = null;
+  for (const sym of symbols) {
+    if (failed.has(sym)) continue;
+    const bars = (r.barsBySymbol[sym] || []).slice().sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+    const last = bars.slice(-EDGE_LIQUIDITY_SESSIONS);
+    const through = bars.length ? bars[bars.length - 1].t.slice(0, 10) : null;
+    const computable = last.length === EDGE_LIQUIDITY_SESSIONS && last.every(b => Number.isFinite(b.v));
+    bySymbol[sym] = {
+      sessions: bars.length,
+      through,
+      avgVolume20d: computable ? last.reduce((s, b) => s + b.v, 0) / EDGE_LIQUIDITY_SESSIONS : null,
+    };
+    if (through && (requiredThrough == null || through > requiredThrough)) requiredThrough = through;
+  }
+  if (requiredThrough && requiredThrough !== calendarPrevious) {
+    console.warn(`getEdgeLiquidity: the newest completed session on the tape is ${requiredThrough}, the calendar says ${calendarPrevious}. Check core/clock.js HOLIDAYS.`);
+  }
+  if (!r.failedSymbols.length) state.edgeLiquidityCache = { date: today, bySymbol, requiredThrough };
+  return { bySymbol, requiredThrough, calendarPrevious, requests: r.requests, failedSymbols: r.failedSymbols };
+}
+
+// The EDGE pre-filter as ONE predicate, for app.js runScreener and
+// scripts/log-signals-edge.mjs alike (they were two copies of one rule).
+// Returns every test the symbol fails; [] = candidate. Missing data is
+// named, never read as 0. ctx.mode 'iex_today' is the fallback when the
+// daily-bar fetch fails outright: exactly the old rule (price + IEX volume
+// so far today), so that a failure narrows the gate back to what it was
+// rather than stopping the scan.
+function edgePrefilterFailures(symbol, snap, ctx) {
+  if (!snap) return ['no_snapshot'];
+  const L = ctx.limits;
+  const failed = [];
+  const p = getLivePrice(snap);
+  if (p == null || !Number.isFinite(p)) failed.push('no_price');
+  else { if (p < L.minPrice) failed.push('price_below_min'); if (p > L.maxPrice) failed.push('price_above_max'); }
+  if (ctx.listingBySymbol) {
+    const listing = ctx.listingBySymbol[symbol];
+    if (listing && listing !== 'listed') failed.push(listing);
+  }
+  if (ctx.mode === 'iex_today') {
+    const v = snap.dailyBar?.v;
+    if (v == null) failed.push('no_volume');
+    else if (!(v >= L.minIexVolume)) failed.push('volume_below_min');
+  } else {
+    const liq = ctx.liquidity.bySymbol[symbol];
+    if (!liq || ctx.liquidity.failedSet.has(symbol)) failed.push('volume_history_unavailable');
+    else {
+      if (liq.avgVolume20d == null) failed.push('no_volume_history');
+      else if (!(liq.avgVolume20d >= L.minAvgShares)) failed.push('avg_volume_below_min');
+      if (liq.through && ctx.liquidity.requiredThrough && liq.through < ctx.liquidity.requiredThrough) failed.push('volume_history_stale');
+    }
+  }
+  return failed;
+}
+
+// Runs the gate over a universe: the two fetches (asset list, daily bars),
+// the rule actually applied (scan_runs.prefilter_rule, db/032, with its
+// parameters), candidates, and a rejection row for every other symbol.
+// Never throws for a data failure (the observer must not break the
+// observed): no asset list -> the listing test is skipped and the rule
+// says so; no daily bars at all -> the IEX-today fallback, and the rule
+// says why. minIexVolume is the fallback's threshold only.
+async function runEdgePrefilter(tickers, snapshots, { today, minIexVolume }, client = _coreClient) {
+  const limits = { minPrice: EDGE_PREFILTER_PRICE_MIN, maxPrice: EDGE_PREFILTER_PRICE_MAX, minAvgShares: EDGE_LIQUIDITY_MIN_AVG_SHARES, minIexVolume };
+  let listingBySymbol = null, listingError = null;
+  try { listingBySymbol = await getAssetListing(tickers, client); }
+  catch (e) { _rethrowIfProgrammerError(e); listingError = e.message || String(e); }
+  let liquidity = null, liquidityError = null;
+  try {
+    const r = await getEdgeLiquidity(tickers, today, client);
+    if (r.failedSymbols.length >= tickers.length) liquidityError = `every daily-bar batch failed (${r.failedSymbols.length} symbols)`;
+    else liquidity = { bySymbol: r.bySymbol, failedSet: new Set(r.failedSymbols), requiredThrough: r.requiredThrough, calendarPrevious: r.calendarPrevious };
+  } catch (e) { _rethrowIfProgrammerError(e); liquidityError = e.message || String(e); }
+
+  const mode = liquidity ? 'trailing' : 'iex_today';
+  const rule = mode === 'trailing'
+    ? { rule: 'trailing_sip_avg', lookback_sessions: EDGE_LIQUIDITY_SESSIONS, min_avg_shares: limits.minAvgShares,
+        price_min: limits.minPrice, price_max: limits.maxPrice, requires_listed_tradable: !!listingBySymbol,
+        requires_through: liquidity.requiredThrough, calendar_previous_trading_day: liquidity.calendarPrevious }
+    : { rule: 'iex_today_fallback', min_volume: limits.minIexVolume, price_min: limits.minPrice, price_max: limits.maxPrice,
+        requires_listed_tradable: !!listingBySymbol, reason: liquidityError };
+  if (listingError) rule.asset_check_unavailable = listingError;
+  if (liquidity && liquidity.failedSet.size) rule.volume_history_failed_symbols = liquidity.failedSet.size;
+
+  const ctx = { mode, limits, listingBySymbol, liquidity };
+  const candidates = [], rejections = [];
+  for (const t of tickers) {
+    const snap = snapshots[t];
+    const failed = edgePrefilterFailures(t, snap, ctx);
+    if (!failed.length) { candidates.push([t, snap]); continue; }
+    const p = snap ? getLivePrice(snap) : null;
+    const liq = liquidity ? liquidity.bySymbol[t] : null;
+    // iex_volume, not volume: fetchSnapshots requests feed:'iex', one venue
+    // (tests/prefilter-rejections.test.js). avg_volume_20d is SIP.
+    rejections.push({
+      symbol: t, price: Number.isFinite(p) ? p : null, iex_volume: snap?.dailyBar?.v ?? null,
+      avg_volume_20d: liq?.avgVolume20d ?? null, volume_history_through: liq?.through ?? null, failed,
+    });
+  }
+  return { candidates, rejections, rule };
 }
 
 // ── Pre-market-specific RVOL baseline (2026-09-04, found live) ───────────
