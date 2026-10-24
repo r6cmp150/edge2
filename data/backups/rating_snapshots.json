@@ -23670,5 +23670,115 @@
     "volume_ratio": 0.325295766401273,
     "price": 13.93,
     "macro_condition": "SECTOR_WEAKNESS_BIOTECH"
+  },
+  {
+    "id": 2170,
+    "ticker": "QSI",
+    "captured_at": "2026-10-23T17:20:56.289+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 52.12765957446809,
+    "volume_ratio": 0.7675854201549246,
+    "price": 1.345,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 2171,
+    "ticker": "ATEC",
+    "captured_at": "2026-10-23T17:20:56.289+00:00",
+    "score": 70,
+    "label": "SOFT BUY",
+    "rsi": 57.058823529411754,
+    "volume_ratio": 1.673336563385955,
+    "price": 11.32,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 2172,
+    "ticker": "LFST",
+    "captured_at": "2026-10-23T17:20:56.289+00:00",
+    "score": 70,
+    "label": "SOFT BUY",
+    "rsi": 58.992805755395686,
+    "volume_ratio": 0.6214084237701392,
+    "price": 12.74,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 2173,
+    "ticker": "ANGO",
+    "captured_at": "2026-10-23T17:20:56.289+00:00",
+    "score": 65,
+    "label": "SOFT BUY",
+    "rsi": 28.658951667801233,
+    "volume_ratio": 0.6753685128934971,
+    "price": 12.405,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 2174,
+    "ticker": "NEOG",
+    "captured_at": "2026-10-23T17:20:56.289+00:00",
+    "score": 65,
+    "label": "SOFT BUY",
+    "rsi": 40.02642007926022,
+    "volume_ratio": 0.38943788341302366,
+    "price": 12.29,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 2175,
+    "ticker": "QSI",
+    "captured_at": "2026-10-23T17:21:45.36+00:00",
+    "score": 75,
+    "label": "SOFT BUY",
+    "rsi": 52.296819787985875,
+    "volume_ratio": 0.7876836282663603,
+    "price": 1.35,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 2176,
+    "ticker": "ATEC",
+    "captured_at": "2026-10-23T17:21:45.36+00:00",
+    "score": 70,
+    "label": "SOFT BUY",
+    "rsi": 57.12603062426382,
+    "volume_ratio": 1.673704307778327,
+    "price": 11.325,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 2177,
+    "ticker": "LFST",
+    "captured_at": "2026-10-23T17:21:45.36+00:00",
+    "score": 70,
+    "label": "SOFT BUY",
+    "rsi": 59.139784946236546,
+    "volume_ratio": 0.6218445469033371,
+    "price": 12.75,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 2178,
+    "ticker": "ANGO",
+    "captured_at": "2026-10-23T17:21:45.36+00:00",
+    "score": 65,
+    "label": "SOFT BUY",
+    "rsi": 28.658951667801233,
+    "volume_ratio": 0.6753685128934971,
+    "price": 12.405,
+    "macro_condition": "GEOPOLITICAL"
+  },
+  {
+    "id": 2179,
+    "ticker": "NEOG",
+    "captured_at": "2026-10-23T17:21:45.36+00:00",
+    "score": 65,
+    "label": "SOFT BUY",
+    "rsi": 39.86754966887416,
+    "volume_ratio": 0.39164473140951606,
+    "price": 12.28,
+    "macro_condition": "GEOPOLITICAL"
   }
 ]
