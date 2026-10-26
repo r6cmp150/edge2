@@ -1016,17 +1016,21 @@ days, not quiet ones.
        HOLIDAYS' last year.
        **The table was never complete, not just short.** A horizon guard
        catches the end but not a hole in the middle, and 2025-01-09 was a
-       hole for almost two years. **Planned, not built:**
-       `scripts/check-market-calendar.mjs`, one command that diffs HOLIDAYS
-       and EARLY_CLOSES against Alpaca's `/v2/calendar` for every year each
-       table covers, to be run whenever the horizon guard fires, so that
-       adding next year also verifies the years already there. (A test
-       can't call Alpaca, which is why it's a script.) The same diff, run
-       by hand on 2026-10-23: HOLIDAYS is complete for 2024–2027, and
-       EARLY_CLOSES starts at 2026, so 2024–2025's six early closes are
-       absent. That has no live effect, because no stored data predates
-       2026; they get added if anything ever classifies a session from
-       those years. The guard's failure message points here.
+       hole for almost two years. **`node scripts/check-market-calendar.mjs`**
+       (committed 2026-10-26) diffs HOLIDAYS and EARLY_CLOSES against
+       Alpaca's `/v2/calendar` for every year each table covers, and exits
+       1 on any difference. Run it whenever the horizon guard fires, so
+       that adding next year also verifies the years already there. (A
+       test can't call Alpaca, which is why it's a script.) It was first
+       run by hand on 2026-10-23 and its output went into the table as
+       data. Until it was committed, that was four years of entries backed
+       by a command nobody could re-run, the same "run once and discarded"
+       shape this section exists to stop. Result on 2026-10-26: HOLIDAYS
+       matches for 2024–2027 and EARLY_CLOSES for 2026–2027. 2024–2025's six
+       early closes are absent by decision (no stored data predates 2026)
+       and print as NOTEs, not errors. Checked against three mutations
+       (a missing holiday, an extra one, a wrong early-close value), all
+       caught. The guard's failure message names the command.
      - **No list is "unknown", whatever form it takes.** An absent cache,
        a malformed one (whatever localStorage hands back), a `/v2/assets`
        response that isn't a list, and a short list all end as "listing

@@ -10,9 +10,9 @@
 // /v2/calendar, every weekday it doesn't list as a session. That check also
 // found 2025-01-09 (the national day of mourning for President Carter),
 // which this table never had. So it was never complete, not just short:
-// adding a year also means re-checking the years already here (see
-// tests/calendar-horizon.test.js's header for the check and the planned
-// scripts/check-market-calendar.mjs).
+// adding a year also means re-checking the years already here:
+// `node scripts/check-market-calendar.mjs` diffs this table and
+// EARLY_CLOSES against Alpaca's calendar for every year they cover.
 const HOLIDAYS = new Set([
   '2024-01-01','2024-01-15','2024-02-19','2024-03-29','2024-05-27',
   '2024-06-19','2024-07-04','2024-09-02','2024-11-28','2024-12-25',

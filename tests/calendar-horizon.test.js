@@ -15,11 +15,12 @@
 // market calendar (/v2/calendar, which a test can't call): every weekday it
 // doesn't list is a closure that must be in HOLIDAYS, and every session
 // closing before 16:00 ET must be in EARLY_CLOSES, for each year each table
-// covers. That diff was run by hand on 2026-10-23 (2024-2027: HOLIDAYS
-// complete; EARLY_CLOSES starts at 2026, so 2024-2025's six early closes are
-// absent, with no live effect). The planned one-command version is
-// scripts/check-market-calendar.mjs (spec §7.6 1f). NOT BUILT YET: whoever
-// adds 2028, build it first and run it.
+// covers. One command does it:
+//
+//   node scripts/check-market-calendar.mjs
+//
+// (2026-10-26: HOLIDAYS 2024-2027 and EARLY_CLOSES 2026-2027 match; the six
+// 2024-2025 early closes are absent by decision and print as NOTEs.)
 'use strict';
 const assert = require('assert');
 const { readSource, run } = require('./_lib');
@@ -33,7 +34,7 @@ run(`HOLIDAYS reaches at least ${HORIZON_DAYS} days ahead`, () => {
   const horizon = new Date(global.__today + 'T12:00:00Z'); horizon.setUTCDate(horizon.getUTCDate() + HORIZON_DAYS);
   const need = horizon.toISOString().slice(0, 10);
   console.log(`today ${global.__today} | HOLIDAYS ends ${latest} | needs to reach ${need}`);
-  assert.ok(latest >= need, `core/clock.js HOLIDAYS ends ${latest}, less than ${HORIZON_DAYS} days ahead of ${global.__today}. Add next year's market closures (and EARLY_CLOSES) from Alpaca /v2/calendar, AND diff every year already in both tables against it (see this file's header: scripts/check-market-calendar.mjs, build it if it isn't there yet).`);
+  assert.ok(latest >= need, `core/clock.js HOLIDAYS ends ${latest}, less than ${HORIZON_DAYS} days ahead of ${global.__today}. Add next year's market closures (and EARLY_CLOSES) from Alpaca /v2/calendar, then run \`node scripts/check-market-calendar.mjs\`, which also verifies every year already in both tables.`);
 });
 
 run('EARLY_CLOSES is kept as far ahead as HOLIDAYS', () => {
