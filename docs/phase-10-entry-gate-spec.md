@@ -1233,6 +1233,63 @@ days, not quiet ones.
          should be a re-aim at the 07:30–11:00 window instead.
        - Warrior's 25 of 384 is a different shape (a frequent cron, almost
          all dropped); the slot matching is approximate for it.
+       - **RE-AIMED 2026-10-27** (arithmetic in each workflow's header).
+         Model: Tue–Fri median delay per declared cron, least squares over
+         the ten crons declared 07:30–15:00Z: `delay = 412.7 − 11.19 ×
+         declared_hour` minutes, with a spread around each median of −26 /
+         +132 min (p10/p90). Mondays ran +113 min later (only 3 Mondays,
+         so not special-cased). The declared times are solved from target
+         landings in PST:
+         - **EDGE:** 8 slots, 10:35, 11:15, 11:50, 12:25, 13:05, 13:40,
+           14:15 and 14:55Z, landing 07:30 to 11:00 PST every 30 min.
+         - **Warrior:** cut from 32 a day to 9. Seven modelled slots
+           (09:20, 09:40, 10:04, 10:15, 10:30, 10:55 and 11:10Z) land
+           06:30 to 08:00 PST every 15 min; 10:04 is off the round hour,
+           the most contended minute. Two **Monday-insurance** slots at
+           07:32 and 08:20Z are declared at the old EDGE slots' *measured*
+           times, not the model. On the three late Mondays those landed
+           about 06:55 and 07:40 PT; on other days they land before the
+           open and no-op. A +113-min Monday would otherwise put every
+           Warrior slot past 08:00, on Roman's strongest day and the day he
+           starts Warrior.
+         - **We expect this schedule to be wrong, and a week of
+           `workflow_runs` will correct it.** Five of EDGE's eight and five
+           of Warrior's modelled seven sit in 09:40–13:45Z, where nothing
+           has ever been declared. That's a line drawn between two islands
+           of data, not interpolation inside a sampled region. Its first
+           job is to be falsified, not defended.
+         - **The islands are different workflows, a confound that can't be
+           ruled out.** All six early points are the EDGE logger and all
+           four late ones are the movers capture. Re-fit on EDGE's own six
+           points, the line is 412.6 − 11.20 × h (declared times move by
+           at most a minute), and it predicts the movers island within 6
+           min. That's consistent with an hour effect, but a workflow
+           offset that happens to match it would look the same. The
+           movers' own four points (75 min of declared range) give a
+           steeper −17.4/h, which would put the early slots about 35 min
+           earlier.
+         - **Oversampling is intentional.** With −26/+132 min around each
+           median, EDGE's eight slots spread across roughly 07:00–13:00 PST,
+           with three to five expected inside 07:30–11:00. Nothing reads a
+           slot as a scan time: `declared_cron` is used only by the
+           instrumentation, and scans are timed by `scan_runs.started_at`
+           and `signal_log.first_shown_at`. A landing before 07:30 is
+           harmless, because the entry gate blocks buying, not scanning.
+         - **The spacing question, answered:** two deliveries 40 min apart
+           both scan. But deliveries *bunch*: EDGE slots declared 25 min
+           apart landed a median ~14 min apart (4–56), and 23 of 66 were
+           skipped as within 30 min of a scan that did run. Those cost scan
+           count, not 30-minute coverage. What would have silently halved
+           coverage is the *new* Warrior schedule, whose 15-min slots meet
+           the shared 30-min rule. So spacing is now per engine: EDGE 30,
+           Warrior 15 (`scan-gate.mjs` `SPACING_MIN_BY_ENGINE`).
+         - **Report after one week, per slot, Mondays broken out first:**
+           delivered against declared, and landing time, for every slot. For Warrior, if cutting
+           density raises the delivered *rate*, that contradicts the
+           "fire often, need many chances" premise its schedule was built
+           on (2026-09-11). It gets stated as a finding, so the same
+           mistake isn't available the next time something looks
+           unreliable.
        - **The browser's scan is the only thing covering 10:00–12:00, and
          it writes nothing.** When Roman opens the app at 10:30, the scan
          he sees runs `runEdgePrefilter` and scores the same way, but
@@ -1252,9 +1309,20 @@ days, not quiet ones.
          history more than one trading day old (dead or halted), and not
          scored on yesterday's bar in the first two minutes after the
          open.
-       - **Day one is 2026-10-27; day ten is 2026-11-09** (no market
-         holidays in between). The count is evaluated after the 11-09
-         close, and then on every later day over the trailing ten.
+       - ~~Day one is 2026-10-27; day ten is 2026-11-09.~~ **RESTARTED
+         (2026-10-27):** the crons are re-aimed on 2026-10-27 (pushed
+         after Roman's review; EDGE 07:30–11:00 PST, Warrior 06:30–08:00
+         PST, see below). A re-aim mid-count changes the yardstick
+         underneath it, and measuring a schedule change as a market
+         change is the error made with Friday's zeros. So the count
+         starts over from the **first full day on the new schedule**. The
+         schedule is aimed at PST, and 10-28..10-30 run it on PDT (an hour
+         later in PT), which isn't its steady state. **Day one is Monday
+         2026-11-02; day ten is 2026-11-13** (no market holidays in
+         between; 11-11 is a trading day). The count is evaluated after
+         the 11-13 close, and then on every later day over the trailing
+         ten. Any later re-aim restarts it the same way, with its date
+         written here.
        - **The yardstick (APPROVED, Roman, 2026-10-27):** the per-day count
          from `measure-gate-buyable.mjs` at the 1M floor: distinct symbols
          buyable at any of **07:30, 09:00, 10:00, 11:00 and 12:00 PT**,

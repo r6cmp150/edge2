@@ -70,9 +70,58 @@ name: Log Warrior signals
 # anon (no UPDATE, no DELETE), so a wrong row has no cleanup path short of
 # the SQL editor, which is exactly why manual runs still default to safe
 # and schedule runs don't get a dry-run option at all.
+#
+# RE-AIMED AND CUT 2026-10-27 (phase-10 spec §7.6 1f). The every-15-min
+# schedule above rested on "fire often, need many chances". Measured
+# 10-09..10-26 in workflow_runs: 25 of 384 declared firings delivered (93%
+# dropped), so density bought drops, not chances. Cut to 7 slots, roughly
+# EDGE's density (whose 6 delivered 66 of 66). If the delivered RATE rises
+# after the cut, that contradicts the design premise above, and is reported
+# per slot (delivered vs declared), not as a total.
+# TARGET: 06:30-08:00 PST, every 15 min. The scan gate's spacing for
+# WARRIOR is 15 min (scripts/lib/scan-gate.mjs), so all 7 can scan.
+# Same model and solve as log-signals-edge.yml's header (delay = 412.7 -
+# 11.19 x declared_hour, Tue-Fri medians 07:30-15:00Z):
+#   06:30 PST -> 14:30Z -> 09:20Z (delay 308)   07:30 -> 15:30Z -> 10:30Z (294)*
+#   06:45     -> 14:45Z -> 09:40Z (305)         07:45 -> 15:45Z -> 10:55Z (291)
+#   07:00     -> 15:00Z -> 10:00Z (301)         08:00 -> 16:00Z -> 11:10Z (287)*
+#   07:15     -> 15:15Z -> 10:15Z (298)
+#   * moved 5 min earlier off EDGE's 10:35Z / 11:15Z minutes.
+# 09:20Z and 09:40Z are inside the measured range (EDGE's old 09:10Z/09:40Z
+# slots); the rest sit in the 09:40-13:45Z range where nothing has EVER
+# been declared. That is a line drawn between two islands of data, not
+# interpolation inside a sampled region, and the true delay there could be
+# anything. WE EXPECT THIS SCHEDULE TO BE WRONG, and a week of
+# workflow_runs will correct it. Its first job is to be falsified; don't
+# defend it. The two islands are also different workflows (EDGE logger
+# 07:30-09:40Z, movers capture 13:45-15:00Z), so the "delay falls through
+# the UTC day" trend could be a workflow difference. EDGE's own line
+# predicts the movers island within 6 min, but can't rule that out.
+# OVERSAMPLING, ON PURPOSE: with a spread of -26/+132 min around each
+# median, these slots land across roughly 06:00-10:00, not on their
+# targets. A slot is a chance, not a scan time: nothing may read "the
+# 07:00 slot" as a 07:00 scan (scan_runs.started_at is the time).
+# MONDAY SLOTS (07:32Z, 08:20Z): Mondays ran ~113 min later (3 Mondays),
+# which would put every slot above past 08:00, outside Warrior's window,
+# on Roman's strongest day and the day he plans to start Warrior. These two
+# are declared at the old EDGE slots' MEASURED times (not the model): on
+# those Mondays 07:30Z landed ~06:55 PT and 08:20Z ~07:40. On other days
+# they land ~05:05 and ~05:45, before the open, and no-op in seconds.
+# (Measured on the EDGE workflow, so the same workflow caveat applies.)
+# 10:04Z, not 10:00Z: a round hour is the most contended minute in
+# GitHub's queue.
+# Until 11-01 (PDT) each lands an hour later in PT, about 07:30-09:00.
 on:
   schedule:
-    - cron: '10,25,40,55 13-20 * * 1-5'
+    - cron: '32 7 * * 1-5'   # Monday insurance: Mon ~06:55 PST, other days pre-open no-op
+    - cron: '20 8 * * 1-5'   # Monday insurance: Mon ~07:40 PST, other days pre-open no-op
+    - cron: '20 9 * * 1-5'   # -> ~06:30 PST
+    - cron: '40 9 * * 1-5'   # -> ~06:45
+    - cron: '4 10 * * 1-5'   # -> ~07:04 (off the round hour)
+    - cron: '15 10 * * 1-5'  # -> ~07:15
+    - cron: '30 10 * * 1-5'  # -> ~07:30
+    - cron: '55 10 * * 1-5'  # -> ~07:45
+    - cron: '10 11 * * 1-5'  # -> ~08:00
   workflow_dispatch:
     inputs:
       dry_run:

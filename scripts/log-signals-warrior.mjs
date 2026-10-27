@@ -57,7 +57,7 @@ import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
-import { scheduledScanGate, SPACING_MIN } from './lib/scan-gate.mjs';
+import { scheduledScanGate } from './lib/scan-gate.mjs';
 import { codeVersionForRun, triggerTypeForRun } from './lib/code-version.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -202,7 +202,7 @@ async function main() {
   // delivers these crons hours late and the window turned almost every
   // firing into a silent exit-0 no-op. Rule and rationale live in
   // scripts/lib/scan-gate.mjs: scan iff the regular session is open and
-  // no WARRIOR scan_runs row started in the last SPACING_MIN minutes.
+  // no WARRIOR scan_runs row started in the last spacingMinFor(WARRIOR) minutes.
   // Applies ONLY to a real scheduled firing -- a manual workflow_dispatch
   // always runs, for testing/debugging.
   // The no-op decision is made here and reported ONCE, below, either way.
@@ -215,7 +215,7 @@ async function main() {
     if (!gate.proceed) {
       noopReason = gate.reason;
       console.log(`log-signals-warrior: ${gate.reason} (minutesSinceOpen=${gate.minutesSinceOpen}). No-op: no scan_runs row written, no Alpaca request made.`);
-    } else console.log(`log-signals-warrior: scheduled firing at ${gate.hhmm} PT, minutesSinceOpen=${gate.minutesSinceOpen}, regular session open, no WARRIOR scan in the last ${SPACING_MIN} min -- proceeding with a real scan.`);
+    } else console.log(`log-signals-warrior: scheduled firing at ${gate.hhmm} PT, minutesSinceOpen=${gate.minutesSinceOpen}, regular session open, no WARRIOR scan in the last ${gate.spacingMin} min -- proceeding with a real scan.`);
   }
   reportNoopDecision(noopReason !== null, noopReason);
   if (noopReason !== null) return;

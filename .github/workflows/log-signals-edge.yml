@@ -18,15 +18,49 @@ name: Log EDGE signals
 # nearly every delivery into a silent no-op (10 of 20 trading days had no
 # EDGE row at all).
 #
-# TARGET: deliveries inside 13:30-15:00Z (6:30-8:00am PDT). A straight-line
-# fit through the 06:00Z and 14:00Z points puts that at declared ~07:50-
-# 09:35Z, so six entries across 07:30-09:40Z. THIS IS A FIT THROUGH AN
-# UNINSTRUMENTED RANGE: nothing in this repo has ever declared a cron
-# between 08:00Z and 13:45Z, so the interpolation spans exactly the part we
-# care about. Revisit after one week of real deliveries (from 2026-10-12):
-# pull actual_fired_at by declared_cron from workflow_runs (filter
-# workflow_name <> 'db023-verify' -- a permanent verification row; see
-# docs/phase-9-entry-exit-spec.md) and re-aim.
+# RE-AIMED 2026-10-27 (phase-10 spec §7.6 1f, "THE BOTTLENECK HAS MOVED").
+# The 07:30-09:40Z schedule below this line's history landed 05:40-07:37
+# PDT (66 of 66 delivered, 4.5-10h late): the first hour, which the timing
+# analysis rules out, and none of the 07:30-11:00 PT window it supports.
+# Qualifying signals on 10-23 and 10-26 appeared at 10:00-12:00, after the
+# last scan.
+#
+# TARGET: 07:30-11:00 PST, one landing every 30 min (8 slots), aimed at
+# PST because DST ends 2026-11-01 and the count restarts on the new clock.
+# Until then (10-28..10-30, PDT) every landing is one hour later in PT
+# wall clock, about 08:30-12:00: still in session.
+# MODEL, from workflow_runs 10-12..10-26, Tue-Fri only, the median delay
+# of each of the ten crons declared 07:30-15:00Z:
+#   07:30Z 332 | 07:55Z 312 | 08:20Z 326 | 08:45Z 315 | 09:10Z 319 |
+#   09:40Z 297 | 13:45Z 265 | 14:30Z 251 | 14:45Z 242 | 15:00Z 246 (min)
+#   least squares: delay = 412.7 - 11.19 x declared_hour (minutes)
+# SOLVE: landing L = D + delay(D)/60, so D = (L - 412.7/60) / (1 - 11.19/60).
+# Each target, PST -> UTC (+8h) -> declared (rounded to 5 min):
+#   07:30 -> 15:30Z -> 10:35Z (delay 294)    09:30 -> 17:30Z -> 13:05Z (266)
+#   08:00 -> 16:00Z -> 11:15Z (287)          10:00 -> 18:00Z -> 13:40Z (260)
+#   08:30 -> 16:30Z -> 11:50Z (280)          10:30 -> 18:30Z -> 14:15Z (253)
+#   09:00 -> 17:00Z -> 12:25Z (274)          11:00 -> 19:00Z -> 14:55Z (246)
+# SPREAD around a median: p10 -26 min, p90 +132 min (late is the long tail).
+# MONDAYS ran +113 min later (3 Mondays; not special-cased, revisit).
+# WE EXPECT THIS SCHEDULE TO BE WRONG, and a week of workflow_runs will
+# correct it. Five of these eight sit between 09:40Z and 13:45Z, where
+# nothing has EVER been declared: a line drawn between two islands of data,
+# not interpolation inside a sampled region. The true delay there could
+# be anything. Its first job is to be falsified; don't defend it. And the
+# two islands are different workflows (this file 07:30-09:40Z, the movers
+# capture 13:45-15:00Z). Re-fit on this file's own six points alone, the
+# line is 412.6 - 11.20 x h (declared times move by at most a minute), and
+# it predicts the movers island within 6 min. That's consistent with an
+# hour effect, but can't rule out a workflow difference that happens to
+# match one.
+# OVERSAMPLING, ON PURPOSE: with -26/+132 min around each median, eight
+# slots spread across roughly 07:00-13:00 PST, and three to five are
+# expected inside 07:30-11:00. A slot is a chance, not a scan time.
+# Nothing reads "the 07:30 slot" as a 07:30 scan: scans are timed by
+# scan_runs.started_at / signal_log.first_shown_at, and a landing before
+# 07:30 is harmless (the entry gate blocks buying, not scanning).
+# CHECK after one week, PER SLOT (exclude workflow_name 'db023-verify'):
+# delivered vs declared, landing time, and Mondays broken out first.
 #
 # Missing the target is no longer fatal: scripts/lib/scan-gate.mjs scans
 # on ANY delivery that lands in the regular session (subject to 30-min
@@ -35,14 +69,14 @@ name: Log EDGE signals
 # signal_log means that when this schedule works, a symbol's row is its
 # morning sighting.
 #
-# DST -- NOV 1, 2026: ET falls back, the open moves from 13:30Z to 14:30Z,
-# and the target becomes 14:30-16:00Z. Shift every entry below +1h at that
-# point (and back -1h on the March DST change). The scan gate is DST-safe
-# on its own (it reads PT wall clock); only the AIM changes.
+# DST: this schedule is aimed at PST (UTC-8). On the March 2027 change
+# back to PDT, every landing moves an hour LATER in PT wall clock: re-aim
+# then, from that season's workflow_runs, not by a blind -1h. The scan
+# gate is DST-safe on its own (it reads PT wall clock); only the AIM moves.
 #
-# Alpaca rate budget: unchanged per run (~11 req, scales with filtered
-# candidates); no entry shares a minute with capture-movers-snapshot
-# (13:45/14:30/14:45/15:00Z) or backup-tables (06:00Z).
+# Alpaca rate budget: unchanged per run; no entry shares a minute with
+# capture-movers-snapshot (13:45/14:30/14:45/15:00Z), backup-tables
+# (06:00Z) or log-signals-warrior (09:20-11:10Z).
 #
 # dry_run input still defaults to true for a MANUAL workflow_dispatch --
 # unaffected by the schedule going live in --write mode below. A schedule-
@@ -54,12 +88,14 @@ name: Log EDGE signals
 # SQL editor.
 on:
   schedule:
-    - cron: '30 7 * * 1-5'
-    - cron: '55 7 * * 1-5'
-    - cron: '20 8 * * 1-5'
-    - cron: '45 8 * * 1-5'
-    - cron: '10 9 * * 1-5'
-    - cron: '40 9 * * 1-5'
+    - cron: '35 10 * * 1-5'  # -> ~07:30 PST
+    - cron: '15 11 * * 1-5'  # -> ~08:00
+    - cron: '50 11 * * 1-5'  # -> ~08:30
+    - cron: '25 12 * * 1-5'  # -> ~09:00
+    - cron: '5 13 * * 1-5'   # -> ~09:30
+    - cron: '40 13 * * 1-5'  # -> ~10:00
+    - cron: '15 14 * * 1-5'  # -> ~10:30
+    - cron: '55 14 * * 1-5'  # -> ~11:00
   workflow_dispatch:
     inputs:
       dry_run:

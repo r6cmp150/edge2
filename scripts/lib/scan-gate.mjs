@@ -31,6 +31,19 @@
 
 export const SPACING_MIN = 30;
 
+// Per engine (2026-10-27). One shared 30 min would quietly halve Warrior's
+// re-aimed schedule: its slots aim 15 min apart across 06:30-08:00 PT, so at
+// 30-min spacing at most 4 of its 7 could ever scan. EDGE's slots aim 30
+// min apart, so it keeps 30. The rule's job is unchanged: a bunched late
+// cluster must not become several scans of the same few minutes (measured
+// 10-12..10-26: EDGE slots declared 25 min apart landed a median ~14 min
+// apart, 4-56; 23 of 66 deliveries were skipped as within 30 min of a scan
+// that did run). An unknown engine gets the conservative default.
+export const SPACING_MIN_BY_ENGINE = { EDGE: 30, WARRIOR: 15 };
+export function spacingMinFor(engineSource) {
+  return SPACING_MIN_BY_ENGINE[engineSource] ?? SPACING_MIN;
+}
+
 export function minutesSinceOpenPT(pt) {
   return pt.getHours() * 60 + pt.getMinutes() - 390; // 390 = 6:30am PT = 9:30am ET
 }
@@ -66,6 +79,7 @@ export async function scheduledScanGate({ engineSource, getPT, ptDateStr, classi
     if (res.status >= 300) throw new Error(`scan gate: could not read today's ${engineSource} scan_runs: ${res.status} ${await res.text()}`);
     recentStartedAts = (await res.json()).map(r => r.started_at);
   }
-  const decision = decideScheduledScan({ dateStr, hhmm, sessionClass, nowMs: Date.now(), recentStartedAts });
-  return { ...decision, minutesSinceOpen, hhmm, dateStr };
+  const spacingMin = spacingMinFor(engineSource);
+  const decision = decideScheduledScan({ dateStr, hhmm, sessionClass, nowMs: Date.now(), recentStartedAts, spacingMin });
+  return { ...decision, minutesSinceOpen, hhmm, dateStr, spacingMin };
 }
