@@ -155,7 +155,77 @@ A Friday entry has to survive a weekend before it gets a second chance,
 and the n=292 hold-time result says surviving a weekend is where money
 goes to die.
 
+> **Day-of-week, retraction with all four reasons (2026-10-27).** The
+> weekday table above can't support a rule, for four independent reasons.
+> Three make the sample thin or contaminated: **batch concentration** (the
+> effective n is trading days, not trades; §7.5), the **dead-stock and
+> stale-bar trades** in the book (17 written off; §7.6 1e½), and **the
+> in-gate result** (adding the Friday rule cut P&L while tidying the win
+> rate; §7.6, "§3.3 Friday: dropped"). The fourth is a different kind:
+> **the labels themselves could be wrong.** `buyDayOfWeek` and
+> `sellDayOfWeek` were read from the day the add or sale was *recorded*,
+> not the order or sale date (fixed 2026-10-27, §7.7). **Measured on the
+> existing data, the fourth has not yet bitten:** 0 of 292 sales and 0 of
+> the 268 datable buys were recorded on a different day from the event, so
+> every checkable weekday label is right. 24 buys (August to early
+> September, before the portfolio backups) can't be dated. It's recorded
+> because it would have bitten silently the first time Roman backdated an
+> add, not because it changed this table.
+
 ### 3.4 No entries in the first hour (6:30–7:30 PT)
+
+> **The stored buy times are real fill times, so the 07:00–07:29 result is
+> not about typing (verified 2026-10-27, `trades_v2` at `b4620bc`, the 270
+> rows without `sell_price_unverified`, which reproduce the bucket exactly:
+> n=70, −$377, 14 days.
+> **Two counts, defined so the documents agree:** Roman's timing analysis
+> counts **252** = 292 − 22 `sell_price_unverified` (= 270 resolved) − 18
+> rows belonging to the 9 resurrected duplicate pairs, dropped because
+> which sale of each pair is real is unresolved (§7.5, broker-export
+> question 2). The audit below counts the **270**. That 270 reproduces
+> the 07:00–07:29 bucket exactly, which shows none of the 18 duplicate
+> rows sat in it, so the two populations agree there.
+> Commands: `node scripts/audit-recording-lag.cjs`,
+> `node scripts/audit-buy-times-vs-tape.mjs` (`SHIFT=60` etc. for the
+> placebo), `node scripts/audit-after-hours-buys.mjs`).** `buy_time`, `sell_time` and `buy_session` are
+> read from the clock at *recording*, so the risk was that the table
+> measured when Roman typed rather than when he bought. Two tests:
+> - **Recorded on a different day?** Never, where it can be checked.
+>   0 of 268 datable buys (dated by the portfolio backups' position ids,
+>   which are the add's `Date.now()`, or bounded by a same-day sale) and
+>   0 of 292 sales. `created_at` is a real recording stamp (its PT time
+>   equals `sell_time` to the minute on 286 of 292 rows), so the sale
+>   check isn't circular. 24 buys can't be dated; 2 are in the bucket
+>   (BTDR 08-17 07:12, PGEN 08-26 07:26). **The audit has a hard floor of
+>   2026-09, by construction.** The 24 are trades held overnight before the
+>   portfolio backups began, so no backup ever holds their add. That gap
+>   closes going forward (every later position appears in a nightly
+>   backup, and since db/033 `trades_v2.position_id` carries the add's
+>   `Date.now()` directly) but never backward. **A re-run in six months
+>   that still shows 24 unknowns is this floor, not a new problem;** only
+>   a count above 24 is new.
+> - **Typed later the same day?** Measured against the full-market tape:
+>   in the bucket, **68 of 70 buy prices traded within ±10 min of the
+>   stored buy time** (other buckets 94–100%). **A placebo shows the test
+>   has power:** shifting every buy time by ±1h or ±2h drops the bucket to
+>   10–36%. The two outside are BMEA and AQST on 09-25 (−$48). Without
+>   them the bucket is **−$329 over 14 days**. Of its 70 buys, 49 share a
+>   minute with another buy (up to five, e.g. 09-30 07:08 RIVN, COMP,
+>   AUR, COUR and OPEN), and their prices trade at that minute too: basket
+>   orders placed together, not a later batch of typing.
+> - **`buy_session`:** REGULAR checks out on 209 of 215. CLOSED (24, the
+>   Sunday orders) is labelled by date and correct. AFTER_HOURS: 16 of 31
+>   verified and 1 outside; **14 are ambiguous.** Each is priced at or near
+>   the closing print and stamped 30 min to 4h after the close, in a thin
+>   evening tape (1–34 after-hours minutes). Each is either a closing fill
+>   typed in later (really REGULAR) or an after-hours fill at the closing
+>   price, and the data can't tell which. At most 14 rows could move, against
+>   215 REGULAR (6%), so excluding AFTER_HOURS stands. **NEOG 08-19 @12.30
+>   never traded at that price at any time that day:** a recorded buy with
+>   no market support, now question 4 on the broker-export list (§7.5).
+> - **What remains unmeasured:** within ±10 min, a stored time can't move
+>   a trade across a 30-min bucket by more than its edges, so the finding
+>   is safe at bucket width, not to the minute.
 
 > **Not a finding (2026-10-22): shipped, and its evidence is currently
 > unfalsifiable.** The time-of-day effect below has two independent
@@ -766,9 +836,9 @@ volume-spike points were not in the mutated set.
 
 ### 7.5 Sample size is trading days, not trades
 
-> **ROMAN: one broker export answers three open questions.** One export
+> **ROMAN: one broker export answers four open questions.** One export
 > of every fill (symbol, side, quantity, price, date, time) since
-> 2026-08-01. Until it arrives, **all three stay written off, not
+> 2026-08-01. Until it arrives, **all four stay written off, not
 > guessed**:
 > 1. **The 24 Sunday (CLOSED-session) orders:** when did each fill, and at
 >    what price? They stay `not-measured` (§5) until the export says.
@@ -780,6 +850,20 @@ volume-spike points were not in the mutated set.
 >    ×2, ATAI, CCRN, DOMO, LC): recorded after each stock had stopped
 >    trading, at its last close, sold back at the same price. Did any of
 >    them execute at all? (§7.6 step 1e½.)
+> 4. **NEOG, bought 2026-08-19 at $12.30 (25 shares, recorded 14:12 PT,
+>    AFTER_HOURS):** a recorded buy with no market support (added
+>    2026-10-27). Same family as question 3, one row instead of seventeen.
+>    NEOG never traded at $12.30 at any time that day; the day's high was
+>    $12.255, 4.5¢ below it. Three explanations were checked and ruled out:
+>    - **not an off-by-one date:** 08-18 ranged 11.49–11.895 and 08-20
+>      ranged 11.725–12.18;
+>    - **not a transposition:** none of that day's other buys (RR, ABR, AMC,
+>      ALT) traded near $12.30;
+>    - **not a split artifact:** raw and adjusted bars are identical.
+>    The pattern, a price just above the day's ceiling, reads like a limit
+>    price entered in place of the fill, which only the export can settle.
+>    The sale side is supported ($11.75 traded on 09-03 at 06:41). Until
+>    then the row's −$13.75 P&L rests on a buy price nobody observed.
 
 Roman buys in batches (17 trades on 2026-10-02). The effective n is
 distinct trading days.
@@ -2096,7 +2180,12 @@ the buy and sale capture code):
   NULLing changes what the order-basis check (§5) and the session splits
   see, so it gets its own review. Until then, any of the four is
   trustworthy only where the event date equals the PT date of the row's
-  `created_at`.
+  `created_at`. **Measured on the existing 292 (§3.4, 2026-10-27):** no
+  sale and no datable buy was recorded on a different day, and the
+  stored buy times match the tape (68 of 70 in the 07:00–07:29 bucket,
+  with a placebo confirming the test's power). So the defect is latent in
+  this data, except for 14 ambiguous AFTER_HOURS rows and 24 undatable
+  buys.
 - **Correct as stored, listed so nobody "recomputes" them:**
   `barsSinceSignal` (minutes from the last scan to the click),
   `minutesFromOpen`, `buyTime` / `buyDayOfWeek` / `sellTime` /
