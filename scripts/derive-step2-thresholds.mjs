@@ -35,6 +35,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { scoreSnapshotWith } from './lib/rescore-snapshot.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const BASE_COMMIT = 'b63ef1b'; // last commit with the pre-step-2 formula
@@ -98,11 +99,9 @@ let mismatches = 0;
 const scored = [];
 for (const r of rows) {
   const o = r.signal_snapshot;
-  const snap = { latestTrade: { p: o.price }, dailyBar: { c: o.price, v: o.volume }, prevDailyBar: { c: o.prevClose } };
-  const macro = o.macroCondition ? { condition: o.macroCondition, changes: null } : null;
-  for (const c of [OLD, NEW]) { c.state.macroContext = macro; c.state.settings.disableMacroOverlay = false; }
-  const args = [o.ticker, snap, o.bars, o.news || null, o.spyChange || 0, o.category || null];
-  const a = OLD.__s(...args), b = NEW.__s(...args);
+  // The one reconstruction of scoreStock's inputs from a snapshot, shared
+  // with the snapshot-at-buy test (scripts/lib/rescore-snapshot.mjs).
+  const a = scoreSnapshotWith(OLD, o), b = scoreSnapshotWith(NEW, o);
   if (!a || !b) continue;
   if (a.score !== o.score) mismatches++;
   scored.push({ date: r.signal_date, symbol: o.ticker, oldScore: a.score, newScore: b.score, price: o.price, tier: r.tier });

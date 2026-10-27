@@ -259,6 +259,15 @@ async function loadPortfolioFromSupabase() {
 // mapper's `x ?? null` convention, a code_version line there would null
 // the column on every peak-price save and fail every one (phase-10 §7.7
 // trip-wire). The position object keeps it, so the sale can copy it.
+// db/033: the signal a position was bought on, one row per position, never
+// updated (anon has INSERT and SELECT only). Throws like its siblings here;
+// the caller (app.js recordSignalSnapshotAtBuy) is what makes it never
+// block or fail the add.
+async function insertSignalSnapshotAtBuy(row) {
+  const { error } = await supabaseClient.from('signal_snapshot_at_buy').insert([row]);
+  if (error) throw error;
+}
+
 async function insertPositionToSupabase(position) {
   if (!position.codeVersion) position.codeVersion = currentCodeVersion();
   const row = { ...mapPositionToSupabaseRow(position), code_version: position.codeVersion };

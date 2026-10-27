@@ -3953,8 +3953,38 @@ async function computeEntryMeasurementFields(ticker, price, sig) {
   return { spreadAtBuy, minutesFromOpen, barsSinceSignal, entryVsSignalPricePct };
 }
 
+// db/033 (phase-10 spec §5): the signal on screen at the moment of the
+// click, copied then (a JSON round trip, so a later scan or stamp can't
+// change it, and it's exactly what jsonb will hold). null = no signal
+// behind this buy (an Own Decision buy, or a ticker no longer in the
+// scan).
+function captureSignalSnapshot(sig) {
+  return sig ? JSON.parse(JSON.stringify(sig)) : null;
+}
+
+// Written after the position insert succeeds, and NOT awaited by the add:
+// a failed snapshot write is logged and never fails, delays or blocks it.
+// It leaves no row, which is honestly "not captured". Three states: a
+// snapshot, absent_reason 'no_signal', or no row (spec §5).
+function recordSignalSnapshotAtBuy(position, snapshot) {
+  const row = {
+    position_id: position.id,
+    engine_source: 'EDGE',
+    code_version: position.codeVersion ?? null,
+    bars_as_of: snapshot?.barsAsOf ?? null,
+    snapshot,
+    absent_reason: snapshot ? null : 'no_signal',
+  };
+  return insertSignalSnapshotAtBuy(row).then(
+    () => true,
+    e => { console.error(`signal_snapshot_at_buy write failed for ${position.ticker} (${position.id}): ${e.message}. Not captured; the position is saved.`); return false; },
+  );
+}
+
 async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
   const sig = state.signals.find(s => s.ticker === ticker);
+  // Copied before any await: what was on screen at the click, not after.
+  const signalSnapshotAtBuy = captureSignalSnapshot(sig);
   // Every *Pts field below comes from the one formula the score was summed
   // from (core/edge-scoring.js scoreComponents), never a local copy.
   const sigComps = sig ? scoreComponents({
@@ -4071,6 +4101,8 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
     if (btn) btn.disabled = false;
     return;
   }
+  // After the position exists (its code_version is now stamped), never awaited.
+  recordSignalSnapshotAtBuy(position, signalSnapshotAtBuy);
 
   state.portfolio.push(position);
   closeModal();
@@ -5883,6 +5915,11 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       // every sale-time field in this row.
       code_version: pos.codeVersion ?? null,
       sale_code_version: currentCodeVersion(),
+      // db/033: the join key to signal_snapshot_at_buy (the portfolio row
+      // is deleted at the sale). Unique on non-NULL: a second sale of the
+      // same position is refused by the database. NULL only if the
+      // position has no id, which is a defect a query will find.
+      position_id: pos.id ?? null,
     }]).select('id');
     if (error) { console.error('Supabase trade write failed:', error.message); return; }
     // record is the same object reference already sitting in state.sold —

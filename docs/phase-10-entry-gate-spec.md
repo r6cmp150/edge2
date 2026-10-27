@@ -428,6 +428,36 @@ applied).** One write at buy, but **not on the position row.**
 - **Order:** db/033 applied and verified, then the code (one insert in
   `finalizeAddPortfolio`, plus its test), then the path columns, then
   the oversold floor re-tested against them.
+- **BUILT (2026-10-27).** `captureSignalSnapshot` copies the on-screen
+  signal before the add's first await. `recordSignalSnapshotAtBuy` writes
+  the row after the position insert succeeds, isn't awaited, and resolves
+  false on failure, never throwing. The sale writes `position_id`.
+  **Sufficiency is proven, not assumed** (`tests/signal-snapshot-at-buy.test.js`):
+  - 60 snapshots captured from live-shaped inputs (last trade ≠ daily
+    close) re-score exactly under the formula their hash names, across 17
+    distinct scores.
+  - 40 of 40 v1 snapshots from the pinned backup find their own formula in
+    git (`38a1ceb`, the newest commit carrying it) and reproduce under it;
+    31 of them would differ under today's formula.
+  - An unknown hash is reported, never replaced by the current formula.
+  - The reconstruction is one shared function
+    (`scripts/lib/rescore-snapshot.mjs`), also used by
+    `derive-step2-thresholds.mjs` (its output is byte-identical after the
+    switch).
+  - 9 mutations, all caught.
+- **Finding: the score is reproducible, `risk` is not.** News no longer
+  affects the score. It feeds only `risk`, through `hasRecentNegNews`,
+  which compares the headline's age with `Date.now()`. Re-scoring a
+  snapshot later reproduces its score, but not its risk: a headline 2h
+  old at the buy reads as days old at the re-run. So `riskAtBuy` is a
+  clock-dependent value, and any analysis of risk must use the stored
+  value, never a recomputed one. Not fixed here (it's in the scoring
+  file, under the pinned hash).
+- **Pre-existing, noted:** a failed `trades_v2` write is only
+  `console.error`'d (`writeTradeToSupabase`); Roman isn't told. With the
+  unique `position_id`, a duplicate sale of one position now fails that
+  way, which is the intended outcome. A legitimate failure is just as
+  silent, as it was before.
 
 ### Store exit factors as a stable id plus display text (added 2026-10-22)
 
