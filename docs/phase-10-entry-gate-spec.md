@@ -167,6 +167,24 @@ goes to die.
 > until rejection logging began (§7.6 step 1e, 2026-10-22). Cite this
 > rule as a precaution in force, never as evidence that early entries are
 > bad.
+>
+> **Update 2026-10-27.** Confounds (1) and (2) are **gone from new data**:
+> the step 1f gate selects on the 20-session full-market average, so the
+> pool no longer depends on the clock or the venue. Friday 10-23's 06:48
+> and 07:22 scans passed the same 80 symbols. The 215 trades above still
+> carry both. **A third confound, independent of the gate, remains in
+> every early scan: early-scan bars.** At the open, a stock that hasn't
+> traded yet has no bar for today, so early scans score some symbols on
+> yesterday's data. EMAT was scored at 06:48 on 10-23 from 10-22's bar.
+> That's within the one-day allowance (step 1e½), so it isn't flagged
+> stale, but it means the first hour's scores rest on a different mix of
+> data than the rest of the day's. The extreme case is already on record:
+> scans in the first two minutes after the open, where the snapshot still
+> holds yesterday's bar, account for 21 of step 2's 106 "buyable"
+> (§7.6 1f, "First live days"). Any time-of-day test must separate
+> signals scored on today's bar from those scored on yesterday's
+> (`signal_log.bars_as_of` against `signal_date` makes that a column
+> comparison).
 
 | Window | n | Win | Avg | P&L | minus worst trade |
 |---|---|---|---|---|---|
@@ -334,6 +352,82 @@ EDGE signal object (score inputs, components, and the bars it was scored
 on, about 14.5 KB) into `signal_snapshot` at buy, as Warrior does. It is
 also what makes 4(c)'s re-scored delta fully version-independent (§7.6
 step 2). Until it exists, the same-version-only delta is the fallback.
+
+**DESIGN (2026-10-27, for review; migration draft `db/033`, not
+applied).** One write at buy, but **not on the position row.**
+- **Why not `portfolio.signal_snapshot` / `trades_v2.signal_snapshot`,
+  which already exist and are already carried buy → sale.** Size. A
+  median EDGE snapshot is **13.7 KB (max 15.2 KB), 91% of it the 126
+  bars**; the median `trades_v2` row is 2.8 KB, and the whole table is
+  0.82 MB (backup `b4620bc`). Four app reads take `trades_v2` with
+  `select('*')` (Sold, the report, two exports). At the observed 11.2
+  trades a day, the column would add about 150 KB a day to each of them,
+  about 38 MB after a year: the Sold tab on a phone getting about 45×
+  heavier to carry data no screen shows. The update path is a second cost
+  of the same choice: `signal_snapshot` is in the shared row mapper, so
+  every peak-price save would resend 14 KB.
+- **Instead, a table of its own:** `signal_snapshot_at_buy`, one row per
+  position, keyed by `position_id`. Columns: `position_id` (PK),
+  `engine_source`, `captured_at`, `code_version` (the position's own
+  value), `bars_as_of`, `snapshot` jsonb, `absent_reason` text.
+- **The key had to be added to `trades_v2` (found 2026-10-27, before
+  anything was applied).** The draft assumed `portfolio` and `trades_v2`
+  already shared `position_id`. **They don't: `trades_v2` has no such
+  column.** The portfolio row is deleted at the sale, so as first drafted
+  the snapshot could never have been joined to its trade: write-only. So
+  db/033 adds `trades_v2.position_id`, written at sale from the
+  position's id.
+  - **Existing rows stay NULL, never guessed.** Matching on ticker and
+    buy date is exactly the match the nine resurrected pairs (one
+    position, two sales) make ambiguous.
+  - **It's UNIQUE on the non-NULL values.** One position sells once
+    (there are no partial sales), so "one position recorded as two sales"
+    becomes impossible at the database, not just prevented in the client.
+  - **What this design saves, and what it doesn't.** The snapshot itself
+    never needs copying at sale, so a copy step that could silently drop
+    a 14 KB value is gone. The *key* still has to be written at sale, but
+    it's one short value, and its absence is checkable: a post-db/033
+    trade with NULL `position_id` is a defect a query finds.
+- **Three states, all distinct:**
+  - a row with `snapshot` set: the signal Roman acted on;
+  - a row with `snapshot` NULL and `absent_reason` (`no_signal`: an Own
+    Decision buy, or a second lot of a ticker no longer in the scan):
+    known to have had no signal;
+  - **no row:** not captured (before this ships, or the write failed).
+  A CHECK makes the first two exclusive. Never `{}`, never a guessed
+  signal.
+- **Write-once by privilege, not trigger:** anon gets INSERT and SELECT
+  only, with no UPDATE or DELETE grant, so nothing in the app can rewrite
+  what was decided on.
+- **What's stored:** a deep copy (JSON round trip) of the `state.signals`
+  entry at the moment of the click, i.e. exactly what was on screen:
+  the full `scoreStock` output with its bars, `thresholdAtBuy`,
+  `buildVersion`, `barsAsOf` and `barsAgeTradingDays`. That's the same
+  shape as `signal_log.signal_snapshot`, so the existing re-scoring tools
+  read both. A pending order captures at placement (the decision), and a
+  later fill never overwrites it.
+- **The observer rule:** written after the position insert succeeds. A
+  failed snapshot write is logged and never fails, delays or blocks the
+  add. It leaves "no row", which is honestly "not captured".
+- **The test that matters:** a captured snapshot, re-scored with the
+  formula at its row's `code_version.scoring_hash`, reproduces its own
+  stored score. That's the property that makes it worth storing, checked
+  the same way `derive-step2-thresholds.mjs` re-scores logged snapshots.
+- **No backfill.** Only **6 of the 253** EDGE trades since 09-11 have a
+  logged signal for the same date and symbol, and that's the logger's
+  scan, not the one Roman saw. History stays at the partial re-score
+  above. **Collection starts the day it ships**, which is why it goes
+  first.
+- **Warrior is unchanged for now:** it keeps `portfolio.signal_snapshot`,
+  so the two engines differ here, and this records that they do. **They
+  converge, on a condition: whichever of the two is touched next moves to
+  the shared shape** (`signal_snapshot_at_buy`). A Warrior change to its
+  snapshot moves it to the table; an EDGE change that would add to the
+  position row goes to the table instead. Neither grows its own copy
+  further.
+- **Order:** db/033 applied and verified, then the code (one insert in
+  `finalizeAddPortfolio`, plus its test), then the path columns, then
+  the oversold floor re-tested against them.
 
 ### Store exit factors as a stable id plus display text (added 2026-10-22)
 
@@ -1045,6 +1139,179 @@ days, not quiet ones.
      - **Add confirm:** the same lookup; a not-listed or not-tradable
        ticker gets a warning with "Add anyway", beside the after-hours
        warning, and never blocks.
+     - **First live days (10-23 and 10-26, five scheduled scans, all
+       `trailing_sip_avg`, none on the fallback).** Pool 80, 80, 79, 79,
+       79. **Buyable (SOFT+ ≥65): 0 and 0.** The top stored score on
+       either day was 55. SHOWN per (date, symbol): 27 on 10-23 (price
+       mix $1–3/$4–9/$10–20 = 2/14/11) and 42 on 10-26 (7/17/18), all in
+       the WATCH band. Same counting as step 2's derivation: one per date
+       and symbol, highest stored score. signal_log keeps one row per
+       (date, symbol, tier), so a symbol that rises after its first SHOWN
+       row isn't re-recorded and per-day counts are lower bounds. The
+       106 baseline was counted the same way, so the comparison is
+       like-for-like. What this does and doesn't say:
+       - **Step 2's target was a third artifacts.** "106 over 19 dates"
+         (5.6/day) reproduces exactly at `de95a93`, but 14 of the 106 are
+         dead stocks (PSKY on every date from 10-09) and 21 are
+         open-minute scans scoring on yesterday's bar (10-16 alone gave
+         20). **Real: 71, or 3.7/day.** So the lines were derived to hold
+         a rate a third of which never existed.
+       - **The drop predates the gate.** Real buyable per date was 2–12
+         from 09-11 to 10-09, then 2, 2, 0, 3, 1, 0, 0, 0 from 10-12 to
+         10-21, and 1 on 10-22 (NWL 65, the old pool's last day). 0 and 0
+         continue that, they don't break it.
+       - **The floor isn't the cause.** The 1M 20-session floor, applied
+         to each of the 71 real buyable signals as of its own date, keeps
+         70 (99%), the same rate as the WATCH band (98%) and below it
+         (100%).
+       - **The projection tool was broken past 10-21, now FIXED
+         (2026-10-27).** Re-run on the gate days, `measure-gate-buyable.mjs`
+         first reproduced only 36% of these scans' stored scores (mean
+         |diff| 11.1 points), against 91% on the window it was built on.
+         The cause wasn't fitting: **both daily fetches ended at a
+         hardcoded `end: '2026-10-21'`**. Run for 10-23, the rebuild had no
+         10-22 bar, so SPY's change spanned two days (−1.64% rebuilt
+         against −0.44% stored), every history was one bar short (125
+         against 126), and RSI and up-days missed a day. Fixed: the history
+         ends at the last date measured (SIP at its previous trading day,
+         which the plan allows), and the tool **refuses to run** if SPY's
+         history doesn't reach each date's previous trading day. A second
+         gap, between the tool and the gate: its trailing pool tested the
+         average but not recency, so it passed PSKY (dead) in every slot.
+         It now applies the gate's recency rule. It still can't apply the
+         listed/tradable test, because that flag has no history. **After
+         the fix: 93% exact on the gate days (mean |diff| 0.7), and 90% on
+         the original window (1.0).**
+       - **Corrected projection at 1M:** **2 on 10-23 (CLF, HUN) and 4 on
+         10-26 (HUN, ANGX, GOGO, TROX).** All of them at 10:00 or 12:00
+         except HUN at 07:00 on 10-26. The floor-decision window
+         (10-13..10-21) becomes **4 a day, 36 in total** (was 5 and 43:
+         PSKY was in every slot). The decision rested on continuity, so
+         it stands; the 5/day it cited is now 4.
+       - **So the stored zeros are mostly the scan schedule, not the
+         market.** No EDGE scan ran after 07:22 on Friday or after 09:06
+         on Monday: the delayed and dropped crons already on record. The
+         projected buyable signals fall in the hours no scan covered.
+         Where scans did run, stored and projected agree (CLF 55, TROX 55
+         and HUN 45 stored, all below 65). **Stored signal_log rows can't
+         measure buyable per day while scans don't cover the day.**
+       - **Not concluded:** whether the lines are too high. That's
+         pre-committed below, not left to judgement.
+
+     - **THE BOTTLENECK HAS MOVED: scan coverage, not scoring or the gate
+       (2026-10-27).** On 10-23 and 10-26 signals qualified at 10:00 and
+       12:00, and nothing scanned then. The GitHub cron delay that db/023
+       was built to measure has gone from a measurement nuisance to the
+       binding constraint on the app's usefulness. **First evidence from
+       `workflow_runs`** (198 rows, 10-09 to 10-26, scheduled deliveries
+       only; each delivery matched to the latest unused declared instant
+       before it):
+
+       | workflow (declared UTC) | due | delivered | dropped | delay min / median / max | lands (PT) |
+       |---|---|---|---|---|---|
+       | Log EDGE signals (6 crons, 07:30–09:40Z) | 66 | 66 | 0 | 271 / ~320 / 590 min | 05:40–07:37 normally; to 09:37 on slow days |
+       | Capture movers (13:45–15:00Z) | 44 | 44 | 0 | 215 / ~255 / 487 min | 10:41–13:27 |
+       | Fill outcomes (20:30, 21:30, 23:00Z) | 33 | 32 | 1 | 111 / ~155 / 342 min | 15:58–18:19 |
+       | Backup tables (06:00Z) | 17 | 17 | 0 | 229 / 283 / 461 min | 02:54–04:41 |
+       | Build float table (Sun 08:00Z) | 3 | 3 | 0 | 257 / 291 / 389 min | 05:16–07:29 |
+       | Log Warrior signals (every 15 min, 13–20Z) | 384 | 25 | 359 | 2 / 12 / 160 min | scattered |
+
+       - **EDGE's scheduled scans cover roughly 06:30–07:37 PT:** the
+         first hour, which §3.4 rules out for entries. They miss the
+         07:30–11:00 window the data supports. Deliveries before the open
+         are the 40 no-ops (the scan gate skips them). Nothing is
+         dropped; it's all *late*, and the lateness shrinks later in the
+         UTC day (about 5.3h at 07:30–09:40Z, 4.2h at 13:45–15:00Z, 2–3h
+         in the evening). That pattern is the evidence for re-aiming; the
+         workflow's own header asked for exactly this check after a week.
+       - **DST, 2026-11-01 (dated, inside the 10-day count):** ET and PT
+         both fall back, so the same UTC deliveries land an hour earlier
+         in PT wall clock, about 04:40–06:37 PST, nearly all before the
+         open. **From Monday 11-02, almost no scheduled EDGE scan lands
+         in market hours unless the crons move.** The header already says
+         to shift every entry +1h at that point; with this data, the shift
+         should be a re-aim at the 07:30–11:00 window instead.
+       - Warrior's 25 of 384 is a different shape (a frequent cron, almost
+         all dropped); the slot matching is approximate for it.
+       - **The browser's scan is the only thing covering 10:00–12:00, and
+         it writes nothing.** When Roman opens the app at 10:30, the scan
+         he sees runs `runEdgePrefilter` and scores the same way, but
+         leaves no `scan_runs` or `signal_log` row. **So his experience may
+         be fine while the logged record shows zeros, and nothing stored
+         can tell the two apart.** That's the browser-path blindness noted
+         below, now with a cost attached: the stored record and the app
+         can disagree about whether anything was buyable, and the stored
+         record is what every analysis reads. Reported, not fixed here.
+
+     - **PRE-COMMITTED (Roman, 2026-10-27): when the lines get
+       re-derived.** If **real buyable averages under 1 a day over 10
+       consecutive trading days, the lines are re-derived**, using
+       `node scripts/derive-step2-thresholds.mjs --exclude-artifacts` on
+       the then-current backup.
+       - **Real** means the time-correct artifact rule: not scored on a
+         history more than one trading day old (dead or halted), and not
+         scored on yesterday's bar in the first two minutes after the
+         open.
+       - **Day one is 2026-10-27; day ten is 2026-11-09** (no market
+         holidays in between). The count is evaluated after the 11-09
+         close, and then on every later day over the trailing ten.
+       - **The yardstick (APPROVED, Roman, 2026-10-27):** the per-day count
+         from `measure-gate-buyable.mjs` at the 1M floor: distinct symbols
+         buyable at any of **07:30, 09:00, 10:00, 11:00 and 12:00 PT**,
+         fixed clock times set in the script, so counts are comparable from
+         day to day rather than depending on when a cron landed. Counted
+         one per date and symbol, the same way as the 106. A window counts
+         only if that run's validation is at least 90% exact; otherwise
+         the count isn't usable and the rule says so rather than counting
+         it. Stored signal_log rows are reported beside it as a lower
+         bound, not the measure: stored rows alone read cron gaps as a
+         quiet market, which is the error made on 10-27.
+       - **Either way:** under 1 a day means re-derive, and at or over 1
+         means the lines stand. Not tuned to the outcome after the fact.
+     - **The fallback path is unexercised, and stays that way until a real
+       failure exercises it.** Detection and handling are proven by the
+       mocked tests (`tests/edge-liquidity-gate.test.js`), but no live
+       scan has had the daily-bar or asset fetch fail. A failure is not
+       manufactured to test it. Same standing, and the same rule, as
+       `audit-signal-log-splits --write` (phase-9 spec §3.9.4): detection
+       proven, the correction path structurally unexercised, nothing
+       fabricated.
+     - **The zero state is said plainly (2026-10-27).** When nothing
+       clears the buy line, the Signals tab says so: "42 signals · best
+       score 55 · buy line 65 — nothing qualifies in this scan. Scanned
+       09:06; tap Refresh for a fresh scan." If the scan is more than an
+       hour old, it says that too. When nothing even shows, it gives the
+       scored count, the best score and the display line, with the same
+       scan time. **It states what the last scan saw and when, and never
+       why.** The first wording added "the market is quiet", and it was
+       false. The fixed tool showed qualifying signals at 10:00 and 12:00
+       on both days, after the last scan, and a confident wrong
+       explanation that Roman can't check is worse than silence. The old
+       empty-state copy ("Market is quiet right now") went with it; a test
+       fails if the claim returns. The reason for the zero state is behavioural, not statistical. An
+       empty list can't be told apart from a broken app, and Roman,
+       seeing that for days, either stops opening it or buys outside it,
+       and a trade outside the app is invisible to every measurement
+       here. Every SHOWN signal counts, owned ones included, so it never
+       claims nothing qualified when the one that did is already held.
+       The line is the version's own, never a literal. After a reload,
+       the "nothing showing" case gives no numbers, because the full
+       results are session-only.
+     - **The browser's side of the gate is unobservable in stored data,
+       by design.** Browser scans write no scan_runs row (a row per
+       browser scan would bury the logger's). Its only guarantees are
+       that it calls the same `runEdgePrefilter`, and the tests over that
+       function. What it CAN do is say what it ran: since 2026-10-27 the
+       scan line always names the rule from the rule object's own
+       parameters, e.g. "pool: 20-session avg volume ≥ 1,000,000 through
+       10-23 · $1–$20 · listed & tradable", followed by any degradation.
+     - **The tradable flag is a point-in-time fact, not a property.** GDC
+       read not tradable at 10-23 06:48, tradable at 07:22, and not
+       tradable again on all three 10-26 scans. XXII moved from not
+       tradable to tradable after the dry run. Each scan records the
+       flag as Alpaca reported it at that moment, so different scans
+       disagreeing is expected; **don't "fix" it** by caching or
+       smoothing the flag across scans.
      - **First real run (dry run, 2026-10-22 23:5x PT, live Alpaca):**
        82 of 239 pass (the measurement estimated about 89 at 1M); all 14
        dead symbols are rejected. Recency alone catches CCO, GETY, HCWC,
@@ -1080,6 +1347,11 @@ days, not quiet ones.
 
    - **The score is the binding constraint, not the pool.** A tenfold
      larger pool at 07:30 yields about 1→3 buyable per scan.
+   - *(Corrected 2026-10-27: this table came from the tool before two
+     fixes. Its histories stopped at 10-21, and its trailing pool skipped
+     the recency rule, so it passed PSKY. Re-run fixed: **1M = 4/day, 36
+     over 7 days**, with 90% validation. The real step-2 target is 4.0/day,
+     not 5.6; see step 2's correction.)*
    - **Step 2's intent was about 5–6 buyable a day** (106 over 19 logged
      dates). The **1M trailing floor** (5/day here) holds that rate. 500k
      (7/day) loosens it, and 100k (11/day) roughly triples it.
@@ -1121,7 +1393,28 @@ days, not quiet ones.
    thresholds in the same change** (§7.7), so buyable signals per day
    stay near today's ~5–6 (106 over 19 dates, one per date and symbol;
    `node scripts/derive-step2-thresholds.mjs`). The intent is to change
-   which signals rank highest, not to turn the tap off. Shipped with both
+   which signals rank highest, not to turn the tap off.
+
+   > **CORRECTION (2026-10-27): a third of the calibration target wasn't
+   > real, and the line survives it.** "106 over 19 dates" reproduces
+   > exactly on the pinned backup (`de95a93`), but 30 of the 106 were not
+   > real signals when scored. Some were histories more than a trading day
+   > stale (dead or halted stocks, PSKY from 10-09). The rest were scored on
+   > yesterday's bar in the first two minutes after the open (10-16 alone
+   > gave 20). So 65 was derived to preserve a count that was partly
+   > fabricated. That it still preserved the real rate was an
+   > *inference*, and is now a *measurement*. With both sides cleaned
+   > (`node scripts/derive-step2-thresholds.mjs --exclude-artifacts`: 32
+   > stale and 53 open-minute rows dropped), **76 real old-formula
+   > buyable (4.0/day) map to 74 at 65 under the new formula, so the
+   > equal-count line is still 65** (60 gives 86, 70 gives 60). WATCH stays
+   > 20 (457 → 417). The artifacts were a similar share of both sides (30 of
+   > 106 old, 24 of 98 new), which is why the inflated count gave the same
+   > line. **The honest target is 4.0 a day, not 5.6.** (An earlier
+   > figure of 71 / 3.7 a day used a fixed list of 14 dead symbols, which
+   > wrongly dropped their signals from before they died.)
+
+   Shipped with both
    score histograms, the old and new lines, and buyable count and
    price-tier mix per day under each. Nothing else moves. The exit
    engine's score cutoffs move with the thresholds in the same change, as

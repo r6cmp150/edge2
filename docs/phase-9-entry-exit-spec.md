@@ -1549,6 +1549,14 @@ positions, two different real outcomes:
   structurally unexercised, and stays that way until a real
   split-corrupted row actually exists to correct. Not forced by writing
   a fake one.
+- **EDGE pre-filter fallback** (phase-10 spec §7.6 step 1f, added
+  2026-10-27, treated the same way as the item above): if the daily-bar
+  fetch fails, the scan falls back to the old IEX-today rule, and if the
+  asset list fails, the listing test is skipped. Both are recorded on
+  `scan_runs.prefilter_rule`. Detection and handling are proven by mocked
+  tests; no live scan has hit either path (five scans on 10-23 and 10-26,
+  all `trailing_sip_avg`). It stays unexercised until a real failure
+  happens. Not forced.
 
 ### 3.9.5 The real copy had a real bug (2026-09-15, same day)
 

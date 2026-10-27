@@ -301,6 +301,73 @@ run('a dead holding takes the priceUnavailable path: no P&L, CANNOT EVALUATE, no
   assert.ok(app.slice(nStart, app.indexOf('\n}\n', nStart)).includes('if (price == null || state.portfolioPriceFetchFailed) return;'));
 });
 
+run('the scan line always names the rule, from its own parameters (normal case included)', () => {
+  const app = readSource('app.js');
+  const grab = name => { const i = app.indexOf(`function ${name}(`); return app.slice(i, app.indexOf('\n}\n', i) + 2); };
+  global.state = {};
+  // eslint-disable-next-line no-eval
+  eval(grab('describePrefilterRule') + grab('buildPrefilterRuleSuffixHtml') + '\nglobal.__suffix = buildPrefilterRuleSuffixHtml;');
+  // The rule object scan 5420325f stored on 2026-10-26, verbatim.
+  global.state.lastPrefilterRule = { rule: 'trailing_sip_avg', price_max: 20, price_min: 1, min_avg_shares: 1000000, requires_through: '2026-10-23', lookback_sessions: 20, requires_listed_tradable: true, calendar_previous_trading_day: '2026-10-23' };
+  const normal = global.__suffix();
+  console.log('normal:', normal);
+  assert.ok(normal.includes('pool: 20-session avg volume ≥ 1,000,000 through 10-23 · $1–$20 · listed &amp; tradable'), normal);
+  // A later floor change must show as itself (the reason the parameters live in the value).
+  global.state.lastPrefilterRule = { rule: 'trailing_sip_avg', price_min: 2, price_max: 15, min_avg_shares: 2500000, lookback_sessions: 30, requires_through: '2027-02-12', requires_listed_tradable: true };
+  assert.ok(global.__suffix().includes('pool: 30-session avg volume ≥ 2,500,000 through 02-12 · $2–$15 · listed &amp; tradable'), global.__suffix());
+  global.state.lastPrefilterRule = { rule: 'iex_today_fallback', min_volume: 100000, price_min: 1, price_max: 20, requires_listed_tradable: false, reason: 'x', asset_check_unavailable: 'y' };
+  const fb = global.__suffix();
+  assert.ok(fb.includes("pool: today's IEX volume ≥ 100,000 · $1–$20</span>"), fb);
+  assert.ok(!fb.includes('listed &amp; tradable'), 'the listing test was skipped, so the line must not claim it ran');
+  assert.ok(fb.includes('used today') && fb.includes('could not run'), 'degradations still follow it');
+  global.state.lastPrefilterRule = { rule: 'something_new' };
+  assert.ok(global.__suffix().includes('pool rule: something_new'), 'an unknown shape is named, not guessed at');
+  global.state.lastPrefilterRule = null;
+  assert.strictEqual(global.__suffix(), '', 'nothing before a scan has run');
+});
+
+run('the zero state says the count, the best score and the line it fell short of', () => {
+  const app = readSource('app.js');
+  const grab = name => { const i = app.indexOf(`function ${name}(`); return app.slice(i, app.indexOf('\n}\n', i) + 2); };
+  global.scoreThresholds = () => ({ watch: 20, soft: 65, strong: 110 });
+  // eslint-disable-next-line no-eval
+  const i0 = app.indexOf('const SCAN_STALE_AFTER_MS');
+  // eslint-disable-next-line no-eval
+  eval(app.slice(i0, app.indexOf('\n', i0) + 1).replace('const ', 'var ') + grab('scanTimeText') + grab('buildNothingQualifiesHtml') + grab('buildNothingShowingText') + '\nglobal.__nq = buildNothingQualifiesHtml; global.__ns = buildNothingShowingText; global.__st = scanTimeText;');
+  const sig = (ticker, score) => ({ ticker, score });
+  // Monday 10-26's 09:06 PT scan (16:06Z), in shape: 42 showing, best 55, seen 10 minutes later.
+  const T = Date.parse('2026-10-26T16:06:00Z');
+  const realNow = Date.now; Date.now = () => T + 10 * 60000;
+  try {
+    global.state = { lastScanTime: T, signals: [sig('CLF', 35), sig('TROX', 55), ...Array.from({ length: 40 }, (_, i) => sig('S' + i, 20 + (i % 30)))] };
+    const html = global.__nq();
+    console.log('zero state:', html.replace(/<[^>]+>/g, ''));
+    assert.strictEqual(html.replace(/<[^>]+>/g, ''), '42 signals · best score 55 · buy line 65 — nothing qualifies in this scan. Scanned 09:06; tap Refresh for a fresh scan.');
+    // More than an hour old: said.
+    Date.now = () => T + 135 * 60000;
+    assert.ok(global.__nq().includes('Scanned 09:06, 2h 15m ago: more than an hour old'), global.__nq());
+    assert.strictEqual(global.__st(T + 60 * 60000), 'Scanned 09:06', 'exactly an hour is not "more than an hour"');
+  } finally { Date.now = realNow; }
+  // Never an explanation of why: no claim about the market anywhere on the Signals tab.
+  assert.ok(!/market is quiet|Market is quiet/.test(app.replace(/^\s*\/\/.*$/gm, '')), 'a "market is quiet" claim is back in app.js');
+  // The line is read, not assumed: under a different version's lines it says that line.
+  global.scoreThresholds = () => ({ watch: 29, soft: 73, strong: 116 });
+  assert.ok(global.__nq().includes('buy line 73'), global.__nq());
+  global.scoreThresholds = () => ({ watch: 20, soft: 65, strong: 110 });
+  global.state.signals.push(sig('HUN', 65));
+  assert.strictEqual(global.__nq(), '', 'one buyable (even an owned one) -> no "nothing qualifies"');
+  global.state = { signals: [] };
+  assert.strictEqual(global.__nq(), '', 'no signals: the other message covers it');
+  // Nothing showing: numbers only when this session scored them.
+  global.state = { lastScanTime: null, lastFullScanResults: [{ signal: { score: 15 } }, { signal: { score: 10 } }, { signal: null }], lastDisplayThreshold: 20 };
+  assert.strictEqual(global.__ns(), '2 scored · best score 15 · display line 20 — nothing showing in this scan. scan time unknown; tap Refresh for a fresh scan.');
+  global.state = { lastScanTime: null, lastFullScanResults: null, lastDisplayThreshold: null }; // after a reload
+  assert.ok(global.__ns().startsWith('No signals above the display line in this scan.') && !/\d+ scored/.test(global.__ns()), 'no numbers nobody computed');
+  // Wired into the Signals tab.
+  assert.ok(app.includes('html += buildNothingQualifiesHtml();') && app.includes('${buildNothingShowingText()}'));
+  assert.ok(app.includes('state.lastDisplayThreshold = displayThreshold;'));
+});
+
 run('the fallback volume control is shown read-only, with the reason', () => {
   const app = readSource('app.js');
   const i = app.indexOf('Fallback volume threshold (today, IEX)');

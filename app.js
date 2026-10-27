@@ -851,6 +851,7 @@ let state = {
   lastPassedCount: 0,
   lastScanDroppedCount: 0, // symbols dropped from the last scan's bars fetch by a chunk-level error (Bug 3) — persisted
   lastPrefilterRule: null, // scan_runs.prefilter_rule shape, from the last runEdgePrefilter -- session only, not persisted
+  lastDisplayThreshold: null, // the display line the last scan used -- session only, like lastFullScanResults
   edgeLiquidityCache: null, // { date, bySymbol, requiredThrough } -- core/universe.js getEdgeLiquidity, one PT day, session only
   selectedUniverse: 'OTHER',
   notifications: {},     // push notification state — persisted
@@ -2004,6 +2005,7 @@ async function runScreener() {
     const category = state.selectedUniverse || 'OTHER';
     const macroCondition = state.macroContext?.condition || null;
     const displayThreshold = getDisplayThreshold(macroCondition, category);
+    state.lastDisplayThreshold = displayThreshold; // the line this scan showed against (buildNothingShowingText)
     const minP2 = state.settings.includeUnder2 ? 0 : 2;
     const updatedOwnedTickers = new Set();
     // scoredAll preserves EVERY candidate's outcome, including the ones
@@ -2198,13 +2200,70 @@ function buildDroppedSuffixHtml() {
   return ` — <span class="ss-dropped">${n} could not be checked</span>`;
 }
 
-// The pre-filter rule the last scan actually ran (step 1f), said only when
-// it isn't the normal one: a fallback pool must not look like the normal
-// pool. Session-only state, so nothing shows before this session's scan.
+// The zero state, said plainly (2026-10-27). With nothing buyable, an empty
+// list can't be told apart from a broken app, and a trade placed outside the
+// app is invisible to every measurement. So the count, the best score and
+// the line it fell short of are stated, with WHEN the scan ran. It never
+// explains why. "The market is quiet" was the first wording, and it was
+// false: on 10-23 and 10-26 the signals that qualified came after the last
+// scan (spec §7.6 1f). The honest statement is what the last scan saw and
+// when. Counts every SHOWN signal, owned ones included: if the only buyable
+// one is already held, something DID qualify and this says nothing. The buy
+// line is the current version's own (scoreThresholds), never a literal.
+const SCAN_STALE_AFTER_MS = 60 * 60 * 1000;
+function scanTimeText(now = Date.now()) {
+  if (!state.lastScanTime) return 'scan time unknown';
+  const hhmm = new Date(state.lastScanTime).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false });
+  const age = now - state.lastScanTime;
+  if (age <= SCAN_STALE_AFTER_MS) return `Scanned ${hhmm}`;
+  const mins = Math.floor(age / 60000);
+  const ago = mins >= 1440 ? `${Math.floor(mins / 1440)}d ago` : mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m ago` : `${mins}m ago`;
+  return `Scanned ${hhmm}, ${ago}: more than an hour old`;
+}
+
+function buildNothingQualifiesHtml() {
+  const lines = scoreThresholds();
+  if (!lines || !state.signals.length) return '';
+  if (state.signals.some(s => s.score >= lines.soft)) return '';
+  const best = Math.max(...state.signals.map(s => s.score));
+  return `<div class="scan-summary">${state.signals.length} signal${state.signals.length === 1 ? '' : 's'} · best score ${best} · buy line ${lines.soft} — nothing qualifies in this scan. ${scanTimeText()}; tap Refresh for a fresh scan.</div>`;
+}
+
+// Nothing showing at all: the same statement against the display line, from
+// this session's full results. After a reload those aren't kept, so no
+// numbers are shown rather than numbers nobody computed; the scan time is
+// persisted, so it's always said.
+function buildNothingShowingText() {
+  const scored = (state.lastFullScanResults || []).filter(r => r.signal);
+  const line = state.lastDisplayThreshold;
+  if (!scored.length || line == null) return `No signals above the display line in this scan. ${scanTimeText()}; tap Refresh for a fresh scan.`;
+  const best = Math.max(...scored.map(r => r.signal.score));
+  return `${scored.length} scored · best score ${best} · display line ${line} — nothing showing in this scan. ${scanTimeText()}; tap Refresh for a fresh scan.`;
+}
+
+// The pre-filter rule the last scan actually ran (step 1f), ALWAYS named,
+// normal case included (2026-10-27): browser scans write no scan_runs row,
+// so this line is the only place the rule behind what's on screen can be
+// seen. Built from the rule object's own parameters, the same shape the
+// logger stores in scan_runs.prefilter_rule, never from constants that
+// could drift from it. Degradations follow it. Session-only state, so
+// nothing shows before this session's scan.
+function describePrefilterRule(r) {
+  const n = v => (typeof v === 'number' ? v.toLocaleString('en-US') : '?');
+  const price = `$${r.price_min ?? '?'}–$${r.price_max ?? '?'}`;
+  const listed = r.requires_listed_tradable ? ' · listed &amp; tradable' : '';
+  if (r.rule === 'trailing_sip_avg') {
+    const through = r.requires_through ? ` through ${String(r.requires_through).slice(5)}` : '';
+    return `pool: ${r.lookback_sessions ?? '?'}-session avg volume ≥ ${n(r.min_avg_shares)}${through} · ${price}${listed}`;
+  }
+  if (r.rule === 'iex_today_fallback') return `pool: today's IEX volume ≥ ${n(r.min_volume)} · ${price}${listed}`;
+  return `pool rule: ${r.rule}`; // a shape this build doesn't know: named, not guessed at
+}
+
 function buildPrefilterRuleSuffixHtml() {
   const r = state.lastPrefilterRule;
   if (!r) return '';
-  const notes = [];
+  const notes = [describePrefilterRule(r)];
   if (r.rule === 'iex_today_fallback') notes.push("20-day volume history unavailable, so this pool used today's IEX volume (the old rule)");
   if (r.asset_check_unavailable) notes.push('the listed/tradable check could not run');
   if (r.volume_history_failed_symbols) notes.push(`${r.volume_history_failed_symbols} without volume history`);
@@ -2259,10 +2318,10 @@ function renderSignalsTab() {
       <p>Tap Refresh to run your first scan.</p>
     </div>`;
   } else if (!state.signals.length) {
-    html += `<div class="scan-summary">Market is quiet — no signals above threshold.${buildDroppedSuffixHtml()}${buildPrefilterRuleSuffixHtml()}</div>`;
+    html += `<div class="scan-summary">${buildNothingShowingText()}${buildDroppedSuffixHtml()}${buildPrefilterRuleSuffixHtml()}</div>`;
     html += `<div class="empty-state">
       <div class="empty-icon">🔇</div>
-      <p>Market is quiet right now. Try refreshing later.</p>
+      <p>Nothing above the display line in the last scan.</p>
       <button class="btn btn-primary" onclick="runScreener()">↻ Refresh</button>
     </div>`;
   } else {
@@ -2275,6 +2334,7 @@ function renderSignalsTab() {
     const total = TICKERS.length;
     const universe = state.selectedUniverse || 'OTHER';
     html += `<div class="scan-summary">Scanned ${total} stocks <span class="ss-universe">[${universe}]</span> — <span class="ss-strong">${sb} strong buy</span>, <span class="ss-soft">${sfb} soft buy</span>, <span class="ss-watch">${w} watch</span>${buildDroppedSuffixHtml()}${buildPrefilterRuleSuffixHtml()}</div>`;
+    html += buildNothingQualifiesHtml();
 
     const filtered = getFilteredSignals();
     if (!filtered.length) {

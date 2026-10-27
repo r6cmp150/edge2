@@ -63,7 +63,36 @@ const NEW = scorer(read('core/edge-scoring.js'));
 
 const raw = JSON.parse(execSync(`git show ${DATA_REV}:data/backups/signal_log.json`, { cwd: ROOT, maxBuffer: 1e9 }).toString());
 console.log(`data: data/backups/signal_log.json at ${DATA_REV}; old formula: core/edge-scoring.js at ${BASE_COMMIT}; new formula: working tree`);
-const rows = (Array.isArray(raw) ? raw : raw.rows).filter(r => r.engine_source === 'EDGE' && r.signal_snapshot?.bars?.length);
+let rows = (Array.isArray(raw) ? raw : raw.rows).filter(r => r.engine_source === 'EDGE' && r.signal_snapshot?.bars?.length);
+
+// --exclude-artifacts (2026-10-27, phase-10 §7.6 step 2 recheck): drop, from
+// BOTH sides, rows that were not a real signal when scored. Decided from
+// each row's own stored data, so the result stays pinned to DATA_REV:
+//   stale    = its newest bar was more than one trading day before the
+//              signal date (a dead or halted stock; PSKY from 10-09);
+//   openMin  = scored on the previous session's bar (age exactly 1) by a
+//              scan in the first two minutes after the 06:30 PT open, when
+//              the live snapshot still held yesterday's bar.
+// Not a fixed list of dead symbols: a stock that died on 10-14 had real
+// signals before that.
+if (process.argv.includes('--exclude-artifacts')) {
+  const clock = { console }; vm.createContext(clock);
+  vm.runInContext(read('core/clock.js') + '\nglobalThis.__tdb = tradingDaysBetween;', clock);
+  const ptHHMM = t => new Date(t).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour12: false, hour: '2-digit', minute: '2-digit' });
+  const why = { stale: 0, openMin: 0, noTime: 0 };
+  rows = rows.filter(r => {
+    const newest = r.signal_snapshot.bars.map(b => b.t).sort().at(-1).slice(0, 10);
+    const age = clock.__tdb(newest, r.signal_date);
+    if (age > 1) { why.stale++; return false; }
+    if (age === 1) {
+      if (!r.first_shown_at) { why.noTime++; return true; } // can't tell: kept, and counted
+      const hm = ptHHMM(r.first_shown_at);
+      if (hm >= '06:30' && hm < '06:33') { why.openMin++; return false; }
+    }
+    return true;
+  });
+  console.log(`--exclude-artifacts: dropped ${why.stale} stale-history rows and ${why.openMin} open-minute rows (age-1 rows without a timestamp, kept: ${why.noTime})`);
+}
 
 let mismatches = 0;
 const scored = [];

@@ -33,7 +33,12 @@ const H = alpacaHeaders(ROOT);
 const UNIVERSE = edgeUniverse(ROOT);
 const DATA_REV = 'de95a93', OLD_REV = 'b63ef1b';   // signal_log backup; the v1 formula those scans ran
 const DATES = ['2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-19', '2026-10-20', '2026-10-21'];
-const TIMES_PT = ['07:00', '07:30', '10:00', '12:00'];
+// FIXED clock times (Roman, 2026-10-27), the yardstick for the pre-committed
+// 10-day rule (spec §7.6 1f): day-to-day counts must be comparable, not
+// depend on when a cron happened to land. Covers the supported buy window
+// (07:30-11:00) and noon. Changing these changes the yardstick, so the
+// spec's rule changes with it, never silently.
+const TIMES_PT = ['07:30', '09:00', '10:00', '11:00', '12:00'];
 const FLOORS = [100e3, 250e3, 500e3, 1e6, 2e6];
 const LOOKBACK = 20, PDT_H = 7, MIN_PRICE = 1, MAX_PRICE = 20, LIVE_MIN_VOL = 100000;
 const ptToUtc = (date, hhmm) => Date.parse(`${date}T${hhmm}:00Z`) + PDT_H * 3600e3;
@@ -53,14 +58,43 @@ const LINES = NEW.__t;   // the current version's own thresholds, not literals
 
 const day = b => b.t.slice(0, 10);
 const syms = [...UNIVERSE, 'SPY'];
-const iexDaily = await fetchBars(H, syms, { timeframe: '1Day', start: '2026-04-01', end: '2026-10-21', feed: 'iex', adjustment: 'all' });
-const sipDaily = await fetchBars(H, UNIVERSE, { timeframe: '1Day', start: '2026-08-01', end: '2026-10-21', feed: 'sip', adjustment: 'all' });
+// The daily history must reach the LAST date measured. Until 2026-10-27 both
+// fetches ended at a hardcoded '2026-10-21': right for the window the tool
+// was built on, silently wrong for any later date. Run for 10-23, it had no
+// 10-22 bar, so SPY's change spanned two days (-1.64% rebuilt against -0.44%
+// live), every history was one bar short (125 against 126) and RSI/up-days
+// missed a day: 36% exact instead of 91%. Each date's history is filtered
+// to days before it below, so ending at the last date leaks nothing.
+const LAST = DATES[DATES.length - 1];
+const clock = { console }; vm.createContext(clock);
+vm.runInContext(read('core/clock.js') + '\nglobalThis.__prev = previousTradingDay;', clock);
+const iexDaily = await fetchBars(H, syms, { timeframe: '1Day', start: '2026-04-01', end: LAST, feed: 'iex', adjustment: 'all' });
+// SIP is only read for sessions BEFORE each date (the trailing average), and
+// the plan refuses SIP queries reaching the last 15 minutes: end it at the
+// last date's previous trading day.
+const sipDaily = await fetchBars(H, UNIVERSE, { timeframe: '1Day', start: '2026-08-01', end: clock.__prev(LAST), feed: 'sip', adjustment: 'all' });
+{
+  // Refuse a history that stops short: SPY trades every session, so its
+  // newest bar before each date must be that date's previous trading day.
+  for (const d of DATES) {
+    const got = (iexDaily.SPY || []).map(day).filter(x => x < d).sort().at(-1);
+    if (got !== clock.__prev(d)) throw new Error(`daily history for ${d} ends ${got}, not ${clock.__prev(d)}: every input would be a day stale`);
+  }
+}
 const iexMin = {};
 for (const d of DATES) iexMin[d] = await fetchBars(H, syms, { timeframe: '1Min', start: `${d}T08:00:00Z`, end: `${d}T19:30:00Z`, feed: 'iex' });
 
+// The live gate's rule (core/universe.js getEdgeLiquidity), recency included
+// (2026-10-27): the 20 sessions must reach the previous trading day. Without
+// it this tool passed PSKY (dead since 10-05, a heavy trailing average) in
+// every slot of its projection. NOT reproduced: the listed/tradable test.
+// Alpaca's flag is a point-in-time fact with no history, so the four
+// not-tradable symbols (still trading) can appear here and not live.
+// Recency alone catches all ten not-listed ones (dry run 2026-10-22).
 function trailingAvg(sym, d) {
   const prior = (sipDaily[sym] || []).filter(b => day(b) < d);
   if (prior.length < LOOKBACK) return null;
+  if (day(prior[prior.length - 1]) !== clock.__prev(d)) return null;
   return prior.slice(-LOOKBACK).reduce((s, b) => s + b.v, 0) / LOOKBACK;
 }
 // The live inputs for one symbol at instant T on date d.
