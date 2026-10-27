@@ -826,6 +826,7 @@ let state = {
   warriorPreMarketVolumeCache: null, // { date, historyBySymbol: {symbol: [{date,volume}]} } — core/universe.js, pre-market-specific RVOL baseline (2026-09-04), daily cache — persisted
   warriorPreMarketRvolObservations: [], // [{capturedAt,date,symbol,ratio,todayPreMarketVolume,avgPreMarketVolume,daysInAverage}] — engines/warrior/gate.js, accumulates across mornings so a real pre-market RVOL threshold can eventually be set from data instead of the unvalidated placeholder — persisted, capped (see gate.js's _trimPreMarketRvolObservations)
   persistFailure: null, // { key, message, at } — core/store.js's persist(), set on ANY localStorage write failure (quota exhaustion, etc), cleared on the next successful persist() — surfaced via updateMarketBanner, not silent
+  saleWriteFailures: {}, // { [positionId]: { ticker, code: 'SALE_FAILED'|'SALE_DUPLICATE', message, at, args } } -- writeTradeToSupabase; PERSISTED, because the portfolio row is already deleted when the sale write runs: this is the only copy of an unrecorded sale until Retry lands it
   positionSaveFailures: {}, // { [positionId]: { ticker, code, message, at } } — backgroundSavePosition(), keyed by core/store.js's three zero-row codes; surfaced via updateMarketBanner. MISSING stays until reload; UNWRITABLE/UNKNOWN clear on that position's next successful save — session only, not persisted
   // warriorEdgarCikMapCache/warriorFloatCache RETIRED 2026-09-04: they backed
   // core/edgar.js's live client-side EDGAR fetch, which a real boot check
@@ -867,7 +868,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','analysisPeriods','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations'].forEach(k => {
+  ['sold','analysisPeriods','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations','saleWriteFailures'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -987,6 +988,33 @@ function updateMarketBanner() {
         <strong>Save failed — ${state.persistFailure.key}</strong>
       </div>
       <span class="market-countdown">Storage full? Free up space, then reload.</span>
+    `;
+    return;
+  }
+  // A sale that isn't recorded outranks everything below: it's a real trade
+  // record that would otherwise be lost without anyone knowing
+  // (writeTradeToSupabase -> noteSaleWrite). SALE_FAILED shows first.
+  const saleFails = Object.entries(state.saleWriteFailures || {}).map(([id, f]) => ({ id, ...f }))
+    .sort((a, b) => (a.code === 'SALE_FAILED' ? 0 : 1) - (b.code === 'SALE_FAILED' ? 0 : 1));
+  if (saleFails.length) {
+    const f = saleFails[0];
+    const more = saleFails.length > 1 ? ` (+${saleFails.length - 1} more)` : '';
+    const failed = f.code === 'SALE_FAILED';
+    el.style.color = failed ? 'var(--red)' : 'var(--muted)';
+    el.innerHTML = failed ? `
+      <div>
+        <span class="market-status-dot" style="background:var(--red)"></span>
+        <strong>${f.ticker} sale NOT recorded${more}</strong>
+      </div>
+      <span class="market-countdown">The sale isn't in the database. Don't re-submit it by hand: tap Retry (safe — a second copy is refused), then check the Sold tab after a refresh.</span>
+      <button class="btn btn-sm btn-danger" onclick="retrySaleWrite('${f.id}')">Retry</button>
+    ` : `
+      <div>
+        <span class="market-status-dot" style="background:var(--muted)"></span>
+        <strong>${f.ticker} sale was already recorded${more}</strong>
+      </div>
+      <span class="market-countdown">A second copy of the same sale was refused, as designed. Nothing is lost — refresh the Sold tab to see it.</span>
+      <button class="btn btn-sm btn-ghost" onclick="dismissSaleNotice('${f.id}')">Dismiss</button>
     `;
     return;
   }
@@ -5921,7 +5949,13 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       // position has no id, which is a defect a query will find.
       position_id: pos.id ?? null,
     }]).select('id');
-    if (error) { console.error('Supabase trade write failed:', error.message); return; }
+    if (error) {
+      // 23505 on trades_v2_position_id_once: this position's sale is
+      // already in trades_v2 (db/033). That's the intended refusal of a
+      // second copy, not a lost trade.
+      const duplicate = error.code === '23505' && /position_id/.test(`${error.message} ${error.details || ''}`);
+      return noteSaleWrite(pos, duplicate ? 'SALE_DUPLICATE' : 'SALE_FAILED', error.message, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
+    }
     // record is the same object reference already sitting in state.sold —
     // capturing the Supabase row id here lets Sell Timing Analysis (Lazy
     // Resolution project) later UPDATE this exact row instead of matching
@@ -5931,9 +5965,45 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       record.supabaseId = data[0].id;
       persist('sold');
     }
+    return noteSaleWrite(pos, 'WRITTEN', null, null);
   } catch(e) {
-    console.error('Supabase trade write failed:', e.message);
+    return noteSaleWrite(pos, 'SALE_FAILED', e.message, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
   }
+}
+
+// The sale write's outcome, surfaced, never just a console line
+// (2026-10-27). The same banner machinery as a failed position save, with
+// three states: WRITTEN, SALE_DUPLICATE (refused as a second copy of a sale
+// already recorded: the intended behaviour since db/033, said as such), and
+// SALE_FAILED (anything else). By the time this runs, confirmMarkSold has
+// already deleted the portfolio row, so a failed sale's arguments are KEPT
+// in persisted state: the only copy until Retry lands it. Retry is safe
+// because trades_v2.position_id is unique: if the first write did land,
+// the retry comes back SALE_DUPLICATE.
+function noteSaleWrite(pos, status, message, args) {
+  if (!state.saleWriteFailures) state.saleWriteFailures = {};
+  if (status === 'WRITTEN') delete state.saleWriteFailures[pos.id];
+  else {
+    console.error(`Supabase trade write ${status} for ${pos.ticker} (${pos.id}): ${message}`);
+    state.saleWriteFailures[pos.id] = { ticker: pos.ticker, code: status, message, at: new Date().toISOString(), args: status === 'SALE_FAILED' ? args : null };
+  }
+  persist('saleWriteFailures');
+  updateMarketBanner();
+  return status;
+}
+
+async function retrySaleWrite(posId) {
+  const f = state.saleWriteFailures?.[posId];
+  if (!f || !f.args) return;
+  await writeTradeToSupabase(...f.args);
+  if (typeof renderSoldTab === 'function' && state.activeTab === 'sold') renderSoldTab();
+}
+
+function dismissSaleNotice(posId) {
+  if (state.saleWriteFailures?.[posId]?.code !== 'SALE_DUPLICATE') return; // only the harmless one is dismissable
+  delete state.saleWriteFailures[posId];
+  persist('saleWriteFailures');
+  updateMarketBanner();
 }
 
 // Unified recommendation snapshot for a trade record at time of sale. Uses
