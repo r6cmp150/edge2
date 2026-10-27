@@ -1301,6 +1301,14 @@ function renderSnapshot(signalSnapshot) {
 // one call site this was designed against.
 const WARRIOR_EXIT_UNVALIDATED_CAVEAT = 'Unvalidated exit rule — backtest found no edge for this setup; this is a live forward test, not confirmed guidance.';
 
+// liveData.at (2026-10-27, phase-10 §7.7): the instant the time-of-day rules
+// judge against. Omitted = now (a live card). A sale passes its own time:
+// the verdict stored at sale must describe the sale, not the moment it was
+// recorded. The sale form takes a date but no time, so a sale recorded on
+// a LATER day passes at: null. Its time of day is unknown, so the two
+// time-of-day rules are not evaluated and the result says so, never
+// judging against the recording time.
+const WARRIOR_EXIT_TIME_UNKNOWN = 'Time of sale unknown (recorded on a later day): the time-of-day rules were not evaluated';
 function evaluateExit(position, liveData) {
   const price = liveData?.price;
   const stop = position?.stop;
@@ -1311,29 +1319,37 @@ function evaluateExit(position, liveData) {
     return { status: 'HOLDING', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Insufficient live data to evaluate exit'] };
   }
 
-  const nowPT = getPT();
-  const minutesFromMidnightPT = nowPT.getHours() * 60 + nowPT.getMinutes();
+  const at = liveData && 'at' in liveData ? liveData.at : Date.now();
+  const timeKnown = at != null;
+  const nowPT = timeKnown ? getPT(new Date(at)) : null;
+  const minutesFromMidnightPT = timeKnown ? nowPT.getHours() * 60 + nowPT.getMinutes() : null;
+  const withTimeNote = reasons => (timeKnown ? reasons : [...reasons, WARRIOR_EXIT_TIME_UNKNOWN]);
 
   if (price <= stop) {
-    return { status: 'SELL_NOW', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Stop-loss hit'] };
+    return { status: 'SELL_NOW', reasons: withTimeNote([WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Stop-loss hit']) };
   }
-  if (minutesFromMidnightPT >= 12 * 60 + 30) {
+  if (timeKnown && minutesFromMidnightPT >= 12 * 60 + 30) {
     return { status: 'SELL_NOW', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Same-day discipline — 30 minutes before close'] };
   }
 
   const risk = buyPrice - stop; // R, same-day tight-stop convention
   if (risk > 0 && price >= buyPrice + 2 * risk) {
-    return { status: 'SELL_SOON', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Target reached (2R)'] };
+    return { status: 'SELL_SOON', reasons: withTimeNote([WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Target reached (2R)']) };
   }
-  if (minutesFromMidnightPT >= 8 * 60) {
+  if (timeKnown && minutesFromMidnightPT >= 8 * 60) {
     return { status: 'SELL_SOON', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Past the high-momentum window (8:00am PT)'] };
   }
   if (typeof peakPrice === 'number' && peakPrice > buyPrice) {
     const peakGain = peakPrice - buyPrice;
     if (price <= buyPrice + peakGain * 0.5) {
-      return { status: 'SELL_SOON', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Gave back more than half its peak gain'] };
+      return { status: 'SELL_SOON', reasons: withTimeNote([WARRIOR_EXIT_UNVALIDATED_CAVEAT, 'Gave back more than half its peak gain']) };
     }
   }
+  // With the time unknown and no price rule firing, HOLDING would be a
+  // verdict the evidence doesn't support (past 08:00 it would have been
+  // SELL_SOON): it's an abstention, said as one. A price rule that did
+  // fire above stands, with the note that the time rules weren't judged.
+  if (!timeKnown) return { status: 'CANNOT_EVALUATE', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT, WARRIOR_EXIT_TIME_UNKNOWN] };
   return { status: 'HOLDING', reasons: [WARRIOR_EXIT_UNVALIDATED_CAVEAT] };
 }
 

@@ -4053,7 +4053,9 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
       const pt = getPT();
       return `${String(pt.getHours()).padStart(2,'0')}:${String(pt.getMinutes()).padStart(2,'0')}`;
     })(),
-    buyDayOfWeek: DAY_NAMES[getPT().getDay()],
+    // The ORDER date's weekday (an entered date, so exact), not the recording
+    // day's: a backdated add recorded the wrong weekday (phase-10 §7.7).
+    buyDayOfWeek: DAY_NAMES[new Date(date + 'T12:00:00Z').getUTCDay()],
     // classifySession (core/clock.js): four values (PRE_MARKET/REGULAR/
     // AFTER_HOURS/CLOSED), not the old isPreMarketHours() ? ... : 'REGULAR'
     // two-value guess that had no AFTER_HOURS branch at all -- see
@@ -4905,7 +4907,12 @@ const DURATION_WINDOW_LABEL = { DAY: 'exit-today', '3-DAY': '2–3 market-day', 
 // direction (negative = exit pressure/down-arrow, positive = hold
 // pressure/up-arrow). composite is null when hardFloor is true, since the
 // hard floor bypasses composite scoring entirely per spec.
-function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) {
+// asOfDate (2026-10-27, phase-10 §7.7): the date the hold is counted to.
+// Omitted = today, right for a live card. A SALE passes its sale date: a
+// verdict stored at sale must count the hold to the day the sale happened,
+// not the day it was recorded. Threaded into calcPeakRiskScore too, whose
+// score is also stored at sale.
+function calcUnifiedRecommendation(position, currentSignal, macroContext, snap, asOfDate = null) {
   // ── CANNOT EVALUATE — checked before anything else, including both hard
   // floors below. Phase 9 §3.4 review (2026-09-15): position.priceFetchFailed
   // is an explicit signal, set only by call sites that know their currentPrice
@@ -4976,7 +4983,7 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
   const factors = [];
   const add = (name, points) => factors.push({ name, points });
 
-  const days = holdSpan(position, ptDateStr(getPT())).closes; // market closes held (2026-10-09)
+  const days = holdSpan(position, asOfDate ?? ptDateStr(getPT())).closes; // market closes held (2026-10-09), to asOfDate when given
   const maxHold = MAX_HOLD_DAYS[position.duration];
   const inProtection = !!position.momentumProtectionActivated;
 
@@ -5138,7 +5145,7 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
     // (never added into composite) and only ever computed in this branch.
     // LOCK IN PROFITS never fires on a losing position even if composite is
     // positive here, per spec.
-    peakRisk = calcPeakRiskScore(position, currentSignal, snap);
+    peakRisk = calcPeakRiskScore(position, currentSignal, snap, asOfDate);
     label = (pnlPct > 0 && peakRisk.score <= -40) ? 'LOCK IN PROFITS' : 'HOLD STRONG';
   }
 
@@ -5170,7 +5177,7 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap) 
 // snap: the raw Alpaca snapshot for the ticker (dailyBar.h/.c, prevDailyBar.c)
 //   — used directly for the intraday-giveup and today's-direction factors so
 //   they don't depend on currentSignal's completeness.
-function calcPeakRiskScore(position, currentSignal, snap) {
+function calcPeakRiskScore(position, currentSignal, snap, asOfDate = null) {
   const factors = [];
   const add = (name, points) => factors.push({ name, points });
 
@@ -5240,7 +5247,7 @@ function calcPeakRiskScore(position, currentSignal, snap) {
   // ── Well past duration window while still winning
   const maxHold = MAX_HOLD_DAYS[position.duration];
   if (maxHold != null && position.buyDate) {
-    const days = holdSpan(position, ptDateStr(getPT())).closes; // market closes held (2026-10-09)
+    const days = holdSpan(position, asOfDate ?? ptDateStr(getPT())).closes; // market closes held (2026-10-09), to asOfDate when given
     const overdueDays = days - maxHold;
     const pnlPct = price != null ? ((price - position.buyPrice) / position.buyPrice) * 100 : null;
     // > 2 market days over (was > 3 calendar) -- same real elapsed time; see
@@ -5898,6 +5905,11 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       exit_rule_id: pos.exitRuleId ?? null,
       minutes_late: pos.minutesLate ?? null,
       source: record.source,
+      // Hold counted to the SALE date since 2026-10-27 (phase-10 §7.7), here
+      // and in peak_risk_score_at_sale. Rows before that counted it to the
+      // day the sale was RECORDED: exact only where sell_date equals the PT
+      // date of created_at. Those rows can't be fixed; that comparison says
+      // which to trust.
       unified_recommendation_at_sale: record.unifiedRecommendationAtSale,
       unified_composite_at_sale: record.unifiedCompositeAtSale,
       top_exit_factors_at_sale: record.topExitFactorsAtSale,
@@ -6009,7 +6021,7 @@ function dismissSaleNotice(posId) {
 // Unified recommendation snapshot for a trade record at time of sale. Uses
 // pos.rsiAtBuy rather than any live RSI since a sale is a point-in-time
 // event with no "current" bar fetch of its own at this point in the flow.
-function computeUnifiedSaleFields(pos, salePrice) {
+function computeUnifiedSaleFields(pos, salePrice, saleDate) {
   // Registry dispatch (Phase 7) -- checked before EDGE's own math runs, not
   // after: calcUnifiedRecommendation reads pos.duration internally
   // (MAX_HOLD_DAYS[position.duration]), which is undefined for every
@@ -6023,8 +6035,14 @@ function computeUnifiedSaleFields(pos, salePrice) {
   // {status, reasons}, nothing resembling a composite score.
   if (pos.engineSource && pos.engineSource !== 'EDGE') {
     const dispatchedEngine = getEngine(pos.engineSource);
+    // The sale's own time (phase-10 §7.7). The form takes a date, not a
+    // time: recorded on the sale date, the recording instant is the best
+    // known time of the sale; recorded on a later day, the time is unknown
+    // (at: null), and the engine says it couldn't judge the time-of-day
+    // rules instead of judging them against the recording moment.
+    const saleAt = saleDate === ptDateStr(getPT()) ? Date.now() : null;
     const exitResult = (dispatchedEngine && dispatchedEngine.evaluateExit)
-      ? dispatchedEngine.evaluateExit(pos, { price: salePrice })
+      ? dispatchedEngine.evaluateExit(pos, { price: salePrice, at: saleAt })
       : neutralEngineExitFallback(pos, { price: salePrice });
     const peakRsiDuringHold = state.ownedPeakRSI[pos.ticker] ?? pos.rsiAtBuy ?? null;
     return {
@@ -6041,7 +6059,10 @@ function computeUnifiedSaleFields(pos, salePrice) {
     };
   }
   const currentSignal = state.signals.find(s => s.ticker === pos.ticker) || currentOwnedScore(pos.ticker) || null;
-  const ur = calcUnifiedRecommendation({ ...pos, currentPrice: salePrice, rsi: pos.rsiAtBuy }, currentSignal, state.macroContext);
+  // The sale's own clock: its price AND its date (phase-10 §7.7). Until
+  // 2026-10-27 the hold was counted to the day the sale was RECORDED, so a
+  // Friday sale recorded on Monday stored Friday's price at Monday's hold.
+  const ur = calcUnifiedRecommendation({ ...pos, currentPrice: salePrice, rsi: pos.rsiAtBuy }, currentSignal, state.macroContext, undefined, saleDate);
   // Independent of composite/hardFloor — tracked across the whole hold by
   // renderPortfolioTab (Change 2), falls back to rsiAtBuy if this ticker was
   // sold without ever being rendered in the Portfolio tab.
@@ -6120,7 +6141,7 @@ async function confirmMarkSold(posId, btn) {
     : null;
   // Rule 5: did the position actually exit via the trailing stop threshold?
   const trailingStopTriggered = !!pos.momentumProtectionActivated && salePrice <= pos.peakPrice * 0.85;
-  const unifiedSaleFields = computeUnifiedSaleFields(pos, salePrice);
+  const unifiedSaleFields = computeUnifiedSaleFields(pos, salePrice, saleDate);
 
   const record = {
     id: Date.now().toString(),
@@ -6174,7 +6195,8 @@ async function confirmMarkSold(posId, btn) {
       const pt = getPT();
       return `${String(pt.getHours()).padStart(2,'0')}:${String(pt.getMinutes()).padStart(2,'0')}`;
     })(),
-    sellDayOfWeek: DAY_NAMES[getPT().getDay()],
+    // The SALE date's weekday, not the recording day's (phase-10 §7.7).
+    sellDayOfWeek: DAY_NAMES[new Date(saleDate + 'T12:00:00Z').getUTCDay()],
     distanceFromTargetAtSale: pos.target
       ? Math.round(((pos.target - salePrice) / pos.target) * 1000) / 10
       : null,
@@ -9971,7 +9993,7 @@ async function runDataLoadAndInit() {
 // §7.7.)
 async function loadWarriorEngine() {
   try {
-    const warrior = await import('./engines/warrior/index.js?v=20261021020000');
+    const warrior = await import('./engines/warrior/index.js?v=20261027140000');
     warrior.register();
     state.warrior = { status: 'loaded' };
   } catch (err) {

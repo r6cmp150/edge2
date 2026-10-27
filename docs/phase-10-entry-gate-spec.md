@@ -383,6 +383,16 @@ applied).** One write at buy, but **not on the position row.**
   - **It's UNIQUE on the non-NULL values.** One position sells once
     (there are no partial sales), so "one position recorded as two sales"
     becomes impossible at the database, not just prevented in the client.
+  - **PAYOFF (2026-10-27): the same index is what makes a sale retry
+    safe.** It went in as a join key and a structural block on the
+    resurrection race. The sale-write fix (`e57769c`) needed something
+    else: a failed write after the portfolio row is deleted has to be
+    retried, and a write that *looked* failed (a timeout) may have landed.
+    Without the index, a retry of that write would record the sale twice.
+    With it, the retry comes back "already recorded" and nothing is
+    duplicated. Recorded because the usual experience runs the other way:
+    a constraint added for one reason turns out to forbid something
+    needed later. This one turned out to enable it.
   - **What this design saves, and what it doesn't.** The snapshot itself
     never needs copying at sale, so a copy step that could silently drop
     a 14 KB value is gone. The *key* still has to be written at sale, but
@@ -2012,6 +2022,127 @@ fixed one must be removed from the list, and nothing can be added
 quietly. It turns "known, open" from a sentence in a spec into a check
 that runs. Use it whenever a defect is found in more places than one
 change can fix.
+
+**A value computed against the current time cannot be reproduced later
+(named 2026-10-27).** It must be stored at the moment it was true, and
+any analysis must read the stored value rather than recompute it. The
+signal snapshot (§5) makes this sharper, not safer: a snapshot holds a
+value's *inputs*, so the value looks reproducible from them, and for
+these it isn't. Recomputing one later answers a different question
+("what would this say now?") under the stored value's name. Instances in
+hand:
+- **`riskAtBuy`** (and `risk` inside a snapshot): `scoreStock`'s
+  `hasRecentNegNews` compares the headline's age with `Date.now()`
+  (`core/edge-scoring.js`, the only clock read in the scoring code). A
+  headline 2h old at the buy re-reads as days old at a re-run. The
+  *score* doesn't read it, which is why the re-score property holds while
+  this doesn't.
+- **Bars age** (`barsAgeTradingDays`, db/031): trading days from the
+  newest bar to the *scan* date. Stored at the scan; recomputed later
+  against "today", every signal reads stale.
+- **Session classification** (`buySession`): `classifySession(date,
+  <now>)` at the click. It's a fact about the moment of the add, and has
+  no meaning re-derived afterward.
+- **Hold time:** `holdSpan(position, <today>)` on every card and in
+  `calcUnifiedRecommendation`. Correct live; meaningless re-read later.
+- **The −6% floor's render-time read** (above): the same defect in its
+  most expensive form. It was a verdict recomputed against "now" every
+  time the screen opened, so the more often Roman looked, the more dips
+  it caught.
+
+**Found by the sweep that named it** (every clock read in the scorer and
+the buy and sale capture code):
+- **`unified_recommendation_at_sale` (and its factors) mixed two
+  clocks. FIXED 2026-10-27.** `computeUnifiedSaleFields` called
+  `calcUnifiedRecommendation` with the *entered sale price*, but that
+  function counted hold days as `holdSpan(position, ptDateStr(getPT()))`,
+  i.e. the day the sale was *recorded*. A Friday sale recorded on Monday
+  stored the verdict for Friday's price at Monday's hold count. The same
+  read was inside `calcPeakRiskScore`, so `peak_risk_score_at_sale` had it
+  too. Both now take an `asOfDate`; a sale passes its sale date, and a
+  live card still counts to today (`tests/at-sale-hold-count.test.js`, 4
+  mutations caught). **Rows before the fix can't be corrected:** an
+  at-sale verdict or peak-risk score is exact only where `sell_date`
+  equals the PT date of the row's `created_at`. That comparison says which
+  to trust, and it's written at the field in `writeTradeToSupabase`.
+- **Same defect, engine side, FIXED 2026-10-27, before Warrior's first
+  live use:** Warrior's `evaluateExit` read `getPT()` for its two
+  time-of-day rules (12:30 close discipline, the 08:00 momentum window), so
+  a Warrior at-sale status judged time-of-day at the moment of
+  *recording*. It now takes `liveData.at`, the instant to judge, and
+  behaves three ways:
+  - **Omitted** (a live card): now, as before.
+  - **Recorded on the sale date:** the recording instant, the best known
+    time.
+  - **Recorded on a later day:** `null`, because the sale form takes a
+    date but no time. The time rules aren't judged, the reasons say so,
+    and with no price rule to stand on the result is **CANNOT_EVALUATE**,
+    never HOLDING: a missing input answered with a verdict is the same
+    mistake as HOLDING on a missing price. The engine import's cache stamp
+    is bumped, so a cached old module can't keep ignoring `at`.
+    `tests/warrior-exit-time.test.js`, 7 mutations caught.
+- **Weekdays, FIXED in the same change:** `buyDayOfWeek` and
+  `sellDayOfWeek` were read from the recording day's clock. A backdated
+  add, or a sale recorded a day late, stored the wrong weekday, which is
+  what §3.3's Friday analysis reads. They now come from the entered order
+  and sale dates, which are exact.
+- **CORRECTION to the "correct as stored" list below: four of its fields
+  are wrong for late recordings. Reported, NOT fixed.** `buyTime`,
+  `sellTime`, `buySession` and `minutesFromOpen` are read from the clock
+  at *recording*. The forms take a date but no time, so for an add or sale
+  recorded on a different day from the event, these store the recording
+  moment under the event's name. It's the "a value that doesn't describe
+  its own row" shape. The honest value there is NULL (not recorded), but
+  NULLing changes what the order-basis check (§5) and the session splits
+  see, so it gets its own review. Until then, any of the four is
+  trustworthy only where the event date equals the PT date of the row's
+  `created_at`.
+- **Correct as stored, listed so nobody "recomputes" them:**
+  `barsSinceSignal` (minutes from the last scan to the click),
+  `minutesFromOpen`, `buyTime` / `buyDayOfWeek` / `sellTime` /
+  `sellDayOfWeek`. These are the moment itself, captured at it, *when
+  the add or sale is recorded on the day it happened* (corrected above:
+  the weekdays now come from the entered dates; the times are wrong for
+  late recordings). The
+  snapshot carries no scan timestamp, so `barsSinceSignal` can't be
+  re-derived from it; the stored column is the only record.
+**The score's independence from the clock is a PROPERTY, pinned
+(2026-10-27).** The news-age line in `scoreStock` is the only clock read in
+the scoring code, and it feeds `risk` alone (`calcRiskScore`), never the
+score. The point function (`scoreComponents`) and `core/indicators.js`
+read no clock at all. That's *why* a snapshot re-scores exactly (§5), and
+it's what would quietly break if a future scoring term ever read the
+time: the snapshot would still look reproducible, and wouldn't be.
+`tests/scorer-clock-free.test.js` fails on any new clock read in either
+file, and on the clock-derived value reaching the score (3 mutations
+caught). If a clock-dependent term is ever genuinely needed, the snapshot
+must store its value, and that test changes in the same commit, on
+purpose.
+
+**A value that doesn't describe its own row (named 2026-10-27).** This is
+a third shape, distinct from both rules above. It isn't a value computed
+against the wrong clock; it's a value stored *on* a row that was never
+computed *for* that row: a shared object, read as though it were
+per-item. **Instance:** `state.macroContext` is fetched once per session
+(`runScreener`: "fetched once per session, cached") and reused by every
+later scan, so a snapshot's `macroCondition` (and the macro adjustment
+inside its score) is the condition at the session's *first* scan, not
+necessarily at the scan that produced it. The row says which macro
+condition applied, and for a later scan that can be another scan's
+answer. **Same family as the modal overwrite** (above): `openStockModal`
+wrote its own recompute of `consUpDays` and friends onto the shared
+`state.signals` entry, so a stored component described the modal's
+moment, not the signal's. The test for this shape: for every per-row
+field, ask whether it was computed for this row, at this row's moment,
+or copied from something shared. **It's the most portable question in
+§7.7: one question catches every instance found so far.** It catches
+the modal mutation (`consUpDays` written from the modal's moment), the
+session-wide `macroContext`, the render-written peak price (a display's
+moment stored where decisions read it), the stale `build_version` (one
+hand-kept constant stamped on every row, stuck at v2.18.0 since
+2026-09-15), and the recording-time `buyTime` / `sellTime` above (the
+recording's moment under the event's name). Not fixed: refreshing the macro context
+per scan changes the score's inputs, a step-2-sized change.
 
 **A fix believed done is not a fix shipped.** A spec may not record
 something as fixed without naming the call sites the fix covers. "Fixed
