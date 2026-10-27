@@ -4023,6 +4023,13 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
   const entryMeasurement = await computeEntryMeasurementFields(ticker, price, sig);
 
   const position = {
+    // TRIP-WIRE (2026-10-27): this id's FORMAT is data. It's epoch ms
+    // (Date.now()) and does three jobs: the join key to signal_snapshot_at_buy
+    // (db/033), the unique trades_v2.position_id that makes a sale retry safe,
+    // and the record of WHEN the add happened. scripts/audit-recording-lag.cjs
+    // parses it as a timestamp. Changing the format (e.g. crypto.randomUUID())
+    // requires storing the add time explicitly in the same change.
+    // tests/position-id-timestamp.test.js fails otherwise.
     id: Date.now().toString(),
     ticker,
     company: COMPANY_NAMES[ticker] || ticker,

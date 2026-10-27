@@ -588,6 +588,13 @@ async function _confirmAddPosition(symbol, btn) {
     : null;
 
   const position = {
+    // TRIP-WIRE (2026-10-27): this id's FORMAT is data. It's epoch ms
+    // (Date.now()) and does three jobs: the join key to signal_snapshot_at_buy
+    // (db/033), the unique trades_v2.position_id that makes a sale retry safe,
+    // and the record of WHEN the add happened. scripts/audit-recording-lag.cjs
+    // parses it as a timestamp. Changing the format (e.g. crypto.randomUUID())
+    // requires storing the add time explicitly in the same change.
+    // tests/position-id-timestamp.test.js fails otherwise.
     id: Date.now().toString(),
     ticker: symbol,
     company: symbol, // Warrior has no company-name source (that's core/edge-scoring.js's COMPANY_NAMES, EDGE-only)
