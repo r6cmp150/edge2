@@ -2192,3 +2192,20 @@ table.analytics-trends-table {
 .settings-row .build-status { text-align: right; padding: 0; }
 .build-status.build-stale { color: var(--yellow, #e0a800); font-weight: 600; }
 .build-status.build-unknown { font-style: italic; }
+
+/* Add-form notes (2026-10-27): what the app knows or advises, shown in the
+   form, never asked as a confirm (phase-10 spec §7.7). */
+.add-form-note {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  margin-bottom: 10px;
+}
+.add-form-note-warn {
+  color: var(--text);
+  background: rgba(255,209,102,0.15);
+  border-color: rgba(255,209,102,0.4);
+}

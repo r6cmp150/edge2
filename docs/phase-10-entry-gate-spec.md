@@ -1915,6 +1915,36 @@ modal) from 10:00 PT onward for DAY-classified signals. Consequences:
 - This is why §7.5 matters beyond small samples: a small sample
   announces itself; a missing-row mechanism does not.
 
+**Corrected 2026-10-27, from live use: the fix for that over-reached.**
+Inside the entry gate, the modal footer was relabelled "+ Record a trade
+already placed", behind a browser `confirm()` ("The advice is not to buy
+now. Record a trade you've already placed for QSI?"). That gated the
+*action* in a second way: the relabel presumed a past trade, so there was
+no ordinary add any more, and a blocking browser dialog was the heaviest
+interruption the page had, spent on a suggestion. The card's warning strip
+and the modal's banner ARE the advice, and Roman likes them; everything
+past them was the app arguing with him. Now:
+- **Inside a gate window:** the strip and the banner are unchanged, and the
+  footer is the ordinary "+ Add to Portfolio", which opens the form
+  directly.
+- **A second lot** (already held, or an order pending) opens the form
+  directly, with the reason shown in it.
+- **After-hours / pre-market entry advice** (§4.1) is a note in the add
+  form, no longer a confirm.
+
+**The principle: confirm when the app knows a FACT that contradicts the
+action; never confirm when it merely ADVISES against it.** A dead asset is
+a fact: Alpaca says it can't be traded, so "are you sure this filled?"
+checks reality. That's the one confirm left on the add path
+(`confirmAddPortfolio`), and "Add anyway" always proceeds. The hour of day
+is an opinion drawn from 70 trades, and an opinion doesn't get a modal;
+holding a position already is a fact, but it doesn't contradict buying
+more. **No browser `confirm()` anywhere in the app:** it blocks the page,
+renders as "<host> says", and on mobile is indistinguishable from a scam
+prompt. The listing confirm is the app's own in-page overlay
+(`showConfirm`). `tests/entry-gate.test.js` pins all of it, including a
+scan of every file for a browser `confirm(`.
+
 **When a change requires editing the same logic in two places, the
 change is to delete one of them.** Duplicated logic that must move
 together has been found by accident, while changing something else,
@@ -2400,3 +2430,30 @@ entries, which is why §3.1 and §3.2 do not appear anywhere in the
 generated report. **That reporting gap is worth fixing too: the section
 should show all four session values, with counts, or it hides the worst
 bucket in the dataset.**
+
+### Open: the bottom nav sometimes sits at the end of the page (2026-10-27)
+
+Roman: on any tab, intermittently, the nav doesn't appear until he scrolls
+to the very bottom. **Not the containing-block cause.** `#bottom-nav` isn't
+`position: fixed`; it's the last flex child of `#app` (`height: 100dvh`),
+below the scrolling `#tab-content`, and no ancestor's transform, filter,
+backdrop-filter, perspective, will-change or contain can capture it.
+**Mechanism reproduced** on a static copy of the shell (real `styles.css`,
+headless Chrome at 390×844): with `#app` held to the screen, the nav is
+pinned; with `#app` unconstrained, the document grows and the nav lands at
+its end, which is the symptom. **Trigger not reproduced.** Nothing in the
+code can make `#app` grow (the scroll container's flex minimum is zero, and
+the modal's `overflow: hidden` is restored on close), so `#app`'s height
+stops matching the screen only when the phone's viewport changes under the
+installed app (`standalone`, `viewport-fit=cover`): keyboard close, resume
+from background, or the status bar. The candidate fixes conflict: locking
+the page's scroll fixes a scrolled document but would hide the nav if
+`dvh` is reported too tall. So **a read-only diagnostic ships first**
+(`checkLayout` in `app.js`, `tests/layout-check.test.js`). When the nav is
+off-screen, the app is taller than the window, or the page has scrolled,
+it records the window and visual-viewport heights, the app height, the
+nav's bottom edge, the scroll offset, standalone mode, dvh support and the
+last event (modal close, keyboard close, resume, tab switch). The last 20
+are kept and summarised under Settings → App Info → Layout check. **The
+fix waits for one recorded case.** No sticky nav and no scroll listener
+moving anything.

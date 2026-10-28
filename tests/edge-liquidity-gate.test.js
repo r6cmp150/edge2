@@ -393,7 +393,7 @@ run('held positions and the add confirm: list-based, every holding, warn never b
   assert.ok(/if \(!priceFetchFailed && !heldListing\)/.test(tab), 'the per-ticker /v2/assets check is the fallback only');
   const confirm = app.match(/async function confirmAddPortfolio\([^)]*\) \{[\s\S]*?\n\}/)[0];
   assert.ok(/await fetchHeldListing\(\[ticker\]\)/.test(confirm));
-  assert.ok(/showConfirm\(warnings\.join\('\\n\\n'\), \(\) => finalizeAddPortfolio\(ticker, shares, price, date, btn, order\), 'Add anyway'\)/.test(confirm),
+  assert.ok(confirm.includes("showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');"),
     'a listing warning offers "Add anyway": it never blocks the add');
   const fetchHeld = app.match(/async function fetchHeldListing\([^)]*\) \{[\s\S]*?\n\}/)[0];
   assert.ok(/return null;/.test(fetchHeld) && !/'listed'/.test(fetchHeld), 'unknown is null, never "listed"');

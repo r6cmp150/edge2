@@ -3368,14 +3368,13 @@ async function openStockModal(ticker) {
       ? `<div class="day-suppressed-overlay" style="margin-bottom:12px">⚠ DAY trade — entry window has closed for today</div>`
       : '';
     // Phase 10 entry gate, same scope as the DAY suppression (Signals-tab
-    // results only, never an owned position). Advice only: the footer's
-    // Add button stays enabled behind a confirm (spec §7.7).
+    // results only, never an owned position). ADVICE ONLY (spec §7.7,
+    // corrected 2026-10-27): this banner and the card's warning strip ARE
+    // the advice. The footer is the ordinary Add button with no confirm,
+    // because the gate advises against the action and never removes it.
     const modalGate = ownedPos ? null : entryGateForSignal(s);
     const gateBanner = modalGate && modalGate.gated
       ? `<div class="day-suppressed-overlay" style="margin-bottom:12px">⛔ Entry gate: ${modalGate.label}</div>`
-      : '';
-    const addBlockReason = modalGate && modalGate.gated ? `Entry gate: ${modalGate.label}.`
-      : daySuppressed ? 'DAY trade — the entry window closed at 10:00 PT.'
       : '';
 
     // Unified recommendation — only meaningful for an owned position. Uses
@@ -3551,20 +3550,19 @@ async function openStockModal(ticker) {
       </div>
     `;
 
-    // Holding or pending: still recordable as a SEPARATE lot behind a
-    // confirm (spec §7.7 -- one position per ticker was never intended, and
-    // a disabled button here silently censored add-on buys).
+    // Holding or pending: a SEPARATE lot, recordable directly (spec §7.7 --
+    // one position per ticker was never intended, and a disabled button here
+    // silently censored add-on buys). The reason is shown inside the add
+    // form, not as a confirm: holding a position is a fact, but it doesn't
+    // contradict buying more.
     const lotReason = ownedPos
       ? `You already hold ${ownedPos.shares} shares of ${ticker} (bought ${ownedPos.buyDate}).`
       : pendingOrder ? `An order for ${ticker} is already pending (placed ${pendingOrder.buyDate}).` : '';
     document.getElementById('stock-modal-footer').innerHTML = ownedPos ? `
-      <button class="btn btn-ghost" style="flex:1" onclick="recordAnotherLot('${ticker}', ${JSON.stringify(lotReason).replace(/"/g, '&quot;')})">✓ In Portfolio · + Record another buy</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="openAddPortfolioModal('${ticker}', ${JSON.stringify(lotReason).replace(/"/g, '&quot;')})">✓ In Portfolio · + Record another buy</button>
       <button class="btn btn-ghost" onclick="closeModal()">✕</button>
     ` : pendingOrder ? `
-      <button class="btn btn-ghost" style="flex:1" title="Mark it filled or cancel it on the Portfolio tab" onclick="recordAnotherLot('${ticker}', ${JSON.stringify(lotReason).replace(/"/g, '&quot;')})">⏳ Order pending · + Record another order</button>
-      <button class="btn btn-ghost" onclick="closeModal()">✕</button>
-    ` : addBlockReason ? `
-      <button class="btn btn-ghost" style="flex:1" onclick="addPortfolioDespiteAdvice('${ticker}', ${JSON.stringify(addBlockReason).replace(/"/g, '&quot;')})">+ Record a trade already placed</button>
+      <button class="btn btn-ghost" style="flex:1" title="Mark it filled or cancel it on the Portfolio tab" onclick="openAddPortfolioModal('${ticker}', ${JSON.stringify(lotReason).replace(/"/g, '&quot;')})">⏳ Order pending · + Record another order</button>
       <button class="btn btn-ghost" onclick="closeModal()">✕</button>
     ` : `
       <button class="btn btn-success" style="flex:1" onclick="openAddPortfolioModal('${ticker}')">+ Add to Portfolio</button>
@@ -3732,6 +3730,7 @@ function closeModal() {
   document.getElementById('modal-overlay').classList.add('hidden');
   document.body.style.overflow = '';
   if (_priceChart) { _priceChart.destroy(); _priceChart = null; }
+  noteLayoutEvent('modal-close'); setTimeout(() => checkLayout('modal-close'), 400); // diagnostic only
 }
 
 function handleOverlayClick(e) {
@@ -3795,29 +3794,24 @@ function openPositionSnapshotModal(ticker) {
 
 // ── 15. PORTFOLIO TAB ──────────────────────────────────────────────
 
-// A gate on advice is never a gate on recording (phase-10 spec §7.7).
+// A gate on advice is never a gate on the action (phase-10 spec §7.7).
 // Inside the entry gate or after the DAY-trade 10:00 cutoff the advice is
-// "don't buy", but a trade Roman already placed must still be recordable:
-// blocking it would delete rows for exactly the trades the gate exists to
-// study, and a missing row is indistinguishable from no trade. (Until
-// 2026-10-21 the DAY cutoff disabled this button outright -- DAY buys after
-// 10:00 PT before that date are censored, spec §7.7.) Whether a recorded
-// trade fell inside a gate window is derived on read (entryGateAt on
-// buy_date/buy_time), never stored.
-function addPortfolioDespiteAdvice(ticker, reason) {
-  if (!window.confirm(`${reason}\n\nThe advice is not to buy now. Record a trade you've already placed for ${ticker}?`)) return;
-  openAddPortfolioModal(ticker);
-}
+// "don't buy". The card's strip and the modal's banner say so, and nothing
+// past them argues. (2026-10-21 to 10-27 the footer was relabelled "Record
+// a trade already placed" behind a browser confirm: that removed the
+// ordinary add, and made a suggestion the heaviest interruption the page
+// has. Before 10-21 the DAY cutoff disabled the button outright, so DAY
+// buys after 10:00 PT before that date are censored.) A confirm is for a
+// FACT that contradicts the action (a stock Alpaca won't trade:
+// confirmAddPortfolio), never for advice. No browser confirm() anywhere in
+// this app (tests/entry-gate.test.js). Whether a recorded trade fell inside
+// a gate window is derived on read (entryGateAt on buy_date/buy_time),
+// never stored.
 
-// Same rule for a ticker Roman already holds or has a pending order in: a
-// second buy is a separate lot (its own row, its own fill and sale), never
-// merged into the first. Until 2026-10-21 both buttons were disabled.
-function recordAnotherLot(ticker, reason) {
-  if (!window.confirm(`${reason}\n\nRecord another, separate buy of ${ticker}?`)) return;
-  openAddPortfolioModal(ticker);
-}
-
-function openAddPortfolioModal(ticker) {
+// note: a second lot's reason (already held / order pending), shown in the
+// form, not asked. After-hours / pre-market entry advice (§4.1) is shown here
+// too: advice, so a note in the form, never a confirm (spec §7.7).
+function openAddPortfolioModal(ticker, note = null) {
   // No signal price (e.g. a second lot of a held ticker that's no longer in
   // the scan) -> an EMPTY field, never "0.00" (spec §7.7's family: a
   // number nobody observed).
@@ -3832,6 +3826,8 @@ function openAddPortfolioModal(ticker) {
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
+      ${note ? `<div class="add-form-note">${note}</div>` : ''}
+      ${addFormSessionAdviceHtml(today)}
       <div class="form-group">
         <label class="form-label">Shares</label>
         <input id="pf-shares" class="form-input" type="number" min="0.01" step="0.01" placeholder="100">
@@ -3901,6 +3897,16 @@ function listingWarningText(ticker, listing) {
     : `${ticker} is not on Alpaca's list of active stocks: it has been delisted, merged or halted. Its last price is from before it stopped trading, so it can't be bought or sold at that price.`;
 }
 
+// §4.1's after-hours / pre-market warning, as a note in the add form
+// (advice, so never a confirm; spec §7.7). Same classifySession formula
+// finalizeAddPortfolio stamps buySession with. The note reflects the moment
+// the form opens; the stored session is stamped at the add.
+function addFormSessionAdviceHtml(dateStr) {
+  const pt = getPT();
+  const s = classifySession(dateStr, `${String(pt.getHours()).padStart(2,'0')}:${String(pt.getMinutes()).padStart(2,'0')}`);
+  return (s === 'AFTER_HOURS' || s === 'PRE_MARKET') ? `<div class="add-form-note add-form-note-warn">${buildAfterHoursWarningText()}</div>` : '';
+}
+
 async function confirmAddPortfolio(ticker, btn) {
   const shares = parseFloat(document.getElementById('pf-shares').value);
   const price  = parseFloat(document.getElementById('pf-price').value);
@@ -3914,29 +3920,17 @@ async function confirmAddPortfolio(ticker, btn) {
   const order = readOrderEntry('pf', date);
   if (order.error) { alert(order.error); return; }
 
-  // §4.1: warn, don't block -- n=10 (now 11) doesn't justify a hard stop,
-  // and Roman's stated risk appetite is medium-to-high. This check and
-  // finalizeAddPortfolio's own buySession (stamped on the position) use
-  // the identical classifySession(date, HH:MM) formula, but are
-  // deliberately two separate getPT() reads, not one value threaded
-  // through: if the warning is shown, the position isn't finalized until
-  // "Add anyway" is actually clicked, and the STORED session should
-  // reflect that real moment, not the moment the warning first appeared.
-  // The two can disagree only in the vanishingly rare case of dwelling
-  // across a session boundary while the dialog is open.
-  const nowPtForSession = getPT();
-  const nowHHMMForSession = `${String(nowPtForSession.getHours()).padStart(2,'0')}:${String(nowPtForSession.getMinutes()).padStart(2,'0')}`;
-  const buySessionForWarning = classifySession(date, nowHHMMForSession);
-  // Listing (phase-10 step 1f, 2026-10-22): warn, never block, the same
-  // rule as the after-hours warning. 17 trades were recorded on stocks
-  // that had already stopped trading; this is where Roman sees it before
-  // one more is. Unknown (the list couldn't be fetched) says nothing.
-  const warnings = [];
+  // Listing (phase-10 step 1f, 2026-10-22): the ONE confirm on the add path,
+  // because it's a FACT that contradicts the action (spec §7.7): Alpaca says
+  // the stock can't be traded, so "are you sure this filled?" checks
+  // reality. 17 trades were recorded on stocks that had already stopped
+  // trading. It's the app's in-page confirm (showConfirm), never a browser
+  // dialog, and "Add anyway" always proceeds. Unknown (the list couldn't be
+  // fetched) says nothing. The after-hours warning is advice, so it's a
+  // note in the form (addFormSessionAdviceHtml), not a confirm.
   const listing = await fetchHeldListing([ticker]);
-  if (listing && listing[ticker] !== 'listed') warnings.push(listingWarningText(ticker, listing[ticker]));
-  if (buySessionForWarning === 'AFTER_HOURS' || buySessionForWarning === 'PRE_MARKET') warnings.push(buildAfterHoursWarningText());
-  if (warnings.length) {
-    showConfirm(warnings.join('\n\n'), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');
+  if (listing && listing[ticker] !== 'listed') {
+    showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');
     return;
   }
   await finalizeAddPortfolio(ticker, shares, price, date, btn, order);
@@ -8376,6 +8370,10 @@ function renderSettingsTab() {
         <span class="settings-label">Build</span>
         <span class="build-status" data-build-status></span>
       </div>
+      <div class="settings-row" style="flex-direction:column;align-items:stretch;">
+        <span class="settings-label">Layout check</span>
+        <div class="settings-hint">${layoutCheckSummaryText()}</div>
+      </div>
       <div class="settings-row">
         <button class="btn btn-ghost btn-sm" onclick="checkBuildStatus({ force: true })">Check for a newer build</button>
       </div>
@@ -9574,6 +9572,74 @@ function buildProvenanceLine(st = _buildStatus) {
   return `${base} · not confirmed latest: ${st.reason}`;
 }
 
+// ── Layout check (2026-10-27): a DIAGNOSTIC, not a fix ──
+// Roman: the bottom nav sometimes doesn't appear until he scrolls to the very
+// bottom, on any tab, intermittently. The nav is NOT position:fixed: it's
+// the last flex child of #app (height: 100dvh), below the scrolling
+// #tab-content, so the containing-block cause (transform/filter/... on an
+// ancestor) can't apply. The symptom means #app's height stopped matching
+// the visible screen and the DOCUMENT scrolled (reproduced on a static copy
+// of the shell: with #app unconstrained, the nav lands at the document's
+// end). Nothing in the code can make #app grow, so the trigger is the
+// phone's viewport (installed standalone app, viewport-fit=cover): keyboard
+// close, resume from background, the status bar. Which one decides the fix,
+// and the candidate fixes conflict, so this records the state when it
+// happens: read-only, never throws, never moves anything. The last 20
+// anomalies are kept in localStorage and summarised in Settings → App Info.
+const LAYOUT_LOG_KEY = 'edge_layoutAnomalies';
+let _lastLayoutEvent = 'load';
+let _lastLayoutRecordAt = 0;
+function noteLayoutEvent(name) { _lastLayoutEvent = name; }
+function checkLayout(trigger) {
+  try {
+    const app = document.getElementById('app'), nav = document.getElementById('bottom-nav');
+    if (!app || !nav) return null;
+    const innerH = window.innerHeight;
+    const vvH = window.visualViewport ? Math.round(window.visualViewport.height) : null;
+    const appH = Math.round(app.getBoundingClientRect().height);
+    const navBottom = Math.round(nav.getBoundingClientRect().bottom);
+    const se = document.scrollingElement || document.documentElement;
+    const scrollY = Math.round(se.scrollTop || window.scrollY || 0);
+    const anomaly = navBottom > innerH + 2 || navBottom <= 0 || appH > innerH + 2 || scrollY > 0;
+    if (!anomaly) return null;
+    if (Date.now() - _lastLayoutRecordAt < 5000) return null; // one record per burst
+    _lastLayoutRecordAt = Date.now();
+    const rec = {
+      at: new Date().toISOString(), trigger, last: _lastLayoutEvent, tab: state.activeTab || null,
+      innerH, vvH, appH, navBottom, docH: se.scrollHeight, scrollY,
+      standalone: !!(navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)),
+      dvh: (window.CSS && CSS.supports) ? CSS.supports('height', '100dvh') : null,
+      ua: navigator.userAgent.slice(0, 140),
+    };
+    let log = [];
+    try { log = JSON.parse(localStorage.getItem(LAYOUT_LOG_KEY) || '[]'); } catch (_) { log = []; }
+    if (!Array.isArray(log)) log = [];
+    log.push(rec);
+    try { localStorage.setItem(LAYOUT_LOG_KEY, JSON.stringify(log.slice(-20))); } catch (_) { /* storage full: the console line still shows it */ }
+    console.warn('Layout anomaly (bottom-nav diagnostic):', rec);
+    return rec;
+  } catch (_) { return null; } // a diagnostic must never break the page it watches
+}
+function installLayoutCheck() {
+  try {
+    const later = (t, ms = 350) => setTimeout(() => checkLayout(t), ms);
+    window.addEventListener('resize', () => later('resize'));
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', () => later('visualViewport'));
+    window.addEventListener('scroll', () => later('document-scroll', 50), { passive: true }); // the document should never scroll: that IS the symptom
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { noteLayoutEvent('resume'); later('resume', 600); } });
+    document.addEventListener('focusout', e => { if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) { noteLayoutEvent('keyboard-close'); later('keyboard-close', 600); } });
+    later('startup', 1000);
+  } catch (_) { /* never break startup */ }
+}
+function layoutCheckSummaryText() {
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem(LAYOUT_LOG_KEY) || '[]'); } catch (_) { log = []; }
+  if (!Array.isArray(log) || !log.length) return 'No layout problems recorded.';
+  const r = log[log.length - 1];
+  const when = new Date(r.at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${log.length} recorded. Last ${when} PT, after ${r.last} (${r.trigger}): screen ${r.innerH}${r.vvH != null ? '/' + r.vvH : ''}, app ${r.appH}, nav bottom ${r.navBottom}, page scrolled ${r.scrollY}, ${r.standalone ? 'home-screen app' : 'browser'}${r.dvh === false ? ', no dvh' : ''}.`;
+}
+
 // Fills every element marked data-build-status (Portfolio footer, Settings).
 function renderBuildStatus() {
   const { cls, text } = buildStatusText();
@@ -9772,6 +9838,7 @@ function startNotificationChecks() {
 
 function switchTab(name) {
   state.activeTab = name;
+  noteLayoutEvent(`tab:${name}`); setTimeout(() => checkLayout('tab-switch'), 400); // diagnostic only
 
   document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === name);
@@ -9948,6 +10015,7 @@ async function runDataLoadAndInit() {
   // background doesn't reload, so it's exactly where a stale build hides.
   checkBuildStatus({ force: true });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkBuildStatus(); });
+  installLayoutCheck(); // bottom-nav diagnostic (2026-10-27), read-only
   // Fire-and-forget, deliberately after first paint: nothing about the
   // notification permission prompt should be able to block the app's first
   // render. startNotificationChecks()'s first check fires 3s later and

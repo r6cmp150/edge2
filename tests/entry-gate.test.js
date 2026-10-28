@@ -74,43 +74,59 @@ run('entry gate: entryGateNow evaluates the PT wall clock at view time', () => {
   }
 });
 
-// §7.7: a gate on advice must never be a gate on recording.
-run('entry gate: recording is never disabled -- the Add button only ever confirms', () => {
+// §7.7: a gate on ADVICE is never a gate on the ACTION (corrected
+// 2026-10-27). Inside a gate window the card strip and the modal banner are
+// the advice. The footer is the ordinary Add, with no relabel and no confirm.
+// From 10-21 to 10-27 the footer read "+ Record a trade already placed"
+// behind a browser confirm, which removed the ordinary add and made a
+// suggestion the heaviest interruption on the page.
+run('entry gate: the footer is the ordinary Add inside a gate window; the banner is the advice', () => {
   const src = readSource('app.js');
-  assert.ok(!/disabled[^>]*>\s*\+ Add to Portfolio/.test(src), 'no disabled "+ Add to Portfolio" button anywhere in app.js');
-  assert.ok(/addBlockReason \? `[\s\S]*?onclick="addPortfolioDespiteAdvice\(/.test(src), 'gated/DAY-suppressed footer routes through the confirm');
-  const fn = src.match(/function addPortfolioDespiteAdvice\([^)]*\) \{[\s\S]*?\n\}/);
-  assert.ok(fn, 'addPortfolioDespiteAdvice present');
-  let opened = null;
-  global.openAddPortfolioModal = t => { opened = t; };
-  global.window = global.window || {};
-  // eslint-disable-next-line no-eval
-  eval(fn[0] + '\nglobal.__add = addPortfolioDespiteAdvice;');
-  global.window.confirm = () => false;
-  global.__add('SNAP', 'Entry gate: 7:00–7:30 PT — not a buy window.');
-  assert.strictEqual(opened, null, 'declining the confirm opens nothing');
-  global.window.confirm = () => true;
-  global.__add('SNAP', 'Entry gate: 7:00–7:30 PT — not a buy window.');
-  assert.strictEqual(opened, 'SNAP', 'confirming opens the normal add form');
+  const footer = src.match(/getElementById\('stock-modal-footer'\)\.innerHTML = [\s\S]*?`;\n/)[0];
+  assert.ok(!/\bdisabled\b/.test(footer), 'no disabled button anywhere in the stock modal footer');
+  assert.ok(!/addBlockReason|Record a trade already placed|addPortfolioDespiteAdvice/.test(src), 'the gated relabel and its confirm are gone');
+  assert.ok(footer.includes(`<button class="btn btn-success" style="flex:1" onclick="openAddPortfolioModal('\${ticker}')">+ Add to Portfolio</button>`), 'normal styling, normal behaviour');
+  // The footer offers exactly three branches: held, pending, and the ordinary Add.
+  assert.strictEqual((footer.match(/\? `/g) || []).length, 2, 'held ? ... : pending ? ... : ordinary Add');
+  // The advice itself is untouched.
+  assert.ok(src.includes('⛔ Entry gate: ${modalGate.label}') && src.includes('⚠ DAY trade — entry window has closed for today'), 'the modal banners stay');
 });
 
-// Same rule for a held ticker or a pending order: a second lot is
-// recordable behind a confirm, never a disabled button.
-run('recording: "In Portfolio" and "Order pending" record another lot behind a confirm', () => {
+// A held ticker or a pending order: a second lot opens the add form
+// directly, with the reason shown IN the form. Holding a position is a fact,
+// but it doesn't contradict buying more, so it isn't asked.
+run('recording: "In Portfolio" and "Order pending" open the add form directly, with the reason as a note', () => {
   const src = readSource('app.js');
-  const footer = src.match(/getElementById\('stock-modal-footer'\)\.innerHTML = [\s\S]*?`;\n/);
-  assert.ok(footer, 'stock modal footer found');
-  assert.ok(!/\bdisabled\b/.test(footer[0]), 'no disabled button anywhere in the stock modal footer');
-  assert.strictEqual((footer[0].match(/recordAnotherLot\(/g) || []).length, 2, 'both held and pending route through recordAnotherLot');
-  const fn = src.match(/function recordAnotherLot\([^)]*\) \{[\s\S]*?\n\}/);
-  let opened = null;
-  global.openAddPortfolioModal = t => { opened = t; };
-  // eslint-disable-next-line no-eval
-  eval(fn[0] + '\nglobal.__lot = recordAnotherLot;');
-  global.window.confirm = () => false; global.__lot('GO', 'You already hold 75 shares of GO.');
-  assert.strictEqual(opened, null);
-  global.window.confirm = () => true; global.__lot('GO', 'You already hold 75 shares of GO.');
-  assert.strictEqual(opened, 'GO');
+  const footer = src.match(/getElementById\('stock-modal-footer'\)\.innerHTML = [\s\S]*?`;\n/)[0];
+  assert.strictEqual((footer.match(/onclick="openAddPortfolioModal\('\$\{ticker\}', \$\{JSON\.stringify\(lotReason\)/g) || []).length, 2, 'held and pending pass their reason to the form');
+  assert.ok(!/recordAnotherLot/.test(src));
+  assert.ok(src.includes('function openAddPortfolioModal(ticker, note = null) {'));
+  assert.ok(src.includes('${note ? `<div class="add-form-note">${note}</div>` : \'\'}'), 'the reason is shown in the form');
   // The add form never pre-fills a price nobody observed.
   assert.ok(/price != null \? price\.toFixed\(2\) : ''/.test(src), 'add form price is empty, not 0.00, when there is no signal price');
+});
+
+// Confirm when the app knows a FACT that contradicts the action; never when
+// it merely ADVISES against it (spec §7.7). The only confirm on the add path
+// is the listing fact, and it's the app's own in-page overlay.
+run('confirms: only the not-listed / not-tradable fact, in-page; after-hours advice is a note in the form', () => {
+  const src = readSource('app.js');
+  const i = src.indexOf('async function confirmAddPortfolio('); const confirmFn = src.slice(i, src.indexOf('\n}\n', i));
+  assert.strictEqual((confirmFn.match(/showConfirm\(/g) || []).length, 1, 'one confirm on the add path');
+  assert.ok(confirmFn.includes("showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');"), 'it is the listing fact, and Add anyway proceeds');
+  assert.ok(!/buildAfterHoursWarningText|classifySession/.test(confirmFn), 'after-hours advice is not a confirm');
+  assert.ok(src.includes('${addFormSessionAdviceHtml(today)}'), 'after-hours advice is shown in the add form');
+  const j = src.indexOf('function addFormSessionAdviceHtml('); const adv = src.slice(j, src.indexOf('\n}\n', j));
+  assert.ok(adv.includes('buildAfterHoursWarningText()') && /AFTER_HOURS.*PRE_MARKET/.test(adv));
+});
+
+// No browser confirm() anywhere: it blocks the page, renders as
+// "<host> says", and on mobile is indistinguishable from a scam prompt.
+run('no browser confirm() anywhere in the app', () => {
+  const fs = require('fs'); const path = require('path');
+  const files = ['app.js', ...['core', 'shell', 'engines/warrior'].flatMap(d => fs.readdirSync(path.join(__dirname, '..', d)).filter(f => f.endsWith('.js')).map(f => `${d}/${f}`))];
+  for (const f of files) {
+    const code = readSource(f).split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+    assert.ok(!/(^|[^\w.])(window\.)?confirm\s*\(/.test(code), `${f} calls the browser confirm()`);
+  }
 });
