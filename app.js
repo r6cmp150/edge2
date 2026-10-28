@@ -3743,36 +3743,69 @@ function handleOverlayClick(e) {
 // action, spec §7.7); showAlert tells. Both use #confirm-overlay, which
 // sits after #modal-overlay at the same z-index, so they show over an open
 // modal. tests/entry-gate.test.js fails on any browser alert( or confirm(.
-function showAlert(msg) {
+// QUEUED, never replaced (2026-10-27). alert() serialised its messages: a
+// second couldn't appear until the first was dismissed, so none was lost.
+// The first in-page version overwrote the text instead, so two notices in
+// quick succession (a loop, two failed validations, an async failure
+// landing on a validation notice) showed only the last, and the earlier
+// one vanished unread. Worse, a notice landing on an open showConfirm
+// cleared its callback, silently dropping the "Add anyway" in progress.
+// Now every showAlert and showConfirm joins one queue, the overlay shows
+// the head, and OK / Confirm / Cancel closes it and opens the next. A
+// notice raised from inside a confirm's own callback queues behind it,
+// exactly as alert() would have. tests/entry-gate.test.js pins the order.
+const _dialogQueue = [];
+let _dialogShowing = null;
+
+function _showNextDialog() {
   const overlay = document.getElementById('confirm-overlay');
-  if (!overlay) { showGlobalErrorToast(String(msg)); return; } // before the app shell exists
-  document.getElementById('confirm-msg').textContent = msg;
+  const next = _dialogQueue.shift();
+  if (!next) { _dialogShowing = null; state._confirmCb = null; if (overlay) overlay.classList.add('hidden'); return; }
+  if (!overlay) { // before the app shell exists: the app's own toast, never a browser dialog
+    _dialogShowing = null;
+    showGlobalErrorToast(String(next.msg));
+    _showNextDialog();
+    return;
+  }
+  _dialogShowing = next;
+  document.getElementById('confirm-msg').textContent = next.msg;
   const btn = document.getElementById('confirm-btn');
-  if (btn) { btn.textContent = 'OK'; btn.className = 'btn-primary'; }
   const cancel = overlay.querySelector('.confirm-btns .btn-ghost');
-  if (cancel) cancel.classList.add('hidden');
-  state._confirmCb = null;
+  if (next.kind === 'alert') {
+    if (btn) { btn.textContent = 'OK'; btn.className = 'btn-primary'; }
+    if (cancel) cancel.classList.add('hidden');
+    state._confirmCb = null;
+  } else {
+    if (btn) { btn.textContent = next.label || 'Confirm'; btn.className = 'btn-danger'; }
+    if (cancel) cancel.classList.remove('hidden');
+    state._confirmCb = next.cb;
+  }
   overlay.classList.remove('hidden');
 }
 
-function showConfirm(msg, cb, confirmLabel) {
-  document.getElementById('confirm-msg').textContent = msg;
-  const btn = document.getElementById('confirm-btn');
-  if (btn) { btn.textContent = confirmLabel || 'Confirm'; btn.className = 'btn-danger'; }
-  const cancel = document.querySelector('#confirm-overlay .confirm-btns .btn-ghost');
-  if (cancel) cancel.classList.remove('hidden');
-  state._confirmCb = cb;
-  document.getElementById('confirm-overlay').classList.remove('hidden');
+function _enqueueDialog(d) {
+  _dialogQueue.push(d);
+  if (!_dialogShowing) _showNextDialog();
 }
 
+function showAlert(msg) { _enqueueDialog({ kind: 'alert', msg }); }
+
+function showConfirm(msg, cb, confirmLabel) { _enqueueDialog({ kind: 'confirm', msg, cb, label: confirmLabel }); }
+
+// Cancel, a tap on the backdrop, or OK on a notice: close the current one,
+// show the next.
 function closeConfirm() {
-  document.getElementById('confirm-overlay').classList.add('hidden');
+  _dialogShowing = null;
   state._confirmCb = null;
+  _showNextDialog();
 }
 
+// Confirm: run the action, then move on. Anything the action raises is
+// already queued behind this dialog, so it shows next.
 function confirmAction() {
-  if (state._confirmCb) state._confirmCb();
-  closeConfirm();
+  const cb = state._confirmCb;
+  state._confirmCb = null;
+  try { if (cb) cb(); } finally { closeConfirm(); }
 }
 
 // Step 3 (Phase 7): "View signal" dispatch for an OWNED position. 'EDGE'/

@@ -133,26 +133,95 @@ run('no browser confirm() or alert() anywhere in the app', () => {
   }
 });
 
-run('showAlert: an in-page notice over the confirm overlay, one OK button; showConfirm restores both buttons', () => {
+// In-page dialogs QUEUE, never replace (2026-10-27). alert() serialised
+// its messages, so call sites were written against "every message is seen".
+// A notice that overwrote the previous one would drop the earlier message
+// unread, and one landing on an open confirm would drop its action.
+function loadDialogs() {
   const src = readSource('app.js');
-  const grab = name => { const i = src.indexOf(`function ${name}(`); return src.slice(i, src.indexOf('\n}\n', i) + 2); };
+  const block = src.slice(src.indexOf('const _dialogQueue = [];'), src.indexOf('function confirmAction() {'));
+  const caI = src.indexOf('function confirmAction() {');
   const el = (cls = '') => { const c = new Set(cls.split(' ').filter(Boolean)); return { textContent: '', className: cls, classList: { add: x => c.add(x), remove: x => c.delete(x), has: x => c.has(x) } }; };
-  const overlay = el('modal-overlay hidden'), msg = el(), btn = el('btn-danger'), cancel = el('btn-ghost');
-  overlay.querySelector = () => cancel;
-  global.document = { getElementById: id => ({ 'confirm-overlay': overlay, 'confirm-msg': msg, 'confirm-btn': btn }[id] || null), querySelector: () => cancel };
+  const ui = { overlay: el('modal-overlay hidden'), msg: el(), btn: el('btn-danger'), cancel: el('btn-ghost') };
+  ui.overlay.querySelector = () => ui.cancel;
+  global.document = { getElementById: id => ({ 'confirm-overlay': ui.overlay, 'confirm-msg': ui.msg, 'confirm-btn': ui.btn }[id] || null) };
   global.state = {};
-  const toasts = []; global.showGlobalErrorToast = m => toasts.push(m);
+  ui.toasts = []; global.showGlobalErrorToast = m => ui.toasts.push(m);
   // eslint-disable-next-line no-eval
-  eval(grab('showAlert') + grab('showConfirm') + '\nglobal.__alert = showAlert; global.__confirm = showConfirm;');
+  eval(block + src.slice(caI, src.indexOf('\n}\n', caI) + 2) +
+    '\nglobal.__alert = showAlert; global.__confirm = showConfirm; global.__ok = confirmAction; global.__cancel = closeConfirm;');
+  ui.shown = () => (ui.overlay.classList.has('hidden') ? null : ui.msg.textContent);
+  return ui;
+}
+
+run('dialogs: a notice is in-page, one OK button; a confirm has its Cancel', () => {
+  const ui = loadDialogs();
   global.__alert('Enter sale price.');
-  assert.strictEqual(msg.textContent, 'Enter sale price.');
-  assert.strictEqual(btn.textContent, 'OK');
-  assert.ok(cancel.classList.has('hidden') && !overlay.classList.has('hidden'), 'one button, overlay shown');
-  assert.strictEqual(global.state._confirmCb, null, 'OK runs nothing');
+  assert.strictEqual(ui.shown(), 'Enter sale price.');
+  assert.ok(ui.btn.textContent === 'OK' && ui.cancel.classList.has('hidden') && global.state._confirmCb === null);
+  global.__ok();
+  assert.strictEqual(ui.shown(), null, 'OK closes it');
   global.__confirm('Not tradable.', () => {}, 'Add anyway');
-  assert.ok(!cancel.classList.has('hidden') && btn.textContent === 'Add anyway' && btn.className === 'btn-danger', 'a confirm after an alert gets its Cancel back');
-  // Before the app shell exists: the app's own toast, never a browser dialog.
+  assert.ok(ui.shown() === 'Not tradable.' && !ui.cancel.classList.has('hidden') && ui.btn.textContent === 'Add anyway' && ui.btn.className === 'btn-danger');
+});
+
+run('dialogs: two notices in quick succession are both seen, in order', () => {
+  const ui = loadDialogs();
+  global.__alert('first'); global.__alert('second');
+  assert.strictEqual(ui.shown(), 'first', 'the second does not replace the first');
+  global.__ok();
+  assert.strictEqual(ui.shown(), 'second');
+  global.__ok();
+  assert.strictEqual(ui.shown(), null);
+});
+
+run('dialogs: a notice landing on an open confirm waits; the confirm keeps its action', () => {
+  const ui = loadDialogs();
+  let added = 0;
+  global.__confirm('Not tradable.', () => { added++; }, 'Add anyway');
+  global.__alert('Could not save setting.');
+  assert.strictEqual(ui.shown(), 'Not tradable.', 'the confirm stays up');
+  assert.strictEqual(ui.btn.textContent, 'Add anyway');
+  global.__ok();
+  assert.strictEqual(added, 1, '"Add anyway" still runs: the late notice did not drop it');
+  assert.strictEqual(ui.shown(), 'Could not save setting.', 'then the notice');
+});
+
+run("dialogs: a notice raised by a confirm's own action shows next; Cancel runs nothing and moves on", () => {
+  const ui = loadDialogs();
+  global.__confirm('Delete?', () => global.__alert('Done.'), 'Delete');
+  global.__alert('queued behind');
+  global.__ok();
+  assert.strictEqual(ui.shown(), 'queued behind', 'FIFO: the earlier queued notice first');
+  global.__ok();
+  assert.strictEqual(ui.shown(), 'Done.', 'then the one the action raised');
+  global.__ok();
+  let ran = false;
+  global.__confirm('Really?', () => { ran = true; });
+  global.__alert('after cancel');
+  global.__cancel();
+  assert.strictEqual(ran, false);
+  assert.strictEqual(ui.shown(), 'after cancel');
+});
+
+run('dialogs: before the app shell exists, every message is a toast (none dropped, no browser dialog)', () => {
+  const ui = loadDialogs();
   global.document = { getElementById: () => null };
-  global.__alert('early');
-  assert.deepStrictEqual(toasts, ['early']);
+  global.__alert('early one'); global.__alert('early two');
+  assert.deepStrictEqual(ui.toasts, ['early one', 'early two']);
+  // Several queued behind a showing dialog, then the shell goes (boot swaps
+  // document.body): every queued one still reaches a toast.
+  const ui2 = loadDialogs();
+  global.__alert('a'); global.__alert('b'); global.__alert('c');
+  global.document = { getElementById: () => null };
+  global.__ok();
+  assert.deepStrictEqual(ui2.toasts, ['b', 'c'], 'the whole queue drains, not just the next one');
+});
+
+run('dialogs: an action that throws still closes its dialog and moves the queue on', () => {
+  const ui = loadDialogs();
+  global.__confirm('Add?', () => { throw new Error('save failed'); }, 'Add anyway');
+  global.__alert('next');
+  assert.throws(() => global.__ok(), /save failed/);
+  assert.strictEqual(ui.shown(), 'next', 'never stuck on a dead dialog');
 });
