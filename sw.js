@@ -14,7 +14,7 @@
 // There's no build step to inject it, so tests/sw-cache-name.test.js FAILS if
 // this name and index.html's app.js?v= stamp disagree: a guard that refuses
 // the divergence, not a reminder.
-const CACHE_NAME = 'edge2-20261027180000';
+const CACHE_NAME = 'edge2-20261027200000';
 
 // Unversioned entry points. The versioned scripts and styles are read from
 // index.html at install (below), so the cache holds exactly what this deploy

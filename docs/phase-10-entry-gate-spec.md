@@ -2445,8 +2445,20 @@ its end, which is the symptom. **Trigger not reproduced.** Nothing in the
 code can make `#app` grow (the scroll container's flex minimum is zero, and
 the modal's `overflow: hidden` is restored on close), so `#app`'s height
 stops matching the screen only when the phone's viewport changes under the
-installed app (`standalone`, `viewport-fit=cover`): keyboard close, resume
-from background, or the status bar. The candidate fixes conflict: locking
+page. **Prime suspect (2026-10-27): Android Chrome's address bar.** Roman
+is on Android in a Chrome tab (three-button system nav; the old dialogs
+rendered as Chrome's "rocmp150.github.io says"), not iOS. Chrome's address
+bar collapses and expands as you scroll, which changes the viewport height
+mid-scroll; `100dvh` tracks that, and a transition caught while the page is
+scrolled is where a flex child below a scrolling area lands below the
+fold. "Intermittent, every tab, resolves when you scroll to the bottom" is
+that signature. **The pair that tells it apart in one reading:**
+`window.innerHeight` against `visualViewport.height` (recorded as `vvDiff`,
+with `visualViewport.offsetTop`) at the moment the nav is off-screen. The
+diagnostic records it and the Settings line leads with it ("window 780 vs
+visible 724 (differ by 56)"). Also recorded: keyboard close, resume, modal
+close and tab switch. **Asked of Roman:** his Chrome version, and whether
+he uses a tab or a home-screen shortcut. The candidate fixes conflict: locking
 the page's scroll fixes a scrolled document but would hide the nav if
 `dvh` is reported too tall. So **a read-only diagnostic ships first**
 (`checkLayout` in `app.js`, `tests/layout-check.test.js`). When the nav is

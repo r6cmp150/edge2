@@ -3737,10 +3737,30 @@ function handleOverlayClick(e) {
   if (e.target === document.getElementById('modal-overlay')) closeModal();
 }
 
+// In-page dialogs only (2026-10-27): a browser alert()/confirm() blocks the
+// page, renders as "<host> says", and on a phone is indistinguishable from
+// a scam prompt. showConfirm asks (only for a FACT that contradicts the
+// action, spec §7.7); showAlert tells. Both use #confirm-overlay, which
+// sits after #modal-overlay at the same z-index, so they show over an open
+// modal. tests/entry-gate.test.js fails on any browser alert( or confirm(.
+function showAlert(msg) {
+  const overlay = document.getElementById('confirm-overlay');
+  if (!overlay) { showGlobalErrorToast(String(msg)); return; } // before the app shell exists
+  document.getElementById('confirm-msg').textContent = msg;
+  const btn = document.getElementById('confirm-btn');
+  if (btn) { btn.textContent = 'OK'; btn.className = 'btn-primary'; }
+  const cancel = overlay.querySelector('.confirm-btns .btn-ghost');
+  if (cancel) cancel.classList.add('hidden');
+  state._confirmCb = null;
+  overlay.classList.remove('hidden');
+}
+
 function showConfirm(msg, cb, confirmLabel) {
   document.getElementById('confirm-msg').textContent = msg;
   const btn = document.getElementById('confirm-btn');
-  if (btn) btn.textContent = confirmLabel || 'Confirm';
+  if (btn) { btn.textContent = confirmLabel || 'Confirm'; btn.className = 'btn-danger'; }
+  const cancel = document.querySelector('#confirm-overlay .confirm-btns .btn-ghost');
+  if (cancel) cancel.classList.remove('hidden');
   state._confirmCb = cb;
   document.getElementById('confirm-overlay').classList.remove('hidden');
 }
@@ -3913,12 +3933,12 @@ async function confirmAddPortfolio(ticker, btn) {
   const date   = document.getElementById('pf-date').value;
 
   if (!shares || !price || isNaN(shares) || isNaN(price)) {
-    alert('Please enter shares and price.'); return;
+    showAlert('Please enter shares and price.'); return;
   }
   // Order vs fill (core/orders.js): market + trading session -> filled now;
   // market while CLOSED, or any other order type -> pending until marked.
   const order = readOrderEntry('pf', date);
-  if (order.error) { alert(order.error); return; }
+  if (order.error) { showAlert(order.error); return; }
 
   // Listing (phase-10 step 1f, 2026-10-22): the ONE confirm on the add path,
   // because it's a FACT that contradicts the action (spec §7.7): Alpaca says
@@ -4128,7 +4148,7 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
   try {
     await insertPositionToSupabase(position);
   } catch(e) {
-    alert('Could not save position to Supabase: ' + e.message);
+    showAlert('Could not save position to Supabase: ' + e.message);
     if (btn) btn.disabled = false;
     return;
   }
@@ -4201,9 +4221,9 @@ async function confirmMarkFilled(posId, btn) {
   const p = state.portfolio.find(x => x.id === posId);
   if (!p || !isPendingOrder(p)) { closeModal(); return; }
   const fillPrice = parseFloat(document.getElementById('mf-price').value);
-  if (!fillPrice || isNaN(fillPrice)) { alert('Enter the fill price.'); return; }
+  if (!fillPrice || isNaN(fillPrice)) { showAlert('Enter the fill price.'); return; }
   const fill = _readFillInstant(document.getElementById('mf-date').value, document.getElementById('mf-time').value, p.buyDate, p.orderType);
-  if (fill.error) { alert(fill.error); return; }
+  if (fill.error) { showAlert(fill.error); return; }
   const fillDate = ptDateStr(getPT(new Date(fill.filledAt)));
   // buyDate/buyTime stay the ORDER (signal attribution uses them); the fill
   // price replaces the order price, and peak tracking restarts at the fill.
@@ -4212,7 +4232,7 @@ async function confirmMarkFilled(posId, btn) {
   try {
     await savePositionToSupabase(updated);
   } catch (e) {
-    alert('Could not save the fill to Supabase: ' + e.message);
+    showAlert('Could not save the fill to Supabase: ' + e.message);
     if (btn) btn.disabled = false;
     return;
   }
@@ -4233,7 +4253,7 @@ function cancelPendingOrder(posId, btn) {
       await deletePositionFromSupabase(p.id);
     } catch (e) {
       state.deletedPositionIds.delete(p.id);
-      alert('Could not remove the order from Supabase: ' + e.message);
+      showAlert('Could not remove the order from Supabase: ' + e.message);
       return;
     }
     state.portfolio = state.portfolio.filter(x => x.id !== posId);
@@ -5790,7 +5810,7 @@ function renderIntradayLineCard(panel) {
 // docs/phase-9-entry-exit-spec.md §6's seventh entry.
 function openMarkSoldModal(posId, currentPrice) {
   const pos = state.portfolio.find(p => p.id === posId);
-  if (pos && isPendingOrder(pos)) { alert('This is a pending order, not a position -- mark it filled first.'); return; }
+  if (pos && isPendingOrder(pos)) { showAlert('This is a pending order, not a position -- mark it filled first.'); return; }
   const today = ptDateStr(getPT()); // PT, not the UTC date (CLAUDE.md getPT rule)
   const sellTypeOpts = ORDER_TYPES.map(([v, l]) => `<option value="${v}"${v === 'market' ? ' selected' : ''}>${l}</option>`).join('');
   const priceUnavailable = currentPrice == null;
@@ -6104,18 +6124,18 @@ function computeUnifiedSaleFields(pos, salePrice, saleDate) {
 async function confirmMarkSold(posId, btn) {
   const salePrice = parseFloat(document.getElementById('sold-price').value);
   const saleDate  = document.getElementById('sold-date').value;
-  if (!salePrice || isNaN(salePrice)) { alert('Enter sale price.'); return; }
+  if (!salePrice || isNaN(salePrice)) { showAlert('Enter sale price.'); return; }
 
   const pos = state.portfolio.find(p => p.id === posId);
   if (!pos) { closeModal(); return; }
   // Backstop (pending cards have no Sell button): a pending order is not a
   // position and can't be sold -- no write.
-  if (isPendingOrder(pos)) { alert('This is a pending order, not a position -- mark it filled first.'); return; }
+  if (isPendingOrder(pos)) { showAlert('This is a pending order, not a position -- mark it filled first.'); return; }
   const sellOrderType = document.getElementById('sold-order-type')?.value || 'market';
   // Fill-before-sale, validated here rather than as a cross-type SQL CHECK
   // (db/027 header): the sale can't be dated before the buy filled.
   const hold = holdSpan(pos, saleDate);
-  if (saleDate < hold.startDate) { alert(`The sale date (${saleDate}) can't be before the buy ${hold.basis === 'fill' ? 'filled' : 'order date'} (${hold.startDate}).`); return; }
+  if (saleDate < hold.startDate) { showAlert(`The sale date (${saleDate}) can't be before the buy ${hold.basis === 'fill' ? 'filled' : 'order date'} (${hold.startDate}).`); return; }
 
   // Supabase is now the source of truth for portfolio — await the delete
   // and only remove the position locally (move it to Sold) on success. A
@@ -6127,7 +6147,7 @@ async function confirmMarkSold(posId, btn) {
   try {
     await deletePositionFromSupabase(pos.id);
   } catch(e) {
-    alert('Could not remove position from Supabase: ' + e.message);
+    showAlert('Could not remove position from Supabase: ' + e.message);
     if (btn) btn.disabled = false;
     return;
   }
@@ -7411,7 +7431,7 @@ async function generateClaudeReport() {
 
   if (!sold.length) {
     if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
-    alert('No completed trades to report yet.');
+    showAlert('No completed trades to report yet.');
     return;
   }
 
@@ -7433,7 +7453,7 @@ async function generateClaudeReport() {
   sold = sold.filter(s => !s.sellPriceUnverified);
   if (!sold.length) {
     if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
-    alert(`All ${allSold.length} completed trades have an unverified sell price — nothing left to report on.`);
+    showAlert(`All ${allSold.length} completed trades have an unverified sell price — nothing left to report on.`);
     return;
   }
 
@@ -8103,7 +8123,7 @@ Trade Duration:
   } catch(e) {
     console.error('generateClaudeReport failed:', e.message);
     if (btn) { btn.disabled = false; btn.textContent = '📋 Generate Claude Report'; }
-    alert('Report generation failed: ' + e.message);
+    showAlert('Report generation failed: ' + e.message);
   }
 }
 
@@ -8753,7 +8773,7 @@ async function exportAndArchiveDatabase() {
     const { data: trades, error: tradesErr } = await supabaseClient
       .from('trades_v2').select('*').order('buy_date', { ascending: true });
     if (tradesErr) throw tradesErr;
-    if (!trades || !trades.length) { alert('No trades in Supabase to archive yet.'); return; }
+    if (!trades || !trades.length) { showAlert('No trades in Supabase to archive yet.'); return; }
 
     let snapshotRows = [];
     try {
@@ -8776,7 +8796,7 @@ async function exportAndArchiveDatabase() {
       'Delete'
     );
   } catch(e) {
-    alert('Could not export archive: ' + e.message);
+    showAlert('Could not export archive: ' + e.message);
   }
 }
 
@@ -8787,11 +8807,11 @@ async function deleteOldRatingSnapshots() {
       .from('rating_snapshots')
       .delete({ count: 'exact' })
       .lt('captured_at', cutoff);
-    if (error) { alert('Could not delete old snapshots: ' + error.message); return; }
-    alert(`Done. ${count ?? 0} old snapshots removed.`);
+    if (error) { showAlert('Could not delete old snapshots: ' + error.message); return; }
+    showAlert(`Done. ${count ?? 0} old snapshots removed.`);
     loadDatabaseUsage();
   } catch(e) {
-    alert('Could not delete old snapshots: ' + e.message);
+    showAlert('Could not delete old snapshots: ' + e.message);
   }
 }
 
@@ -8805,7 +8825,7 @@ function saveApiKeys() {
   state.settings.alpacaSecret = document.getElementById('set-alpaca-secret')?.value.trim() || '';
   state.settings.groqKey      = document.getElementById('set-groq-key')?.value.trim() || '';
   persistApiKeys();
-  alert('API keys saved.');
+  showAlert('API keys saved.');
 }
 
 async function saveBudget() {
@@ -8815,11 +8835,11 @@ async function saveBudget() {
     await saveSettingsToSupabase(state.settings);
   } catch(e) {
     state.settings.budget = prev;
-    alert('Could not save budget to Supabase: ' + e.message);
+    showAlert('Could not save budget to Supabase: ' + e.message);
     return;
   }
   updateBudgetBar();
-  alert('Budget saved.');
+  showAlert('Budget saved.');
 }
 
 // Local-only (see core/store.js's persistLocalOnlySettings) — same reason
@@ -8827,19 +8847,19 @@ async function saveBudget() {
 function saveRiskPerTrade() {
   state.settings.riskPerTradePct = parseFloat(document.getElementById('set-risk-per-trade')?.value) || 2;
   persistLocalOnlySettings();
-  alert('Risk per trade saved.');
+  showAlert('Risk per trade saved.');
 }
 
 function saveFloatThreshold() {
   state.settings.floatThresholdShares = parseFloat(document.getElementById('set-float-threshold')?.value) || 10000000;
   persistLocalOnlySettings();
-  alert('Float threshold saved.');
+  showAlert('Float threshold saved.');
 }
 
 function saveMaxLossPct() {
   state.settings.maxLossPct = parseFloat(document.getElementById('set-max-loss-pct')?.value) || DEFAULT_MAX_LOSS_PCT;
   persistLocalOnlySettings();
-  alert('Max loss floor saved.');
+  showAlert('Max loss floor saved.');
 }
 
 async function savePref(key, val) {
@@ -8849,7 +8869,7 @@ async function savePref(key, val) {
     await saveSettingsToSupabase(state.settings);
   } catch(e) {
     state.settings[key] = prev;
-    alert('Could not save setting to Supabase: ' + e.message);
+    showAlert('Could not save setting to Supabase: ' + e.message);
     renderSettingsTab();
   }
 }
@@ -8861,7 +8881,7 @@ async function toggleForcePreMarketMode(checked) {
     await saveSettingsToSupabase(state.settings);
   } catch(e) {
     state.settings.forcePreMarketMode = !checked;
-    alert('Could not save setting to Supabase: ' + e.message);
+    showAlert('Could not save setting to Supabase: ' + e.message);
     renderSettingsTab();
     return;
   }
@@ -9159,7 +9179,7 @@ async function exportAllData(btn) {
     a.click();
     URL.revokeObjectURL(url);
   } catch(e) {
-    alert('Could not export data from Supabase: ' + e.message);
+    showAlert('Could not export data from Supabase: ' + e.message);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -9174,7 +9194,7 @@ function clearAllData() {
     loadState();
     renderSettingsTab();
     updateNavBadges();
-    alert('All data cleared.');
+    showAlert('All data cleared.');
   });
 }
 
@@ -9461,7 +9481,7 @@ async function analyticsConfirmStartPeriod(btn) {
   const name = document.getElementById('ap-name').value.trim();
   const changeDescription = document.getElementById('ap-desc').value.trim();
   if (!name || !changeDescription) {
-    alert('Both a name and a description of what changed are required — a period labelled only by its date is worthless in two months.');
+    showAlert('Both a name and a description of what changed are required — a period labelled only by its date is worthless in two months.');
     return;
   }
   if (btn) btn.disabled = true;
@@ -9479,7 +9499,7 @@ async function analyticsConfirmStartPeriod(btn) {
     closeModal();
     renderAnalyticsTab();
   } catch(e) {
-    alert('Could not start new period: ' + e.message);
+    showAlert('Could not start new period: ' + e.message);
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -9581,11 +9601,18 @@ function buildProvenanceLine(st = _buildStatus) {
 // the visible screen and the DOCUMENT scrolled (reproduced on a static copy
 // of the shell: with #app unconstrained, the nav lands at the document's
 // end). Nothing in the code can make #app grow, so the trigger is the
-// phone's viewport (installed standalone app, viewport-fit=cover): keyboard
-// close, resume from background, the status bar. Which one decides the fix,
-// and the candidate fixes conflict, so this records the state when it
-// happens: read-only, never throws, never moves anything. The last 20
-// anomalies are kept in localStorage and summarised in Settings → App Info.
+// phone's viewport changing under the page. PRIME SUSPECT (2026-10-27):
+// Roman is on Android Chrome, in a browser tab (the dialogs rendered as
+// Chrome's "<host> says"). Chrome's address bar collapses and expands as
+// you scroll, which changes the viewport height mid-scroll; 100dvh tracks
+// that, and a transition caught while the page is scrolled is where a
+// flex child below a scrolling area lands below the fold. The pair that
+// separates an address-bar transition from everything else in one
+// reading: window.innerHeight against visualViewport.height (recorded as
+// vvDiff) at the moment the nav is off-screen. Also recorded: keyboard
+// close, resume, modal close and tab switch. Read-only, never throws,
+// never moves anything. The last 20 are kept in localStorage and
+// summarised in Settings → App Info.
 const LAYOUT_LOG_KEY = 'edge_layoutAnomalies';
 let _lastLayoutEvent = 'load';
 let _lastLayoutRecordAt = 0;
@@ -9595,7 +9622,10 @@ function checkLayout(trigger) {
     const app = document.getElementById('app'), nav = document.getElementById('bottom-nav');
     if (!app || !nav) return null;
     const innerH = window.innerHeight;
-    const vvH = window.visualViewport ? Math.round(window.visualViewport.height) : null;
+    const vv = window.visualViewport;
+    const vvH = vv ? Math.round(vv.height) : null;
+    const vvTop = vv ? Math.round(vv.offsetTop) : null;
+    const vvDiff = vvH != null ? innerH - vvH : null; // != 0: the visual viewport (address bar / keyboard) differs from the layout one
     const appH = Math.round(app.getBoundingClientRect().height);
     const navBottom = Math.round(nav.getBoundingClientRect().bottom);
     const se = document.scrollingElement || document.documentElement;
@@ -9606,7 +9636,8 @@ function checkLayout(trigger) {
     _lastLayoutRecordAt = Date.now();
     const rec = {
       at: new Date().toISOString(), trigger, last: _lastLayoutEvent, tab: state.activeTab || null,
-      innerH, vvH, appH, navBottom, docH: se.scrollHeight, scrollY,
+      innerH, vvH, vvDiff, vvTop, appH, navBottom, docH: se.scrollHeight, scrollY,
+      screenH: (window.screen && window.screen.height) || null,
       standalone: !!(navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)),
       dvh: (window.CSS && CSS.supports) ? CSS.supports('height', '100dvh') : null,
       ua: navigator.userAgent.slice(0, 140),
@@ -9637,7 +9668,8 @@ function layoutCheckSummaryText() {
   if (!Array.isArray(log) || !log.length) return 'No layout problems recorded.';
   const r = log[log.length - 1];
   const when = new Date(r.at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
-  return `${log.length} recorded. Last ${when} PT, after ${r.last} (${r.trigger}): screen ${r.innerH}${r.vvH != null ? '/' + r.vvH : ''}, app ${r.appH}, nav bottom ${r.navBottom}, page scrolled ${r.scrollY}, ${r.standalone ? 'home-screen app' : 'browser'}${r.dvh === false ? ', no dvh' : ''}.`;
+  const pair = r.vvH != null ? `window ${r.innerH} vs visible ${r.vvH} (${r.vvDiff === 0 ? 'same' : 'differ by ' + r.vvDiff})` : `window ${r.innerH}, no visualViewport`;
+  return `${log.length} recorded. Last ${when} PT, after ${r.last} (${r.trigger}): ${pair}; app ${r.appH}, nav bottom ${r.navBottom}, page scrolled ${r.scrollY}, ${r.standalone ? 'home-screen app' : 'browser tab'}${r.dvh === false ? ', no dvh' : ''}.`;
 }
 
 // Fills every element marked data-build-status (Portfolio footer, Settings).
@@ -10068,7 +10100,7 @@ async function runDataLoadAndInit() {
 // §7.7.)
 async function loadWarriorEngine() {
   try {
-    const warrior = await import('./engines/warrior/index.js?v=20261027140000');
+    const warrior = await import('./engines/warrior/index.js?v=20261027200000');
     warrior.register();
     state.warrior = { status: 'loaded' };
   } catch (err) {

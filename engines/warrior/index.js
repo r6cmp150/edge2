@@ -561,16 +561,16 @@ async function _confirmAddPosition(symbol, btn) {
   const price  = parseFloat(document.getElementById('wf-price').value);
   const date   = document.getElementById('wf-date').value;
   if (!shares || !price || isNaN(shares) || isNaN(price)) {
-    alert('Please enter shares and price.'); return;
+    showAlert('Please enter shares and price.'); return;
   }
   // Order vs fill (db/027) -- core/orders.js, shared with EDGE's add form.
   const order = readOrderEntry('wf', date);
-  if (order.error) { alert(order.error); return; }
+  if (order.error) { showAlert(order.error); return; }
 
   const candidate = (_lastScanResults?.results || []).find(r => r.symbol === symbol);
   const ets = candidate?.primarySetup?.entryTargetStop;
   if (!candidate || !ets) {
-    alert('This candidate is no longer buyable -- the scan moved on.');
+    showAlert('This candidate is no longer buyable -- the scan moved on.');
     closeModal();
     return;
   }
@@ -623,7 +623,7 @@ async function _confirmAddPosition(symbol, btn) {
   try {
     await insertPositionToSupabase(position);
   } catch(e) {
-    alert('Could not save position to Supabase: ' + e.message);
+    showAlert('Could not save position to Supabase: ' + e.message);
     if (btn) btn.disabled = false;
     return;
   }

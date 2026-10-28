@@ -40,7 +40,7 @@ evalModule(readSource('core/orders.js'), { expose: ['isPendingOrder', 'ORDER_TYP
 function loadOpenMarkSoldModal(position = { id: 'pos1', orderType: null, filledAt: null }) {
   let captured = null;
   global.state.portfolio = [position];
-  global.alert = () => {};
+  global.showAlert = () => {}; // the in-page notice (2026-10-27: no browser alert())
   global.showModal = (html) => { captured = html; };
   global.window = global.window || {}; // openMarkSoldModal sets window._saleDecision at the end
   const src = extractFn('openMarkSoldModal');

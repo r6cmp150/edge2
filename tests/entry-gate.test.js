@@ -120,13 +120,39 @@ run('confirms: only the not-listed / not-tradable fact, in-page; after-hours adv
   assert.ok(adv.includes('buildAfterHoursWarningText()') && /AFTER_HOURS.*PRE_MARKET/.test(adv));
 });
 
-// No browser confirm() anywhere: it blocks the page, renders as
-// "<host> says", and on mobile is indistinguishable from a scam prompt.
-run('no browser confirm() anywhere in the app', () => {
+// No browser dialog anywhere: confirm() or alert() blocks the page, renders
+// as "<host> says", and on a phone is indistinguishable from a scam prompt.
+// Asking uses showConfirm and telling uses showAlert, both in-page.
+run('no browser confirm() or alert() anywhere in the app', () => {
   const fs = require('fs'); const path = require('path');
   const files = ['app.js', ...['core', 'shell', 'engines/warrior'].flatMap(d => fs.readdirSync(path.join(__dirname, '..', d)).filter(f => f.endsWith('.js')).map(f => `${d}/${f}`))];
   for (const f of files) {
     const code = readSource(f).split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
     assert.ok(!/(^|[^\w.])(window\.)?confirm\s*\(/.test(code), `${f} calls the browser confirm()`);
+    assert.ok(!/(^|[^\w.])(window\.)?alert\s*\(/.test(code), `${f} calls the browser alert(): use showAlert`);
   }
+});
+
+run('showAlert: an in-page notice over the confirm overlay, one OK button; showConfirm restores both buttons', () => {
+  const src = readSource('app.js');
+  const grab = name => { const i = src.indexOf(`function ${name}(`); return src.slice(i, src.indexOf('\n}\n', i) + 2); };
+  const el = (cls = '') => { const c = new Set(cls.split(' ').filter(Boolean)); return { textContent: '', className: cls, classList: { add: x => c.add(x), remove: x => c.delete(x), has: x => c.has(x) } }; };
+  const overlay = el('modal-overlay hidden'), msg = el(), btn = el('btn-danger'), cancel = el('btn-ghost');
+  overlay.querySelector = () => cancel;
+  global.document = { getElementById: id => ({ 'confirm-overlay': overlay, 'confirm-msg': msg, 'confirm-btn': btn }[id] || null), querySelector: () => cancel };
+  global.state = {};
+  const toasts = []; global.showGlobalErrorToast = m => toasts.push(m);
+  // eslint-disable-next-line no-eval
+  eval(grab('showAlert') + grab('showConfirm') + '\nglobal.__alert = showAlert; global.__confirm = showConfirm;');
+  global.__alert('Enter sale price.');
+  assert.strictEqual(msg.textContent, 'Enter sale price.');
+  assert.strictEqual(btn.textContent, 'OK');
+  assert.ok(cancel.classList.has('hidden') && !overlay.classList.has('hidden'), 'one button, overlay shown');
+  assert.strictEqual(global.state._confirmCb, null, 'OK runs nothing');
+  global.__confirm('Not tradable.', () => {}, 'Add anyway');
+  assert.ok(!cancel.classList.has('hidden') && btn.textContent === 'Add anyway' && btn.className === 'btn-danger', 'a confirm after an alert gets its Cancel back');
+  // Before the app shell exists: the app's own toast, never a browser dialog.
+  global.document = { getElementById: () => null };
+  global.__alert('early');
+  assert.deepStrictEqual(toasts, ['early']);
 });

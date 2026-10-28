@@ -45,7 +45,19 @@ run('catches the symptom: app taller than the screen, nav at the end of the docu
   assert.ok(r, 'recorded');
   assert.deepStrictEqual({ appH: r.appH, innerH: r.innerH, navBottom: r.navBottom, last: r.last, standalone: r.standalone, tab: r.tab }, { appH: 2632, innerH: 844, navBottom: 2632, last: 'modal-close', standalone: true, tab: 'portfolio' });
   assert.strictEqual(JSON.parse(store.edge_layoutAnomalies).length, 1);
-  assert.ok(/1 recorded\. Last .* after modal-close \(modal-close\): screen 844\/844, app 2632, nav bottom 2632, page scrolled 0, home-screen app\./.test(global.__summary()), global.__summary());
+  assert.strictEqual(r.vvDiff, 0, 'window and visible viewport agree: not an address-bar transition');
+  assert.ok(/1 recorded\. Last .* after modal-close \(modal-close\): window 844 vs visible 844 \(same\); app 2632, nav bottom 2632, page scrolled 0, home-screen app\./.test(global.__summary()), global.__summary());
+});
+
+// Android Chrome (Roman's browser): the address bar collapsing or expanding
+// changes the viewport mid-scroll. The pair innerHeight vs
+// visualViewport.height, recorded when the nav is off-screen, separates
+// that transition from everything else in one reading.
+run('records the address-bar pair: window vs visible viewport, and says when they differ', () => {
+  load({ innerH: 780, vvH: 724, appH: 836, navBottom: 836, docH: 836, scrollY: 56 });
+  const r = quiet(() => global.__check('document-scroll'));
+  assert.deepStrictEqual({ innerH: r.innerH, vvH: r.vvH, vvDiff: r.vvDiff }, { innerH: 780, vvH: 724, vvDiff: 56 });
+  assert.ok(global.__summary().includes('window 780 vs visible 724 (differ by 56)'), global.__summary());
 });
 
 run('catches a scrolled document even when the app height looks right', () => {
