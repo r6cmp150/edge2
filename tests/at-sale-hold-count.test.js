@@ -36,7 +36,7 @@ run('the sale passes its own date all the way down, peak risk included', () => {
   }
   // Behaviourally, through computeUnifiedSaleFields with a spy.
   const calls = [];
-  global.getEngine = () => null; global.currentOwnedScore = () => null;
+  global.getEngine = () => null; global.currentSignalForHolding = () => null; // the one resolver (2026-10-28)
   global.state = { signals: [], macroContext: null, ownedPeakRSI: {} };
   global.calcUnifiedRecommendation = (...a) => { calls.push(a); return { label: 'HOLD', composite: 0, factors: [], hardFloor: false, peakRisk: null }; };
   // eslint-disable-next-line no-eval

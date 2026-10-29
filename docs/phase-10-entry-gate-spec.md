@@ -508,6 +508,27 @@ applied).** One write at buy, but **not on the position row.**
 - **Order:** db/033 applied and verified, then the code (one insert in
   `finalizeAddPortfolio`, plus its test), then the path columns, then
   the oversold floor re-tested against them.
+- **IT NEVER WROTE A ROW: found 2026-10-28, db/034.** Every insert was
+  refused with 42501, "new row violates row-level security policy".
+  Supabase enables RLS on tables created in its SQL editor, and db/033 gave
+  the table GRANTs but no RLS policy. **db/033's verification checked
+  `has_table_privilege`, which RLS doesn't consult, so it passed while every
+  write failed.** All 72 positions bought on 10-27 and 10-28 have no
+  snapshot, and those already sold can't be recaptured. The failures went
+  unseen because a failed snapshot write only reached the console, by
+  design (never block the add). Two changes:
+  - db/034 adds insert and select policies for anon. Its verification does
+    a real insert *as anon* inside a rolled-back transaction, and a probe
+    over HTTP must answer 23514 (the CHECK), not 42501 (RLS).
+  - Snapshot write outcomes are now counted, with the last error, under
+    Settings → App Info.
+
+  **Rule: verify a write path by writing, not by reading privileges.** A
+  privilege check, an RLS policy and a CHECK are three independent gates,
+  and only an actual insert (rolled back, or one that a constraint must
+  refuse) tests all three. The specific trap, and the rule for every new
+  table, is in §7.7: a table created in Supabase's SQL editor has RLS on
+  and no policy, and a privilege check can't see it.
 - **BUILT (2026-10-27).** `captureSignalSnapshot` copies the on-screen
   signal before the add's first await. `recordSignalSnapshotAtBuy` writes
   the row after the position insert succeeds, isn't awaited, and resolves
@@ -942,6 +963,25 @@ days, not quiet ones.
    trade was placed inside a gate window is derived on read from
    `buy_date`/`buy_time`, not stored. The DAY-suppression button
    (disabled "+ Add to Portfolio" after 10:00 PT) is fixed the same way.
+   - **PRE-COMMITTED (2026-10-28): when the 07:00–07:30 gate is
+     reconsidered.** **When 30 or more forward trades (`code_version`
+     set) have been placed inside 07:00–07:30 PT, across at least 8
+     distinct trading days, the window is re-derived against the
+     historical 70** (§3.4's bucket: `trades_v2` at `b4620bc`, the 270
+     rows without `sell_price_unverified`). Before that, it stands.
+     - **Why day-clustered:** trades bought on the same morning share
+       that morning's market, so a cluster of them is one observation,
+       not many. The first forward trades inside the window all came
+       from a single morning (10-28); that is one data point, however
+       it turned out.
+     - **Why written down now:** the gate is advice, Roman overrides it,
+       and overrides that win are memorable. Without a criterion fixed
+       in advance, the decision gets made by whichever anecdote is most
+       recent. An override that wins doesn't count toward reversing the
+       gate; only meeting the criterion does.
+     - **The count:** `node scripts/report-forward-test.mjs --rev
+       <backup>` prints the trades inside the window and their distinct
+       days, with the criterion and whether it's met.
 1b. **Recording, everywhere:** "✓ In Portfolio" and "Order pending" get
    the same confirm-and-record treatment. One position per ticker was
    never intended.
@@ -1423,6 +1463,40 @@ days, not quiet ones.
          below, now with a cost attached: the stored record and the app
          can disagree about whether anything was buyable, and the stored
          record is what every analysis reads. Reported, not fixed here.
+
+     - **THE FIRST FORWARD-TEST TRADES (2026-10-27 and 10-28). Read their
+       results with all of the following in view.** These are the first
+       trades recorded with `code_version` (all 64 sold on those two days,
+       plus the 8 still open), so they are the first forward test of step
+       2's scoring, the entry gate and the 1M liquidity gate together.
+       - **They have NO signal snapshot.** Every write to
+         `signal_snapshot_at_buy` from 10-27 to 10-28 was refused by
+         row-level security (db/034). All 72 positions lack one, and the
+         sold ones can't be recaptured. Their entry inputs are only the
+         stored per-position fields (§5), not a re-scorable snapshot.
+       - **Size and turnover changed, and not by the same factor.** Per
+         trade, positions are about **1.5x** the historical size (median
+         cost $572 against $371 over the 292 earlier trades; mean $617
+         against $408). The **~9x** is capital deployed at once against the
+         $1,500 configured budget ($13,788 on the morning of 10-28). The
+         larger change is turnover: 64 round trips in two days, $32,145
+         bought on 10-28 alone. The historical expectancy (**−$2.53** per
+         trade over the 270 verified rows; an earlier −$2.34 came from a
+         stale dataset and is withdrawn) was measured at the old size and
+         pace. Per-trade results
+         scale with the 1.5x; daily and book-level results with the
+         turnover. They aren't comparable to the history without saying
+         which.
+       - **The report:** `node scripts/report-forward-test.mjs --rev
+         <backup>`. The 10-28 backup (e582d87) holds only 14 of the 64,
+         so the first quotable run is on the 10-29 backup; until then the
+         `--live` figures are not quotable and aren't recorded here.
+         Caveats that travel with them: two trading days, both up days
+         for small caps (IWM +1.17% and +0.40% close to close, IEX bars);
+         the two-current-scores defect and the double-fire window were
+         both live (fixed 2026-10-28); and 60 of 64 resolved the same day,
+         against 86 of 270 in the baseline, so a comparison of the whole
+         books is mostly a comparison of holding periods.
 
      - **PRE-COMMITTED (Roman, 2026-10-27): when the lines get
        re-derived.** If **real buyable averages under 1 a day over 10
@@ -2072,6 +2146,28 @@ contract reachable from `gate.js`, `replay.js` or `setups.js` (today:
 either version all three sub-imports to one shared version or state here
 why not. It's a condition checked at a known moment, not an open item
 nobody is watching.
+
+**A table created in Supabase's SQL editor has RLS enabled and no policy.
+Grants alone never suffice, and a privilege check cannot see the
+difference.** (Added 2026-10-28.) `has_table_privilege` answers from
+GRANTs; row-level security is a separate gate it never consults, and with
+RLS on and no policy every row is refused (42501), whatever was granted.
+**The instance: db/033** (`signal_snapshot_at_buy`). Its verification
+checked `has_table_privilege` for anon, passed, and was signed off, while
+every insert from 10-27 to 10-28 was refused, so all 72 positions bought
+in the first forward test have no snapshot (§5, "IT NEVER WROTE A ROW").
+This project already held the general rule: "status codes prove nothing,
+always re-select" (db/023), and a real round-trip for db/028. It was
+applied to new columns on existing tables, whose policies already
+covered them, and dropped for a new table, the one case where it decides
+the outcome. The generic rule didn't catch it for either reviewer; this
+one would have. **So every migration that creates a table** states its
+RLS posture in the same file (enabled, with the policies each role
+needs), and its verification is an actual write as the role that will
+write (`set local role anon` inside a rolled-back transaction), plus,
+after it's applied, a probe over HTTP that a constraint must refuse
+(expect the constraint's code, e.g. 23514, never 42501). db/034 is the
+first migration written this way.
 
 **Displaying something must never write to state that a decision reads.**
 A view may compute fresh values; it may not store them where the scorer,

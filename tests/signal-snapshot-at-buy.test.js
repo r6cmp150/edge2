@@ -118,9 +118,13 @@ run('captured at the click: a copy, so later changes to the on-screen signal can
 run('three states, and a failed write never fails, delays or blocks the add', async () => {
   const rows = [];
   let fail = false;
-  global.insertSignalSnapshotAtBuy = async row => { if (fail) throw new Error('503'); rows.push(row); };
+  global.insertSignalSnapshotAtBuy = async row => { if (fail) { const e = new Error('new row violates row-level security policy'); e.code = '42501'; throw e; } rows.push(row); };
+  const store = {}; global.localStorage = { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = v; } };
+  const app = readSource('app.js'); const ci = app.indexOf('const SNAPSHOT_LOG_KEY');
   // eslint-disable-next-line no-eval
-  eval(grab('recordSignalSnapshotAtBuy') + '\nglobal.__record = recordSignalSnapshotAtBuy;');
+  eval(grab('recordSignalSnapshotAtBuy') + app.slice(ci, app.indexOf('\n}\n', app.indexOf('function snapshotWritesSummaryText(')) + 2) +
+    '\nglobal.__record = recordSignalSnapshotAtBuy; global.__snapSummary = snapshotWritesSummaryText;');
+  assert.strictEqual(global.__snapSummary(), 'No buys recorded on this device yet.');
   const pos = { id: '1761550000000', ticker: 'X', codeVersion: { app: 'a', scoring: 2, scoring_hash: 'h' } };
   assert.strictEqual(await global.__record(pos, { ticker: 'X', score: 55, barsAsOf: '2026-10-26' }), true);
   assert.strictEqual(await global.__record(pos, null), true);
@@ -133,6 +137,10 @@ run('three states, and a failed write never fails, delays or blocks the add', as
   try { assert.strictEqual(await global.__record(pos, null), false, 'a failed write resolves false: it never throws'); }
   finally { console.error = err; }
   assert.ok(seen.some(m => /Not captured; the position is saved/.test(m)));
+  // ...and counted where Roman can see it, not only in the console (db/034:
+  // two days of 42501s went unnoticed because they were console-only).
+  assert.strictEqual(global.__snapSummary(), '2 saved, 1 failed (last: 42501: new row violates row-level security policy).');
+  assert.ok(app.includes('${snapshotWritesSummaryText()}'), 'shown in Settings → App Info');
   // Wired after the position insert, NOT awaited, before the add completes.
   const fin = grab('finalizeAddPortfolio');
   const ins = fin.indexOf('await insertPositionToSupabase(position);'), rec = fin.indexOf('recordSignalSnapshotAtBuy(position, signalSnapshotAtBuy);'), push = fin.indexOf('state.portfolio.push(position);');

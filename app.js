@@ -856,7 +856,7 @@ let state = {
   edgeLiquidityCache: null, // { date, bySymbol, requiredThrough } -- core/universe.js getEdgeLiquidity, one PT day, session only
   selectedUniverse: 'OTHER',
   notifications: {},     // push notification state — persisted
-  ownedScores: {},        // ticker → {score, label, scoringVersion} snapshotted at each screener run, for owned positions that no longer clear the display threshold — persisted, so read ONLY through currentOwnedScore() (a stored score from another formula is not evaluated, never used)
+  ownedScores: {},        // ticker → {score, label, scoringVersion, scannedAt, signal} snapshotted at each screener run (the full signal since 2026-10-28; read through currentSignalForHolding), for owned positions that no longer clear the display threshold — persisted, so read ONLY through currentOwnedScore() (a stored score from another formula is not evaluated, never used)
   ownedPrevRSI: {},       // ticker → RSI from the previous portfolio render, for detecting "declining from peak" in calcPeakRiskScore — persisted
   ownedPeakRSI: {},       // ticker → highest RSI seen across the current hold, for peakRsiDuringHold on the sold record — persisted
   preMarketGroqCache: {}, // ticker → {pairs}|{raw} Groq pre-market read — session only, tap-triggered
@@ -1536,6 +1536,31 @@ async function resolveMacroConditionWithGroq(changes) {
 // (every entry written before this fix has no scoringVersion) comes back as a
 // not-evaluated marker with its reason, never as a number from another
 // formula. The next scan refreshes every owned ticker, so it heals itself.
+// ONE current signal for a held ticker (2026-10-28), read by the portfolio
+// card, the stock modal, every recommendation and the nav badge. Until then
+// the card read ownedScores first while the recommendation and the modal read
+// state.signals first: AXTL's card said "SCORE NOW 70 (last scan)" while the
+// verdict beneath it said "Score improved from 80 → 85" and returned HOLD
+// STRONG, computed from a score shown nowhere. ownedScores is refreshed for
+// every held ticker on every scan (main loop or the owned-ticker refresh),
+// so it's never staler than state.signals; state.signals is only the
+// fallback for a holding no scan has refreshed yet. Entries written before
+// this change hold the score only, so the component factors (volume, MA
+// distance, up days, catalyst) are flagged scoreOnly, and the recommendation
+// says they weren't evaluated instead of silently dropping them. They're
+// refreshed at the next scan.
+function currentSignalForHolding(ticker) {
+  const e = currentOwnedScore(ticker);
+  if (e && e.notEvaluatedReason) return e; // another formula's score: not evaluated, and says so
+  if (e && e.score != null) {
+    return e.signal
+      ? { ...e.signal, score: e.score, signal: e.label, scannedAt: e.scannedAt ?? null, scoreSource: 'scan' }
+      : { ticker, score: e.score, signal: e.label, scannedAt: e.scannedAt ?? null, scoreSource: 'scan', scoreOnly: true };
+  }
+  const sig = state.signals.find(x => x.ticker === ticker);
+  return sig ? { ...sig, scannedAt: state.lastScanTime ?? null, scoreSource: 'scan' } : null;
+}
+
 function currentOwnedScore(ticker) {
   const e = state.ownedScores[ticker];
   if (!e) return null;
@@ -2071,7 +2096,7 @@ async function runScreener() {
       // here, before the threshold/price filters below can drop them, so the
       // Portfolio tab's Score Now always reflects the most recent scan.
       if (s && getOwnedPosition(ticker)) {
-        state.ownedScores[ticker] = { score: s.score, label: s.signal, scoringVersion: SCORING_VERSION };
+        state.ownedScores[ticker] = { score: s.score, label: s.signal, scoringVersion: SCORING_VERSION, scannedAt: Date.now(), signal: s };
         updatedOwnedTickers.add(ticker);
       }
       const shown = !!s && s.score >= displayThreshold && s.price >= minP2;
@@ -2110,7 +2135,7 @@ async function runScreener() {
           const bars = extraBars[ticker] || [];
           const tickerCategory = findTickerCategory(ticker) || category;
           const s = scoreStock(ticker, snap, bars, newsMap[ticker] || null, spyChangePct, tickerCategory);
-          if (s) state.ownedScores[ticker] = { score: s.score, label: s.signal, scoringVersion: SCORING_VERSION };
+          if (s) state.ownedScores[ticker] = { score: s.score, label: s.signal, scoringVersion: SCORING_VERSION, scannedAt: Date.now(), signal: s };
         });
       } catch(e) {
         console.warn('Owned-ticker score refresh failed:', e.message);
@@ -2321,8 +2346,8 @@ function renderSignalsTab() {
   if (aft && getHoldings().length > 0) {
     const exitTickers = getHoldings()
       .filter(p => {
-        const sig = state.signals.find(s => s.ticker === p.ticker);
-        if (!sig) return false;
+        const sig = currentSignalForHolding(p.ticker);
+        if (!sig || sig.price == null) return false;
         const result = calcUnifiedRecommendation({ ...p, currentPrice: sig.price, rsi: sig.rsi }, sig, state.macroContext);
         return result.hardFloor || result.label === 'SELL NOW';
       })
@@ -3170,8 +3195,13 @@ let _chartCurrentPrice = 0;
 let _modalStock = null;
 
 async function openStockModal(ticker) {
-  const s = state.signals.find(x => x.ticker === ticker);
   const ownedPos = getOwnedPosition(ticker);
+  // A held ticker's signal is the one the card and the recommendation read
+  // (currentSignalForHolding, 2026-10-28), so the modal's score, breakdown
+  // and verdict all come from one scan. A score-only or not-evaluated entry
+  // isn't a full signal; the modal then falls back to its own rules below.
+  const held = ownedPos ? currentSignalForHolding(ticker) : null;
+  const s = (held && !held.scoreOnly && !held.notEvaluatedReason) ? held : state.signals.find(x => x.ticker === ticker);
   const pendingOrder = ownedPos ? null : getPendingOrder(ticker);
 
   showModal(`<div class="modal-handle"></div>
@@ -3383,7 +3413,7 @@ async function openStockModal(ticker) {
     const unifiedModalBlock = ownedPos
       ? buildUnifiedRecommendationModalBlock(calcUnifiedRecommendation(
           { ...ownedPos, currentPrice: _modalStock.livePrice, rsi: _modalStock.liveRsi, priceFetchFailed: modalPriceUnavailable },
-          s || currentOwnedScore(ticker) || null,
+          currentSignalForHolding(ticker),
           state.macroContext
         ))
       : '';
@@ -3960,7 +3990,18 @@ function addFormSessionAdviceHtml(dateStr) {
   return (s === 'AFTER_HOURS' || s === 'PRE_MARKET') ? `<div class="add-form-note add-form-note-warn">${buildAfterHoursWarningText()}</div>` : '';
 }
 
+// A second tap while an add is still in flight is ignored (2026-10-28). The
+// button used to be disabled only just before the insert, after two network
+// waits (the listing fetch here, the spread fetch in
+// computeEntryMeasurementFields), so a slow network and an impatient tap made
+// a second position with its own Date.now() id, and with no confirm left on
+// the ordinary add, nothing caught it. The flag covers tap -> saved; finalize
+// disables the button at its very start, which also covers the listing
+// confirm's "Add anyway" path.
+let _addInFlight = false;
+
 async function confirmAddPortfolio(ticker, btn) {
+  if (_addInFlight) return;
   const shares = parseFloat(document.getElementById('pf-shares').value);
   const price  = parseFloat(document.getElementById('pf-price').value);
   const date   = document.getElementById('pf-date').value;
@@ -3973,6 +4014,10 @@ async function confirmAddPortfolio(ticker, btn) {
   const order = readOrderEntry('pf', date);
   if (order.error) { showAlert(order.error); return; }
 
+  _addInFlight = true;
+  if (btn) btn.disabled = true;
+  try {
+
   // Listing (phase-10 step 1f, 2026-10-22): the ONE confirm on the add path,
   // because it's a FACT that contradicts the action (spec §7.7): Alpaca says
   // the stock can't be traded, so "are you sure this filled?" checks
@@ -3983,10 +4028,17 @@ async function confirmAddPortfolio(ticker, btn) {
   // note in the form (addFormSessionAdviceHtml), not a confirm.
   const listing = await fetchHeldListing([ticker]);
   if (listing && listing[ticker] !== 'listed') {
+    // Waiting on Roman now, not the network: release, so Cancel leaves a
+    // usable button. "Add anyway" goes through finalize, which disables it.
+    _addInFlight = false;
+    if (btn) btn.disabled = false;
     showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');
     return;
   }
   await finalizeAddPortfolio(ticker, shares, price, date, btn, order);
+  } finally {
+    _addInFlight = false;
+  }
 }
 
 // Phase 9 §4.2 (2026-09-16) -- entry measurement, none of it scores
@@ -4051,12 +4103,35 @@ function recordSignalSnapshotAtBuy(position, snapshot) {
     absent_reason: snapshot ? null : 'no_signal',
   };
   return insertSignalSnapshotAtBuy(row).then(
-    () => true,
-    e => { console.error(`signal_snapshot_at_buy write failed for ${position.ticker} (${position.id}): ${e.message}. Not captured; the position is saved.`); return false; },
+    () => { noteSnapshotWrite(true, null); return true; },
+    e => { console.error(`signal_snapshot_at_buy write failed for ${position.ticker} (${position.id}): ${e.message}. Not captured; the position is saved.`); noteSnapshotWrite(false, e); return false; },
   );
 }
 
+// Snapshot write outcomes, counted where Roman can see them (2026-10-28).
+// Every write from 10-27 to 10-28 failed (row-level security, db/034), and
+// because a failure only reached the console, about 63 snapshots were lost
+// before anyone knew. A failure still never blocks an add; it's now counted
+// with its last error, under Settings -> App Info.
+const SNAPSHOT_LOG_KEY = 'edge_snapshotWrites';
+function noteSnapshotWrite(ok, e) {
+  try {
+    let c = {};
+    try { c = JSON.parse(localStorage.getItem(SNAPSHOT_LOG_KEY) || '{}') || {}; } catch (_) { c = {}; }
+    if (ok) c.saved = (c.saved || 0) + 1;
+    else { c.failed = (c.failed || 0) + 1; c.lastError = `${e?.code ? e.code + ': ' : ''}${e?.message || e}`.slice(0, 160); c.lastFailedAt = new Date().toISOString(); }
+    localStorage.setItem(SNAPSHOT_LOG_KEY, JSON.stringify(c));
+  } catch (_) { /* never break the add */ }
+}
+function snapshotWritesSummaryText() {
+  let c = {};
+  try { c = JSON.parse(localStorage.getItem(SNAPSHOT_LOG_KEY) || '{}') || {}; } catch (_) { c = {}; }
+  if (!c.saved && !c.failed) return 'No buys recorded on this device yet.';
+  return `${c.saved || 0} saved, ${c.failed || 0} failed${c.failed ? ` (last: ${c.lastError})` : ''}.`;
+}
+
 async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
+  if (btn) btn.disabled = true; // at the very start: the spread fetch below is a network wait too
   const sig = state.signals.find(s => s.ticker === ticker);
   // Copied before any await: what was on screen at the click, not after.
   const signalSnapshotAtBuy = captureSignalSnapshot(sig);
@@ -4648,7 +4723,7 @@ async function renderPortfolioTab() {
           : neutralEngineExitFallback(p, { price: currentPrice });
       portBanner = buildRegisteredEngineExitBanner(exitResult);
     } else {
-      const currentSignal = state.signals.find(s => s.ticker === p.ticker) || currentOwnedScore(p.ticker) || null;
+      const currentSignal = currentSignalForHolding(p.ticker);
       const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);
       portBanner = buildUnifiedPortfolioBanner(unifiedResult);
     }
@@ -4714,16 +4789,14 @@ async function renderPortfolioTab() {
     // per position on every render would be a much larger change, so instead
     // the "(last scan)" label makes the cache explicit rather than silently
     // showing a number that might not match what the modal shows right now.
-    const storedOwned = currentOwnedScore(p.ticker);
-    const ownedScore = storedOwned && storedOwned.score != null ? storedOwned : null;
-    const liveSignal = state.signals.find(s => s.ticker === p.ticker);
-    const nowScore = ownedScore
-      ? ownedScore
-      : liveSignal ? { score: liveSignal.score, label: liveSignal.signal } : null;
-    const scoreNowDisplay = nowScore
-      ? `${nowScore.score} <span class="pf-score-label ${scoreLabel(nowScore.score) === 'STRONG BUY' ? 'pf-score-green' : 'pf-score-yellow'}">${nowScore.label}</span>${ownedScore ? ' <span class="pf-score-stale">(last scan)</span>' : ''}`
-      : storedOwned?.notEvaluatedReason
-        ? `<span class="pf-score-na">— not evaluated (${storedOwned.notEvaluatedReason})</span>`
+    // The SAME object the recommendation below reads (currentSignalForHolding),
+    // so the score on the card is the score the verdict used.
+    const nowSig = currentSignalForHolding(p.ticker);
+    const nowAt = nowSig?.scannedAt ? new Date(nowSig.scannedAt).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false }) : null;
+    const scoreNowDisplay = nowSig && nowSig.score != null
+      ? `${nowSig.score} <span class="pf-score-label ${scoreLabel(nowSig.score) === 'STRONG BUY' ? 'pf-score-green' : 'pf-score-yellow'}">${nowSig.signal}</span> <span class="pf-score-stale">(scan${nowAt ? ' ' + nowAt : ''})</span>`
+      : nowSig?.notEvaluatedReason
+        ? `<span class="pf-score-na">— not evaluated (${nowSig.notEvaluatedReason})</span>`
         : `<span class="pf-score-na">—</span>`;
 
     // Duration urgency — same maxHoldDays map used for the card sort order above.
@@ -5104,6 +5177,7 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap, 
   // gets the top weight its STRONG BUY label implies (it used to be > 116
   // here and >= 116 on the label).
   if (currentSignal?.notEvaluatedReason) add(`Current score not evaluated — ${currentSignal.notEvaluatedReason}`, 0);
+  if (currentSignal?.scoreOnly) add('Volume, MA-distance and up-day factors not evaluated — the stored scan kept the score only; refreshed at the next scan', 0);
   const nowScore = currentSignal?.score;
   if (nowScore != null) {
     const t = scoreThresholds();
@@ -6112,7 +6186,7 @@ function computeUnifiedSaleFields(pos, salePrice, saleDate) {
       fullPeakRiskFactorsAtSale: null,
     };
   }
-  const currentSignal = state.signals.find(s => s.ticker === pos.ticker) || currentOwnedScore(pos.ticker) || null;
+  const currentSignal = currentSignalForHolding(pos.ticker);
   // The sale's own clock: its price AND its date (phase-10 §7.7). Until
   // 2026-10-27 the hold was counted to the day the sale was RECORDED, so a
   // Friday sale recorded on Monday stored Friday's price at Monday's hold.
@@ -8424,6 +8498,10 @@ function renderSettingsTab() {
         <span class="build-status" data-build-status></span>
       </div>
       <div class="settings-row" style="flex-direction:column;align-items:stretch;">
+        <span class="settings-label">Signal snapshots at buy</span>
+        <div class="settings-hint">${snapshotWritesSummaryText()}</div>
+      </div>
+      <div class="settings-row" style="flex-direction:column;align-items:stretch;">
         <span class="settings-label">Layout check</span>
         <div class="settings-hint">${layoutCheckSummaryText()}</div>
       </div>
@@ -9982,7 +10060,7 @@ function updateNavBadges() {
           if (exitResult.status === 'SELL_NOW' || exitResult.status === 'SELL_SOON') warnCount++;
           return;
         }
-        const currentSignal = state.signals.find(s => s.ticker === p.ticker) || currentOwnedScore(p.ticker) || null;
+        const currentSignal = currentSignalForHolding(p.ticker);
         const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy, priceFetchFailed: state.portfolioPriceFetchFailed }, currentSignal, state.macroContext);
         if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(result.label)) warnCount++;
       });
