@@ -4103,22 +4103,28 @@ function recordSignalSnapshotAtBuy(position, snapshot) {
     absent_reason: snapshot ? null : 'no_signal',
   };
   return insertSignalSnapshotAtBuy(row).then(
-    () => { noteSnapshotWrite(true, null); return true; },
-    e => { console.error(`signal_snapshot_at_buy write failed for ${position.ticker} (${position.id}): ${e.message}. Not captured; the position is saved.`); noteSnapshotWrite(false, e); return false; },
+    () => { noteSnapshotWrite(snapshot ? 'saved' : 'no_signal', null); return true; },
+    e => { console.error(`signal_snapshot_at_buy write failed for ${position.ticker} (${position.id}): ${e.message}. Not captured; the position is saved.`); noteSnapshotWrite('failed', e); return false; },
   );
 }
 
 // Snapshot write outcomes, counted where Roman can see them (2026-10-28).
 // Every write from 10-27 to 10-28 failed (row-level security, db/034), and
-// because a failure only reached the console, about 63 snapshots were lost
-// before anyone knew. A failure still never blocks an add; it's now counted
-// with its last error, under Settings -> App Info.
+// because a failure only reached the console, all 72 positions bought in
+// those two days have none. A failure still never blocks an add; it's now
+// counted with its last error, under Settings -> App Info. Three outcomes,
+// as in the table: a snapshot saved; 'no_signal' saved on purpose (bought
+// with no signal on screen -- a correct row, never shown as a failure); and
+// a write that failed. The first version counted 'no_signal' as "saved"
+// because both were "not a failure": three real outcomes squeezed into two
+// (spec §5).
 const SNAPSHOT_LOG_KEY = 'edge_snapshotWrites';
-function noteSnapshotWrite(ok, e) {
+function noteSnapshotWrite(outcome, e) {
   try {
     let c = {};
     try { c = JSON.parse(localStorage.getItem(SNAPSHOT_LOG_KEY) || '{}') || {}; } catch (_) { c = {}; }
-    if (ok) c.saved = (c.saved || 0) + 1;
+    if (outcome === 'saved') c.saved = (c.saved || 0) + 1;
+    else if (outcome === 'no_signal') c.noSignal = (c.noSignal || 0) + 1;
     else { c.failed = (c.failed || 0) + 1; c.lastError = `${e?.code ? e.code + ': ' : ''}${e?.message || e}`.slice(0, 160); c.lastFailedAt = new Date().toISOString(); }
     localStorage.setItem(SNAPSHOT_LOG_KEY, JSON.stringify(c));
   } catch (_) { /* never break the add */ }
@@ -4126,8 +4132,8 @@ function noteSnapshotWrite(ok, e) {
 function snapshotWritesSummaryText() {
   let c = {};
   try { c = JSON.parse(localStorage.getItem(SNAPSHOT_LOG_KEY) || '{}') || {}; } catch (_) { c = {}; }
-  if (!c.saved && !c.failed) return 'No buys recorded on this device yet.';
-  return `${c.saved || 0} saved, ${c.failed || 0} failed${c.failed ? ` (last: ${c.lastError})` : ''}.`;
+  if (!c.saved && !c.noSignal && !c.failed) return 'No buys recorded on this device yet.';
+  return `${c.saved || 0} saved with their signal, ${c.noSignal || 0} recorded with no signal on purpose, ${c.failed || 0} failed${c.failed ? ` (last: ${c.lastError})` : ''}.`;
 }
 
 async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {

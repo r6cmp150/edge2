@@ -139,7 +139,8 @@ run('three states, and a failed write never fails, delays or blocks the add', as
   assert.ok(seen.some(m => /Not captured; the position is saved/.test(m)));
   // ...and counted where Roman can see it, not only in the console (db/034:
   // two days of 42501s went unnoticed because they were console-only).
-  assert.strictEqual(global.__snapSummary(), '2 saved, 1 failed (last: 42501: new row violates row-level security policy).');
+  assert.strictEqual(global.__snapSummary(), '1 saved with their signal, 1 recorded with no signal on purpose, 1 failed (last: 42501: new row violates row-level security policy).',
+    "a 'no_signal' row is its own correct state, never counted as saved-with-signal or as a failure");
   assert.ok(app.includes('${snapshotWritesSummaryText()}'), 'shown in Settings → App Info');
   // Wired after the position insert, NOT awaited, before the add completes.
   const fin = grab('finalizeAddPortfolio');

@@ -521,7 +521,14 @@ applied).** One write at buy, but **not on the position row.**
     a real insert *as anon* inside a rolled-back transaction, and a probe
     over HTTP must answer 23514 (the CHECK), not 42501 (RLS).
   - Snapshot write outcomes are now counted, with the last error, under
-    Settings → App Info.
+    Settings → App Info, as three states: saved with a signal, recorded
+    with no signal on purpose (`absent_reason 'no_signal'`), and failed.
+    **The first version had two, and why is worth keeping:** a
+    `no_signal` row counted as "saved" because both were "not a failure".
+    That's the two-state collapse this project keeps meeting (NULL, `''`
+    and 0), one level up from a value: a *classification* with three real
+    outcomes squeezed into two, because only one of them was interesting
+    at the time. Fixed 2026-10-29, before any `no_signal` row existed.
 
   **Rule: verify a write path by writing, not by reading privileges.** A
   privilege check, an RLS policy and a CHECK are three independent gates,
@@ -959,7 +966,9 @@ days, not quiet ones.
    entries 7:00–7:30 PT (**a precaution, not a finding:** its evidence
    is confounded by pool size and the IEX venue artifact, see §3.4). Time-and-place rules, no prediction. Evaluated
    at view time, not scan time. EDGE only. 6:30–7:00 and PRE_MARKET are
-   open and logged. Recording stays open behind a confirm; whether a
+   open and logged. Recording stays open, with no confirm: inside a gate
+   window the footer is the ordinary "+ Add to Portfolio" (the confirm
+   that once stood here was removed 2026-10-27, §7.7); whether a
    trade was placed inside a gate window is derived on read from
    `buy_date`/`buy_time`, not stored. The DAY-suppression button
    (disabled "+ Add to Portfolio" after 10:00 PT) is fixed the same way.
