@@ -61,6 +61,16 @@ confound)*
 Across all 270: **RSI 45–55 → n=55, 72.7% win, +0.86% avg, +$242.**
 The other 215 trades: 50.7% win, **−$926**.
 
+> **First out-of-sample look (pinned 2026-11-01, `node
+> scripts/report-forward-test.mjs --rev 0775407`): not confirmed.** In the
+> first 64 forward trades (10-27 and 10-28), RSI 45–55 was n=19, 63% win,
+> +0.48%: worse than this history on both measures, and the weakest of the
+> three middle bands in that sample (35–45: 74%, +1.17%; 55–65: 83%,
+> +1.43%). n=19 on two up-days for small caps neither refutes nor confirms
+> it, but this is the project's only entry finding, and its first test
+> outside the data it was found in did not reproduce it (§7.6, "THE FIRST
+> FORWARD-TEST TRADES").
+
 ### Why I believe it (four tests it survived)
 
 1. **Drop the single largest winner** — the test that killed the −6%
@@ -291,7 +301,8 @@ at 7:30–10:00 falls to −0.35% before 7:30), so time is a real second
 effect, not a proxy for RSI.
 
 **Best cell in the dataset: RSI 45–55 bought 7:30–10:00 PT — n=21,
-81.0% win, +1.68% avg, +$222.**
+81.0% win, +1.68% avg, +$222.** *(Its band was not confirmed in the first
+forward trades: §1, "First out-of-sample look".)*
 
 ---
 
@@ -680,6 +691,14 @@ measure rates 58–65 among the better bands. Cutting a term because a
 confounded measure disliked it, against the clean measure, is the same
 mistake in the other direction. None of §2's new weights (+25 band, −10
 for 35–42, −5 for 65–75) and none of §4's monotonic price ladder ships.
+
+**A second, independent piece of evidence (pinned 2026-11-01, `node
+scripts/report-forward-test.mjs --rev 0775407`):** in the first 64 forward
+trades, RSI 55–65 was n=18, 83% win, +1.43%, against 54% and −1.41% in the
+exit-contaminated history. That is consistent with the exit-free
+signal_log measure that kept the band at +20, and it comes from a
+different source (forward trades, not the log). Small, and one market: it
+supports leaving the weight alone, nothing more.
 
 **Withdrawn display copy (2026-10-21).** The RSI copy (step 1c) and all
 five volume-band notes in the score breakdown: "Healthy volume — best
@@ -1497,15 +1516,53 @@ days, not quiet ones.
          turnover. They aren't comparable to the history without saying
          which.
        - **The report:** `node scripts/report-forward-test.mjs --rev
-         <backup>`. The 10-28 backup (e582d87) holds only 14 of the 64,
-         so the first quotable run is on the 10-29 backup; until then the
-         `--live` figures are not quotable and aren't recorded here.
-         Caveats that travel with them: two trading days, both up days
-         for small caps (IWM +1.17% and +0.40% close to close, IEX bars);
+         0775407` (the 10-29 backup; the 10-28 one, e582d87, holds only
+         14 of the 64). **Pinned 2026-11-01. No figure changed between
+         the live read of 2026-10-29 02:43Z, which was quoted to Roman as
+         provisional, and the backup:** every count, rate, total, window,
+         band and gap is identical, and only the order of tied rows in
+         two listings differs. So the live read was safe to reason from;
+         that is a finding about this read, not a licence for the next
+         one. Caveats that travel with the figures: two trading days, both up days
+         for small caps (IWM +1.15% and +0.40% close to close, SIP bars, pinned in
+         the report; an ad-hoc IEX fetch first gave +1.17% for 10-27);
          the two-current-scores defect and the double-fire window were
          both live (fixed 2026-10-28); and 60 of 64 resolved the same day,
          against 86 of 270 in the baseline, so a comparison of the whole
          books is mostly a comparison of holding periods.
+       - **THE +$352 IS HOLDING PERIOD, NOT SCORING.** The forward book
+         made +$351.70 over 64 trades (71.9% win, +$5.50 a trade) against
+         the baseline's −$684.33 over 270 (55.2%, −$2.53), and none of that
+         difference is evidence for step 2. **On same-day trades the
+         forward book is slightly worse than the history:** 73.3% win
+         against 79.1%, with the same average return (+1.02% against
+         +0.94%). The whole difference is composition: 60 of the 64
+         forward trades (94%) resolved the same day, against 86 of 270
+         (32%) in the baseline, whose loss is carried by its 184 overnight
+         holds (−$1,025.60). The smaller average loss (−2.00% against
+         −4.58%) is the same effect: a same-day loser has no time to grow.
+         **Roman changed his behaviour in the direction his own n=292 data
+         already pointed, and that is what the money came from.** Holding
+         period is his decision, not the scorer's.
+       - **What it says about the shipped rules** (each recorded where the
+         rule is, too): RSI 45–55, the project's only entry finding, was
+         **not confirmed** (n=19, 63% win, +0.48%, against 72.7% and
+         +0.86%; §1). RSI 55–65 did well (n=18, 83%, +1.43%, against 54%
+         and −1.41%), a second, independent piece of evidence for leaving
+         it at +20 (§7.3). Oversold buys (RSI <35) fell from 72 of 270
+         (27%) to 6 of 64 (9%): the one place step 2's mechanism shows
+         directly, and the band scores 0 rather than being excluded, so
+         some still come through.
+       - **Double-fire: settled, not suspected.** The double-tap window
+         was live (fixed 2026-10-28), so every repeat ticker-day was
+         checked. A double fire's signature is two lots seconds apart (by
+         `position_id`, the add's `Date.now()`) with identical share
+         counts, because one form produced both. Twelve ticker-days have
+         more than one lot; the closest pair is GCTK on 10-28, 31.8 minutes
+         apart, ×400 then ×250. That is a deliberate second lot, and none
+         match the signature. The detector was mutation-checked: a planted
+         copy of a lot 4 s later at the same size is reported. Don't
+         re-open this without a pair that matches the signature.
 
      - **PRE-COMMITTED (Roman, 2026-10-27): when the lines get
        re-derived.** If **real buyable averages under 1 a day over 10
@@ -2177,6 +2234,72 @@ write (`set local role anon` inside a rolled-back transaction), plus,
 after it's applied, a probe over HTTP that a constraint must refuse
 (expect the constraint's code, e.g. 23514, never 42501). db/034 is the
 first migration written this way.
+
+**A failure that reports only to a channel nobody reads is a reminder with
+extra steps.** (Added 2026-11-01.) Fill outcomes failed the first of its
+three evening runs on five days running (10-26 to 10-30 PT; GitHub run
+40423623086 first), and the only report was GitHub's email to Roman, who
+mentioned it days later. Found by asking, not by looking.
+- **What it actually was** (read from the run logs, not inferred from the
+  email): every PATCH succeeded, then the verification re-select put every
+  touched id in one URL (`?id=in.(…)`) and failed with `fetch failed`
+  (UND_ERR_HEADERS_OVERFLOW). Measured: 371 ids answers, 400 doesn't. The
+  first run of an evening touches the most rows (452 on 10-26, 597 on
+  10-30) and crossed the line as the logger's volume grew; the later runs
+  touch fewer and passed. Fixed by chunking (`scripts/lib/select-by-ids.mjs`,
+  100 ids per request), in fill-outcomes and in the split audit, which had
+  the same line.
+- **What it cost: little, and that is a finding, not a relief.** The
+  signal_log writes of each failing run had landed; its trades_v2
+  sell-timing writes and the stale-unresolved assertion didn't run, but
+  the next run an hour later did both (274/274, assertion passed), and
+  found nothing left to write. No outcome column went stale. **What saved
+  five sell-timing passes and five assertion runs was the job running
+  three times an evening, and nobody designed that as redundancy:** the
+  three crons exist to straddle the two DST closes and to retry a dropped
+  delivery. With one run a day, every one of those five days would have
+  lost both. It also only worked because the failure sat after the writes
+  and the later runs touched fewer rows; a failure that hit every run
+  would have had no cover at all.
+  - **Does the cover survive the schedule change? Checked 2026-11-01:
+    yes.** The re-aim (2026-10-27) moved the EDGE and Warrior loggers
+    only; fill-outcomes keeps 20:30, 21:30 and 23:00 UTC on weekdays.
+    Under EST the close is 21:00 UTC, so the 20:30 firing, if delivered on
+    time, would stand down at the `/v2/clock` check (a no-op, not a
+    failure), leaving two real runs. Measured on `workflow_runs`
+    (10-13 to 10-30, 15 evenings): every delivery was 111 minutes late or
+    more (median 199 / 181 / 139 for the three), there were no no-ops,
+    and so all three ran after the close. **A second run after the first
+    exists either way.** It is now something to keep, not an accident: a
+    schedule change to fill-outcomes that leaves it one real run an
+    evening removes the only thing that covered this failure, and must
+    say so in the same change.
+- **The diagnosis was wrong first, and the email is why.** The suspicion
+  was the stale-unresolved assertion (10-09) firing on CCO, TDAY and GO
+  for three weeks, because the email showed "3 annotations". The three
+  annotations were a Node 20 deprecation warning, "Process completed with
+  exit code 1", and an Ubuntu label notice; the three rows had resolved
+  (`not-taken-confirmed`) and the assertion had passed on every run that
+  reached it. **An email's summary says that something failed, not what
+  failed. Read the log before naming the cause.**
+  - **The sharper version, from the reviewer who made the guess:** the
+    cause was inferred from a coincidence and from a mechanism the
+    reviewer had built. Three annotations matching three rows already in
+    mind, plus an assertion its designer was pleased with, produced a
+    confident wrong answer in one step. **The author of a mechanism is
+    the worst person to guess whether it fired**, because the mechanism
+    is the first explanation that comes to mind and the one they most
+    want to be right. Ask the log, not the designer.
+- **The rule still stands, and it covers the assertion too.** The 10-09
+  assertion replaced a human reminder because it "can't be forgotten". It
+  can't be, but it can be ignored exactly as this failure was, because
+  its only output is the same email. So every scheduled job's outcome is
+  shown where Roman already looks: Settings → App Info, "Scheduled jobs",
+  from `workflow_runs` (which recorded all five failures, matching GitHub
+  run for run). Three outcomes per run: success, failure, and no outcome
+  recorded (a run that started and never wrote `job_status`), plus a job
+  with no run in 8 days. A failure is shown even when a later run
+  succeeded; it's red when the latest run failed.
 
 **Displaying something must never write to state that a decision reads.**
 A view may compute fresh values; it may not store them where the scorer,

@@ -8508,6 +8508,10 @@ function renderSettingsTab() {
         <div class="settings-hint">${snapshotWritesSummaryText()}</div>
       </div>
       <div class="settings-row" style="flex-direction:column;align-items:stretch;">
+        <span class="settings-label">Scheduled jobs</span>
+        <div class="settings-hint" id="workflow-health">Loading…</div>
+      </div>
+      <div class="settings-row" style="flex-direction:column;align-items:stretch;">
         <span class="settings-label">Layout check</span>
         <div class="settings-hint">${layoutCheckSummaryText()}</div>
       </div>
@@ -8538,7 +8542,76 @@ function renderSettingsTab() {
     </div>
   `;
   loadDatabaseUsage();
+  loadWorkflowHealth();
   renderBuildStatus(); // fill the Build row with the last check (current / stale / unknown)
+}
+
+// Scheduled-job health, from workflow_runs (2026-11-01). Fill outcomes
+// failed its first run on five evenings (10-26 to 10-30 PT) and the only
+// report was GitHub's email, so it was found by Roman, days later, not
+// by anyone looking. An assertion or a failing job that reports only to a
+// channel nobody reads is a reminder with extra steps (spec §7.7); this is
+// the surface Roman already checks. Three outcomes per run, never two:
+// success, failure, and no outcome recorded (a run that started and never
+// wrote job_status -- not shown as a success, and not as a failure either).
+const WORKFLOW_NAMES = [
+  'Log EDGE signals', 'Log Warrior signals', 'Fill outcomes',
+  'Backup trades/portfolio/settings/rating_snapshots',
+  'Capture movers/most-actives snapshot', 'Build float table',
+];
+const WORKFLOW_HEALTH_DAYS = 8; // covers the weekly float-table run
+function workflowHealthLines(runs, nowMs) {
+  const sinceMs = nowMs - WORKFLOW_HEALTH_DAYS * 86400000;
+  const pt = iso => new Date(iso).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const lines = [];
+  let clean = 0, total = 0;
+  for (const name of WORKFLOW_NAMES) {
+    const rs = runs.filter(r => r.workflow_name === name && Date.parse(r.actual_fired_at) >= sinceMs)
+      .sort((a, b) => Date.parse(a.actual_fired_at) - Date.parse(b.actual_fired_at));
+    total += rs.length;
+    if (!rs.length) { lines.push({ bad: true, text: `${name}: no run recorded in ${WORKFLOW_HEALTH_DAYS} days.` }); continue; }
+    // A run still inside its first hour may simply not have finished.
+    const done = rs.filter(r => r.job_status != null || nowMs - Date.parse(r.actual_fired_at) > 3600000);
+    const failed = done.filter(r => r.job_status === 'failure');
+    const noOutcome = done.filter(r => r.job_status == null);
+    const other = done.filter(r => r.job_status != null && r.job_status !== 'success' && r.job_status !== 'failure');
+    if (!failed.length && !noOutcome.length && !other.length) { clean++; continue; }
+    const latest = done[done.length - 1];
+    const parts = [];
+    if (failed.length) parts.push(`${failed.length} of ${done.length} runs failed, last ${pt(failed[failed.length - 1].actual_fired_at)} PT`);
+    if (noOutcome.length) parts.push(`${noOutcome.length} recorded no outcome`);
+    if (other.length) parts.push(`${other.length} ${[...new Set(other.map(r => r.job_status))].join('/')}`);
+    const latestText = latest.job_status === 'success' ? 'latest run succeeded' : `latest run: ${latest.job_status ?? 'no outcome recorded'}`;
+    lines.push({ bad: latest.job_status !== 'success', text: `${name}: ${parts.join('; ')}; ${latestText} (${pt(latest.actual_fired_at)} PT).` });
+  }
+  if (clean === WORKFLOW_NAMES.length) return [{ bad: false, text: `All ${WORKFLOW_NAMES.length} jobs: no failures in ${WORKFLOW_HEALTH_DAYS} days (${total} runs).` }];
+  if (clean) lines.push({ bad: false, text: `The other ${clean}: no failures in ${WORKFLOW_HEALTH_DAYS} days.` });
+  return lines;
+}
+async function loadWorkflowHealth() {
+  const el = document.getElementById('workflow-health');
+  if (!el) return;
+  try {
+    const since = new Date(Date.now() - WORKFLOW_HEALTH_DAYS * 86400000).toISOString();
+    // ~35 runs a day across the six jobs, so 8 days is ~300 rows: well
+    // inside the 2000 asked for. If the result is exactly the limit, say so
+    // rather than report on a truncated set.
+    const { data, error } = await supabaseClient.from('workflow_runs')
+      .select('workflow_name,actual_fired_at,job_status').gte('actual_fired_at', since)
+      .order('actual_fired_at', { ascending: false }).limit(2000);
+    if (error) throw error;
+    if (data.length >= 2000) { el.textContent = 'Too many runs to summarise (2000+ in 8 days) — not evaluated.'; return; }
+    el.textContent = '';
+    for (const l of workflowHealthLines(data, Date.now())) {
+      const d = document.createElement('div');
+      d.textContent = l.text; // text, never markup: workflow names come from the table
+      if (l.bad) d.style.color = 'var(--red)';
+      el.appendChild(d);
+    }
+  } catch (e) {
+    el.textContent = `Could not read workflow_runs (${e.message || e}) — job health unknown.`;
+    el.style.color = 'var(--red)';
+  }
 }
 
 const DB_ROW_LIMIT = 50000;

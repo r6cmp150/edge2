@@ -62,6 +62,7 @@ import { assertColumnsExist } from './lib/schema-check.mjs';
 import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { signalPrecedesTrade, isMostRecentPriorSignal } from './lib/taken-precedence.mjs';
+import { selectByIds } from './lib/select-by-ids.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -735,8 +736,8 @@ async function main() {
   console.log(`fill-outcomes: ${touchedIds.length}/${toWrite.length} PATCH(es) succeeded.`);
 
   if (touchedIds.length) {
-    const verifyRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=in.(${touchedIds.join(',')})&select=${selectCols}`, { headers: anonHeaders });
-    const verifyBody = await verifyRes.json();
+    // Chunked: one URL holding every id overflowed at ~400 (lib/select-by-ids.mjs).
+    const verifyBody = await selectByIds(SUPABASE_URL, 'signal_log', touchedIds, selectCols, anonHeaders);
     console.log(`fill-outcomes: re-selected ${verifyBody.length}/${touchedIds.length} touched row(s) via anon key:`);
     for (const row of verifyBody) console.log(`  ${row.id}: ${JSON.stringify(row)}`);
   }
@@ -757,8 +758,7 @@ async function main() {
   console.log(`fill-outcomes: ${touchedTradeIds.length}/${sellTimingToWrite.length} trades_v2 PATCH(es) succeeded.`);
 
   if (touchedTradeIds.length) {
-    const verifyRes = await fetch(`${SUPABASE_URL}/rest/v1/trades_v2?id=in.(${touchedTradeIds.join(',')})&select=${tradesSelectCols}`, { headers: anonHeaders });
-    const verifyBody = await verifyRes.json();
+    const verifyBody = await selectByIds(SUPABASE_URL, 'trades_v2', touchedTradeIds, tradesSelectCols, anonHeaders);
     console.log(`fill-outcomes: re-selected ${verifyBody.length}/${touchedTradeIds.length} touched trades_v2 row(s) via anon key:`);
     for (const row of verifyBody) console.log(`  ${row.id}: ${JSON.stringify(row)}`);
   }

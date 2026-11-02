@@ -43,6 +43,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
+import { selectByIds } from './lib/select-by-ids.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -214,11 +215,8 @@ async function main() {
   }
   console.log(`audit-signal-log-splits: ${touchedIds.length}/${patches.length} PATCH(es) succeeded.`);
   if (touchedIds.length) {
-    const verifyRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/signal_log?id=in.(${touchedIds.join(',')})&select=${selectCols},ret_close_split_in_window,ret_1d_split_in_window,ret_3d_split_in_window,ret_5d_split_in_window`,
-      { headers: anonHeaders }
-    );
-    const verifyBody = await verifyRes.json();
+    // Chunked, like fill-outcomes: one URL holding every id overflows at ~400.
+    const verifyBody = await selectByIds(SUPABASE_URL, 'signal_log', touchedIds, `${selectCols},ret_close_split_in_window,ret_1d_split_in_window,ret_3d_split_in_window,ret_5d_split_in_window`, anonHeaders);
     console.log(`audit-signal-log-splits: re-selected ${verifyBody.length}/${touchedIds.length} touched row(s) via anon key:`);
     for (const row of verifyBody) console.log(`  ${row.id}: ${JSON.stringify(row)}`);
   }

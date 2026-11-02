@@ -163,3 +163,22 @@ for (const [k, a] of rep) for (let i = 0; i < a.length; i++) for (let j = i + 1;
 console.log(`  closest pair by position_id: ${closest ? `${closest.k}, ${(closest.gap / 60000).toFixed(1)} min apart, ×${closest.a.shares} then ×${closest.b.shares}` : 'none'}`);
 console.log(`  double-fire signature (<=2 min apart AND identical shares): ${sig.length ? sig.join(' ; ') : 'none'}`);
 console.log(`  forward rows without position_id: ${fwd.filter(r => r.position_id == null).length}`);
+
+// The market those days were (spec §7.6 caveat, pinned 2026-11-01): IWM and
+// SPY close to close on each forward buy date, from SIP daily bars (every
+// date here is long past SIP's 15-minute limit). The figure first quoted
+// came from an ad-hoc IEX fetch; this replaces it.
+{
+  const { alpacaHeaders, fetchBars } = await import('./lib/alpaca-bars.mjs');
+  const dates = [...new Set(fwd.map(r => String(r.buy_date).slice(0, 10)))].sort();
+  const start = new Date(Date.parse(`${dates[0]}T12:00:00Z`) - 10 * 86400000).toISOString().slice(0, 10);
+  const bars = await fetchBars(alpacaHeaders(ROOT), ['IWM', 'SPY'], { timeframe: '1Day', start, end: dates[dates.length - 1], feed: 'sip', adjustment: 'all' });
+  console.log('\nMARKET ON FORWARD BUY DATES (SIP daily bars, close to close):');
+  for (const d of dates) {
+    const cells = ['IWM', 'SPY'].map(t => {
+      const b = bars[t] || [], i = b.findIndex(x => x.t.slice(0, 10) === d);
+      return i > 0 ? `${t} ${pc((b[i].c / b[i - 1].c - 1) * 100)}` : `${t} no bar`;
+    });
+    console.log(`  ${d}: ${cells.join(' | ')}`);
+  }
+}
