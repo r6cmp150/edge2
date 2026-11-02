@@ -2864,6 +2864,25 @@ separate two mutants. Not observed in the data; Alpaca's `t` is an ISO
 timestamp. Fix: an unparseable date is unknown (`null` age), in
 `barsFreshness`, one place for every reader.
 
+**Stored data, 2026-11-02: zero, and zero by the schema, not by luck.**
+`node scripts/audit-unparseable-bar-dates.mjs --rev d6e277d`: 0 of 1,338
+`signal_log.bars_as_of` (each equal to the max of its own snapshot's bar
+dates), 0 of 166,314 snapshot bar dates, 0 of 159 `trades_v2` dates, 0 of
+11,013 buy-snapshot bar dates. That count could not have been anything
+else: the columns are Postgres `date`, so a non-date insert is rejected
+(the logger then exits 1 and the run fails, recorded in `workflow_runs`),
+and db/031's backfill cast `::date` would have aborted on one bad value.
+The failure mode was never "a wrong stored date"; it was "a failed run".
+Every failed run on record has an established cause, none a date
+rejection (2026-11-02 enumeration).
+**The same loop, the same collapse, NOT fixed by that change:**
+`marketClosesHeld` (holdSpan: the hold count on every card, the default
+sort key, the exit window, stale pending orders, and the AT-SALE hold
+count, which is stored) and `businessDaysBetween` (one log line in
+fill-outcomes). Their inputs are Postgres `date`/`timestamptz` today, so
+they are schema-valid, but an unknown start date would read as 0 closes,
+"same day". Its own change.
+
 ### Decided: a stale quote qualifies a display and withholds a record (2026-11-02)
 
 **The principle, stated generally because it will come up again: a DISPLAY

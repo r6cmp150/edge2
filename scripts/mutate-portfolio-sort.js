@@ -32,6 +32,7 @@ const TESTS = {
   sort: 'tests/portfolio-sort.test.js',
   gate: 'tests/prior-session-daily-bar.test.js',
   sold: 'tests/portfolio-price-unavailable.test.js',
+  dates: 'tests/unparseable-dates.test.js',
 };
 
 // [file, test, name, from, to]
@@ -97,6 +98,11 @@ const M = [
   ['core/entry-gate.js', 'sort', 'lint: gate branches on a payload field (!x.asOf)', "  if (dailyBarSessionAge(signal).state !== 'EARLIER_SESSION') return null;", '  if (!dailyBarSessionAge(signal).asOf) return null;', { lint: true }],
   ['app.js', 'sort', 'lint: reader branches on age && age.asOf', "  if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", "  if (age && age.asOf) return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", { lint: true }],
   ['app.js', 'sort', 'lint: reader branches on a payload field (if (age.asOf))', "  if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", "  if (age.asOf) return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", { lint: true }],
+  // the freshness primitives (2026-11-02): "the date is not a date" is unknown
+  ['core/clock.js', 'dates', 'tradingDaysBetween: Invalid Date counts as 0 again', '  if (parseableDay(fromDateStr) == null || parseableDay(toDateStr) == null) return null;\n', '', { behavioural: true }],
+  ['core/clock.js', 'dates', 'barsFreshness: an unparseable bar is skipped, not unknown', '  if (days.some(d => d == null)) return { barsAsOf: null, barsAgeTradingDays: null };\n  const barsAsOf = days.reduce((a, d) => (d > a ? d : a));', "  const barsAsOf = days.filter(Boolean).reduce((a, d) => (d > a ? d : a), '');", { behavioural: true }],
+  ['core/clock.js', 'dates', 'barsFreshness: the old code verbatim (throws on no t; garbage -> age 0)', "  const days = bars.map(b => parseableDay(typeof b?.t === 'string' ? b.t.slice(0, 10) : null));\n  if (days.some(d => d == null)) return { barsAsOf: null, barsAgeTradingDays: null };\n  const barsAsOf = days.reduce((a, d) => (d > a ? d : a));", '  let newest = bars[0].t;\n  for (const b of bars) if (b.t > newest) newest = b.t;\n  const barsAsOf = newest.slice(0, 10);', { behavioural: true }],
+  ['core/clock.js', 'dates', 'parseableDay: format only, no round-trip (2026-02-30 accepted)', "  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s ? s : null;", '  return s;', { behavioural: true }],
   // the producer invariant (2026-11-02): payload only on the stale state
   ['core/clock.js', 'sort', 'producer: CURRENT carries asOf too', "? { state: 'EARLIER_SESSION', asOf: fresh.dailyBarAsOf } : { state: 'CURRENT' };", "? { state: 'EARLIER_SESSION', asOf: fresh.dailyBarAsOf } : { state: 'CURRENT', asOf: fresh.dailyBarAsOf };"],
   ['core/clock.js', 'sort', 'producer: CURRENT carries openDate too', "return { state: 'CURRENT' };\n  return { state: 'PRIOR_SESSION'", "return { state: 'CURRENT', openDate };\n  return { state: 'PRIOR_SESSION'"],

@@ -342,11 +342,28 @@ function businessDaysBetween(startDateStr, endDateStr) {
   return count;
 }
 
+// A real calendar day "YYYY-MM-DD", returned as is, or null (2026-11-02).
+// "Real": the format matches AND it round-trips through Date, so '2026-02-30'
+// and '2026-10-3x' are not days. The one test of "is this date a date" for
+// the freshness primitives below.
+function parseableDay(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s + 'T12:00:00Z');
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s ? s : null;
+}
+
 // Trading days AFTER fromDateStr up to and including toDateStr, with market
 // holidays excluded (HOLIDAYS). Unlike businessDaysBetween, which counts
 // weekdays and would call the day after a holiday "two days" later.
 // Same date -> 0; the previous trading day -> 1. Dates are PT "YYYY-MM-DD".
+// Either date not a date -> null, UNKNOWN (2026-11-02). It used to be 0:
+// an Invalid Date compares false, the loop never ran, and an unparseable bar
+// date read as "today's" -- age 0, CURRENT -- through STALE_BARS,
+// STALE_DAILY_BAR and the card. marketClosesHeld and businessDaysBetween
+// have the same loop and the same collapse; not changed here (phase-10
+// appendix).
 function tradingDaysBetween(fromDateStr, toDateStr) {
+  if (parseableDay(fromDateStr) == null || parseableDay(toDateStr) == null) return null;
   let n = 0;
   const cur = new Date(fromDateStr + 'T12:00:00Z');
   const end = new Date(toDateStr + 'T12:00:00Z');
@@ -375,11 +392,17 @@ function previousTradingDay(dateStr) {
 // barsAgeTradingDays = trading days from it to the scan date (0 = today's
 // partial bar, 1 = yesterday's). With no bars, both are null: unknown,
 // never 0.
+// A bar whose date is missing or not a date makes BOTH unknown (2026-11-02):
+// it could be the newest, so the newest can't be known. Before, a missing t
+// threw (b.t.slice), which ended the whole scan through scanFreshness, and
+// an unparseable one became age 0. Now neither: null, which the gates read
+// as not judged and the logger stores as NULL (a garbage barsAsOf would
+// also have been rejected by the date column, failing the run's insert).
 function barsFreshness(bars, scanDateStr) {
   if (!bars || !bars.length) return { barsAsOf: null, barsAgeTradingDays: null };
-  let newest = bars[0].t;
-  for (const b of bars) if (b.t > newest) newest = b.t;
-  const barsAsOf = newest.slice(0, 10);
+  const days = bars.map(b => parseableDay(typeof b?.t === 'string' ? b.t.slice(0, 10) : null));
+  if (days.some(d => d == null)) return { barsAsOf: null, barsAgeTradingDays: null };
+  const barsAsOf = days.reduce((a, d) => (d > a ? d : a));
   return { barsAsOf, barsAgeTradingDays: tradingDaysBetween(barsAsOf, scanDateStr) };
 }
 

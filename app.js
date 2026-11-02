@@ -4523,9 +4523,10 @@ function portfolioScoreState(sig) {
 //   { state: 'CURRENT' } | { state: 'EARLIER_SESSION_CLOSE', asOf } |
 //   { state: 'UNJUDGED' } (no dailyBar price, or its date unknown)
 function displayQuoteAge(snap, nowMs) {
-  // No dated dailyBar: not judged. (scanFreshness throws on a dailyBar
-  // without t; the render must never fail on a quote it only annotates.)
-  if (!snap?.dailyBar?.c || typeof snap.dailyBar.t !== 'string') return { state: 'UNJUDGED' };
+  // Price not from a dailyBar: not judged. (An undated or unparseable
+  // dailyBar is UNJUDGED from scanFreshness itself since 2026-11-02; the
+  // guard that used to sit here for its throw is gone with the throw.)
+  if (!snap?.dailyBar?.c) return { state: 'UNJUDGED' };
   const age = dailyBarSessionAge(scanFreshness(snap, nowMs));
   if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };
   if (age.state === 'CURRENT') return { state: 'CURRENT' };
