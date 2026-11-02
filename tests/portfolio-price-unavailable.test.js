@@ -77,6 +77,21 @@ async function testAvailablePriceStillPrefillsNormally() {
 // getLivePrice itself is untouched by this fix (core/market-data.js) --
 // confirms the REAL function, not an assumption, is what drives
 // priceUnavailable's "!getLivePrice(snap)" half in renderPortfolioTab.
+// A display can be qualified by its state; a record cannot (phase-10
+// appendix, 2026-11-02). The sale-price field becomes the record, so an
+// earlier session's close is never put in it.
+async function testEarlierCloseIsWithheldAndNamed() {
+  const { openMarkSoldModal, getHtml } = loadOpenMarkSoldModal();
+  openMarkSoldModal('pos1', null, '2026-10-30');
+  const html = getHtml();
+  assert.ok(/id="sold-price"[^>]*value=""/.test(html), 'EMPTY, never the earlier close');
+  assert.ok(html.includes('The only price available is the 2026-10-30 close (no trade on the feed yet today), so it isn\'t filled in'), 'names the withheld close');
+  assert.ok(html.includes('Enter the real fill price from your broker; do not guess'));
+  assert.ok(!html.includes('No live price was available'), 'not the unavailable wording: a price existed');
+  openMarkSoldModal('pos1', null);
+  assert.ok(getHtml().includes('No live price was available for this position'), 'unavailable keeps its own wording');
+}
+
 async function testGetLivePriceRealBehaviorMatchesWhatPriceUnavailableAssumes() {
   evalModule(readSource('core/market-data.js'), { expose: ['getLivePrice'] });
   const getLivePrice = global.getLivePrice;
@@ -88,5 +103,6 @@ async function testGetLivePriceRealBehaviorMatchesWhatPriceUnavailableAssumes() 
 (async () => {
   await run('portfolio-price-unavailable: Mark as Sold renders an EMPTY field, never the fabricated buy-price number', testUnavailablePriceRendersEmptyFieldNotFabricatedNumber);
   await run('portfolio-price-unavailable: a real available price still pre-fills normally (no regression)', testAvailablePriceStillPrefillsNormally);
+  await run('portfolio-price-unavailable: an earlier session\'s close is WITHHELD, not pre-filled, and the notice names it (2026-11-02)', testEarlierCloseIsWithheldAndNamed);
   await run('portfolio-price-unavailable: getLivePrice\'s real falsy cases match what priceUnavailable in renderPortfolioTab relies on', testGetLivePriceRealBehaviorMatchesWhatPriceUnavailableAssumes);
 })();

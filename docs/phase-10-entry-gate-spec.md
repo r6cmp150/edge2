@@ -2824,6 +2824,74 @@ come out in one fixed order instead of load order. **Its own change**:
 the fix has to put both engines on one comparable measure (or rank them
 separately), and that is a decision, not a refactor.
 
+### Open: "Closest to time limit" reads an unrecognised duration as a one-day hold (2026-11-02)
+
+The default sort key is `holdSpan(p).closes / (MAX_HOLD_DAYS[p.duration] || 1)`.
+The `|| 1` keeps an unrecognised (or missing) EDGE duration from producing
+NaN, but what it produces instead is worse: **the position is treated as a
+one-day hold and sorts as maximally urgent.** NaN would at least have been
+visibly unknown (`knownNumber` turns it into the unknown bucket); this is a
+confident wrong answer in the key that is now the default order. Measured
+2026-11-02 (`node scripts/count-portfolio-urgency-unknown.mjs --rev d6e277d
+--today 2026-11-02`): 0 of 451 sold positions and 0 open positions have an
+unrecognised duration (every row is DAY, 3-DAY or WEEK). **Not changed:**
+the fix (an unrecognised duration is unknown, not 1) changes the default
+order, so it belongs with the cross-engine scale defect above, in the
+default order's own change.
+
+### Open (wording, low priority): "Highest current score" claims more than is checked (2026-11-02)
+
+`portfolioScoreState` ranks a score only if it was scanned after the most
+recent open by the current formula. It does **not** check which daily bar
+the score was computed on (a post-open scan can still have read yesterday's
+dailyBar, and the owned-ticker refresh stamps no `dailyBarAsOf` at all; see
+below). Roman will read "current score" as "scored on today's price". The
+code comment says what is and isn't checked; the label doesn't. It closes
+when the owned-ticker refresh gets its freshness stamps and the sort also
+refuses a score whose dailyBar was an earlier session's; until then the
+label overstates.
+
+### Open: an unparseable bar date reads as age 0, i.e. CURRENT (2026-11-02)
+
+`tradingDaysBetween` counts with `while (cur < end)`, and an Invalid Date
+compares false, so a bar date that doesn't parse (`''`, `'x'`, a truncated
+timestamp) gets age **0**. `barsFreshness` therefore reports such a history
+or dailyBar as today's: STALE_BARS and STALE_DAILY_BAR pass it, the card
+calls it CURRENT, and the logger writes it to `signal_log.bars_as_of`
+alongside age 0. Unknown read as fresh: the three-state rule's exact
+failure. Found by probing `dailyBarSessionAge` for an input that could
+separate two mutants. Not observed in the data; Alpaca's `t` is an ISO
+timestamp. Fix: an unparseable date is unknown (`null` age), in
+`barsFreshness`, one place for every reader.
+
+### Decided: a stale quote qualifies a display and withholds a record (2026-11-02)
+
+**The principle, stated generally because it will come up again: a DISPLAY
+can be qualified by its state. A RECORD cannot.** A number shown on screen
+can carry a marker that says what it is; a number written into the data
+cannot, because the record outlives the screen and nothing reading it later
+sees the marker. So when the quote is an earlier session's close (no trade
+on the feed yet today; `displayQuoteAge` EARLIER_SESSION_CLOSE):
+
+- **The exit verdict is computed and marked**, never blocked. Blocking is the
+  worse failure: a position that needs selling silently stops getting a
+  verdict. Both banners (EDGE's and a registered engine's) carry the same
+  tag as the P/L: "Computed on the YYYY-MM-DD close".
+- **The nav badge counts it, and says so.** Its warning count includes
+  verdicts computed on an earlier close, and the badge is marked when any
+  are.
+- **The summary totals include it, and disclose it** ("Includes N positions
+  priced at an earlier session's close").
+- **Mark as Sold does NOT pre-fill it.** The pre-fill becomes the recorded
+  sale price, and a wrong sale price corrupts the P/L history permanently
+  and silently. The field stays empty, the notice says which close was
+  withheld, and Roman enters the fill.
+
+One state, one source: every one of these reads the same `quoteAge`
+computed once per card in `renderPortfolioTab`. Out of scope, and open: the
+stock modal's verdict reads a different price (the last IEX minute bar),
+whose staleness this state does not describe.
+
 ### Open, HIGH PRIORITY: `scanFreshness` throws on a dailyBar with no `t` (2026-11-02)
 
 `core/clock.js scanFreshness` passes the snapshot's `dailyBar` to

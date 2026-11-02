@@ -163,12 +163,17 @@ function fixture() {
       pos('0999', 'FFF', { buyPrice: 8, buyDate: '2026-11-02', filledAt: null, orderType: null, duration: 'WEEK' }),
       // +25% with a lower stored peak: writes peakPrice, activates momentum.
       pos('1005', 'GGG', { buyPrice: 10, buyDate: '2026-10-28', filledAt: '2026-10-28T17:00:00.000Z', peakPrice: 11, duration: 'WEEK' }),
+      // A score (85, so ranking it would put it second) with NO scan time:
+      // scanSessionAge -> UNJUDGED, where the two readers deliberately
+      // disagree. The sort must not rank it; the gate must pass it.
+      pos('1006', 'HHH', { buyPrice: 10, buyDate: '2026-10-30', filledAt: '2026-10-30T18:00:00.000Z', duration: 'WEEK' }),
     ],
-    snapshots: { AAA: snapAt(10.5), BBB: snapAt(21), CCC: snapAt(5), DDD: snapAt(11, '2026-10-30'), EEE: snapAt(9.7), GGG: snapAt(12.5) },
+    snapshots: { AAA: snapAt(10.5), BBB: snapAt(21), CCC: snapAt(5), DDD: snapAt(11, '2026-10-30'), EEE: snapAt(9.7), GGG: snapAt(12.5), HHH: snapAt(10.2) },
     ownedScores: {
       AAA: sig(80, NOW - HOUR), BBB: sig(80, NOW - HOUR),
       CCC: sig(75, Date.parse('2026-10-30T21:00:00Z')), // Friday 14:00 PT: before Monday's open
       DDD: sig(60, NOW - HOUR), EEE: sig(90, NOW - 2 * HOUR), GGG: sig(70, NOW - HOUR),
+      HHH: sig(85, undefined), // stored with no scannedAt
     },
     ownedPrevRSI: { AAA: 55, GGG: 61 },
   };
@@ -177,7 +182,7 @@ function fixture() {
 function renderCtx() {
   const ctx = { Date: FakeDate, Math, JSON, Set, Map, Intl, Object, String, Number, Array, Infinity, NaN, isFinite, console, Promise };
   vm.createContext(ctx);
-  for (const f of ['core/clock.js', 'core/indicators.js', 'core/market-data.js', 'core/orders.js', 'core/edge-scoring.js']) vm.runInContext(strip(readSource(f)), ctx);
+  for (const f of ['core/clock.js', 'core/indicators.js', 'core/market-data.js', 'core/orders.js', 'core/edge-scoring.js', 'core/entry-gate.js']) vm.runInContext(strip(readSource(f)), ctx);
   vm.runInContext([
     sortBlock(), grabFn('renderPortfolioTab'), grabFn('currentSignalForHolding'), grabFn('currentOwnedScore'),
     grabFn('filterByEngine'), grabFn('durHoldLabel'), grabFn('renderIntradayLineCard'),
@@ -193,7 +198,7 @@ function renderCtx() {
 async function renderIn(ctx, mode, alter = () => {}) {
   const fx = fixture();
   alter(fx);
-  const writes = {}, saves = [], persists = [];
+  const writes = {}, saves = [], persists = [], verdicts = {};
   const tracked = fx.portfolio.map(p => {
     writes[p.id] = [];
     return new Proxy(p, { set(t, k, v) { writes[t.id].push([k, v]); t[k] = v; return true; } });
@@ -214,8 +219,12 @@ async function renderIn(ctx, mode, alter = () => {}) {
     computeIntradayPanel: ({ buyPrice, nowPrice }) => ({ state: 'OK', nowPct: (nowPrice - buyPrice) / buyPrice * 100 }),
     backgroundSavePosition: p => saves.push([p.id, JSON.stringify(p)]),
     persist: k => persists.push(k),
-    calcUnifiedRecommendation: () => ({}), buildUnifiedPortfolioBanner: () => '', buildRegisteredEngineExitBanner: () => '',
-    getEngine: () => null, neutralEngineExitFallback: () => ({}), buildFridayFlag: () => '',
+    // Record what each verdict was computed from: "computed, never blocked".
+    calcUnifiedRecommendation: (pos) => { verdicts[pos.ticker] = { engine: 'EDGE', price: pos.currentPrice, priceFetchFailed: pos.priceFetchFailed }; return {}; },
+    buildUnifiedPortfolioBanner: (r, tag) => `<div class="stub-banner" data-tag="${tag === undefined ? 'UNDEFINED' : tag ? 'TAG:' + encodeURIComponent(tag) : ''}"></div>`,
+    buildRegisteredEngineExitBanner: (r, tag) => `<div class="stub-banner" data-status="${r.status}" data-tag="${tag === undefined ? 'UNDEFINED' : tag ? 'TAG:' + encodeURIComponent(tag) : ''}"></div>`,
+    getEngine: () => ({ evaluateExit: (pos, live) => { verdicts[pos.ticker] = { engine: pos.engineSource, price: live.price }; return { status: 'HOLDING', reasons: [] }; } }),
+    neutralEngineExitFallback: () => ({}), buildFridayFlag: () => '',
     updateBudgetBar() {}, buildPendingOrdersHtml: () => '', buildWeekendBanner: () => '', buildEngineFilterControl: () => '',
     renderBuildStatus() {}, checkBuildStatus() {}, renderEngineBadge: () => '', listingWarningText: () => '',
     computeTradeMetrics: () => ({ totalPnL: 0, count: 0, excluded: 0 }),
@@ -223,14 +232,14 @@ async function renderIn(ctx, mode, alter = () => {}) {
   await ctx.renderPortfolioTab();
   const list = els['pf-list'].innerHTML;
   return {
-    writes, saves, persists, list, summary: els['pf-summary'].innerHTML,
+    writes, saves, persists, verdicts, list, summary: els['pf-summary'].innerHTML,
     order: [...list.matchAll(/<div class="pf-ticker">([A-Z]+) /g)].map(m => m[1]).join(' '),
     maps: JSON.stringify([ctx.state.ownedPrevRSI, ctx.state.ownedPeakRSI, ctx.state.portfolioPrices]),
     finalPositions: JSON.stringify(fx.portfolio),
   };
 }
 
-const T = { A: 'AAA', B: 'BBB', C: 'CCC', D: 'DDD', E: 'EEE', F: 'FFF', G: 'GGG' };
+const T = { A: 'AAA', B: 'BBB', C: 'CCC', D: 'DDD', E: 'EEE', F: 'FFF', G: 'GGG', H: 'HHH' };
 
 run('renderPortfolioTab in all six modes: the same writes, the same values, the same saves; only the card order differs', async () => {
   const ctx = renderCtx();
@@ -257,14 +266,32 @@ run('renderPortfolioTab in all six modes: the same writes, the same values, the 
     fixture().portfolio.findIndex(p => p.id === a) - fixture().portfolio.findIndex(p => p.id === b)));
   // End to end: the keys the render built sort as the comparator says.
   const want = {
-    TIME_LIMIT:    'D G E A B F C', // closes/window: D 2/1, G 3/5, E 2/5, A=B 1/3 (id), F=C 0 (id)
-    MOST_PROFIT:   'G A B C E F D', // C's real 0.0% ranked; F (no price) and D (earlier close) at the bottom, by id
-    MOST_LOSS:     'E C A B G F D',
-    NEWEST:        'C A B E G F D',
-    OLDEST:        'G E A B C F D',
-    HIGHEST_SCORE: 'E A B G D F C', // C: Friday's scan, before Monday's open: unknown
+    TIME_LIMIT:    'D G E A B H F C', // closes/window: D 2/1, G 3/5, E 2/5, A=B 1/3 (id), H 1/5, F=C 0 (id)
+    MOST_PROFIT:   'G A B H C E F D', // C's real 0.0% ranked; F (no price) and D (earlier close) at the bottom, by id
+    MOST_LOSS:     'E C H A B G F D',
+    NEWEST:        'C H A B E G F D',
+    OLDEST:        'G E A B H C F D',
+    HIGHEST_SCORE: 'E A B G D F C H', // C: Friday's scan; H: no scan time (85, would be 2nd): both unknown, by id
   };
   for (const mode of MODES) assert.strictEqual(r[mode].order, want[mode].split(' ').map(x => T[x]).join(' '), mode);
+});
+
+run('a score with no scan time: the sort refuses to rank it, the gate passes it (the deliberate disagreement, at both readers)', async () => {
+  const ctx = renderCtx();
+  const r = await renderIn(ctx, 'HIGHEST_SCORE');
+  const hhh = r.list.split('<div class="portfolio-card">').find(c => c.includes('<div class="pf-ticker">HHH '));
+  assert.ok(hhh.includes('Not ranked by “Highest current score”: scan time not recorded'), hhh);
+  assert.ok(hhh.includes('not current: scan time not recorded'), 'the card says so beside the score');
+  // The SAME resolved signal, through the real gate, at the same moment:
+  // UNJUDGED passes there (no evidence of a problem), so no PRIOR_SESSION.
+  vm.runInContext('globalThis.__resolved = currentSignalForHolding("HHH"); globalThis.__gate = entryGateForSignal(globalThis.__resolved);', ctx);
+  assert.strictEqual(ctx.__resolved.score, 85);
+  assert.strictEqual(ctx.__resolved.scannedAt, null);
+  assert.strictEqual(ctx.__gate.rule, null, `gate: ${JSON.stringify(ctx.__gate)}`);
+  assert.strictEqual(ctx.__gate.gated, false);
+  // And a scan before the open is refused by BOTH readers (they agree there).
+  vm.runInContext('globalThis.__ccc = entryGateForSignal(currentSignalForHolding("CCC"));', ctx);
+  assert.strictEqual(ctx.__ccc.rule, 'PRIOR_SESSION');
 });
 
 run('markers: the earlier close on every P/L it prices, the scan date, the unranked cards', async () => {
@@ -311,18 +338,24 @@ run('the unpriced and earlier-close lists are alphabetical, whatever order the h
   }
 });
 
-run('wiring: the stale-close state never reaches priceUnavailable, exit dispatch or Mark as Sold; the recommendation reads the resolver unchanged', () => {
+run('wiring: the stale-close state never reaches priceUnavailable or exit dispatch; it only marks displays and withholds the sale pre-fill', () => {
   const src = grabFn('renderPortfolioTab');
   const code = src.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
   assert.ok(code.includes('const priceUnavailable = priceFetchFailed || !getLivePrice(snap) || notTradingNow;'), 'priceUnavailable unchanged');
   for (const name of ['showsEarlierSessionClose', 'quoteAge']) {
     const uses = code.split('\n').filter(l => new RegExp(`\\b${name}\\b`).test(l));
     for (const l of uses) {
-      assert.ok(!/priceUnavailable\s*=|priceFetchFailed:|openMarkSoldModal|evaluateExit|calcUnifiedRecommendation|exitResult|backgroundSavePosition|peakPrice/.test(l), `${name} reaches the exit path: ${l.trim()}`);
+      // Mark as Sold is the one record path it reaches, and only to WITHHOLD
+      // (asserted exactly below); a verdict is never blocked for it.
+      if (/openMarkSoldModal/.test(l)) continue;
+      assert.ok(!/priceUnavailable\s*=|priceFetchFailed:|evaluateExit|calcUnifiedRecommendation|exitResult\s*=|backgroundSavePosition|peakPrice/.test(l), `${name} reaches the exit path: ${l.trim()}`);
     }
   }
   assert.ok(code.includes("calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);"), 'recommendation call unchanged');
-  assert.ok(code.includes("openMarkSoldModal('${p.id}', ${priceUnavailable ? 'null' : currentPrice})"), 'Mark as Sold pre-fill unchanged');
+  assert.ok(code.includes("openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf}'` : 'null'})"), 'Mark as Sold: withheld on an earlier close, never pre-filled from it');
+  // The verdict is computed whatever the quote's age: the exit dispatch
+  // conditions mention priceUnavailable only.
+  assert.ok(code.includes("const exitResult = priceUnavailable\n        ? { status: 'CANNOT_EVALUATE',"), 'exit dispatch gated on priceUnavailable alone');
   assert.ok(!/portfolioScoreState/.test(grabFn('calcUnifiedRecommendation')), 'the recommendation never reads the sort state');
   // No sort before the loop: the loop walks holdings itself.
   assert.ok(code.includes('holdings.forEach(p => {') && !/sortedPortfolio/.test(code));
@@ -384,19 +417,92 @@ run('the two clock rules return three NAMED states, each a non-null object; no r
   assert.deepStrictEqual(plain(ctx.__da({ dailyBarAgeTradingDays: 0, scanSession: 'REGULAR' })), { state: 'CURRENT' });
   assert.deepStrictEqual(plain(ctx.__da({ dailyBarAgeTradingDays: 1, scanSession: 'PRE_MARKET', dailyBarAsOf: '2026-10-30' })), { state: 'CURRENT' });
   assert.deepStrictEqual(plain(ctx.__da({ dailyBarAgeTradingDays: 1, scanSession: 'AFTER_HOURS', dailyBarAsOf: '2026-10-30' })), { state: 'EARLIER_SESSION', asOf: '2026-10-30' });
-  // Every reader reads .state; none tests the result itself.
+  // LINT (not a test; the behavioural tests above are the tests): STATE IS
+  // DETERMINED FROM .state ALONE. Every use of a result is one of:
+  //   - `.state === / !== '<a literal from that function's own state set>'`
+  //   - a payload field READ (or destructure), only after the reader has
+  //     already compared .state to a literal, and never as a condition itself
+  // `if (age.state)` (truthy for every state), `!age`, `age && …`, a
+  // misspelt state, and `if (!x.asOf)` (correct today only because only one
+  // state carries asOf; see the producer test above) all fail.
+  const STATES = { scanSessionAge: ['UNJUDGED', 'CURRENT', 'PRIOR_SESSION'], dailyBarSessionAge: ['UNJUDGED', 'CURRENT', 'EARLIER_SESSION'] };
+  const PAYLOAD = { scanSessionAge: ['scan', 'openDate'], dailyBarSessionAge: ['asOf'] };
   const files = { 'app.js': app, 'core/entry-gate.js': readSource('core/entry-gate.js') };
-  let readers = 0;
-  for (const [f, src] of Object.entries(files)) {
-    for (const m of src.matchAll(/const (\w+) = (?:scanSessionAge|dailyBarSessionAge)\(/g)) {
-      readers++;
-      const v = m[1], after = src.slice(m.index, m.index + 600);
-      assert.ok(!new RegExp(`(!|\\?\\?|\\|\\||&&)\\s*${v}\\b(?!\\.)|\\b${v}\\s*(\\?|&&|\\|\\||==)|if \\(${v}\\)`).test(after), `${f}: ${v} tested by truthiness`);
+  const strip = src => src.split('\n').map(l => l.replace(/\/\/.*$/, '')).join('\n');
+  const lit = fn => `(?:===|!==)\\s*'(?:${STATES[fn].join('|')})'`;
+  let uses = 0;
+  for (const [f, raw] of Object.entries(files)) {
+    const src = strip(raw);
+    for (const fn of Object.keys(STATES)) {
+      for (const m of src.matchAll(new RegExp(`(?<!function )\\b${fn}\\(`, 'g'))) {
+        const before = src.slice(Math.max(0, m.index - 40), m.index), callEnd = src.indexOf(')', m.index) + 1;
+        const v = (before.match(/const (\w+) = $/) || [])[1];
+        if (!v) { // used inline: must be compared to a literal right there
+          uses++;
+          assert.ok(new RegExp(`^\\.state\\s*${lit(fn)}`).test(src.slice(callEnd)), `${f}: ${fn}(…) used inline without a literal state comparison: ${src.slice(m.index, callEnd + 40)}`);
+          continue;
+        }
+        const body = src.slice(callEnd, src.indexOf('\n}\n', callEnd));
+        for (const u of body.matchAll(new RegExp(`\\b${v}\\b`, 'g'))) {
+          uses++;
+          const rest = body.slice(u.index + v.length), lead = body.slice(Math.max(0, u.index - 6), u.index);
+          const stateCompare = new RegExp(`^\\.state\\s*${lit(fn)}`).test(rest);
+          const payloadRead = new RegExp(`^\\.(?:${PAYLOAD[fn].join('|')})\\b`).test(rest);
+          const destructure = /\}\s*=\s*$/.test(lead) && /^\s*;/.test(rest);
+          const ctxt = `…${body.slice(Math.max(0, u.index - 30), u.index + 40)}…`;
+          assert.ok(stateCompare || payloadRead || destructure, `${f}: ${fn} result '${v}' used without a literal state comparison: ${ctxt}`);
+          if (payloadRead || destructure) {
+            // Read inside a branch .state already established...
+            const established = new RegExp(`\\b${v}\\.state\\s*${lit(fn)}`).test(body.slice(0, u.index));
+            assert.ok(established, `${f}: ${fn} payload of '${v}' read before any .state comparison: ${ctxt}`);
+            // ...and never the branch condition itself.
+            const afterField = rest.replace(/^\.\w+/, '');
+            const asCondition = /(?:!|&&|\|\||\?|if \(|while \()\s*$/.test(body.slice(Math.max(0, u.index - 8), u.index))
+              || /^\s*(?:\)|\?|&&|\|\||[=!]==?|[<>])/.test(afterField);
+            assert.ok(!asCondition, `${f}: ${fn} payload of '${v}' used as a condition (state comes from .state alone): ${ctxt}`);
+          }
+        }
+      }
     }
-    assert.ok(!/(scanSessionAge|dailyBarSessionAge)\([^)]*\)\s*(!==?|===?|\?|&&|\|\|)/.test(src), `${f}: a call result compared directly`);
   }
-  assert.ok(/dailyBarSessionAge\(signal\)\.state !== 'EARLIER_SESSION'/.test(files['core/entry-gate.js']), 'gate: STALE_DAILY_BAR reads .state');
-  assert.ok(readers >= 3, `readers found: ${readers}`);
+  assert.ok(uses >= 8, `uses checked: ${uses}`);
+});
+
+run('PRODUCER INVARIANT: only the stale state carries a payload (asOf; scan/openDate), for every input', () => {
+  // Readers branch on .state; this pins the payload to its state at the
+  // source, so adding asOf to CURRENT (a reasonable-looking change) fails
+  // HERE and sends whoever makes it to the readers, instead of to a wrong card.
+  const ctx = renderCtx();
+  ctx.state = { settings: {} };
+  vm.runInContext('globalThis.__sa = scanSessionAge; globalThis.__da = dailyBarSessionAge;', ctx);
+  const keys = o => Object.keys(o).sort().join(',');
+  let n = 0;
+  for (const age of [null, undefined, 0, 1, 2, 30, NaN]) for (const scanSession of ['PRE_MARKET', 'REGULAR', 'AFTER_HOURS', 'CLOSED', null]) {
+    for (const dailyBarAsOf of ['2026-10-30', null, '']) {
+      const r = ctx.__da({ dailyBarAgeTradingDays: age, scanSession, dailyBarAsOf });
+      n++;
+      assert.strictEqual(keys(r), r.state === 'EARLIER_SESSION' ? 'asOf,state' : 'state', `dailyBarSessionAge(${age}, ${scanSession}) -> ${JSON.stringify(r)}`);
+    }
+  }
+  for (const at of [null, undefined, NOW - HOUR, NOW - 5 * HOUR, Date.parse('2026-10-30T21:00:00Z'), Date.parse('2026-11-02T14:29:00Z'), Date.parse('2026-11-02T14:30:00Z'), 0]) {
+    const r = ctx.__sa(at);
+    n++;
+    assert.strictEqual(keys(r), r.state === 'PRIOR_SESSION' ? 'openDate,scan,state' : 'state', `scanSessionAge(${at}) -> ${JSON.stringify(r)}`);
+  }
+  assert.ok(n > 100);
+});
+
+run('state.portfolioPrices is session-only: never persisted or restored, so no entry can predate the { price, quoteAge } shape', () => {
+  // updateNavBadges reads cached.quoteAge.state unguarded. That is safe only
+  // while every entry comes from this build's render; if this map is ever
+  // persisted or restored, an old bare-number entry would throw there.
+  assert.ok(!/persist\(\s*'portfolioPrices'\s*\)/.test(app), 'never persisted');
+  const restore = app.match(/function loadState\(\) \{[\s\S]*?\]\.forEach\(k => \{/)[0];
+  assert.ok(!restore.includes("'portfolioPrices'"), 'never restored by loadState');
+  const writes = [...app.matchAll(/state\.portfolioPrices\[[^\]]+\]\s*=(?!=)/g)].map(m => m[0]);
+  assert.deepStrictEqual(writes, ['state.portfolioPrices[p.ticker] ='], 'one write site');
+  const reads = app.split('\n').filter(l => /state\.portfolioPrices\b/.test(l) && !/^\s*\/\//.test(l) && !/^\s*portfolioPrices:/.test(l));
+  assert.strictEqual(reads.length, 3, `writer pair + one reader, nothing else: ${reads.join(' | ')}`);
 });
 
 run('the intraday line carries the price tag as a parameter, on every line that shows a percentage', () => {
@@ -409,4 +515,80 @@ run('the intraday line carries the price tag as a parameter, on every line that 
   assert.ok(!ctx.__il({ state: 'OK', nowPct: 4.2 }).includes('pf-earlier-close-tag'), 'no tag passed, none shown');
   for (const st of ['FAILED', 'NO_DATA', 'INACTIVE']) assert.ok(!ctx.__il({ state: st }, TAG).includes(TAG), `${st}: no percentage, so no tag`);
   assert.ok(!/renderIntradayLineCard\([^)]*\)\.replace\(/.test(app), 'never spliced into the renderer\'s markup');
+});
+
+run('exit side, display: the verdict is computed and carries the same tag as the P/L; Mark as Sold withholds the earlier close', async () => {
+  const ctx = renderCtx();
+  const r = await renderIn(ctx, 'TIME_LIMIT');
+  const card = t => r.list.split('<div class="portfolio-card">').find(c => c.includes(`<div class="pf-ticker">${t} `));
+  const tagOf = t => decodeURIComponent((card(t).match(/class="stub-banner" data-tag="([^"]*)"/) || [])[1]);
+  const DDD_TAG = 'TAG:<span class="pf-earlier-close-tag" title="No trade on the feed yet today: this is the 2026-10-30 close">2026-10-30 close</span>';
+  // The banner gets EXACTLY the tag the P/L got (one state, one source)...
+  assert.ok(card('DDD').includes('stub-banner'), 'a verdict is still computed for the earlier-close card');
+  assert.strictEqual(tagOf('DDD'), DDD_TAG);
+  assert.ok(card('DDD').includes(DDD_TAG.slice(4)), 'the same span is on the P/L');
+  // ...and nothing on a current price. Never undefined: always passed.
+  for (const t of ['AAA', 'CCC', 'EEE', 'GGG', 'HHH']) assert.strictEqual(tagOf(t), '', t);
+  // Computed, never blocked: the verdict ran on the earlier close itself,
+  // not as CANNOT EVALUATE.
+  assert.deepStrictEqual({ ...r.verdicts.DDD }, { engine: 'EDGE', price: 11, priceFetchFailed: false });
+  assert.strictEqual(r.verdicts.FFF.priceFetchFailed, true, 'an unavailable price is still CANNOT EVALUATE (calcUnifiedRecommendation decides it), unchanged');
+  // A registered engine's position on an earlier close: evaluated too, and marked.
+  const w = await renderIn(ctx, 'TIME_LIMIT', fx => { fx.portfolio.find(p => p.ticker === 'DDD').engineSource = 'WARRIOR'; });
+  const wddd = w.list.split('<div class="portfolio-card">').find(c => c.includes('<div class="pf-ticker">DDD '));
+  assert.deepStrictEqual({ ...w.verdicts.DDD }, { engine: 'WARRIOR', price: 11 }, 'evaluateExit called on the earlier close');
+  assert.ok(wddd.includes('data-status="HOLDING"'), 'its verdict is shown, not CANNOT_EVALUATE');
+  assert.strictEqual(decodeURIComponent(wddd.match(/data-tag="([^"]*)"/)[1]), DDD_TAG);
+  // Mark as Sold: withheld (null) with the close named; a current price pre-fills.
+  assert.ok(card('DDD').includes(`openMarkSoldModal('1003', null, '2026-10-30')`), card('DDD'));
+  assert.ok(card('AAA').includes(`openMarkSoldModal('1000', 10.5, null)`));
+  assert.ok(card('FFF').includes(`openMarkSoldModal('0999', null, null)`), 'unavailable: null, no close to name');
+  // The badge's cache carries the card's own state.
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(ctx.state.portfolioPrices.DDD)), { price: 11, quoteAge: { state: 'EARLIER_SESSION_CLOSE', asOf: '2026-10-30' } });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(ctx.state.portfolioPrices.AAA)), { price: 10.5, quoteAge: { state: 'CURRENT' } });
+  assert.ok(!('FFF' in ctx.state.portfolioPrices), 'no price, no cache entry (unchanged)');
+});
+
+run('exit side, the real banner builders: every branch carries the tag when given, none when not', () => {
+  const ctx = { console, Math };
+  vm.createContext(ctx);
+  const src = ['getUnifiedBannerClass', 'unifiedFactorLine', 'buildUnifiedPortfolioBanner', 'buildRegisteredEngineExitBanner'].map(grabFn).join('\n');
+  vm.runInContext(grabLine('const priceBasisLine = ') + src + '\nglobalThis.__u = buildUnifiedPortfolioBanner; globalThis.__w = buildRegisteredEngineExitBanner;', ctx);
+  const TAG = '<span class="pf-earlier-close-tag">2026-10-30 close</span>';
+  const f = [{ name: 'x', points: -5 }];
+  const results = {
+    'hard floor': { label: 'SELL NOW', hardFloor: true },
+    'cannot evaluate': { label: 'CANNOT EVALUATE', cannotEvaluate: true },
+    'lock in profits': { label: 'LOCK IN PROFITS', pnlPct: 31, peakRisk: { topFactors: f } },
+    'composite': { label: 'HOLD', composite: 12, topFactors: f },
+  };
+  for (const [name, res] of Object.entries(results)) {
+    assert.ok(ctx.__u(res, TAG).includes(`Computed on the ${TAG}`), `EDGE banner, ${name}`);
+    assert.ok(!ctx.__u(res).includes('Computed on the'), `EDGE banner, ${name}, no tag`);
+  }
+  for (const status of ['SELL_NOW', 'SELL_SOON', 'HOLDING', 'CANNOT_EVALUATE']) {
+    assert.ok(ctx.__w({ status, reasons: ['r'] }, TAG).includes(`Computed on the ${TAG}`), `engine banner, ${status}`);
+    assert.ok(!ctx.__w({ status, reasons: ['r'] }).includes('Computed on the'), `engine banner, ${status}, no tag`);
+  }
+});
+
+run('exit side, nav badge: an earlier-close warning is COUNTED (never dropped) and the badge is marked', () => {
+  const badge = { textContent: '', title: '', classList: { s: new Set(), toggle(c, on) { on ? this.s.add(c) : this.s.delete(c); }, has(c) { return this.s.has(c); } } };
+  const run1 = (prices) => {
+    const ctx = { console, Math, document: { getElementById: () => badge }, isAfternoonMode: () => true,
+      getHoldings: () => [{ ticker: 'AAA', engineSource: 'EDGE' }, { ticker: 'DDD', engineSource: 'EDGE' }, { ticker: 'ZZZ', engineSource: 'EDGE' }],
+      currentSignalForHolding: () => null, calcUnifiedRecommendation: () => ({ label: 'SELL NOW' }),
+      getPendingOrders: () => [], isStalePendingOrder: () => false, getEngine: () => null, neutralEngineExitFallback: () => ({}),
+      state: { portfolioPrices: prices, portfolioPriceFetchFailed: false, macroContext: null } };
+    vm.createContext(ctx);
+    vm.runInContext(grabFn('updateNavBadges') + '\nupdateNavBadges();', ctx);
+    return badge;
+  };
+  const b = run1({ AAA: { price: 10, quoteAge: { state: 'CURRENT' } }, DDD: { price: 11, quoteAge: { state: 'EARLIER_SESSION_CLOSE', asOf: '2026-10-30' } } });
+  assert.strictEqual(String(b.textContent), '2', 'both warnings counted; ZZZ (no cached price) adds none');
+  assert.ok(b.classList.has('badge-earlier-close'), 'marked');
+  assert.strictEqual(b.title, "1 of 2 computed on an earlier session's close (no trade on the feed yet today)");
+  const c = run1({ AAA: { price: 10, quoteAge: { state: 'CURRENT' } }, DDD: { price: 11, quoteAge: { state: 'UNJUDGED' } } });
+  assert.strictEqual(String(c.textContent), '2');
+  assert.ok(!c.classList.has('badge-earlier-close') && c.title === '', 'not marked when nothing counted is on an earlier close');
 });

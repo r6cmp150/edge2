@@ -8,15 +8,30 @@
 //   node scripts/mutate-portfolio-sort.js
 //
 // A mutant that SURVIVES means a guard that doesn't guard: exit code 1.
+//
+// Every kill is reported with the tests that failed. LINT tests (source-text
+// checks) are named in LINT_TESTS; a mutant marked `behavioural` counts as
+// killed only if a NON-lint test fails, i.e. the code's behaviour changed
+// and a test saw it.
+//
+// Removed 2026-11-02, as not mutations: `!dailyBarSessionAge(signal).asOf`
+// for the gate's `.state !== 'EARLIER_SESSION'`, and `age && age.asOf` for
+// displayQuoteAge's `age.state === 'EARLIER_SESSION'`. Both are EQUIVALENT
+// rewrites, not missing fixtures: asOf is set only on EARLIER_SESSION, which
+// needs age >= 1, which needs a parseable bar date, so asOf is then always a
+// non-empty date and no input can tell the two apart. Replaced by the
+// realistic mistake, testing .state by truthiness, which behaves differently.
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { spawnSync, execSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const LINT_TESTS = [/three NAMED states/, /^wiring:/];
 const TESTS = {
   sort: 'tests/portfolio-sort.test.js',
   gate: 'tests/prior-session-daily-bar.test.js',
+  sold: 'tests/portfolio-price-unavailable.test.js',
 };
 
 // [file, test, name, from, to]
@@ -56,9 +71,35 @@ const M = [
   ['core/clock.js', 'sort', 'quote age: session ignored', '  return age >= 1 && inOrAfterSession ? {', '  return age >= 1 ? {'],
   ['core/clock.js', 'sort', 'scanSessionAge: unknown returned as null', "  if (scannedAt == null) return { state: 'UNJUDGED' };", '  if (scannedAt == null) return null;'],
   ['core/clock.js', 'sort', 'dailyBarSessionAge: current returned as false', ": { state: 'CURRENT' };\n}", ': false;\n}'],
-  ['app.js', 'sort', 'reader branches on truthiness (displayQuoteAge)', "  if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", "  if (age && age.asOf) return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };"],
-  ['core/entry-gate.js', 'sort', 'gate branches on truthiness (STALE_DAILY_BAR)', "  if (dailyBarSessionAge(signal).state !== 'EARLIER_SESSION') return null;", '  if (!dailyBarSessionAge(signal).asOf) return null;'],
+  // .state tested by truthiness (true for every state): must change behaviour
+  ['app.js', 'sort', '.state truthiness: displayQuoteAge', "  if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", "  if (age.state) return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", { behavioural: true }],
+  ['app.js', 'sort', '.state truthiness: portfolioScoreState PRIOR_SESSION', "  if (age.state === 'PRIOR_SESSION') return { score: null, unknown: `scanned before", "  if (age.state) return { score: null, unknown: `scanned before", { behavioural: true }],
+  ['core/entry-gate.js', 'gate', '.state truthiness: gate STALE_DAILY_BAR', "  if (dailyBarSessionAge(signal).state !== 'EARLIER_SESSION') return null;", '  if (!dailyBarSessionAge(signal).state) return null;', { behavioural: true }],
+  ['core/entry-gate.js', 'gate', '.state truthiness: gate PRIOR_SESSION', "  if (age.state !== 'PRIOR_SESSION') return null; // CURRENT or UNJUDGED", '  if (!age.state) return null;', { behavioural: true }],
+  ['core/entry-gate.js', 'sort', '.state truthiness: gate PRIOR_SESSION, seen at the HHH row', "  if (age.state !== 'PRIOR_SESSION') return null; // CURRENT or UNJUDGED", '  if (!age.state) return null;', { behavioural: true }],
+  ['app.js', 'sort', 'unknown scan time ranked, seen at the HHH row', "  if (age.state === 'UNJUDGED') return { score: null, unknown: 'scan time not recorded' };", '', { behavioural: true }],
   ['core/entry-gate.js', 'gate', 'gate: unknown scan time no longer passes', "  if (age.state !== 'PRIOR_SESSION') return null; // CURRENT or UNJUDGED", "  if (age.state === 'CURRENT') return null;"],
+  // exit side (2026-11-02): a display is qualified, a record withheld, a verdict never blocked
+  ['app.js', 'sort', 'EDGE verdict blocked on an earlier close', 'calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable }', 'calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable || showsEarlierSessionClose }', { behavioural: true }],
+  ['app.js', 'sort', 'engine verdict blocked on an earlier close', '      const exitResult = priceUnavailable\n', '      const exitResult = (priceUnavailable || showsEarlierSessionClose)\n', { behavioural: true }],
+  ['app.js', 'sort', 'EDGE verdict not marked', 'portBanner = buildUnifiedPortfolioBanner(unifiedResult, earlierCloseTag);', 'portBanner = buildUnifiedPortfolioBanner(unifiedResult);', { behavioural: true }],
+  ['app.js', 'sort', 'engine verdict not marked', 'portBanner = buildRegisteredEngineExitBanner(exitResult, earlierCloseTag);', 'portBanner = buildRegisteredEngineExitBanner(exitResult);', { behavioural: true }],
+  ['app.js', 'sort', 'banner builder: hard floor drops the tag', '<strong>${result.label}</strong>${priceBasisLine(priceTag)}</div>`;', '<strong>${result.label}</strong></div>`;', { behavioural: true }],
+  ['app.js', 'sort', 'banner builder: lock-in drops the tag', '      <div class="ur-exit-window">This is the exit window — consider selling now</div>\n      ${priceBasisLine(priceTag)}', '      <div class="ur-exit-window">This is the exit window — consider selling now</div>', { behavioural: true }],
+  ['app.js', 'sort', 'Mark as Sold pre-fills the earlier close (a record from a stale quote)', "${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}", "${priceUnavailable ? 'null' : currentPrice}", { behavioural: true }],
+  ['app.js', 'sort', 'Mark as Sold not told which close was withheld', "${showsEarlierSessionClose ? `'${quoteAge.asOf}'` : 'null'})\">Mark as sold", "null)\">Mark as sold", { behavioural: true }],
+  ['app.js', 'sold', 'Mark as Sold notice says "no live price" for a withheld close', "${withheldCloseAsOf ? `The only price available is", "${false ? `The only price available is", { behavioural: true }],
+  ['app.js', 'sort', 'nav badge drops an earlier-close warning (blocking by omission)', "        const onEarlierClose = cached.quoteAge.state === 'EARLIER_SESSION_CLOSE';", "        const onEarlierClose = cached.quoteAge.state === 'EARLIER_SESSION_CLOSE'; if (onEarlierClose) return;", { behavioural: true }],
+  ['app.js', 'sort', 'nav badge not marked', "    pfBadge.classList.toggle('badge-earlier-close', earlierCloseWarnCount > 0);", "    pfBadge.classList.toggle('badge-earlier-close', false);", { behavioural: true }],
+  ['app.js', 'sort', 'badge cache drops the state (bare number again)', 'else state.portfolioPrices[p.ticker] = { price: currentPrice, quoteAge };', 'else state.portfolioPrices[p.ticker] = { price: currentPrice, quoteAge: { state: "UNJUDGED" } };', { behavioural: true }],
+  // LINT-required (2026-11-02): equivalent TODAY, so no behaviour test can
+  // see them; they are what the lint exists for (state from .state alone).
+  ['core/entry-gate.js', 'sort', 'lint: gate branches on a payload field (!x.asOf)', "  if (dailyBarSessionAge(signal).state !== 'EARLIER_SESSION') return null;", '  if (!dailyBarSessionAge(signal).asOf) return null;', { lint: true }],
+  ['app.js', 'sort', 'lint: reader branches on age && age.asOf', "  if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", "  if (age && age.asOf) return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", { lint: true }],
+  ['app.js', 'sort', 'lint: reader branches on a payload field (if (age.asOf))', "  if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", "  if (age.asOf) return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };", { lint: true }],
+  // the producer invariant (2026-11-02): payload only on the stale state
+  ['core/clock.js', 'sort', 'producer: CURRENT carries asOf too', "? { state: 'EARLIER_SESSION', asOf: fresh.dailyBarAsOf } : { state: 'CURRENT' };", "? { state: 'EARLIER_SESSION', asOf: fresh.dailyBarAsOf } : { state: 'CURRENT', asOf: fresh.dailyBarAsOf };"],
+  ['core/clock.js', 'sort', 'producer: CURRENT carries openDate too', "return { state: 'CURRENT' };\n  return { state: 'PRIOR_SESSION'", "return { state: 'CURRENT', openDate };\n  return { state: 'PRIOR_SESSION'"],
   ['core/entry-gate.js', 'gate', 'gate: PRIOR_SESSION never fires', "  if (age.state !== 'PRIOR_SESSION') return null; // CURRENT or UNJUDGED", '  return null;'],
 ];
 
@@ -80,14 +121,21 @@ for (const t of new Set(M.map(m => m[1]))) {
 }
 
 let survived = 0;
-for (const [file, test, name, from, to] of M) {
+for (const [file, test, name, from, to, opts = {}] of M) {
   const n = orig[file].split(from).length - 1;
   if (n !== 1) { console.log(`ANCHOR x${n}  ${name}`); survived++; continue; }
   fs.writeFileSync(path.join(ROOT, file), orig[file].replace(from, to));
   const r = spawnSync(process.execPath, [TESTS[test]], { cwd: ROOT, encoding: 'utf8' });
-  const killed = r.status !== 0 || /^FAIL/m.test(r.stdout + r.stderr);
+  const failed = [...(r.stdout + r.stderr).matchAll(/^FAIL: (.*)$/gm)].map(m => m[1]);
+  const behaviourFails = failed.filter(t => !LINT_TESTS.some(re => re.test(t)));
+  const crashed = r.status !== 0 && !failed.length;
+  const lintFails = failed.length - behaviourFails.length;
+  const killed = opts.behavioural ? (behaviourFails.length > 0 || crashed)
+    : opts.lint ? lintFails > 0
+    : (failed.length > 0 || crashed);
   if (!killed) survived++;
-  console.log(`${killed ? 'killed  ' : 'SURVIVED'}  ${name}`);
+  const by = crashed ? 'crash' : `${behaviourFails.length} behavioural, ${failed.length - behaviourFails.length} lint`;
+  console.log(`${killed ? 'killed  ' : 'SURVIVED'}  ${name}${opts.behavioural ? ' [behavioural required]' : opts.lint ? ' [lint required]' : ''}  (${by})`);
   restoreAll();
 }
 console.log(`\n${M.length} mutants: ${M.length - survived} killed, ${survived} survived or unanchored`);

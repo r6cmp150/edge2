@@ -842,7 +842,7 @@ let state = {
   filters: { priceRange: 'all', duration: 'all', catalystOnly: false },
   signalToggles: { strongBuy: true, softBuy: true, watch: true },
   aiCache: {},         // ticker → {bullets, tip} — session only
-  portfolioPrices: {}, // ticker → live price — session only
+  portfolioPrices: {}, // ticker → { price, quoteAge } from the last Portfolio render (quoteAge: displayQuoteAge, so the badge reads the card's own state) — session only
   ahSnapshots: {},     // ticker → SIP snapshot — session only, AH mode
   spyChange: 0,        // SPY today % change — updated each screener run
   macroContext: null,  // { changes, condition, ambiguous, source, explanation, fetchedAt } — session only, fetched once
@@ -4509,10 +4509,13 @@ function portfolioScoreState(sig) {
   return score == null ? { score: null, unknown: 'no scan has scored it' } : { score, unknown: null };
 }
 
-// How old the card's "Now" price is: DISPLAY STATE ONLY. Not
-// priceUnavailable, and must never be wired into it, into exit dispatch, or
-// into Mark as Sold's pre-fill: whether a stale dailyBar should block exit
-// advice is a separate decision (raised 2026-11-02, not taken). The price
+// How old the card's "Now" price is. It QUALIFIES displays and WITHHOLDS
+// a record, nothing else (phase-10 appendix, "Decided: a stale quote
+// qualifies a display and withholds a record", 2026-11-02): the P/L, the
+// exit verdict, the nav badge and the summary are computed and marked; Mark
+// as Sold's pre-fill is left empty. It is NOT priceUnavailable and must
+// never be wired into it or into exit dispatch: a verdict is never blocked
+// for it, because a position that needs selling must keep getting one. The
 // comes from the snapshot's dailyBar (getLivePrice), which Alpaca serves as
 // "the most recent daily bar": with no trade on the feed yet today it is
 // yesterday's close. Same rule as the gate's STALE_DAILY_BAR
@@ -4525,7 +4528,8 @@ function displayQuoteAge(snap, nowMs) {
   if (!snap?.dailyBar?.c || typeof snap.dailyBar.t !== 'string') return { state: 'UNJUDGED' };
   const age = dailyBarSessionAge(scanFreshness(snap, nowMs));
   if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };
-  return { state: age.state }; // CURRENT or UNJUDGED
+  if (age.state === 'CURRENT') return { state: 'CURRENT' };
+  return { state: 'UNJUDGED' };
 }
 
 async function renderPortfolioTab() {
@@ -4849,7 +4853,7 @@ async function renderPortfolioTab() {
     // fallback when priceUnavailable, and updateNavBadges used to read it
     // back as a live price, guarded only by the batch-level flag.
     if (priceUnavailable) delete state.portfolioPrices[p.ticker];
-    else state.portfolioPrices[p.ticker] = currentPrice;
+    else state.portfolioPrices[p.ticker] = { price: currentPrice, quoteAge }; // the badge marks what the card marks
 
     const cost  = p.shares * p.buyPrice;
     const value = p.shares * currentPrice;
@@ -4903,11 +4907,11 @@ async function renderPortfolioTab() {
         : (dispatchedEngine && dispatchedEngine.evaluateExit)
           ? dispatchedEngine.evaluateExit(p, { price: currentPrice })
           : neutralEngineExitFallback(p, { price: currentPrice });
-      portBanner = buildRegisteredEngineExitBanner(exitResult);
+      portBanner = buildRegisteredEngineExitBanner(exitResult, earlierCloseTag); // computed, and marked
     } else {
       const currentSignal = currentSignalForHolding(p.ticker);
       const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);
-      portBanner = buildUnifiedPortfolioBanner(unifiedResult);
+      portBanner = buildUnifiedPortfolioBanner(unifiedResult, earlierCloseTag); // computed, and marked
     }
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
     const priceDiffPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
@@ -5102,7 +5106,7 @@ async function renderPortfolioTab() {
       ${durationBlockHtml}
       ${momentumBadge}
       <div class="pf-actions">
-        <button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${priceUnavailable ? 'null' : currentPrice})">Mark as sold</button>
+        <button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf}'` : 'null'})">Mark as sold</button>
         <button class="btn btn-ghost" onclick="openPositionSnapshotModal('${p.ticker}')">View signal</button>
       </div>
     </div>`;
@@ -5656,10 +5660,15 @@ function unifiedFactorLine(f, cssClass) {
 // net composite, and — if the composite is within ±10 — a "conflicted" note.
 // Hard floor renders as a plain single-line banner (no factors/net; composite
 // is null and there's nothing to break down beyond the stop-loss hit itself).
-function buildUnifiedPortfolioBanner(result) {
+// priceTag (2026-11-02): the qualifier on the price this verdict was
+// computed from (the card's earlier-session-close tag). Every branch shows
+// it, so a verdict never appears without the state of its price.
+const priceBasisLine = priceTag => priceTag ? `<div class="ur-price-basis">Computed on the ${priceTag}</div>` : '';
+
+function buildUnifiedPortfolioBanner(result, priceTag = '') {
   const cls = getUnifiedBannerClass(result.label);
   if (result.hardFloor || result.cannotEvaluate) {
-    return `<div class="port-banner ur-banner ${cls}"><strong>${result.label}</strong></div>`;
+    return `<div class="port-banner ur-banner ${cls}"><strong>${result.label}</strong>${priceBasisLine(priceTag)}</div>`;
   }
   if (result.label === 'LOCK IN PROFITS') {
     // Peak-risk factors only — the main composite factors that got the
@@ -5672,6 +5681,7 @@ function buildUnifiedPortfolioBanner(result) {
         ${result.peakRisk.topFactors.map(f => unifiedFactorLine(f, 'ur-factor')).join('')}
       </div>
       <div class="ur-exit-window">This is the exit window — consider selling now</div>
+      ${priceBasisLine(priceTag)}
     </div>`;
   }
   const netSign = result.composite >= 0 ? '+' : '';
@@ -5681,6 +5691,7 @@ function buildUnifiedPortfolioBanner(result) {
       ${result.topFactors.map(f => unifiedFactorLine(f, 'ur-factor')).join('')}
       <div class="ur-net">Net: ${netSign}${result.composite}</div>
     </div>
+    ${priceBasisLine(priceTag)}
   </div>`;
 }
 
@@ -5765,7 +5776,7 @@ function renderEngineBadge(engineSource) {
   return `<span class="badge" style="background:rgba(255,255,255,0.08);color:var(--muted);border:1px solid rgba(255,255,255,0.15)">${engineSource}</span>`;
 }
 
-function buildRegisteredEngineExitBanner(exitResult) {
+function buildRegisteredEngineExitBanner(exitResult, priceTag = '') {
   const cls = { SELL_NOW: 'ur-sell-now', SELL_SOON: 'ur-sell-soon', HOLDING: 'ur-hold' }[exitResult.status] || 'ur-hold-mixed';
   const label = (exitResult.status || '').replace(/_/g, ' ');
   return `<div class="port-banner ur-banner ${cls}">
@@ -5773,6 +5784,7 @@ function buildRegisteredEngineExitBanner(exitResult) {
     <div class="ur-factors">
       ${(exitResult.reasons || []).map(r => `<div class="ur-factor">${r}</div>`).join('')}
     </div>
+    ${priceBasisLine(priceTag)}
   </div>`;
 }
 
@@ -6145,7 +6157,11 @@ function renderIntradayLineCard(panel, priceTag = '') {
 // unknowingly confirm a fabricated one. This is the fix for the bug
 // that produced 22 fake "breakeven" trades in trades_v2 — see
 // docs/phase-9-entry-exit-spec.md §6's seventh entry.
-function openMarkSoldModal(posId, currentPrice) {
+// withheldCloseAsOf (2026-11-02): set when a price existed but was an
+// earlier session's close. It is withheld, not shown, because this field
+// becomes the recorded sale price: a display can be qualified by its state,
+// a record cannot (phase-10 appendix). The notice names the close.
+function openMarkSoldModal(posId, currentPrice, withheldCloseAsOf = null) {
   const pos = state.portfolio.find(p => p.id === posId);
   if (pos && isPendingOrder(pos)) { showAlert('This is a pending order, not a position -- mark it filled first.'); return; }
   const today = ptDateStr(getPT()); // PT, not the UTC date (CLAUDE.md getPT rule)
@@ -6157,7 +6173,7 @@ function openMarkSoldModal(posId, currentPrice) {
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
-      ${priceUnavailable ? `<div class="stale-table-warning">⚠ No live price was available for this position — the field below is empty on purpose. Enter the real fill price from your broker; do not guess.</div>` : ''}
+      ${priceUnavailable ? `<div class="stale-table-warning">⚠ ${withheldCloseAsOf ? `The only price available is the ${withheldCloseAsOf} close (no trade on the feed yet today), so it isn't filled in` : 'No live price was available for this position'} — the field below is empty on purpose. Enter the real fill price from your broker; do not guess.</div>` : ''}
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Sale Price per Share</label>
@@ -10343,13 +10359,18 @@ function updateNavBadges() {
   const pfBadge = document.getElementById('badge-portfolio');
   if (pfBadge) {
     let warnCount = 0;
+    let earlierCloseWarnCount = 0; // of warnCount: verdicts computed on an earlier session's close
     if (isAfternoonMode()) {
       getHoldings().forEach(p => {
         // No real cached price -> this position can't be evaluated (the
         // card says CANNOT EVALUATE), so it adds no warning either way.
         // Never substitute the buy price as if it were live.
-        const price = state.portfolioPrices[p.ticker];
+        const cached = state.portfolioPrices[p.ticker];
+        const price = cached ? cached.price : null;
         if (price == null || state.portfolioPriceFetchFailed) return;
+        // Counted, never dropped (a position that needs selling keeps its
+        // warning), and the badge says so: the card's own quoteAge.
+        const onEarlierClose = cached.quoteAge.state === 'EARLIER_SESSION_CLOSE';
         // Same dispatch shape as renderPortfolioTab's banner (Phase 7) --
         // kept in sync deliberately, not two independent implementations of
         // "does this position warrant a warning." See that call site's
@@ -10360,12 +10381,12 @@ function updateNavBadges() {
           const exitResult = (dispatchedEngine && dispatchedEngine.evaluateExit)
             ? dispatchedEngine.evaluateExit(p, { price })
             : neutralEngineExitFallback(p, { price });
-          if (exitResult.status === 'SELL_NOW' || exitResult.status === 'SELL_SOON') warnCount++;
+          if (exitResult.status === 'SELL_NOW' || exitResult.status === 'SELL_SOON') { warnCount++; if (onEarlierClose) earlierCloseWarnCount++; }
           return;
         }
         const currentSignal = currentSignalForHolding(p.ticker);
         const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy, priceFetchFailed: state.portfolioPriceFetchFailed }, currentSignal, state.macroContext);
-        if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(result.label)) warnCount++;
+        if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(result.label)) { warnCount++; if (onEarlierClose) earlierCloseWarnCount++; }
       });
     }
     // Pending orders that have sat through a close need an answer from
@@ -10374,6 +10395,15 @@ function updateNavBadges() {
     warnCount += getPendingOrders().filter(isStalePendingOrder).length;
     pfBadge.textContent = warnCount;
     pfBadge.classList.toggle('hidden', warnCount === 0);
+    // The ring IS the marker; the title is not load-bearing (a phone has no
+    // hover). A nav badge can't hold the date, and doesn't need to: the full
+    // disclosure (the tag on each verdict, P/L and price) is one tap away on
+    // the Portfolio tab. Do NOT "improve" this with a popup or alert: Roman
+    // explicitly rejected a popup for the entry gate (2026-10-27), and the
+    // same reasoning holds here.
+    pfBadge.classList.toggle('badge-earlier-close', earlierCloseWarnCount > 0);
+    pfBadge.title = earlierCloseWarnCount > 0
+      ? `${earlierCloseWarnCount} of ${warnCount} computed on an earlier session's close (no trade on the feed yet today)` : '';
   }
 }
 

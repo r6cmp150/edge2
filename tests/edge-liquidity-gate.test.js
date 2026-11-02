@@ -283,14 +283,17 @@ run('a dead holding takes the priceUnavailable path: no P&L, CANNOT EVALUATE, no
   assert.ok(has("let intradayPanel = notTradingNow ? { state: 'INACTIVE' }"), "the intraday line says it stopped trading, not 'connection issue'");
   // The consumers the flag already drives (unchanged; asserted so a refactor can't drop one).
   assert.ok(has('priceFetchFailed: priceUnavailable }'), 'recommendation: CANNOT EVALUATE');
-  assert.ok(has("openMarkSoldModal('${p.id}', ${priceUnavailable ? 'null' : currentPrice})"), 'Mark as sold: no pre-filled price');
+  // Still no pre-filled price when priceUnavailable; since 2026-11-02 also
+  // none on an earlier session's close (a record is never written from it).
+  assert.ok(has("openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, "), 'Mark as sold: no pre-filled price');
   assert.ok(has('if (priceUnavailable) {\n        summaryUnpricedTickers.push(p.ticker);'), 'summary: named, never summed');
   // A registered engine (Warrior) is not asked for exit advice on a price
   // that isn't live: its evaluateExit would answer HOLDING, still a verdict.
   assert.ok(has("const exitResult = priceUnavailable\n        ? { status: 'CANNOT_EVALUATE',"), 'engine exit advice gated on priceUnavailable');
   const bStart = app.indexOf('function buildRegisteredEngineExitBanner(');
   // eslint-disable-next-line no-eval
-  eval(app.slice(bStart, app.indexOf('\n}\n', bStart) + 2) + '\nglobal.__banner = buildRegisteredEngineExitBanner;');
+  const basis = app.match(/^const priceBasisLine = .*$/m)[0].replace(/^const /, 'var '); // the banner's price-tag line (2026-11-02)
+  eval(basis + '\n' + app.slice(bStart, app.indexOf('\n}\n', bStart) + 2) + '\nglobal.__banner = buildRegisteredEngineExitBanner;');
   const html = global.__banner({ status: 'CANNOT_EVALUATE', reasons: ['Live price unavailable this render — cannot evaluate exit'] });
   assert.ok(html.includes('<strong>CANNOT EVALUATE</strong>') && html.includes('ur-hold-mixed') && !/HOLDING|SELL/.test(html),
     "renders as EDGE's CANNOT EVALUATE does (same class), with no verdict");

@@ -1172,6 +1172,8 @@ a { color: var(--blue); }
 .pf-sort-select { flex: 1; min-width: 0; background: var(--surface); color: inherit; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 8px; font-size: 13px; }
 .pf-unranked-divider { margin: 14px 12px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--yellow); border-top: 1px dashed var(--border); padding-top: 8px; }
 .pf-sort-unranked { font-size: 11px; color: var(--yellow); margin-bottom: 6px; }
+.ur-price-basis { margin-top: 6px; font-size: 11px; color: var(--yellow); }
+.nav-badge.badge-earlier-close { box-shadow: 0 0 0 2px var(--yellow); }
 
 .pf-quick-read {
   font-size: 11px;
