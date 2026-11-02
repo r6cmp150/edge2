@@ -203,7 +203,7 @@ async function main() {
   const CODE_VERSION = codeVersionForRun(REPO_ROOT, 'log-signals-edge');
   global.VERSION = CODE_VERSION.app;
 
-  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession', 'barsFreshness', 'previousTradingDay']);
+  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession', 'barsFreshness', 'previousTradingDay', 'ptDateTimeOf', 'scanFreshness']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
   loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT', 'fetchMultiBars', 'checkUnresolvedSymbols']);
   loadReal('core/universe.js', ['runEdgePrefilter', 'edgePrefilterFailures', 'getEdgeLiquidity', 'getAssetListing', '_getAssetIndex', '_fetchSipDailyBars']);
@@ -296,6 +296,7 @@ async function main() {
   const displayThreshold = global.getDisplayThreshold(macroCondition, category);
   const minP2 = global.state.settings.includeUnder2 ? 0 : 2;
 
+  const scanMs = Date.now(); // one instant for the whole scan's stamps
   const scoredAll = candidates.map(([ticker, snap]) => {
     const bars = allBars[ticker] || [];
     const s = global.scoreStock(ticker, snap, bars, newsMap[ticker] || null, spyChangePct, category);
@@ -303,6 +304,8 @@ async function main() {
       s.thresholdAtBuy = displayThreshold;
       s.buildVersion = global.VERSION;
       Object.assign(s, global.barsFreshness(bars, today)); // db/031: as-of date of the scored history
+      Object.assign(s, global.scanFreshness(snap, scanMs)); // scan time + dailyBar as-of (2026-11-01), same stamp as app.js
+      s.scoreSettings = { disableMacroOverlay: !!global.state.settings.disableMacroOverlay };
     }
     const shown = !!s && s.score >= displayThreshold && s.price >= minP2;
     return { ticker, signal: s, shown, tier: s ? (shown ? 'SHOWN' : 'BELOW_THRESHOLD') : 'NOT_EVALUATED' };

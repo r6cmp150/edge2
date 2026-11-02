@@ -71,10 +71,51 @@ function entryGateNow() {
 // field (scored before this shipped) is not judged stale: unknown, and the
 // next scan stamps it.
 const STALE_BARS_MAX_AGE = 1; // trading days: today's partial bar (0) or yesterday's (1)
+
+// A signal from a previous session (2026-11-01). DNUT and NRGV were a 10-28
+// scan still on screen at 07:18 on 10-29, shown at 85 and bought; on that
+// morning's data they scored 55 and 50, both under the line. barsAgeTradingDays
+// couldn't see it: it is measured against the scan's own date, so a scan
+// reads as current forever. This compares the scan's time with the most
+// recent regular-session open: a scan from before it is not buyable, and
+// the card says when it was taken. Pre-market, the most recent open is the
+// previous trading day's, so last evening's scan stays current until 06:30.
+// scannedAt unknown (not stamped) is not judged.
+function entryGatePriorSession(signal) {
+  if (signal?.scannedAt == null) return null;
+  const now = getPT();
+  const nowDate = ptDateStr(now);
+  const nowHHMM = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  const openedToday = classifySession(nowDate, '06:30') === 'REGULAR' && nowHHMM >= '06:30';
+  const openDate = openedToday ? nowDate : previousTradingDay(nowDate);
+  const scan = ptDateTimeOf(signal.scannedAt);
+  if (scan.date > openDate || (scan.date === openDate && scan.hhmm >= '06:30')) return null;
+  return { gated: true, rule: 'PRIOR_SESSION', logged: null, label: `Scanned ${scan.date} ${scan.hhmm} PT, before the ${openDate} open — rescan for a current score; not buyable` };
+}
+
+// The snapshot's dailyBar from an earlier session (2026-11-01, db/031's rule
+// one level up). Price, volume and today's change come from the live
+// snapshot's dailyBar, and Alpaca's dailyBar is "the most recent daily bar":
+// with no trade yet today on the feed, it is YESTERDAY's, presented as
+// today's. APUS, BIAF and IPDN on 10-30 (no IEX print by 07:33) showed
+// +6.4%, +4.6% and +5.6% when SIP had them at -7.8%, -2.0% and -7.6%, and
+// were bought. STALE_BARS allowed it: yesterday's bar (age 1) is current
+// before the open, and the rule never asked whether the scan was taken in a
+// session. This does: a dailyBar older than the scan's date, on a scan
+// taken during or after that day's session, is scored on yesterday and not
+// buyable. Three states, as for bars_as_of: current, stale, or unknown
+// (a signal stamped before this shipped is not judged).
+function entryGateStaleDailyBar(signal) {
+  const age = signal?.dailyBarAgeTradingDays;
+  if (age == null || age < 1) return null;
+  if (signal.scanSession !== 'REGULAR' && signal.scanSession !== 'AFTER_HOURS') return null;
+  return { gated: true, rule: 'STALE_DAILY_BAR', logged: null, label: `Scored on ${signal.dailyBarAsOf}'s price, not today's: no trade on the feed yet when scanned — not buyable` };
+}
+
 function entryGateForSignal(signal) {
   const age = signal?.barsAgeTradingDays;
   if (age != null && age > STALE_BARS_MAX_AGE) {
     return { gated: true, rule: 'STALE_BARS', logged: null, label: `Scored on price history from ${signal.barsAsOf} (${age} trading days old) — not buyable` };
   }
-  return entryGateNow();
+  return entryGatePriorSession(signal) || entryGateStaleDailyBar(signal) || entryGateNow();
 }

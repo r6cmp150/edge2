@@ -872,6 +872,14 @@ function loadState() {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
+  // Signals stored before scannedAt was stamped (2026-11-01): state.signals
+  // is only ever replaced whole, in the same statement that sets
+  // lastScanTime, so lastScanTime IS their scan time -- a value computed for
+  // them, not a guess. Without it a scan restored from a previous session
+  // couldn't be judged (PRIOR_SESSION) until the next scan replaced it.
+  if (Array.isArray(state.signals) && state.lastScanTime != null) {
+    for (const s of state.signals) if (s && s.scannedAt == null) s.scannedAt = state.lastScanTime;
+  }
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
@@ -2074,6 +2082,7 @@ async function runScreener() {
     // worse in one way (no intermediate array existed at all before this).
     // Consumed by the signal_log write-site (Phase 7), not by any
     // existing rendering path -- state.signals below is unchanged.
+    const scanMs = Date.now(); // one instant for the whole scan's stamps
     const scoredAll = candidates.map(([ticker, snap]) => {
       const bars = allBars[ticker] || [];
       const s = scoreStock(ticker, snap, bars, newsMap[ticker] || null, spyChangePct, category);
@@ -2083,6 +2092,11 @@ async function runScreener() {
         // barsAgeTradingDays). A stale history makes the signal not buyable
         // (core/entry-gate.js entryGateForSignal).
         Object.assign(s, barsFreshness(bars, ptDateStr(getPT())));
+        // When it was scanned and whether the snapshot's dailyBar was
+        // today's (PRIOR_SESSION / STALE_DAILY_BAR, 2026-11-01), and the
+        // one setting scoreStock reads, so a snapshot says what produced it.
+        Object.assign(s, scanFreshness(snap, scanMs));
+        s.scoreSettings = { disableMacroOverlay: !!state.settings.disableMacroOverlay };
         // buildVersion (2026-09-05): mirrors engines/warrior/gate.js's
         // gateResult.buildVersion stamp (added 2026-09-03, "the forward
         // test's value depends on knowing which build produced which

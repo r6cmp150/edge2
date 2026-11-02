@@ -382,3 +382,25 @@ function barsFreshness(bars, scanDateStr) {
   const barsAsOf = newest.slice(0, 10);
   return { barsAsOf, barsAgeTradingDays: tradingDaysBetween(barsAsOf, scanDateStr) };
 }
+
+// PT date and "HH:MM" of an instant (2026-11-01), formatted, never a
+// mutated getPT() Date (CLAUDE.md), so an absolute time can be placed on
+// the session calendar.
+function ptDateTimeOf(ms) {
+  const p = {};
+  for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ms))) p[x.type] = x.value;
+  return { date: `${p.year}-${p.month}-${p.day}`, hhmm: `${p.hour}:${p.minute}` };
+}
+
+// When a signal was scanned and how current the live snapshot's dailyBar
+// was then (2026-11-01; core/entry-gate.js PRIOR_SESSION and
+// STALE_DAILY_BAR read it). The one stamp both scans (app.js, the logger)
+// apply. Price, volume and today's change come from snap.dailyBar, which
+// Alpaca serves as "the most recent daily bar" -- yesterday's when the feed
+// has no trade yet today -- so its date is measured like the history's.
+// No dailyBar: unknown (null), never 0.
+function scanFreshness(snap, scanMs) {
+  const { date, hhmm } = ptDateTimeOf(scanMs);
+  const d = barsFreshness(snap?.dailyBar ? [snap.dailyBar] : [], date);
+  return { scannedAt: scanMs, scanSession: classifySession(date, hhmm), dailyBarAsOf: d.barsAsOf, dailyBarAgeTradingDays: d.barsAgeTradingDays };
+}

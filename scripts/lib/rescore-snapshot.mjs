@@ -44,10 +44,16 @@ export function scorerFromSource(root, src) {
   return c;
 }
 
-export function scoreSnapshotWith(scorer, o) {
+// The macro overlay as the snapshot recorded it (scoreSettings, stamped from
+// 2026-11-01), else on. The default is what the logger runs with, so it is
+// right for signal_log; it is WRONG for Roman's buys before that date: he
+// runs with the overlay off, and 44 of his first 88 buy snapshots re-score
+// to their stored score with it on, 88 of 88 with it off. A caller reading
+// those passes the setting it inferred (measure-iex-vs-sip-scoring.mjs).
+export function scoreSnapshotWith(scorer, o, { disableMacroOverlay } = {}) {
   const { args, macroContext } = snapshotScoreInputs(o);
   scorer.state.macroContext = macroContext;
-  scorer.state.settings.disableMacroOverlay = false;
+  scorer.state.settings.disableMacroOverlay = disableMacroOverlay ?? o.scoreSettings?.disableMacroOverlay ?? false;
   return scorer.__s(...args);
 }
 

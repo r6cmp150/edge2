@@ -1721,6 +1721,116 @@ days, not quiet ones.
      scored on bars ending 08-28), with nothing marking it. That's the
      defect family: a score on data no one would call current. Not fixed;
      `scoreStock` should mark or refuse a stale history.
+   - **SCORED ON ONE VENUE, ADMITTED ON ALL OF THEM (found 2026-11-01).**
+     The 1M gate reads SIP (`core/universe.js`), but the bars and snapshot
+     that reach `scoreStock` come from `core/market-data.js`, which
+     hardcodes `feed:'iex'` (`fetchSnapshots`, `fetchMultiBars`), in the
+     browser scan and in the logger, which loads the same file. Measured on
+     every buy with a snapshot: `node scripts/measure-iex-vs-sip-scoring.mjs
+     --rev d6e277d` (88 buys, 10-29 and 10-30; the real `scoreStock` on
+     each feed at the same minute, macro overlay as at the buy; the IEX
+     rebuild reproduces 80 of 88 stored scores, the rest drift between
+     scan and buy).
+     - **Three defects, not one.** (a) **The live snapshot's dailyBar from
+       a previous session** (APUS, BIAF, IPDN on 10-30): Alpaca's dailyBar
+       is "the most recent daily bar", so a stock with no IEX trade yet
+       today is scored on yesterday's, shown as today's: +6.4%, +4.6% and
+       +5.6% when SIP had them at −7.8%, −2.0% and −7.6%, and all three
+       bought. AREN's frozen-snapshot mechanism, in the live path.
+       STALE_BARS (db/031) let it through: the marker watched the right
+       bar (history and dailyBar agree on the date in all 88; they come
+       from two requests seconds apart and can disagree, 9 of 88 by a few
+       hundred shares), but it allows age 1 at any hour, and never asked
+       whether the scan was taken in a session. The offline
+       `--exclude-artifacts` rule (step 2) has the same hole: it treats
+       age 1 as an artifact only in the first two minutes after the open.
+       (b) **A scan from a previous session shown as current** (DNUT,
+       NRGV at 07:18 on 10-29: a 10-28 scan still on screen, shown at 85;
+       that morning's data scored 55 and 50, both under the line; both
+       bought). `barsAgeTradingDays` is measured against the scan's own
+       date, so a scan reads as current forever; the only age warning was
+       the tab banner ("Stale data — refresh now"), which names no date
+       and doesn't touch buyability. The card's strip that morning was
+       the 7:00–7:30 gate, not the age. (c) **The feed itself**, below.
+     - **(a) and (b) FIXED 2026-11-01, advice only, as every gate:**
+       `core/entry-gate.js` STALE_DAILY_BAR (a dailyBar older than the
+       scan's date, on a scan taken during or after that day's session)
+       and PRIOR_SESSION (a scan from before the most recent regular open;
+       pre-market, last evening's scan stays current until 06:30). Both
+       read one stamp both scans apply (`core/clock.js scanFreshness`:
+       `scannedAt`, `scanSession`, `dailyBarAsOf`,
+       `dailyBarAgeTradingDays`), three states like `bars_as_of`
+       (unknown is not judged). Signals stored before it get `scannedAt`
+       from `lastScanTime`, which is set in the same statement. On the 88
+       bought, exactly five would have been not buyable: APUS, BIAF,
+       IPDN, DNUT, NRGV (`tests/prior-session-daily-bar.test.js`, on
+       d6e277d). No feed change, no re-derivation: neither changes a
+       score, only whether a stale one is offered.
+     - **(c) What IEX does to each input** (IEX minus SIP, same minute):
+       price-derived terms track in the median and not in the tail
+       (price 0.0% median, 7.7% max; RSI 0.2 points, 14.5 max; today's
+       change 0.2 points, 14.2 max; RSI points differ on 0 rows, MA points
+       on 1, momentum points on 9). The tail is the stocks barely traded
+       on IEX, whose "last price" is hours old. **Volume points are the
+       mover: they differ on 25 of 88, IEX higher on 19.** Score
+       identical on 49 of 88, 90th-percentile difference 20, IEX higher
+       29 / lower 10; **label differs on 15 of 88; buyable on IEX only 11,
+       on SIP only 3.** The error leans toward false buys.
+     - **A ratio of two same-venue quantities is unbiased on average and
+       arbitrary per row, and a bucketed score turns per-row noise into
+       category errors.** The volume ratio is IEX-today / IEX-10-day
+       average, so the venue cancels only if IEX's share of today equals
+       its share of the averaged days. It does in the median (6.7% both,
+       ratio of shares 1.05) and not per row (0.64 to 1.58, 10th to 90th
+       percentile); the volume points are steps at 0.5×, 1×, 2× and 3×,
+       so the per-row spread crosses edges. The reviewer's expectation
+       ("volume ratio may partly cancel") was half right in the way that
+       matters least.
+     - **The 1M gate is a mean, and a mean admits spiky stocks.** APUS:
+       20-session SIP mean 5.37M, 50k traded on 10-29 (200 shares in 3
+       trades on IEX). IPDN: 3.63M mean, 20k on 10-29. "Cleared 1M" does
+       not mean it trades on a typical day. Recorded, not changed.
+     - **The IWM correction is the same root cause, small.** The
+       forward-test caveat first quoted IWM +1.17% for 10-27 from an
+       ad-hoc IEX fetch; SIP says +1.15%. The error was small because IWM
+       is about as liquid as anything traded, and that is exactly why it
+       can't be used to reassure anyone about the stocks that aren't.
+     - **15-minute-delayed SIP against live IEX** (the Basic plan serves
+       SIP only for data at least 15 minutes old; Warrior's gap scan
+       already uses it). Both measured against live SIP at the minute,
+       split by the stock's 10-session IEX share:
+
+       | IEX share | n | price off, median (IEX / delayed) | labels wrong (IEX / delayed) | buy decision wrong (IEX / delayed) |
+       |---|---|---|---|---|
+       | all | 88 | 0.0% / 0.4% | 15 / 11 | 14 / 11 |
+       | < 3% | 9 | 2.7% / 1.4% | 1 / 1 | 1 / 1 |
+       | 3–8% | 61 | 0.0% / 0.3% | 11 / 6 | 10 / 6 |
+       | ≥ 8% | 18 | 0.0% / 0.5% | 3 / 4 | 3 / 4 |
+
+       **Delayed SIP is better on labels overall, and not strictly better.**
+       On price, live IEX is closer to the truth everywhere except the
+       thinnest band, where delayed SIP halves the error (90th percentile
+       7.7% to 3.4%). On labels it wins in the middle band, ties in the
+       thinnest (n=9), and loses slightly where IEX's share is high. 11 of
+       88 labels are still wrong with it: the delay costs about as much
+       as the venue did. Not decided; the shape worth measuring next is
+       mixed (SIP history and delayed SIP volume, live price), since
+       volume is where the venue error lives and price is where the delay
+       error lives.
+     - **(c) is a project, not a fix, and it carries the re-derivation in
+       the same change:** step 2's thresholds and the 10-day buyable
+       pre-commitment were set on IEX scores (signal_log is IEX too), so
+       a feed change moves the score distribution under them. The change
+       states what the distribution does, re-derives the lines, and
+       restarts the 10-day count. Not started until (a) and (b) shipped.
+     - **Snapshots now record the setting that produced them.** The
+       macro overlay is the one setting `scoreStock` reads; Roman runs
+       with it off, the snapshot didn't say so, and
+       `scripts/lib/rescore-snapshot.mjs` assumed it on: 44 of 88 of his
+       buy snapshots re-scored to their stored score, 88 of 88 with it
+       off. Both scans now stamp `scoreSettings.disableMacroOverlay` (on
+       the signal, outside `scoreStock`, so `scoring_hash` is unchanged),
+       and the helper reads it when present.
 2. **Neutralise the two backwards terms in §7.3 AND re-derive the BUY
    thresholds in the same change** (§7.7), so buyable signals per day
    stay near today's ~5–6 (106 over 19 dates, one per date and symbol;
