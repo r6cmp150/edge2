@@ -51,7 +51,7 @@
 // PER-TABLE OUTCOMES, NOT ALL-OR-NOTHING: a table that fails its own rule
 // has its write skipped -- its last committed file is left untouched --
 // but every OTHER table that passes still gets written and committed.
-// The six files are independent; a legitimately-shrinking portfolio must
+// The seven files are independent; a legitimately-shrinking portfolio must
 // never cost the trades (or trades_v2, or signal_log) backup.
 //
 // THE RUN STILL FAILS LOUDLY, THOUGH: if any table failed its rule, this
@@ -113,6 +113,17 @@ const TABLE_RULES = {
       console.warn(`backup-tables: FLAG -- portfolio dropped to 0 rows (was ${prior}). Not blocked -- shrinking is normal (every sale deletes a row) -- but every position closing at once is unusual enough to be worth a glance.`);
     }
     return { ok: true }; // never aborts: shrinking is this table's normal operation
+  },
+  // signal_snapshot_at_buy (db/033, added here 2026-11-01): one row per
+  // position, never updated or deleted (anon has INSERT and SELECT only,
+  // db/034), so the same never-shrink posture. Unbacked from creation
+  // until 88 rows had accumulated, so nothing read from it could be
+  // pinned to a commit.
+  signal_snapshot_at_buy(fresh, prior) {
+    if (fresh < prior) {
+      return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- signal_snapshot_at_buy has no UPDATE or DELETE policy (db/034); any shrink means something is wrong` };
+    }
+    return { ok: true };
   },
   rating_snapshots(fresh, prior) {
     if (prior > 0 && fresh < prior * 0.8) {
