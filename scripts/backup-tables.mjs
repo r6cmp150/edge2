@@ -18,7 +18,7 @@
 // PER-TABLE RULES, NOT ONE GLOBAL RULE (revised 2026-09-05: the first
 // draft required every table to hold or grow, all-or-nothing. That's
 // wrong -- portfolio shrinks every time Roman sells a position, and
-// rating_snapshots shrinks by design once its 90-day retention window
+// rating_snapshots shrank by design (until 2026-11-02, now append-only) once its 90-day retention window
 // starts outpacing insertion. Under the all-or-nothing version, the
 // FIRST sale after this job shipped would have aborted the entire
 // backup, including trades -- the table this exists to protect --
@@ -42,11 +42,12 @@
 //                        sale). Never aborts; only flags a drop to zero
 //                        from nonzero, since closing every position at
 //                        once is unusual enough to be worth a glance.
-//   rating_snapshots -- shrinks gradually and legitimately (90-day
-//                        retention pruning). Aborts only on a LARGE drop
-//                        (>20% in one run) -- retention prunes a little
-//                        every day; a wipe removes most of the table at
-//                        once, and that shape is what this rule catches.
+//   rating_snapshots -- append-only since 2026-11-02 (the app's 90-day
+//                        retention purge was removed: it is the only
+//                        record of the morning browser scans). Any shrink
+//                        at all means something deleted rows -- the anon
+//                        key has a DELETE path on it -- so, like trades,
+//                        any shrink aborts. (Was: abort only on >20%.)
 //
 // PER-TABLE OUTCOMES, NOT ALL-OR-NOTHING: a table that fails its own rule
 // has its write skipped -- its last committed file is left untouched --
@@ -126,8 +127,8 @@ const TABLE_RULES = {
     return { ok: true };
   },
   rating_snapshots(fresh, prior) {
-    if (prior > 0 && fresh < prior * 0.8) {
-      return { ok: false, reason: `dropped from ${prior} to ${fresh} rows (more than 20% in one run) -- 90-day retention prunes a little every day; a drop this large at once looks like a wipe, not normal aging-out` };
+    if (fresh < prior) {
+      return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- rating_snapshots is append-only since 2026-11-02 (no purge call site left in the app); any shrink means something deleted rows` };
     }
     return { ok: true };
   },

@@ -2188,9 +2188,15 @@ async function runScreener() {
   writeRatingSnapshots(state.signals);
 }
 
-// Best-effort mirror of this run's qualifying signals into Supabase, plus a
-// purge of anything older than 90 days. Never blocks or interrupts the
-// screener — any failure (write or purge) is caught and logged, not thrown.
+// Best-effort mirror of this run's qualifying signals into Supabase. Never
+// blocks or interrupts the screener — a failed write is caught and logged,
+// not thrown.
+// NO RETENTION PURGE (2026-11-02). This used to delete every row older than
+// 90 days on every scan. rating_snapshots is the only record of what the
+// browser scans showed in the morning entry window (07:00-09:00 PT), which
+// the GitHub-scheduled logger cannot cover; its 90-day purge would have
+// begun deleting it on 2026-11-11. The table is append-only now, and the
+// daily backup treats any shrink as a defect (scripts/backup-tables.mjs).
 async function writeRatingSnapshots(signals) {
   const toWrite = (signals || []).filter(s => s.score >= 60);
   if (!toWrite.length) return;
@@ -2208,8 +2214,6 @@ async function writeRatingSnapshots(signals) {
     }));
     const { error } = await supabaseClient.from('rating_snapshots').insert(rows);
     if (error) { console.error('Supabase snapshot write failed:', error.message); return; }
-    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    await supabaseClient.from('rating_snapshots').delete().lt('captured_at', cutoff);
   } catch(e) {
     console.error('Supabase snapshot write failed:', e.message);
   }
@@ -8734,7 +8738,7 @@ function renderSettingsTab() {
       <div id="db-usage"><div class="test-result"><span class="spinner"></span> Loading…</div></div>
       <div class="settings-row" style="flex-direction:column;align-items:stretch;">
         <button class="btn btn-ghost btn-sm mt8" onclick="exportAndArchiveDatabase()">📦 Export &amp; Archive Database</button>
-        <div class="settings-hint mt4">Downloads all Supabase trade data as a report, then offers to purge rating snapshots older than 90 days</div>
+        <div class="settings-hint mt4">Downloads all Supabase trade data as a report. Nothing is deleted (rating snapshots are kept: they're the only record of the morning scans).</div>
       </div>
     </div>
 
@@ -9221,28 +9225,10 @@ async function exportAndArchiveDatabase() {
     a.click();
     URL.revokeObjectURL(url);
 
-    showConfirm(
-      'Archive downloaded. Delete rating snapshots older than 90 days to free up space?',
-      deleteOldRatingSnapshots,
-      'Delete'
-    );
+    // No purge offer (2026-11-02): rating_snapshots is append-only. See
+    // writeRatingSnapshots.
   } catch(e) {
     showAlert('Could not export archive: ' + e.message);
-  }
-}
-
-async function deleteOldRatingSnapshots() {
-  const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-  try {
-    const { error, count } = await supabaseClient
-      .from('rating_snapshots')
-      .delete({ count: 'exact' })
-      .lt('captured_at', cutoff);
-    if (error) { showAlert('Could not delete old snapshots: ' + error.message); return; }
-    showAlert(`Done. ${count ?? 0} old snapshots removed.`);
-    loadDatabaseUsage();
-  } catch(e) {
-    showAlert('Could not delete old snapshots: ' + e.message);
   }
 }
 
