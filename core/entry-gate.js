@@ -80,16 +80,13 @@ const STALE_BARS_MAX_AGE = 1; // trading days: today's partial bar (0) or yester
 // recent regular-session open: a scan from before it is not buyable, and
 // the card says when it was taken. Pre-market, the most recent open is the
 // previous trading day's, so last evening's scan stays current until 06:30.
-// scannedAt unknown (not stamped) is not judged.
+// scannedAt unknown (not stamped) is not judged: UNJUDGED passes here, on
+// purpose, while the portfolio sort treats it as unknown (see the comment on
+// core/clock.js scanSessionAge, the rule both read, 2026-11-02).
 function entryGatePriorSession(signal) {
-  if (signal?.scannedAt == null) return null;
-  const now = getPT();
-  const nowDate = ptDateStr(now);
-  const nowHHMM = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-  const openedToday = classifySession(nowDate, '06:30') === 'REGULAR' && nowHHMM >= '06:30';
-  const openDate = openedToday ? nowDate : previousTradingDay(nowDate);
-  const scan = ptDateTimeOf(signal.scannedAt);
-  if (scan.date > openDate || (scan.date === openDate && scan.hhmm >= '06:30')) return null;
+  const age = scanSessionAge(signal?.scannedAt);
+  if (age.state !== 'PRIOR_SESSION') return null; // CURRENT or UNJUDGED
+  const { scan, openDate } = age;
   return { gated: true, rule: 'PRIOR_SESSION', logged: null, label: `Scanned ${scan.date} ${scan.hhmm} PT, before the ${openDate} open — rescan for a current score; not buyable` };
 }
 
@@ -104,11 +101,11 @@ function entryGatePriorSession(signal) {
 // session. This does: a dailyBar older than the scan's date, on a scan
 // taken during or after that day's session, is scored on yesterday and not
 // buyable. Three states, as for bars_as_of: current, stale, or unknown
-// (a signal stamped before this shipped is not judged).
+// (a signal stamped before this shipped is not judged). The rule itself is
+// core/clock.js dailyBarSessionAge, which the portfolio card's price also
+// reads (2026-11-02).
 function entryGateStaleDailyBar(signal) {
-  const age = signal?.dailyBarAgeTradingDays;
-  if (age == null || age < 1) return null;
-  if (signal.scanSession !== 'REGULAR' && signal.scanSession !== 'AFTER_HOURS') return null;
+  if (dailyBarSessionAge(signal).state !== 'EARLIER_SESSION') return null; // CURRENT or UNJUDGED
   return { gated: true, rule: 'STALE_DAILY_BAR', logged: null, label: `Scored on ${signal.dailyBarAsOf}'s price, not today's: no trade on the feed yet when scanned — not buyable` };
 }
 

@@ -1560,10 +1560,14 @@ async function resolveMacroConditionWithGroq(changes) {
 function currentSignalForHolding(ticker) {
   const e = currentOwnedScore(ticker);
   if (e && e.notEvaluatedReason) return e; // another formula's score: not evaluated, and says so
+  // scoringVersion/scoringHash ride along for the portfolio sort's state
+  // (portfolioScoreState); nothing in the recommendation reads them. The
+  // entry's version was checked by currentOwnedScore; its hash is the
+  // signal's own stamp, null when stored before 2026-11-02.
   if (e && e.score != null) {
     return e.signal
-      ? { ...e.signal, score: e.score, signal: e.label, scannedAt: e.scannedAt ?? null, scoreSource: 'scan' }
-      : { ticker, score: e.score, signal: e.label, scannedAt: e.scannedAt ?? null, scoreSource: 'scan', scoreOnly: true };
+      ? { ...e.signal, score: e.score, signal: e.label, scannedAt: e.scannedAt ?? null, scoreSource: 'scan', scoringVersion: e.scoringVersion, scoringHash: e.signal.scoringHash ?? null }
+      : { ticker, score: e.score, signal: e.label, scannedAt: e.scannedAt ?? null, scoreSource: 'scan', scoreOnly: true, scoringVersion: e.scoringVersion, scoringHash: null };
   }
   const sig = state.signals.find(x => x.ticker === ticker);
   return sig ? { ...sig, scannedAt: state.lastScanTime ?? null, scoreSource: 'scan' } : null;
@@ -2097,6 +2101,9 @@ async function runScreener() {
         // one setting scoreStock reads, so a snapshot says what produced it.
         Object.assign(s, scanFreshness(snap, scanMs));
         s.scoreSettings = { disableMacroOverlay: !!state.settings.disableMacroOverlay };
+        // The formula that scored it (2026-11-02): the portfolio sort ranks a
+        // held ticker's score only if the current formula produced it.
+        s.scoringVersion = SCORING_VERSION; s.scoringHash = SCORING_HASH;
         // buildVersion (2026-09-05): mirrors engines/warrior/gate.js's
         // gateResult.buildVersion stamp (added 2026-09-03, "the forward
         // test's value depends on knowing which build produced which
@@ -2149,6 +2156,7 @@ async function runScreener() {
           const bars = extraBars[ticker] || [];
           const tickerCategory = findTickerCategory(ticker) || category;
           const s = scoreStock(ticker, snap, bars, newsMap[ticker] || null, spyChangePct, tickerCategory);
+          if (s) { s.scoringVersion = SCORING_VERSION; s.scoringHash = SCORING_HASH; }
           if (s) state.ownedScores[ticker] = { score: s.score, label: s.signal, scoringVersion: SCORING_VERSION, scannedAt: Date.now(), signal: s };
         });
       } catch(e) {
@@ -4390,6 +4398,136 @@ function cancelPendingOrder(posId, btn) {
   }, 'Cancel order');
 }
 
+// ── Portfolio sort (2026-11-02) ──────────────────────────────────────
+// Presentation only. renderPortfolioTab visits every holding once, in the
+// holdings' own order, whatever the mode (it is the sole writer of
+// peakPrice, momentumProtectionActivated and prevRSI); only the finished
+// cards are sorted. Every key has three states: a number, or null for
+// unknown. Unknowns go in their own bucket at the bottom in both directions,
+// never interleaved with known values and never read as 0; a real 0.0% is
+// 0. The final tiebreak is the position id, so equal keys always come out
+// in the same order.
+//   key        what it reads                           unknown when
+//   urgency    hold-window share used (the formula     never (it's computed
+//              that ordered this tab before)           from buyDate)
+//   pnlPct     unrealized P/L %                         priceUnavailable, or the
+//                                                       price is an earlier
+//                                                       session's close
+//   filledAtMs filledAt: the entered fill time, or     filledAt missing; no
+//              the recording instant when none was     fallback to buyDate,
+//              entered (every market order)            buyTime or the id
+//   score      currentSignalForHolding's score          portfolioScoreState
+const PORTFOLIO_SORTS = {
+  TIME_LIMIT:    { label: 'Closest to time limit', key: 'urgency',    dir: -1 },
+  MOST_PROFIT:   { label: 'Most profit',           key: 'pnlPct',     dir: -1 },
+  MOST_LOSS:     { label: 'Most loss',             key: 'pnlPct',     dir: 1 },
+  NEWEST:        { label: 'Newest purchase',       key: 'filledAtMs', dir: -1 },
+  OLDEST:        { label: 'Oldest purchase',       key: 'filledAtMs', dir: 1 },
+  HIGHEST_SCORE: { label: 'Highest current score', key: 'score',      dir: -1 },
+};
+const PORTFOLIO_SORT_DEFAULT = 'TIME_LIMIT';
+const PORTFOLIO_SORT_STORAGE_KEY = 'edge2_portfolioSort';
+const isPortfolioSort = v => typeof v === 'string' && Object.prototype.hasOwnProperty.call(PORTFOLIO_SORTS, v);
+
+// The mode in force: this session's choice, else the stored one, else the
+// default. A stored value that isn't a mode (edited, or from a later build)
+// is ignored, never trusted.
+function currentPortfolioSort() {
+  if (isPortfolioSort(state.portfolioSort)) return state.portfolioSort;
+  let stored = null;
+  try { stored = localStorage.getItem(PORTFOLIO_SORT_STORAGE_KEY); } catch (_) { /* storage blocked: default */ }
+  return isPortfolioSort(stored) ? stored : PORTFOLIO_SORT_DEFAULT;
+}
+
+function setPortfolioSort(mode) {
+  if (!isPortfolioSort(mode)) return;
+  state.portfolioSort = mode;
+  try { localStorage.setItem(PORTFOLIO_SORT_STORAGE_KEY, mode); } catch (_) { /* this session only */ }
+  renderPortfolioTab();
+}
+
+function buildPortfolioSortControl(mode) {
+  const opts = Object.entries(PORTFOLIO_SORTS)
+    .map(([v, s]) => `<option value="${v}"${v === mode ? ' selected' : ''}>${s.label}</option>`).join('');
+  return `<label class="pf-sort"><span class="pf-sort-label">Sort</span> <select class="pf-sort-select" onchange="setPortfolioSort(this.value)">${opts}</select></label>`;
+}
+
+const comparePositionIds = (a, b) => { const x = String(a), y = String(b); return x < y ? -1 : x > y ? 1 : 0; };
+
+// cards: [{ id, keys: { urgency, pnlPct, filledAtMs, score } }]. Known
+// values first, in the mode's direction; then the unknowns; id breaks ties
+// in both.
+function comparePortfolioCards(mode) {
+  const { key, dir } = PORTFOLIO_SORTS[isPortfolioSort(mode) ? mode : PORTFOLIO_SORT_DEFAULT];
+  return (a, b) => {
+    const x = a.keys[key], y = b.keys[key];
+    const ux = x == null, uy = y == null;
+    if (ux !== uy) return ux ? 1 : -1;
+    if (!ux && x !== y) return x < y ? -dir : dir;
+    return comparePositionIds(a.id, b.id);
+  };
+}
+
+// A finite number, or null. Never 0 for "nobody computed it".
+const knownNumber = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+
+// The held ticker's current score as the sort sees it: { score } when it
+// passes every check below, else { score: null, unknown: why }. Reads the
+// resolver's object (the same one the card and the recommendation read);
+// decides only whether the sort may rank it. The recommendation never reads
+// this.
+//
+// WHAT IS CHECKED: WHEN the scan ran (after the most recent open) and WHICH
+// formula ran it (SCORING_VERSION, and SCORING_HASH when recorded).
+//   - not evaluated (a notEvaluatedReason marker) -> its own reason
+//   - no score from the resolver -> no scan has scored it
+//   - scoringVersion absent -> not recorded; present and different -> both
+//     versions named
+//   - a recorded scoringHash that differs -> both hashes named. An entry
+//     stored before 2026-11-02 has no hash: its version is checked, its
+//     hash can't be, and a missing hash is not evidence of another formula.
+//   - scan time unknown, or before the most recent open (core/clock.js
+//     scanSessionAge, the gate's PRIOR_SESSION rule; UNJUDGED is unknown
+//     here and passes in the gate, deliberately -- see that comment)
+// WHAT IS NOT CHECKED: which daily bar the score was computed on. A scan
+// taken after the open can still have scored a ticker on yesterday's
+// dailyBar (no trade on the feed yet: the gate's STALE_DAILY_BAR), and the
+// owned-ticker refresh in runScreener stamps no dailyBarAsOf at all, so
+// that can't be checked for those signals. "Highest current score" means
+// "scored after the open by the current formula", not "scored on today's
+// price". (phase-10 spec appendix: Open, the owned-ticker refresh.)
+function portfolioScoreState(sig) {
+  if (sig?.notEvaluatedReason) return { score: null, unknown: `not evaluated (${sig.notEvaluatedReason})` };
+  if (!sig || sig.score == null) return { score: null, unknown: 'no scan has scored it' };
+  if (sig.scoringVersion == null) return { score: null, unknown: 'scoring version not recorded' };
+  if (sig.scoringVersion !== SCORING_VERSION) return { score: null, unknown: `scored by scoring v${sig.scoringVersion}, current is v${SCORING_VERSION}` };
+  if (sig.scoringHash != null && sig.scoringHash !== SCORING_HASH) return { score: null, unknown: `scored by formula ${String(sig.scoringHash).slice(0, 12)}, current is ${SCORING_HASH.slice(0, 12)}` };
+  const age = scanSessionAge(sig.scannedAt);
+  if (age.state === 'UNJUDGED') return { score: null, unknown: 'scan time not recorded' };
+  if (age.state === 'PRIOR_SESSION') return { score: null, unknown: `scanned before the ${age.openDate} open` }; // the card's label already shows when
+  const score = knownNumber(sig.score);
+  return score == null ? { score: null, unknown: 'no scan has scored it' } : { score, unknown: null };
+}
+
+// How old the card's "Now" price is: DISPLAY STATE ONLY. Not
+// priceUnavailable, and must never be wired into it, into exit dispatch, or
+// into Mark as Sold's pre-fill: whether a stale dailyBar should block exit
+// advice is a separate decision (raised 2026-11-02, not taken). The price
+// comes from the snapshot's dailyBar (getLivePrice), which Alpaca serves as
+// "the most recent daily bar": with no trade on the feed yet today it is
+// yesterday's close. Same rule as the gate's STALE_DAILY_BAR
+// (core/clock.js dailyBarSessionAge), asked of this moment. ->
+//   { state: 'CURRENT' } | { state: 'EARLIER_SESSION_CLOSE', asOf } |
+//   { state: 'UNJUDGED' } (no dailyBar price, or its date unknown)
+function displayQuoteAge(snap, nowMs) {
+  // No dated dailyBar: not judged. (scanFreshness throws on a dailyBar
+  // without t; the render must never fail on a quote it only annotates.)
+  if (!snap?.dailyBar?.c || typeof snap.dailyBar.t !== 'string') return { state: 'UNJUDGED' };
+  const age = dailyBarSessionAge(scanFreshness(snap, nowMs));
+  if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };
+  return { state: age.state }; // CURRENT or UNJUDGED
+}
+
 async function renderPortfolioTab() {
   const container = document.getElementById('tab-content');
   updateBudgetBar();
@@ -4419,11 +4557,13 @@ async function renderPortfolioTab() {
 
   const weekendBanner = buildWeekendBanner();
   const engineFilter = state.portfolioEngineFilter || 'ALL';
+  const sortMode = currentPortfolioSort();
   container.innerHTML = `<div class="tab-header">
     <h1 class="tab-title">PORTFOLIO</h1>
     <button class="btn btn-sm btn-ghost" onclick="renderPortfolioTab()">↻</button>
   </div>
   ${buildEngineFilterControl('portfolioEngineFilter', holdings)}
+  ${buildPortfolioSortControl(sortMode)}
   ${weekendBanner}
   ${pendingHtml}
   <div id="pf-list"><div class="empty-state"><span class="spinner"></span></div></div>
@@ -4480,7 +4620,7 @@ async function renderPortfolioTab() {
   // asset-status distinction as the modal (a fetch that found nothing vs.
   // a symbol Alpaca has independently marked inactive/untradable while
   // still sitting in the portfolio). Batched here, once per ticker,
-  // rather than inside sortedPortfolio.forEach below — that loop is a
+  // rather than inside holdings.forEach below — that loop is a
   // plain synchronous forEach and can't await per card.
   // Held-position listing check (phase-10 step 1f, 2026-10-22), for EVERY
   // holding, from the one cached asset list: TWO was held for six weeks
@@ -4521,11 +4661,20 @@ async function renderPortfolioTab() {
   let totalCost = 0, totalValue = 0; // priced positions only -- see the summary block
   let summaryPositionCount = 0;
   const summaryUnpricedTickers = [];
-  let html = '';
+  const summaryEarlierCloseTickers = []; // priced, but at an earlier session's close (displayQuoteAge)
+  const cards = []; // { id, keys, html } -- sorted after the loop, never before it
+  const nowMs = Date.now(); // one instant for every card's quote age
 
-  // Sort by urgency: how much of the position's intended hold duration has
-  // elapsed. Ratio >= 1.0 (at/past max duration) naturally sorts to the top
-  // since it's just the largest values in a descending sort.
+  // "Closest to time limit" (the default sort): how much of the position's
+  // intended hold duration has elapsed. Ratio >= 1.0 (at/past max duration)
+  // naturally sorts to the top since it's just the largest values in a
+  // descending sort.
+  // KNOWN DEFECT (2026-11-02, gets its own change): EDGE's ratio is whole
+  // closes over the window (0, 1/3, 2/3, 1) while Warrior's is the time of
+  // day, continuous. On day 0 every EDGE position is 0 and every Warrior
+  // position is the same nonzero number, so Warrior sorts above EDGE all day
+  // regardless of actual urgency. The sort control kept the formula as it
+  // was and added only the id tiebreak.
   // One window table (MAX_HOLD_DAYS), counted in market closes via holdSpan
   // -- the same clock the Sold tab and report use (2026-10-09).
   const maxHoldDays = MAX_HOLD_DAYS;
@@ -4546,9 +4695,11 @@ async function renderPortfolioTab() {
     const daysHeld = holdSpan(p, ptDateStr(getPT())).closes;
     return daysHeld / (maxHoldDays[p.duration] || 1);
   };
-  const sortedPortfolio = [...holdings].sort((a, b) => portfolioUrgencyRatio(b) - portfolioUrgencyRatio(a));
 
-  sortedPortfolio.forEach(p => {
+  // Every holding, once, in the holdings' own order -- never the display
+  // order, so the writes below (prevRSI, peakPrice, momentum protection,
+  // backgroundSavePosition) can't depend on the sort mode.
+  holdings.forEach(p => {
     // Filter check happens here, up front -- everything below (peakPrice
     // tracking, exit dispatch, Supabase writes) still runs for a filtered-
     // out position, same as before this control existed. Only the summary
@@ -4595,6 +4746,13 @@ async function renderPortfolioTab() {
     const listing = heldListing ? heldListing[p.ticker] : null;
     const notTradingNow = !!listing && listing !== 'listed';
     const priceUnavailable = priceFetchFailed || !getLivePrice(snap) || notTradingNow;
+    // Display state only -- see displayQuoteAge. NOT priceUnavailable: it
+    // gates nothing below except the P/L's marker and its sort key.
+    const quoteAge = displayQuoteAge(snap, nowMs);
+    const showsEarlierSessionClose = !priceUnavailable && quoteAge.state === 'EARLIER_SESSION_CLOSE';
+    const earlierCloseTag = showsEarlierSessionClose
+      ? `<span class="pf-earlier-close-tag" title="No trade on the feed yet today: this is the ${quoteAge.asOf} close">${quoteAge.asOf} close</span>`
+      : '';
     const rsi = closes.length >= 15 ? calcRSI(closes) : p.rsiAtBuy;
     const trimmedAtr = bars.length >= 15 ? calcTrimmedATR(bars) : 0;
 
@@ -4625,7 +4783,10 @@ async function renderPortfolioTab() {
     const listingBanner = notTradingNow
       ? `<div class="pf-stale-banner">⚠ ${listingWarningText(p.ticker, listing)}</div>`
       : '';
-    const intradayLineHtml = renderIntradayLineCard(intradayPanel);
+    // Its "Up/Down X% today" is measured from the buy price at currentPrice:
+    // the same P/L, so the same marker, passed in (never spliced into its
+    // markup, where a change to the renderer could drop it silently).
+    const intradayLineHtml = renderIntradayLineCard(intradayPanel, earlierCloseTag);
 
     // Snapshot the prior render's RSI before overwriting — calcPeakRiskScore
     // needs this to detect "declining from peak" (RSI was >70, now lower).
@@ -4705,6 +4866,7 @@ async function renderPortfolioTab() {
       } else {
         totalCost  += cost;
         totalValue += value;
+        if (showsEarlierSessionClose) summaryEarlierCloseTickers.push(p.ticker);
       }
     }
 
@@ -4797,24 +4959,27 @@ async function renderPortfolioTab() {
     const scoreBuyLabel = scoreLabel(p.scoreAtBuy, p.codeVersion?.scoring ?? 1) || '—';
     const scoreBuyCls   = scoreBuyLabel === 'STRONG BUY' ? 'pf-score-green' : 'pf-score-yellow';
 
-    // Score now — state.ownedScores is snapshotted every screener run for owned
-    // tickers specifically (see runScreener), even when they no longer clear the
-    // display threshold and so don't appear in state.signals. Fall back to
-    // state.signals for the rare case ownedScores hasn't been populated yet
-    // (e.g. a position added before this cache existed), else show a placeholder.
+    // Score now: currentSignalForHolding, the one resolver (2026-10-28) --
+    // the SAME object the recommendation above reads, so the score on the
+    // card is the score the verdict used. It's the latest scan's score for
+    // this ticker (ownedScores, refreshed for every held ticker on every
+    // scan; state.signals only for a holding no scan has refreshed yet),
+    // labelled with when that scan ran.
     //
     // Known limitation: this can disagree with the Stock Detail Modal, which
     // recomputes a fresh score from live bars when opened (see openStockModal)
-    // rather than reading this same cache. Making this card do a live fetch
-    // per position on every render would be a much larger change, so instead
-    // the "(last scan)" label makes the cache explicit rather than silently
-    // showing a number that might not match what the modal shows right now.
-    // The SAME object the recommendation below reads (currentSignalForHolding),
-    // so the score on the card is the score the verdict used.
+    // rather than reading this same cache. The scan label makes that explicit.
+    // The label carries the DATE whenever the scan wasn't today (2026-11-02):
+    // a time alone made Friday's score read as fresh on Monday. A score the
+    // sort won't rank (portfolioScoreState) says why, on the card.
     const nowSig = currentSignalForHolding(p.ticker);
-    const nowAt = nowSig?.scannedAt ? new Date(nowSig.scannedAt).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false }) : null;
+    const scoreState = portfolioScoreState(nowSig);
+    const nowScan = nowSig?.scannedAt != null ? ptDateTimeOf(nowSig.scannedAt) : null;
+    const nowAt = nowScan ? (nowScan.date === ptDateStr(getPT()) ? nowScan.hhmm : `${nowScan.date} ${nowScan.hhmm}`) : null;
+    const scoreNotCurrent = scoreState.score == null && nowSig?.score != null
+      ? ` <span class="pf-sort-unknown">not current: ${scoreState.unknown}</span>` : '';
     const scoreNowDisplay = nowSig && nowSig.score != null
-      ? `${nowSig.score} <span class="pf-score-label ${scoreLabel(nowSig.score) === 'STRONG BUY' ? 'pf-score-green' : 'pf-score-yellow'}">${nowSig.signal}</span> <span class="pf-score-stale">(scan${nowAt ? ' ' + nowAt : ''})</span>`
+      ? `${nowSig.score} <span class="pf-score-label ${scoreLabel(nowSig.score) === 'STRONG BUY' ? 'pf-score-green' : 'pf-score-yellow'}">${nowSig.signal}</span> <span class="pf-score-stale">(scan${nowAt ? ' ' + nowAt : ''})</span>${scoreNotCurrent}`
       : nowSig?.notEvaluatedReason
         ? `<span class="pf-score-na">— not evaluated (${nowSig.notEvaluatedReason})</span>`
         : `<span class="pf-score-na">—</span>`;
@@ -4858,7 +5023,27 @@ async function renderPortfolioTab() {
       ? `<div class="pf-quick-read">${firstAiPair.label}: ${firstAiPair.pct}% likely</div>`
       : '';
 
+    // Sort keys, three states each (see PORTFOLIO_SORTS). P/L is unknown
+    // when the price isn't live or is an earlier session's close: the same
+    // condition that puts the marker on the P/L above.
+    const keys = {
+      urgency: knownNumber(portfolioUrgencyRatio(p)),
+      pnlPct: (priceUnavailable || showsEarlierSessionClose) ? null : knownNumber(pnlPct),
+      filledAtMs: p.filledAt ? knownNumber(Date.parse(p.filledAt)) : null,
+      score: scoreState.score,
+    };
+    const unknownWhy = {
+      urgency: 'hold window unknown',
+      pnlPct: priceUnavailable ? 'price unavailable' : `price is the ${quoteAge.asOf} close`,
+      filledAtMs: 'fill time not recorded',
+      score: scoreState.unknown,
+    };
+    const sortKey = PORTFOLIO_SORTS[sortMode].key;
+    const unrankedNote = keys[sortKey] == null
+      ? `<div class="pf-sort-unranked">Not ranked by “${PORTFOLIO_SORTS[sortMode].label}”: ${unknownWhy[sortKey]}</div>` : '';
+
     const cardHtml = `<div class="portfolio-card">
+      ${unrankedNote}
       ${listingBanner}
       ${portBanner}
       ${fridayFlag}
@@ -4871,7 +5056,7 @@ async function renderPortfolioTab() {
           ${priceUnavailable
             ? `<div class="pf-pnl-dollar pf-now-stale">—</div><div class="pf-pnl-pct pf-now-stale">price unavailable</div>`
             : `<div class="pf-pnl-dollar ${pnlCls}">${pnlDollar>=0?'+':''}$${pnlDollar.toFixed(2)}</div>
-          <div class="pf-pnl-pct ${pnlCls}">${pnlDollar>=0?'▲':'▼'}${Math.abs(pnlPct).toFixed(1)}%</div>`}
+          <div class="pf-pnl-pct ${pnlCls}">${pnlDollar>=0?'▲':'▼'}${Math.abs(pnlPct).toFixed(1)}%</div>${earlierCloseTag ? `<div class="pf-pnl-pct">${earlierCloseTag}</div>` : ''}`}
         </div>
       </div>
       ${pfAHHtml}
@@ -4881,7 +5066,7 @@ async function renderPortfolioTab() {
           <div class="pf-price-val pf-muted">$${p.buyPrice.toFixed(2)}</div>
         </div>
         <div class="pf-price-cell">
-          <div class="pf-price-label">Now${priceUnavailable ? ` <span class="pf-stale-tag">(${priceFetchFailed ? 'stale' : 'unavailable'})</span>` : ''}</div>
+          <div class="pf-price-label">Now${priceUnavailable ? ` <span class="pf-stale-tag">(${priceFetchFailed ? 'stale' : 'unavailable'})</span>` : earlierCloseTag ? ` ${earlierCloseTag}` : ''}</div>
           <div class="pf-price-val ${nowCls}">${priceUnavailable ? 'Price unavailable' : `$${currentPrice.toFixed(2)}`}</div>
         </div>
         <div class="pf-price-divider"></div>
@@ -4921,7 +5106,20 @@ async function renderPortfolioTab() {
         <button class="btn btn-ghost" onclick="openPositionSnapshotModal('${p.ticker}')">View signal</button>
       </div>
     </div>`;
-    if (matchesEngineFilter) html += cardHtml;
+    if (matchesEngineFilter) cards.push({ id: p.id, keys, html: cardHtml });
+  });
+
+  // Sorted only now, after every holding was visited: presentation only.
+  // The unknowns sit below a divider, never among the ranked cards.
+  cards.sort(comparePortfolioCards(sortMode));
+  const sortKey = PORTFOLIO_SORTS[sortMode].key;
+  const unrankedCount = cards.filter(c => c.keys[sortKey] == null).length;
+  let html = '';
+  cards.forEach((c, i) => {
+    if (c.keys[sortKey] == null && (i === 0 || cards[i - 1].keys[sortKey] != null)) {
+      html += `<div class="pf-unranked-divider">Not ranked (${unrankedCount}) — value unknown</div>`;
+    }
+    html += c.html;
   });
 
   // Three states, never a number nobody computed (instance twelve):
@@ -4936,8 +5134,14 @@ async function renderPortfolioTab() {
   const noneSummaryPriced = pricedCount === 0;
   const partialSummary = pricedCount > 0 && summaryUnpricedTickers.length > 0;
   const partialTag = partialSummary ? ` <span class="pf-summary-partial">(${pricedCount} of ${summaryPositionCount} positions priced)</span>` : '';
+  // Alphabetical, so the note never depends on the order positions were visited.
   const unpricedNote = summaryUnpricedTickers.length
-    ? `<div class="pf-summary-note">${noneSummaryPriced ? 'No position has a live price' : `${summaryUnpricedTickers.length} position${summaryUnpricedTickers.length === 1 ? '' : 's'} excluded`} — price unavailable (${summaryUnpricedTickers.join(', ')}). ${noneSummaryPriced ? 'Totals are not shown rather than estimated from cost.' : 'Totals cover the priced positions only.'}</div>`
+    ? `<div class="pf-summary-note">${noneSummaryPriced ? 'No position has a live price' : `${summaryUnpricedTickers.length} position${summaryUnpricedTickers.length === 1 ? '' : 's'} excluded`} — price unavailable (${[...summaryUnpricedTickers].sort().join(', ')}). ${noneSummaryPriced ? 'Totals are not shown rather than estimated from cost.' : 'Totals cover the priced positions only.'}</div>`
+    : '';
+  // The totals still include these (whether they should is the exit-side
+  // question, raised separately); the note marks the figure that contains them.
+  const earlierCloseNote = summaryEarlierCloseTickers.length
+    ? `<div class="pf-summary-note">Includes ${summaryEarlierCloseTickers.length} position${summaryEarlierCloseTickers.length === 1 ? '' : 's'} priced at an earlier session's close, no trade on the feed yet today (${[...summaryEarlierCloseTickers].sort().join(', ')}).</div>`
     : '';
   // Realized: the same exclusion computeTradeMetrics applies (db/026) -- a
   // trade whose sell price was fabricated has an unknown outcome, not a $0
@@ -4950,6 +5154,7 @@ async function renderPortfolioTab() {
     <div class="pf-summary-row"><span>Total Value${partialTag}</span><span class="mono">${noneSummaryPriced ? '<span class="pf-now-stale">unavailable</span>' : `$${totalValue.toFixed(2)}`}</span></div>
     <div class="pf-summary-row"><span>Unrealized P&L${partialTag}</span><span class="mono ${noneSummaryPriced ? 'pf-now-stale' : totalPnL>=0?'pos':'neg'}">${noneSummaryPriced ? 'unavailable' : `${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)} (${totalPnLPct.toFixed(1)}%)`}</span></div>
     ${unpricedNote}
+    ${earlierCloseNote}
     <div class="pf-summary-row"><span>All-Time Realized P&L${realized.excluded ? ` <span class="pf-summary-partial">(${realized.count} of ${realized.count + realized.excluded} trades)</span>` : ''}</span><span class="mono ${allTimePnL>=0?'pos':'neg'}">${allTimePnL>=0?'+':''}$${allTimePnL.toFixed(2)}</span></div>
     ${realized.excluded ? `<div class="pf-summary-note">${realized.excluded} sold trade${realized.excluded === 1 ? '' : 's'} excluded — sell price unverified, outcome unknown (not $0).</div>` : ''}
   </div>`;
@@ -5041,12 +5246,13 @@ const DURATION_WINDOW_LABEL = { DAY: 'exit-today', '3-DAY': '2–3 market-day', 
 //   buy-time snapshots — renderPortfolioTab already computes fresh
 //   currentPrice/rsi every render and must attach them before calling,
 //   e.g. calcUnifiedRecommendation({...p, currentPrice, rsi}, sig, ctx)).
-// currentSignal: the live state.signals entry for this ticker if still in
-//   the last scan (full fields: score/signal/rsi/volRatio/macroCondition/
-//   category/catalystSetup/maPct), or the reduced state.ownedScores entry
-//   (score/label only) if it dropped out, or null/undefined if untracked.
-//   Any factor needing a field currentSignal doesn't have is skipped
-//   gracefully rather than throwing — see individual checks below.
+// currentSignal: currentSignalForHolding(ticker), the one resolver
+//   (2026-10-28): the latest scan's full signal for this ticker; a
+//   score-only object flagged scoreOnly (an entry stored before 2026-10-28,
+//   whose component factors are reported not evaluated); a
+//   notEvaluatedReason marker (another formula's score); or null if no scan
+//   has scored it. Any factor needing a field currentSignal doesn't have is
+//   skipped gracefully rather than throwing — see individual checks below.
 // macroContext: state.macroContext ({condition, changes, ...}) or null.
 //
 // Returns { label, composite, factors, topFactors, hardFloor, mixed }.
@@ -5898,7 +6104,11 @@ function renderIntradayPanelModal(panel) {
 // for why), never silently omitted even in the failure/no-data states
 // (§7 review: "a card that silently omits the line when data is missing is
 // the same quiet absence we keep designing against").
-function renderIntradayLineCard(panel) {
+// priceTag (2026-11-02): the qualifier on the price the percentage is
+// computed from (the portfolio card's earlier-session-close tag). Rendered on
+// every line that shows a percentage, so the number never appears without it.
+function renderIntradayLineCard(panel, priceTag = '') {
+  const tag = priceTag ? ` ${priceTag}` : '';
   if (panel.state === 'FAILED') {
     return `<div class="pf-intraday pf-intraday-failed">Today's price history unavailable — current price above is still live</div>`;
   }
@@ -5911,7 +6121,7 @@ function renderIntradayLineCard(panel) {
   const up = panel.nowPct >= 0;
   if (up) {
     const highPart = panel.todayHigh ? `, high of ${intradayFmtPct(panel.todayHigh.pct)} at ${intradayFmtTime(panel.todayHigh.time)}` : '';
-    return `<div class="pf-intraday">Up ${panel.nowPct.toFixed(1)}% today${highPart}</div>`;
+    return `<div class="pf-intraday">Up ${panel.nowPct.toFixed(1)}% today${highPart}${tag}</div>`;
   }
   // The line, not the high, on the down side of this one-line card —
   // same reasoning and wording as the modal's floorClause (§0.3.1/§4,
@@ -5920,7 +6130,7 @@ function renderIntradayLineCard(panel) {
   const floorPart = panel.maxLossPct != null
     ? ` — ${Math.abs(panel.nowPct + panel.maxLossPct).toFixed(1)}pp ${panel.maxLossReached ? 'past' : 'above'} your -${panel.maxLossPct}% floor`
     : '';
-  return `<div class="pf-intraday">Down ${Math.abs(panel.nowPct).toFixed(1)}% today${floorPart}</div>`;
+  return `<div class="pf-intraday">Down ${Math.abs(panel.nowPct).toFixed(1)}% today${floorPart}${tag}</div>`;
 }
 
 // ── 17. MARK AS SOLD ──────────────────────────────────────────────

@@ -37,7 +37,10 @@ run('the logged data: 32 stale signals, 9 of them SHOWN (pinned backup de95a93)'
 });
 
 run('entryGateForSignal: a history older than one trading day is not buyable, and says why', () => {
-  const g = { Date, Math, console, state: { settings: {} }, classifySession: () => 'REGULAR', getPT: () => new Date('2026-10-21T17:00:00Z'), ptDateStr: () => '2026-10-21' };
+  // The two freshness questions (core/clock.js) answer "unknown" here: this
+  // test is STALE_BARS alone; tests/prior-session-daily-bar.test.js runs them for real.
+  const g = { Date, Math, console, state: { settings: {} }, classifySession: () => 'REGULAR', getPT: () => new Date('2026-10-21T17:00:00Z'), ptDateStr: () => '2026-10-21',
+    scanSessionAge: () => ({ state: 'UNJUDGED' }), dailyBarSessionAge: () => ({ state: 'UNJUDGED' }) };
   vm.createContext(g);
   vm.runInContext(readSource('core/entry-gate.js') + '\n;globalThis.__eg = entryGateForSignal;', g);
   const stale = g.__eg({ barsAsOf: '2026-09-15', barsAgeTradingDays: 26 });

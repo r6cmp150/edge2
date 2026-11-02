@@ -404,3 +404,56 @@ function scanFreshness(snap, scanMs) {
   const d = barsFreshness(snap?.dailyBar ? [snap.dailyBar] : [], date);
   return { scannedAt: scanMs, scanSession: classifySession(date, hhmm), dailyBarAsOf: d.barsAsOf, dailyBarAgeTradingDays: d.barsAgeTradingDays };
 }
+
+// The two freshness rules core/entry-gate.js gates on (PRIOR_SESSION,
+// STALE_DAILY_BAR), so the portfolio card asks exactly what the gate asks
+// (2026-11-02). One rule, two readers.
+//
+// THREE NAMED STATES, every one a non-null object: UNJUDGED, CURRENT, and
+// the stale state. Readers compare .state; none can tell two states apart by
+// truthiness. (The first version returned null / false / an object, so
+// `!result` was true for both "unknown" and "not stale", and the gate had to
+// write `!== true` to defend against its own helper.)
+
+// Was a scan taken before the most recent regular-session open? Pre-market
+// the most recent open is the previous trading day's, so last evening's scan
+// stays current until 06:30. ->
+//   { state: 'UNJUDGED' }   scannedAt unknown
+//   { state: 'CURRENT' }    taken at or after the most recent open
+//   { state: 'PRIOR_SESSION', scan: {date, hhmm}, openDate }
+//
+// UNJUDGED MEANS DIFFERENT THINGS TO ITS TWO READERS, DELIBERATELY. Do not
+// "make them consistent":
+//   - core/entry-gate.js entryGatePriorSession: UNJUDGED passes. The gate
+//     says "not buyable" only on evidence; a signal stamped before
+//     scannedAt existed is not judged stale.
+//   - app.js portfolioScoreState (the portfolio sort): UNJUDGED is unknown,
+//     and the score is not ranked. Ranking a score as current needs evidence
+//     that it is.
+// Both are right for their jobs: a gate blocks on evidence of a problem; a
+// ranking claims a fact only on evidence of the fact.
+function scanSessionAge(scannedAt) {
+  if (scannedAt == null) return { state: 'UNJUDGED' };
+  const now = getPT();
+  const nowDate = ptDateStr(now);
+  const nowHHMM = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  const openedToday = classifySession(nowDate, '06:30') === 'REGULAR' && nowHHMM >= '06:30';
+  const openDate = openedToday ? nowDate : previousTradingDay(nowDate);
+  const scan = ptDateTimeOf(scannedAt);
+  if (scan.date > openDate || (scan.date === openDate && scan.hhmm >= '06:30')) return { state: 'CURRENT' };
+  return { state: 'PRIOR_SESSION', scan, openDate };
+}
+
+// Was the snapshot's dailyBar from an earlier session than the one the
+// moment (a scanFreshness() stamp) was in? A dailyBar older than that day,
+// read during or after its session, is yesterday's price presented as
+// today's. ->
+//   { state: 'UNJUDGED' }   the dailyBar's date is unknown
+//   { state: 'CURRENT' }
+//   { state: 'EARLIER_SESSION', asOf }   asOf: the dailyBar's date
+function dailyBarSessionAge(fresh) {
+  const age = fresh?.dailyBarAgeTradingDays;
+  if (age == null) return { state: 'UNJUDGED' };
+  const inOrAfterSession = fresh.scanSession === 'REGULAR' || fresh.scanSession === 'AFTER_HOURS';
+  return age >= 1 && inOrAfterSession ? { state: 'EARLIER_SESSION', asOf: fresh.dailyBarAsOf } : { state: 'CURRENT' };
+}

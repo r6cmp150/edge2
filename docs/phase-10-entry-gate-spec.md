@@ -2807,3 +2807,46 @@ last event (modal close, keyboard close, resume, tab switch). The last 20
 are kept and summarised under Settings → App Info → Layout check. **The
 fix waits for one recorded case.** No sticky nav and no scroll listener
 moving anything.
+
+### Open: "Closest to time limit" compares two scales (2026-11-02)
+
+The portfolio's default order (named "Closest to time limit" when the sort
+control shipped) ranks the share of the hold window used. **EDGE's share is
+quantized to whole market closes** (closes held over the window: 0, 1/3,
+2/3, 1 for a 3-DAY) **while Warrior's is continuous within the day**
+(minutes since midnight PT over 12:30). On day 0 every EDGE position is 0
+and every Warrior position is the same nonzero number, so **Warrior sorts
+above EDGE all day on day 0 regardless of actual urgency**, and every
+Warrior position ties with every other. That is a defect in the default
+order, not in the sort control: the control kept the formula exactly and
+added only the id tiebreak (`comparePortfolioCards`), so equal values now
+come out in one fixed order instead of load order. **Its own change**:
+the fix has to put both engines on one comparable measure (or rank them
+separately), and that is a decision, not a refactor.
+
+### Open, HIGH PRIORITY: `scanFreshness` throws on a dailyBar with no `t` (2026-11-02)
+
+`core/clock.js scanFreshness` passes the snapshot's `dailyBar` to
+`barsFreshness`, which reads `bar.t.slice(0, 10)`. A `dailyBar` without `t`
+throws a TypeError. Both scans call it inside the per-ticker scoring map
+(`app.js runScreener`, `scripts/log-signals-edge.mjs`), so **one malformed
+snapshot ends the whole scan: no signals at all, not one degraded card.**
+Found while building the portfolio sort, whose own reader
+(`displayQuoteAge`) now refuses an undated dailyBar as UNJUDGED; the scan
+path was left for its own change. The fix is the three-state rule: no date
+is unknown (`dailyBarAsOf: null`), never a throw. Not observed in the data
+yet; nothing in the code prevents it.
+
+### Open: the owned-ticker refresh scores without freshness stamps (2026-11-02)
+
+`runScreener`'s step 7b re-scores held tickers the main scan never reached
+(failed the price/volume filter, or outside the selected universe). It
+calls `scoreStock` and stores the result in `ownedScores`, but **does not
+apply `scanFreshness` or `barsFreshness`**, so those signals carry no
+`dailyBarAsOf`, `dailyBarAgeTradingDays`, `scanSession` or `barsAsOf`.
+Consequences: the entry gate's STALE_DAILY_BAR and STALE_BARS can't judge
+them (unknown passes), and a held ticker's score can be computed on
+yesterday's dailyBar and still rank as current in the portfolio's "Highest
+current score" (which checks when the scan ran and which formula ran it,
+not which bar it read; see `portfolioScoreState`). Fix: stamp the refresh
+exactly as the main scan does, one helper for both.

@@ -1163,6 +1163,15 @@ a { color: var(--blue); }
 .pf-score-yellow { color: var(--yellow); }
 .pf-score-na { color: var(--muted); }
 .pf-score-stale { font-size: 10px; font-weight: 400; color: var(--muted); }
+.pf-sort-unknown { font-size: 10px; font-weight: 600; color: var(--yellow); }
+
+/* Portfolio sort (2026-11-02): a price that is an earlier session's close,
+   and the cards a sort can't rank, are marked, never silently placed. */
+.pf-earlier-close-tag { font-size: 10px; font-weight: 600; color: var(--yellow); white-space: nowrap; }
+.pf-sort { display: flex; align-items: center; gap: 8px; margin: 8px 12px 10px; font-size: 12px; color: var(--muted); }
+.pf-sort-select { flex: 1; min-width: 0; background: var(--surface); color: inherit; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 8px; font-size: 13px; }
+.pf-unranked-divider { margin: 14px 12px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--yellow); border-top: 1px dashed var(--border); padding-top: 8px; }
+.pf-sort-unranked { font-size: 11px; color: var(--yellow); margin-bottom: 6px; }
 
 .pf-quick-read {
   font-size: 11px;
