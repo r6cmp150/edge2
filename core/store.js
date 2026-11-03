@@ -320,16 +320,32 @@ async function deletePositionFromSupabase(positionId) {
   if (error) throw error;
 }
 
-// settings has no natural unique key (single-row table, no auth/RLS scoping
-// per the migration's explicit scope) — read-then-write against whatever row
-// currently has the highest id, insert a fresh row only if none exists yet.
+// settings is a single-row table (Roman's row, id 3, since 2026-08-17). The
+// load remembers which row it read; a save updates exactly that row and must
+// get it back.
+//
+// THE APP NEVER CREATES A SETTINGS ROW (2026-11-02). The save used to re-read
+// the newest id and, when that read came back empty, INSERT a fresh row from
+// whatever was in memory -- after an empty load, the defaults. Row-level
+// security answers a read it won't allow with an EMPTY list, not an error, so
+// one flaky or denied read plus any Settings tap would have written the
+// defaults as the newest row, and every later load (ordered by id) would have
+// returned them, shadowing the real row for good. Empty is unknown, not
+// absent: a save that can't confirm the row refuses, changes nothing, and
+// says to reload. A missing row is created deliberately, in SQL.
 // API keys/PIN are intentionally absent from both directions; the caller is
 // responsible for merging those back in from localStorage.
+let settingsRowId = null; // the row the last successful load read; null = none confirmed
+const SETTINGS_NOT_SAVED = 'Setting NOT saved: EDGE2 could not confirm your settings row '
+  + '(a connection or permission problem looks the same as a missing row). Nothing was changed. '
+  + 'Reload the app, then make the change again.';
+
 async function loadSettingsFromSupabase() {
   const { data, error } = await supabaseClient
     .from('settings').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
-  if (!data) return null;
+  if (!data) { settingsRowId = null; return null; }
+  settingsRowId = data.id;
   return {
     budget: data.budget,
     includeUnder2: !!data.include_under2,
@@ -350,14 +366,9 @@ async function saveSettingsToSupabase(settings) {
     disable_macro_overlay: !!settings.disableMacroOverlay,
     updated_at: new Date().toISOString(),
   };
-  const { data: existing, error: selectError } = await supabaseClient
-    .from('settings').select('id').order('id', { ascending: false }).limit(1).maybeSingle();
-  if (selectError) throw selectError;
-  if (existing) {
-    const { error } = await supabaseClient.from('settings').update(row).eq('id', existing.id);
-    if (error) throw error;
-  } else {
-    const { error } = await supabaseClient.from('settings').insert([row]);
-    if (error) throw error;
-  }
+  if (settingsRowId == null) throw new Error(SETTINGS_NOT_SAVED);
+  const { data, error } = await supabaseClient
+    .from('settings').update(row).eq('id', settingsRowId).select('id');
+  if (error) throw error;
+  if (!data || data.length !== 1) throw new Error(SETTINGS_NOT_SAVED);
 }

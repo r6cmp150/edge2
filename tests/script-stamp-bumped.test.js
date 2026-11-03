@@ -36,3 +36,32 @@ run('every local script whose file changed has a new ?v= stamp', () => {
   }
   assert.deepStrictEqual(bad, []);
 });
+
+// 2026-11-02: a new ?v= alone doesn't deliver a file. An open app keeps the
+// old code until a new service worker installs, and that happens only when
+// sw.js changes: CACHE_NAME (= 'edge2-<app.js stamp>', tests/sw-cache-name
+// .test.js). A core/-only change that bumped just its own ?v= would leave an
+// open app on the old code with no update banner (found costing the
+// settings-save carve-out; the b2eb9d8 miss in a new place). So any changed
+// local script also requires a new CACHE_NAME.
+const cacheName = sw => (sw.match(/const CACHE_NAME = '([^']+)'/) || [])[1];
+run('every changed local script also changes sw.js CACHE_NAME (that is what installs it)', () => {
+  let shallow;
+  try { shallow = git('rev-parse --is-shallow-repository') === 'true'; } catch (_) { console.log('  (not a git checkout; skipped)'); return; }
+  if (shallow) { console.log('  (shallow clone: history unavailable; skipped)'); return; }
+  const now = stamps(readSource('index.html'));
+  const head = stamps(git('show HEAD:index.html'));
+  const nameNow = cacheName(readSource('sw.js')), nameHead = cacheName(git('show HEAD:sw.js'));
+  assert.ok(nameNow && nameHead, 'sw.js declares CACHE_NAME');
+  const bad = [];
+  const changedHere = Object.keys(now).filter(f => now[f] !== head[f] || !ok(`diff --quiet HEAD -- ${f}`));
+  if (changedHere.length && nameNow === nameHead) bad.push(`working tree changes ${changedHere.join(', ')} but CACHE_NAME is still ${nameNow}`);
+  const cacheBumped = git(`log -1 --format=%H -G"const CACHE_NAME = " -- sw.js`);
+  for (const file of Object.keys(now)) {
+    if (changedHere.includes(file)) continue;
+    const changed = git(`log -1 --format=%H -- ${file}`);
+    if (!changed) continue;
+    if (!cacheBumped || !ok(`merge-base --is-ancestor ${changed} ${cacheBumped}`)) bad.push(`${file}: changed in ${changed.slice(0, 7)} after CACHE_NAME last changed (${(cacheBumped || 'never').slice(0, 7)})`);
+  }
+  assert.deepStrictEqual(bad, []);
+});
