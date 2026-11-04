@@ -22,7 +22,7 @@ run('a scan writes its snapshots and deletes nothing', async () => {
   });
   const ctx = { console, Date, JSON, Math, supabaseClient: { from: table } };
   vm.createContext(ctx);
-  vm.runInContext(grab('writeRatingSnapshots') + '\n;globalThis.__w = writeRatingSnapshots;', ctx);
+  vm.runInContext(app.match(/^const RATING_SNAPSHOT_MIN_SCORE = \d+;$/m)[0] + '\n' + grab('writeRatingSnapshots') + '\n;globalThis.__w = writeRatingSnapshots;', ctx);
   await ctx.__w([{ ticker: 'A', score: 80, signal: 'SOFT BUY' }, { ticker: 'B', score: 40 }]);
   assert.deepStrictEqual(calls, [['insert', 'rating_snapshots', 1]], 'one insert (score >= 60 only), no delete');
 });
@@ -34,11 +34,13 @@ run('no delete call site on rating_snapshots anywhere in the app; the archive do
   assert.ok(!/older than 90 days/.test(code.replace(/\/\/.*$/gm, '')), 'no 90-day purge offer or copy left in executable code');
 });
 
-run('the daily backup refuses ANY shrink of rating_snapshots (was: only > 20%)', () => {
-  const src = readSource('scripts/backup-tables.mjs');
-  const m = src.match(/  rating_snapshots\(fresh, prior\) \{[\s\S]*?\n  \},/);
-  assert.ok(m, 'rule found');
-  const rule = vm.runInNewContext(`({ ${m[0].trim().replace(/,$/, '')} })`).rating_snapshots;
+run('the daily backup refuses ANY shrink of rating_snapshots (was: only > 20%)', async () => {
+  // CHANGED 2026-11-02, declared: the rules moved to scripts/lib/backup-rules.mjs
+  // (importable without running a backup); the rule is imported, not extracted.
+  const { pathToFileURL } = require('url');
+  const path = require('path');
+  const { TABLE_RULES } = await import(pathToFileURL(path.join(__dirname, '..', 'scripts', 'lib', 'backup-rules.mjs')).href);
+  const rule = TABLE_RULES.rating_snapshots;
   assert.strictEqual(rule(3184, 3184).ok, true, 'unchanged');
   assert.strictEqual(rule(3200, 3184).ok, true, 'grew');
   assert.strictEqual(rule(3183, 3184).ok, false, 'one row lost is a defect');

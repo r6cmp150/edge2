@@ -20,6 +20,7 @@
 // percentages are the size-free comparison.
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -122,9 +123,22 @@ for (const r of blocked) console.log(`  ${r.ticker} ${String(r.buy_date).slice(0
 const sessions = {}; for (const r of fwd) sessions[r.buy_session ?? 'null'] = (sessions[r.buy_session ?? 'null'] || 0) + 1;
 console.log(`Forward buy_session: ${Object.entries(sessions).map(([k, n]) => `${k} ${n}`).join(', ')}`);
 
-const sameDay = r => String(r.buy_date).slice(0, 10) === String(r.sell_date).slice(0, 10);
-block('SAME-DAY (sold on the buy date)', [fwd.filter(sameDay), base.filter(sameDay)]);
-block('HELD OVERNIGHT OR LONGER', [fwd.filter(r => !sameDay(r)), base.filter(r => !sameDay(r))]);
+// Hold buckets use THE hold function (core/clock.js holdSpan: market closes
+// from the fill, or the order date when no fill was recorded, to the sale).
+// Until 2026-11-02 this compared calendar dates, which drops Sunday orders
+// sold Monday (0 closes held) from "same-day"; that figure is still printed,
+// labelled, so the withdrawn 73.3%-vs-79.1% comparison can be traced.
+const clockCtx = { console, Date, Math, Intl, Number, String, Set, Map, Array, Object, JSON, isNaN };
+vm.createContext(clockCtx);
+vm.runInContext(readFileSync(path.join(ROOT, 'core/clock.js'), 'utf8') + '\n;globalThis.__holdSpan = holdSpan;', clockCtx);
+const closesHeld = r => clockCtx.__holdSpan({ filledAt: r.filled_at ?? null, buyDate: String(r.buy_date).slice(0, 10), orderType: r.order_type ?? null }, String(r.sell_date).slice(0, 10)).closes;
+const noHold = [...fwd, ...base].filter(r => closesHeld(r) == null);
+if (noHold.length) console.log(`\nNo hold length computable (left out of the hold blocks): ${noHold.length}`);
+block('SAME-DAY (0 market closes held, holdSpan)', [fwd.filter(r => closesHeld(r) === 0), base.filter(r => closesHeld(r) === 0)]);
+block('1 MARKET CLOSE HELD', [fwd.filter(r => closesHeld(r) === 1), base.filter(r => closesHeld(r) === 1)]);
+block('2+ MARKET CLOSES HELD', [fwd.filter(r => closesHeld(r) >= 2), base.filter(r => closesHeld(r) >= 2)]);
+const calendarSameDate = r => String(r.buy_date).slice(0, 10) === String(r.sell_date).slice(0, 10);
+block('[calendar same-date, NOT the app definition: buy_date = sell_date]', [fwd.filter(calendarSameDate), base.filter(calendarSameDate)]);
 
 console.log('\nRSI AT BUY, forward | baseline');
 for (const [band] of [...RSI_BANDS, ['no RSI']]) {

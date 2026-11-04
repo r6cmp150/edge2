@@ -13,7 +13,7 @@ assert.ok(start >= 0 && fnStart > start, 'cutoff helpers sit just above the sect
 let depth = 0, end = app.indexOf('{', fnStart);
 for (; end < app.length; end++) { if (app[end] === '{') depth++; else if (app[end] === '}' && --depth === 0) break; }
 // eslint-disable-next-line no-eval
-eval(app.slice(start, end + 1) + '\nglobal.__section = buildIndividualSignalPerformanceSection; global.__off = modalComponentsWrittenOff;');
+eval(app.match(/^const legendPts = .*$/m)[0] + '\n' + app.slice(start, end + 1) + '\nglobal.__section = buildIndividualSignalPerformanceSection; global.__off = modalComponentsWrittenOff;');
 
 const trade = (buyDate, relStrengthPts, pnlPct, engineSource = 'EDGE') => ({
   buyDate, engineSource, relStrengthPts, pnlPct, volSpikePts: 20, rsiPts: 15, priceMomentumPts: 0, maPts: 10,

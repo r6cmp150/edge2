@@ -29,6 +29,8 @@
 // per row from first_shown_at (no column). See docs/phase-8-report-spec.md
 // "Time-of-day bucketing" before pooling any results across a session.
 
+import { assertReadable } from './readable.mjs';
+
 export const SPACING_MIN = 30;
 
 // Per engine (2026-10-27). One shared 30 min would quietly halve Warrior's
@@ -73,6 +75,10 @@ export async function scheduledScanGate({ engineSource, getPT, ptDateStr, classi
   const minutesSinceOpen = minutesSinceOpenPT(pt);
   let recentStartedAts = [];
   if (sessionClass === 'REGULAR') {
+    // Positive control (2026-11-02): scan_runs is never empty, so an empty
+    // read is a denied one, and "no scan today yet" would fire a scan on
+    // every cron. Stop instead (the job goes red, no scan runs).
+    await assertReadable(supabaseUrl, { apikey: anonKey, Authorization: `Bearer ${anonKey}` }, 'scan_runs');
     const res = await fetch(`${supabaseUrl}/rest/v1/scan_runs?engine_source=eq.${engineSource}&scan_date=eq.${dateStr}&select=started_at`, {
       headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
     });

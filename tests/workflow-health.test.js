@@ -57,11 +57,19 @@ run('a job with no run in the window is shown, red', () => {
   assert.ok(c && c.bad && /no run recorded in 8 days/.test(c.text));
 });
 
-run('the six names match the workflow files exactly', () => {
+// CHANGED 2026-11-02, declared: the job-health list covers every SCHEDULED
+// workflow (the ones with a cadence it can judge: "no run recorded in N
+// days"). A workflow without a schedule must be named in NOT_SCHEDULED, so
+// a new scheduled one still can't exist unmonitored and an unscheduled one
+// can't be added silently. The first: Tests (tests.yml), push-triggered.
+const NOT_SCHEDULED = ['Tests'];
+run('the six names match the scheduled workflow files exactly; every other workflow is named', () => {
   const fs = require('fs');
   const dir = path.join(__dirname, '..', '.github', 'workflows');
-  const names = fs.readdirSync(dir).filter(f => f.endsWith('.yml')).map(f => fs.readFileSync(path.join(dir, f), 'utf8').match(/^name: (.+)$/m)[1].trim());
-  assert.deepStrictEqual([...names].sort(), [...global.__names].sort());
+  const wfs = fs.readdirSync(dir).filter(f => f.endsWith('.yml')).map(f => fs.readFileSync(path.join(dir, f), 'utf8'))
+    .map(src => ({ name: src.match(/^name: (.+)$/m)[1].trim(), scheduled: /^\s*schedule:/m.test(src) }));
+  assert.deepStrictEqual(wfs.filter(w => w.scheduled).map(w => w.name).sort(), [...global.__names].sort());
+  assert.deepStrictEqual(wfs.filter(w => !w.scheduled).map(w => w.name).sort(), [...NOT_SCHEDULED].sort(), 'an unscheduled workflow is named here, never silently skipped');
 });
 
 run('wired: App Info row, loaded on render, read failure says unknown', () => {

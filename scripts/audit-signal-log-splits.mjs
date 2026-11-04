@@ -44,6 +44,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
 import { selectByIds } from './lib/select-by-ids.mjs';
+import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -123,6 +124,7 @@ async function main() {
   const client = global.createApiClient('CORE');
   const anonHeaders = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' };
   const selectCols = 'id,symbol,signal_date,reference_price,ret_close,ret_1d,ret_3d,ret_5d';
+  await assertReadable(SUPABASE_URL, anonHeaders, 'signal_log'); // an audit that read nothing has not passed
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/signal_log?select=${selectCols}&or=(ret_close.not.is.null,ret_1d.not.is.null,ret_3d.not.is.null,ret_5d.not.is.null)&order=signal_date.asc`,
     { headers: anonHeaders }
@@ -217,6 +219,7 @@ async function main() {
   if (touchedIds.length) {
     // Chunked, like fill-outcomes: one URL holding every id overflows at ~400.
     const verifyBody = await selectByIds(SUPABASE_URL, 'signal_log', touchedIds, `${selectCols},ret_close_split_in_window,ret_1d_split_in_window,ret_3d_split_in_window,ret_5d_split_in_window`, anonHeaders);
+    assertReReadComplete('audit-signal-log-splits', touchedIds.length, verifyBody.length);
     console.log(`audit-signal-log-splits: re-selected ${verifyBody.length}/${touchedIds.length} touched row(s) via anon key:`);
     for (const row of verifyBody) console.log(`  ${row.id}: ${JSON.stringify(row)}`);
   }

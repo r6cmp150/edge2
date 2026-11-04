@@ -660,9 +660,41 @@ EDGE signals), RSI 45–58 minus the rest:
 | +1 day | +0.58 pts | 9 of 17 |
 | +3 days | +1.23 pts | 11 of 15 |
 
-- **No RSI band predicts the immediate move.** Roman's literal question
+- ~~**No RSI band predicts the immediate move.** Roman's literal question
   ("does it go up right after I buy") has the answer *nothing in §1
-  predicts it*.
+  predicts it*.~~
+
+  **WITHDRAWN 2026-11-02: the generalisation was an absence of data
+  reported as a null result.** The rows it was computed on (`signal_log`,
+  EDGE, signal_date ≤ 10-21: 676 rows, 19 dates) are **68% scanned in the
+  12:00 PT hour**, the last hour before the 13:00 close; 11 of the 19
+  dates are noon-only; 06:00–09:59 PT totals 209 rows on at most 6 dates
+  (`node scripts/audit-signal-log-hour-coverage.mjs --rev d6e277d --asof
+  2026-10-21`; `created_at` is within 0.1 min of `scan_runs.started_at`
+  for all 58 EDGE scans). The logger runs on GitHub's scheduler, which
+  delivers hours late, so its rows sit wherever the queue landed them.
+  - **WITHDRAWN:** "no RSI band predicts the immediate move."
+  - **RETAINED, narrowly, and pinned in this sentence:** at 80f52fb (EDGE, signal_date
+    ≤ 10-21, 664 rows, 18 dates), among signals scanned in the final hour of the
+    session, RSI band did not predict the subsequent move: −0.04 pts at 30 minutes and
+    at the close. Still −0.04 for both at d6e277d (676 rows, 19 dates). The table's
+    later horizons are as of 80f52fb and have moved as outcomes filled in: +3d is
+    +1.23, 11 of 15 dates, there and +1.59, 14 of 18, at d6e277d.
+  - **UNMEASURED, and stated as unmeasured:** the 07:00–09:00 PT window,
+    where Roman actually buys. Not "no effect". Unmeasured.
+  - **The horizons are not independent.** From a noon scan, "+30 min"
+    lands at about 12:30–13:00 PT and the same-day close at 13:00, so the
+    −0.04 / −0.04 above is nearly one measurement reported twice, not two
+    horizons agreeing. The +1 and +3 day figures carry the same skew:
+    every horizon is measured from the scan.
+  - **What this suspends:** "scoring doesn't predict the immediate move"
+    can't justify anything about morning entry selection. Reasoning that
+    leaned on it is suspended, not merely qualified.
+  - **Not exposed:** the entry-timing work (§3.4, the 07:00–07:29
+    window) is computed from `trades_v2` buy times, not logger rows; its
+    stated basis and its three scripts (`audit-recording-lag.cjs`,
+    `audit-buy-times-vs-tape.mjs`, `audit-after-hours-buys.mjs`) never
+    read `signal_log`.
 - **The defensible claim is the floor: don't buy deeply oversold.** RSI
   below 42 trails the day mean by 0.6–0.8 pts at +1d and +3d. The effect
   is 1–3 day drift, not an immediate-move edge.
@@ -900,6 +932,12 @@ volume-spike points were not in the mutated set.
 > 4. **NEOG, bought 2026-08-19 at $12.30 (25 shares, recorded 14:12 PT,
 >    AFTER_HOURS):** a recorded buy with no market support (added
 >    2026-10-27). Same family as question 3, one row instead of seventeen.
+>    **Not a date error (2026-11-02):** $12.30 is outside NEOG's full-day
+>    SIP range on 08-19 and on each of the five trading days before it
+>    (`SIDE=buy scripts/audit-sell-dates-vs-tape.mjs`, the only buy of 405
+>    to fail), so moving the date can't explain it. That strengthens
+>    "the limit price was entered, not the fill": ask whether it filled,
+>    and at what.
 >    NEOG never traded at $12.30 at any time that day; the day's high was
 >    $12.255, 4.5¢ below it. Three explanations were checked and ruled out:
 >    - **not an off-by-one date:** 08-18 ranged 11.49–11.895 and 08-20
@@ -1536,7 +1574,13 @@ days, not quiet ones.
          difference is evidence for step 2. **On same-day trades the
          forward book is slightly worse than the history:** 73.3% win
          against 79.1%, with the same average return (+1.02% against
-         +0.94%). The whole difference is composition: 60 of the 64
+         +0.94%). **[DEFINITION, 2026-11-02:** 79.1% of 86 is CALENDAR
+         same-day (buy_date = sell_date). The app's hold function
+         (holdSpan, 0 closes) puts 107 of the 270 in that bucket at 71.0%:
+         the 21 extra are Sunday orders sold Monday, 8 of them winners.
+         Which definition the forward book's 73.3% used is not recorded, so
+         "slightly worse than the history" is unconfirmed until both are
+         computed one way (`scripts/rederive-hold-length-finding.mjs`).**]** The whole difference is composition: 60 of the 64
          forward trades (94%) resolved the same day, against 86 of 270
          (32%) in the baseline, whose loss is carried by its 184 overnight
          holds (−$1,025.60). The smaller average loss (−2.00% against
@@ -2751,6 +2795,43 @@ redesign, not a step; it needs §5's re-test behind it.
 
 ---
 
+**Two rules for mutation checks, a pair (2026-11-02).**
+- **A mutation the code swallows is not a mutation.** A rewrite that no
+  input can tell apart from the original (db/035's `!x.asOf` for
+  `x.state !== 'EARLIER_SESSION'`) is a refactor; drop it from the set
+  rather than "killing" it with a lint, and test the invariant that makes
+  it equivalent at the producer instead.
+- **A mutant must resemble the code it guards.** `tests/anon-write-paths.test.js`
+  first matched a supabase-js chain only when a `;` came within 200
+  characters, so it never saw the sale insert, whose object literal runs to
+  thousands; the same flaw sat in the UPDATE/DELETE check, which had been
+  accepted because it killed four mutants, all of them short. A mutation
+  set drawn only from easy cases certifies the easy cases. From now on, any
+  guard that parses or enumerates source gets at least one mutant built
+  from the LONGEST and ugliest real instance in the repo, not from a short
+  synthetic one.
+  - **First catch, the same day (2026-11-02):** building
+    `tests/empty-read-sites.test.js`, the 400-character window came back
+    a second time. The longest real chain, the sale insert, turned out to
+    hide a genuine read: `.select('id')` 4,161 characters after
+    `.from('trades_v2')`. When that read comes back empty, the sale is
+    reported written (correct), but `record.supabaseId` is never set, so
+    later id-keyed updates of that sale miss it in silence. The window is
+    now the whole statement.
+
+**Reporting rule: every figure carries its source in its own line
+(2026-11-02).** The source is one of: committed SHA, pin (a backup
+revision), working tree, or live (with the time read). It goes in the
+line that reports the number, not the paragraph around it. A number
+without its tree or pin is unreadable, and twice in one day it cost a
+round trip:
+- the 19-row discrepancy compared a pinned backup against a live table;
+- the carve-out's stamps were printed from the local checkout (mid-sync,
+  before its uncommitted stamps were restacked) and read as the pushed
+  commit 67308c3.
+
+Same error, different tree.
+
 ## Appendix — provenance
 
 **Not quotable under §7.7 (2026-10-21):** the parse and grouping below
@@ -2937,3 +3018,103 @@ yesterday's dailyBar and still rank as current in the portfolio's "Highest
 current score" (which checks when the scan ran and which formula ran it,
 not which bar it read; see `portfolioScoreState`). Fix: stamp the refresh
 exactly as the main scan does, one helper for both.
+### Withdrawn: Monday insurance crons for EDGE (2026-11-02)
+
+~~On Monday 11-02, Warrior delivered only through its two "Monday insurance"
+crons (07:32Z and 08:20Z), which fired about ten hours late (17:22Z,
+18:26Z). EDGE has no insurance crons, and as of 19:10Z no EDGE run existed
+at all, not even a GitHub-created one. That is evidence for giving EDGE
+the same spread insurance crons.~~
+
+**WITHDRAWN the same day, by the day's own evidence.** EDGE's crons did
+land, all in one displaced bunch: 10:35Z fired at 20:28Z (12:28 PT, the
+one real scan: 80 scored, 159 pre-filtered), 11:15Z at 20:46Z and 11:50Z
+at 20:54Z (both correctly no-op'd by the 30-minute spacing rule), 12:25Z
+at 21:48Z (no-op, after the close). Warrior's insurance crons fired about
+ten hours late too: they delivered something because Warrior runs more
+crons, not because spreading them helped. Crons spread across the morning
+land in the same ten-hour-displaced bunch, after the close, exactly as
+EDGE's did. Adding crons would only have let us believe otherwise.
+
+**The conclusion: GitHub's scheduler cannot deliver time-of-day-sensitive
+collection.** The delay moved from landing EDGE runs BEFORE the buy window
+(05:40-07:37 PT the week of 10-26) to AFTER it (12:28 PT on 11-02); both
+miss. No cron arrangement fixes a ten-hour queue. **The 30-minute spacing
+rule behaved correctly** on 11-02 (it suppressed two bunched duplicates and
+let the one real scan through); it is not the defect and is not to be
+"fixed".
+
+### Process note (low priority): test rows in production (2026-11-02)
+
+A hand-inserted verification position (`ZZVERIFY`, `position_id`
+`verify-step6-disposable`, 10 sh @ $5, 2026-09-06) sat in the production
+`portfolio` table for four days, showed as a holding in Roman's app, and
+was deleted with no record, so finding it again in the backups cost an hour
+of tracing. Rule from now on: a test row written to production carries a
+documented marker (a `ZZ`-prefixed ticker plus an id beginning `verify-`)
+and a named cleanup step in the same change, recorded here when it runs.
+Prefer no production rows at all: rolled-back transactions (the db/035 and
+db/037 behaviour runs) leave nothing behind.
+
+### Rules and findings landed ahead of the observe-only build (2026-11-04)
+
+**Rule: text that states a threshold, version or count is GENERATED from
+the value (2026-11-02).** It is never written beside the value, and a test
+fails when the value moves and the text doesn't.
+- **Why:** three false statements sat beside numbers: db/027's sell_time
+  comment, the overlay hint, and the banner's "score 50+" for a cut of 65.
+- **What the sweep found:** both scoring legends were wrong.
+  - Settings said volume 0–30, RSI 0–20, "Total (capped) 100" and labels
+    80/50/20. Scoring v2 is −10..+20, −10..+20, uncapped, 110/65/20.
+  - The report pasted into Claude said RSI <35 = 10 (it's 0 since step 2)
+    and "rewards RSI 50-65" (it's 55–65).
+  - The report's bucket labels put v2 RSI <35 trades under "RSI 65-75".
+    **Did any quoted RSI figure come from those buckets? No (2026-11-03;
+    `node scripts/audit-rsi-figures.mjs`, guard
+    `tests/rsi-figure-provenance.test.js`).** Not a retraction:
+    - §1, §2, §3, §3.5 (the 270 trades): parsed from the report's per-trade
+      history, using each trade's own RSI (see the Appendix), not its buckets.
+      They now recompute from `rsi_at_buy` at 80f52fb: n, win rate and dollars
+      exact, averages within 0.01 (the parse used 2-decimal text).
+    - The forward figures, "63% against 73%" included:
+      `report-forward-test.mjs --rev 0775407`, from `rsi_at_buy`.
+    - §7.2, "−0.04 points at 30 minutes" included: signal_log, each signal's own
+      snapshot RSI, at 80f52fb (664 rows, 18 dates; +3d recomputes as +1.24 against
+      the table's +1.23). The §7.2 withdrawal about the noon-hour rows still stands:
+      the figure is right and what it can support is narrow.
+    - The buckets couldn't have produced them: their edges are 35, 55, 65, 75, and
+      the quoted bands turn on 45 and 58. Pre-v2 their labels were true: "Got 0" held
+      RSI 66.7–72.9 at 80f52fb. The false legend only touches scoring-v2 trades: at
+      0775407 "Got 0" holds 8, 6 of them RSI <35, and no spec figure quotes it.
+    - That bucket still merges the two ranges, labelled as such: read no RSI band
+      from it.
+- **Now:**
+  - the points are computed by calling `scoreComponents` at each band's
+    probe;
+  - the band boundaries are written once, and probed either side by
+    `tests/generated-text.test.js`;
+  - labels come from `scoreThresholds()`;
+  - `RAW_SCORE_MAX` must equal the computed sum;
+  - the detection thresholds (1.3×, 8–15%, RSI 45) are checked against
+    `scoreStock`'s literals, which can't be referenced without moving the
+    hash.
+  - the 60+ snapshot cut, the duration ranges and the workflow-health limit
+    are generated from their constants.
+  - 6 mutants killed, three of them moving the scorer itself.
+
+**The queue tests, and a failure that is UNEXPLAINED (2026-11-03).**
+`tests/queue-pacing.test.js` failed once, at 23:26Z on 11-03, in a full strict run:
+serial, nothing else of ours running. It then passed on every rerun. It was written
+off as "load-sensitive", with no evidence: `scripts/run-tests.mjs` runs files one at a
+time, and 3 runs under 12 busy processes on 8 cores all passed. **The cause is not
+known, and whether there is a defect in real pacing is not known.** The runner had kept
+only the test's name, so the numbers are gone; it now keeps the assertion's message.
+- `queue-pacing`, `concurrency` and `priority-ordering` run on `_lib.virtualClock`, so
+  they are deterministic. They prove the bucket's arithmetic and can't see real timers.
+- `tests/queue-pacing-real-clock.test.js` (slow, about 25 s) is the check on real
+  pacing. Never faster than refill paid for: a hard failure, always. Too slow: a failure
+  unless a probe shows timers ran late, when it says NOT JUDGED with its numbers. If the
+  original failure recurs, this is where its numbers will be. Three runs under those 12
+  busy processes (live, 2026-11-04): 171–172/min, timers p95 58 ms late. Load slowed the
+  timers and not the rate, which counts against "load" as the explanation.
+

@@ -25,9 +25,18 @@
 //      capacity" and "genuinely rate-limited" — not a fixed-size tail
 //      slice, which can straddle that boundary depending on how much
 //      capacity happened to be left over at whatever point the slice starts.
+//
+// VIRTUAL TIME (2026-11-03): these assertions used to measure a rate on the
+// wall clock, in real timers. Loaded machines delay timers, so the measured
+// rate can fall out of its band with nothing wrong, and a test that can fail
+// that way teaches everyone to dismiss the next failure. The module under test
+// now runs on a clock this file owns (_lib.virtualClock), so the rate is a
+// property of the bucket's code and the same on every run.
 'use strict';
 const assert = require('assert');
-const { readSource, run } = require('./_lib');
+const { readSource, run, virtualClock } = require('./_lib');
+const clock = virtualClock();
+const { Date, setTimeout } = clock; // shadow the globals: the eval below sees these
 
 const apiClientSrc = readSource('core/api-client.js');
 
@@ -82,7 +91,7 @@ async function testBucketPacesUnderGenuineExhaustion() {
       tokenTrace.push({ label: 'mid-enqueue', t: Date.now() - t0, tokens: readTokens() });
     }
   }
-  await Promise.all(promises);
+  await clock.runUntil(Promise.all(promises));
   tokenTrace.push({ label: 'end', t: Date.now() - t0, tokens: readTokens() });
 
   console.log('Token trace (start/mid/end) — the burst-exhaustion proof:');
@@ -109,6 +118,15 @@ async function testBucketPacesUnderGenuineExhaustion() {
 
   assert.ok(throttledRatePerMin <= RATE_LIMIT_PER_MIN, `throttled-phase rate ${throttledRatePerMin.toFixed(1)}/min exceeded the hard cap ${RATE_LIMIT_PER_MIN}/min`);
   assert.ok(throttledRatePerMin >= RATE_LIMIT_TARGET_PER_MIN * 0.85 && throttledRatePerMin <= RATE_LIMIT_TARGET_PER_MIN * 1.15, `throttled-phase rate ${throttledRatePerMin.toFixed(1)}/min is not within ~15% of target ${RATE_LIMIT_TARGET_PER_MIN}/min`);
+  return { gaps: dispatchTimes.map((t, i) => t - (dispatchTimes[i - 1] ?? t)), throttleStartIdx };
+}
+
+async function testPacingIsDeterministic() {
+  // The reason for the virtual clock, held: two runs dispatch at identical
+  // intervals, so a failure here can't be load. Real timers never do this.
+  const a = await testBucketPacesUnderGenuineExhaustion();
+  const b = await testBucketPacesUnderGenuineExhaustion();
+  assert.deepStrictEqual(b, a);
 }
 
 async function testUnexhaustedBurstIsNotMistakenForAViolation() {
@@ -124,7 +142,7 @@ async function testUnexhaustedBurstIsNotMistakenForAViolation() {
   const TOTAL = 40;
   const promises = [];
   for (let i = 0; i < TOTAL; i++) promises.push(enqueue(mockRequest(), { engine: 'EDGE', priority: 'foreground' }));
-  await Promise.all(promises);
+  await clock.runUntil(Promise.all(promises));
   const endTokens = readTokens();
   console.log(`\n(Negative case) 40 requests at 200ms latency: _tokens=${endTokens.toFixed(2)} — buffer NOT exhausted, as expected.`);
   assert.ok(endTokens > 150, `expected the buffer to still be nearly full for this small a burst (got ${endTokens.toFixed(2)}) — if this fails, the burst-exhaustion threshold above may need revisiting`);
@@ -132,5 +150,6 @@ async function testUnexhaustedBurstIsNotMistakenForAViolation() {
 
 (async () => {
   await run('queue-pacing: bucket paces correctly once genuinely exhausted', testBucketPacesUnderGenuineExhaustion);
+  await run('queue-pacing: two runs dispatch identically (no dependence on machine load)', testPacingIsDeterministic);
   await run('queue-pacing: small burst correctly does not exhaust the buffer (negative control)', testUnexhaustedBurstIsNotMistakenForAViolation);
 })();

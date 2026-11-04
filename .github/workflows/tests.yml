@@ -1,0 +1,29 @@
+# Tests (2026-11-02). Runs the whole suite through scripts/run-tests.mjs on
+# every push and pull request. That runner decides the result: a file passes
+# only if it exits 0, prints at least one PASS line and no FAIL line. A file
+# that crashes on load, is empty, or runs nothing fails the run (the shell
+# loop it replaces counted those as passes). tests/run-tests-checker.test.js
+# proves the runner can fail.
+#
+# fetch-depth 0: several tests read pinned backups with `git show <commit>:`
+# and the stamp guard reads history. No secrets and no network: the tests
+# use Node built-ins only.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run the suite (strict runner)
+        run: node scripts/run-tests.mjs tests

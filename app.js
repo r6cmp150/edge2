@@ -264,7 +264,69 @@ const GROQ_MODEL = 'openai/gpt-oss-20b';
 // this sum against scoreStock() if any signal's point value ever changes.
 // Does NOT include the Macro Market Overlay adjustment — that's applied
 // after normalization, on the already-0-100 score, not pooled into this max.
-const RAW_SCORE_MAX = 145;
+const RAW_SCORE_MAX = 145; // tests/generated-text.test.js: must equal the sum of the legend's positive maxima
+// THE SCORING LEGEND, GENERATED FROM THE SCORER (2026-11-02). Both legends
+// (Settings and the report pasted into Claude) were typed beside the formula
+// and had drifted from it: Settings said volume 0–30, RSI 0–20, "Total
+// (capped) 100" and labels 80/50/20; the report said RSI <35 = 10. Scoring v2
+// says −10..+20, −10..+20, uncapped, 110/65/20, and RSI <35 = 0. Rule (phase-10
+// spec §7.7): text that states a threshold, version or count is GENERATED from
+// the value. Here the POINTS come from calling scoreComponents at each band's
+// probe input; the band BOUNDARIES are written once, as numbers, and
+// tests/generated-text.test.js probes either side of every one, so a moved
+// boundary fails the suite instead of leaving the text wrong.
+//   edge: the boundary between this band and the next (null on the last)
+const SCORING_LEGEND = [
+  { name: 'Volume vs 10-day avg', field: 'volPts', input: v => ({ volRatio: v }), bands: [
+    { text: 'under 0.5×', probe: 0.3, edge: 0.5 }, { text: '0.5–1×', probe: 0.75, edge: 1 }, { text: '1–2×', probe: 1.5, edge: 2 },
+    { text: '2–3×', probe: 2.5, edge: 3 }, { text: '3×+', probe: 4, edge: null }] },
+  { name: 'Price momentum (today)', field: 'momPts', input: v => ({ todayChange: v }), bands: [
+    { text: 'under 2%', probe: 1, edge: 2 }, { text: '2–4%', probe: 3, edge: 4 }, { text: '4%+', probe: 5, edge: null }] },
+  { name: 'RSI (14-day)', field: 'rsiPts', input: v => ({ rsi: v }), bands: [
+    { text: 'under 35', probe: 30, edge: 35 }, { text: '35–55', probe: 45, edge: 55 }, { text: '55–65', probe: 60, edge: 65 },
+    { text: '65–75', probe: 70, edge: 75 }, { text: 'over 75', probe: 80, edge: null }] },
+  { name: 'Price vs 20-day MA', field: 'maPts', input: v => ({ price: v, ma20: 1 }), bands: [
+    { text: 'at or below', probe: 0.9, edge: 1 }, { text: 'above', probe: 1.1, edge: null }] },
+  { name: 'Relative strength vs SPY', field: 'relStrengthPts', input: v => ({ rsVsSPY: v }), bands: [
+    { text: '0% or less', probe: -1, edge: 0 }, { text: 'over 0%', probe: 0.5, edge: 1 }, { text: 'over 1%', probe: 1.5, edge: 2 }, { text: 'over 2%', probe: 3, edge: null }] },
+  { name: 'Consecutive up days', field: 'consUpPts', input: v => ({ consUpDays: v }), discrete: true, bands: [
+    { text: '0–1', probe: 1 }, { text: '2', probe: 2 }, { text: '3', probe: 3 }, { text: '4+', probe: 4 }] },
+  { name: 'Volume build', field: 'volBuildPts', input: v => ({ volBuild: v }), discrete: true, bands: [{ text: 'no', probe: false }, { text: 'yes', probe: true }] },
+  { name: 'Mean reversion setup', field: 'meanRevPts', input: v => ({ meanReversion: v }), discrete: true, bands: [{ text: 'no', probe: false }, { text: 'yes', probe: true }] },
+  { name: 'Catalyst setup', field: 'catalystPts', input: v => ({ catalystSetup: v }), discrete: true, bands: [{ text: 'no', probe: false }, { text: 'yes', probe: true }] },
+];
+const LEGEND_NEUTRAL = { volRatio: 0.3, todayChange: 0, rsi: NaN, price: 20, ma20: 30, volBuild: false, meanReversion: false, catalystSetup: false, consUpDays: 0, rsVsSPY: -1 };
+const legendPts = p => (p > 0 ? `+${p}` : p < 0 ? `−${-p}` : '0');
+function scoringLegendRows() {
+  return SCORING_LEGEND.map(c => {
+    const pts = c.bands.map(b => scoreComponents({ ...LEGEND_NEUTRAL, ...c.input(b.probe) })[c.field]);
+    return { name: c.name, bands: c.bands.map((b, i) => ({ text: b.text, pts: pts[i] })), min: Math.min(...pts), max: Math.max(...pts) };
+  });
+}
+// The label lines, from the version's own thresholds.
+function scoreLabelBands(version = SCORING_VERSION) {
+  const t = scoreThresholds(version);
+  return [
+    { label: 'STRONG BUY', text: `${t.strong}+` },
+    { label: 'SOFT BUY', text: `${t.soft}–${t.strong - 1}` },
+    { label: 'WATCH', text: `${t.watch}–${t.soft - 1}` },
+  ];
+}
+function scoringLegendText() {
+  const rows = scoringLegendRows().map(r => `  ${(r.name + ':').padEnd(28)} ${legendPts(r.min)} to ${legendPts(r.max)} pts (${r.bands.map(b => `${b.text} ${legendPts(b.pts)}`).join(', ')})`);
+  rows.push(`  ${'Sub-$10 entry:'.padEnd(28)} RSI over 60 ${legendPts(scoreComponents({ ...LEGEND_NEUTRAL, price: 5, ma20: 6, rsi: 61 }).sub10Pts)}, volume over 2.5× ${legendPts(scoreComponents({ ...LEGEND_NEUTRAL, price: 5, ma20: 6, volRatio: 2.6 }).sub10Pts)} (bonuses neutralised in v2)`);
+  return rows.join('\n');
+}
+// The detection thresholds for the two yes/no components, as the report states
+// them. They're literals inside scoreStock (hashed source, scoring v2), so
+// they can't be referenced from here without moving the hash; instead
+// tests/generated-text.test.js reads them out of scoreStock's source and
+// fails if these disagree.
+const VOL_BUILD_TODAY_MIN = 1.3;
+const MEAN_REV_BELOW_MA_MIN = 8;
+const MEAN_REV_BELOW_MA_MAX = 15;
+const MEAN_REV_RSI_MAX = 45;
+
 // VIX excluded — it's a CBOE index, not an equity, and is not obtainable through
 // Alpaca's /stocks endpoints on any tier. See Macro Market Overlay addendum.
 const MACRO_ETFS = ['SPY', 'XLE', 'XLK', 'XBI', 'XLF', 'XLI', 'XLRE', 'XLY'];
@@ -1656,12 +1718,12 @@ function buildMacroBanner() {
   if (!ctx || !ctx.condition || ctx.condition === 'CHOPPY') return '';
 
   if (BROAD_ELEVATED_CONDITIONS.includes(ctx.condition)) {
-    return `<div class="macro-banner">⚠ <strong>${ctx.condition}</strong> — Only showing high-confidence signals across all sectors (score 50+) due to broad market conditions.</div>`;
+    return `<div class="macro-banner">⚠ <strong>${ctx.condition}</strong> — Only showing high-confidence signals across all sectors (score ${ELEVATED_SCORE_THRESHOLD}+) due to broad market conditions.</div>`;
   }
 
   const sector = SECTOR_WEAKNESS_DISPLAY_NAME[ctx.condition];
   if (sector) {
-    return `<div class="macro-banner">⚠ <strong>${ctx.condition}</strong> — ${sector} sector weak today. Only showing high-confidence ${sector} signals (score 50+). Other sectors unaffected.</div>`;
+    return `<div class="macro-banner">⚠ <strong>${ctx.condition}</strong> — ${sector} sector weak today. Only showing high-confidence ${sector} signals (score ${ELEVATED_SCORE_THRESHOLD}+). Other sectors unaffected.</div>`;
   }
 
   const text = ctx.explanation || MACRO_INTERPRETATIONS[ctx.condition] || '';
@@ -2197,8 +2259,11 @@ async function runScreener() {
 // the GitHub-scheduled logger cannot cover; its 90-day purge would have
 // begun deleting it on 2026-11-11. The table is append-only now, and the
 // daily backup treats any shrink as a defect (scripts/backup-tables.mjs).
+// rating_snapshots holds shown signals scoring at least this (stated in the
+// report's no-history text and in db/039's coverage line from this value).
+const RATING_SNAPSHOT_MIN_SCORE = 60;
 async function writeRatingSnapshots(signals) {
-  const toWrite = (signals || []).filter(s => s.score >= 60);
+  const toWrite = (signals || []).filter(s => s.score >= RATING_SNAPSHOT_MIN_SCORE);
   if (!toWrite.length) return;
   try {
     const capturedAt = new Date().toISOString();
@@ -6874,7 +6939,7 @@ async function renderSoldTab() {
 async function buildRatingSnapshotHistorySection(sold) {
   const noDataMsg = `=== RATING SNAPSHOT HISTORY ===
 
-No snapshot history yet — snapshots are recorded after each screener run for stocks scoring 60+`;
+No snapshot history yet — snapshots are recorded after each screener run for stocks scoring ${RATING_SNAPSHOT_MIN_SCORE}+`;
 
   let data;
   try {
@@ -7609,34 +7674,34 @@ function buildIndividualSignalPerformanceSection(sold) {
   const byPts = (field, points) => withBreakdown.filter(s => s[field] === points);
 
   const volSpikeBlock = `  Volume spike points:
-${bucket(byPts('volSpikePts', 20),  'Got +20 (1-2x vol):')}
-${bucket(byPts('volSpikePts', 15),  'Got +15 (0.5-1x vol):')}
-${bucket(byPts('volSpikePts', 10),  'Got +10 (2-3x vol):')}
-${bucket(byPts('volSpikePts', -10), 'Got −10 (3x+ vol):')}`;
+${bucket(byPts('volSpikePts', 20),  `Got ${legendPts(20)} (1-2x vol):`)}
+${bucket(byPts('volSpikePts', 15),  `Got ${legendPts(15)} (0.5-1x vol):`)}
+${bucket(byPts('volSpikePts', 10),  `Got ${legendPts(10)} (2-3x vol):`)}
+${bucket(byPts('volSpikePts', -10), `Got ${legendPts(-10)} (3x+ vol):`)}`;
 
   const rsiPtsBlock = `  RSI points:
-${bucket(byPts('rsiPts', 20),  'Got +20 (RSI 55-65):')}
-${bucket(byPts('rsiPts', 15),  'Got +15 (RSI 35-55):')}
-${bucket(byPts('rsiPts', 10),  'Got +10 (RSI <35):')}
-${bucket(byPts('rsiPts', 0),   'Got 0 (RSI 65-75):')}
-${bucket(byPts('rsiPts', -10), 'Got −10 (RSI 75+):')}`;
+${bucket(byPts('rsiPts', 20),  `Got ${legendPts(20)} (RSI 55-65):`)}
+${bucket(byPts('rsiPts', 15),  `Got ${legendPts(15)} (RSI 35-55):`)}
+${bucket(byPts('rsiPts', 10),  `Got ${legendPts(10)} (RSI <35, scoring v1 only):`)}
+${bucket(byPts('rsiPts', 0),   `Got ${legendPts(0)} (RSI 65-75; also RSI <35 from scoring v2):`)}
+${bucket(byPts('rsiPts', -10), `Got ${legendPts(-10)} (RSI 75+):`)}`;
 
   const momentumBlock = `  Price momentum points:
-${bucket(byPts('priceMomentumPts', 20), 'Got +20 (up 4%+):')}
-${bucket(byPts('priceMomentumPts', 10), 'Got +10 (up 2-4%):')}
-${bucket(byPts('priceMomentumPts', 0),  'Got 0 (under 2%):')}`;
+${bucket(byPts('priceMomentumPts', 20), `Got ${legendPts(20)} (up 4%+):`)}
+${bucket(byPts('priceMomentumPts', 10), `Got ${legendPts(10)} (up 2-4%):`)}
+${bucket(byPts('priceMomentumPts', 0),  `Got ${legendPts(0)} (under 2%):`)}`;
 
   const maBlock = `  Above 20-day MA:
-${bucket(byPts('maPts', 10), 'Yes (+10 pts):')}
-${bucket(byPts('maPts', 0),  'No (0 pts):')}`;
+${bucket(byPts('maPts', 10), `Yes (${legendPts(10)} pts):`)}
+${bucket(byPts('maPts', 0),  `No (${legendPts(0)} pts):`)}`;
 
   const volBuildBlock = `  Volume build fired:
-${bucket(byPts('volBuildPts', 15), 'Yes (+15 pts):')}
-${bucket(byPts('volBuildPts', 0),  'No (0 pts):')}`;
+${bucket(byPts('volBuildPts', 15), `Yes (${legendPts(15)} pts):`)}
+${bucket(byPts('volBuildPts', 0),  `No (${legendPts(0)} pts):`)}`;
 
   const meanReversionBlock = `  Mean reversion fired:
-${bucket(byPts('meanReversionPts', 20), 'Yes (+20 pts):')}
-${bucket(byPts('meanReversionPts', 0),  'No (0 pts):')}`;
+${bucket(byPts('meanReversionPts', 20), `Yes (${legendPts(20)} pts):`)}
+${bucket(byPts('meanReversionPts', 0),  `No (${legendPts(0)} pts):`)}`;
 
   // Measured rows only (see modalComponentsWrittenOff); the written-off
   // count is printed with its reason, never omitted.
@@ -8020,7 +8085,7 @@ ${(()=>{
   const avgRsiL = avg(losses,s=>s.rsiAtBuy||0);
   if (wins.length && losses.length && Math.abs(avgRsiW-avgRsiL)/Math.max(avgRsiL,1)*100 > 15) {
     const dir = avgRsiW < avgRsiL ? 'LOWER' : 'HIGHER';
-    flags.push(`⚠ Avg RSI at purchase: wins ${avgRsiW.toFixed(1)} vs losses ${avgRsiL.toFixed(1)} — wins had ${dir} RSI than losses.\n  Current scoring rewards RSI 50-65 with 20pts. Sample size: ${sold.length} trades.\n  Consider re-evaluating once sample reaches 25-30 trades.`);
+    flags.push(`⚠ Avg RSI at purchase: wins ${avgRsiW.toFixed(1)} vs losses ${avgRsiL.toFixed(1)} — wins had ${dir} RSI than losses.\n  Current scoring rewards RSI ${(r => { const b = r.bands.reduce((x, y) => (y.pts > x.pts ? y : x)); return `${b.text} with ${legendPts(b.pts)} pts`; })(scoringLegendRows().find(r => r.name.startsWith('RSI')))}. Sample size: ${sold.length} trades.\n  Consider re-evaluating once sample reaches 25-30 trades.`);
   }
   const avgVolW = avg(wins,s=>s.volRatioAtBuy||0);
   const avgVolL = avg(losses,s=>s.volRatioAtBuy||0);
@@ -8106,8 +8171,8 @@ Performance by price tier:
 
 Performance by duration classification:
   ${durStats('DAY','Exit Today')}
-  ${durStats('3-DAY','Est. 2–3 market days')}
-  ${durStats('WEEK','Est. 4–5 market days')}
+  ${durStats('3-DAY',`Est. ${HOLD_RANGE_LABEL['3-DAY']}`)}
+  ${durStats('WEEK',`Est. ${HOLD_RANGE_LABEL.WEEK}`)}
 
 Performance by signal score at purchase:
   ${scoreLabelStatsLines(sold, winRatePct).join('\n  ')}
@@ -8430,24 +8495,20 @@ ${ureFactorAccuracySection}
 
   report += `=== CURRENT SCORING FORMULA (for Claude's reference) ===
 
-Scoring System — Scoring Formula v2 (raw signal points, summed directly — no
+Scoring System — Scoring Formula v${SCORING_VERSION} (raw signal points, summed directly — no
 longer normalized to a 0-100 scale. Floored at 0 after the Macro Market
-Overlay adjustment below is applied; uncapped above):
-  Volume spike:        −10 to +20 pts (<0.5x=0, 0.5-1x=15, 1-2x=20 best zone, 2-3x=10, 3x+=−10)
-  Volume build:        0–15 pts (2 consecutive days rising + today >=1.3x avg)
-  Price momentum:      0–20 pts (2-4%=10, 4%+=20)
-  RSI position:        −10 to +20 pts (<35=10, 35-55=15, 55-65=20 best zone, 65-75=0, 75+=−10)
-  Above 20-day MA:     10 pts
-  Relative strength:   0–15 pts (outperform SPY by >0%=5, >1%=10, >2%=15)
-  Consecutive up days: 0–15 pts (2 days=5, 3 days=10, 4+ days=15)
-  Mean reversion:      0–20 pts (price 8-15% below MA, RSI<45, RSI turning up)
+Overlay adjustment below is applied; uncapped above). Generated from the
+scorer itself (scoreComponents), so it can't drift from it:
+${scoringLegendText()}
+  Volume build means: 2 consecutive days rising + today >= ${VOL_BUILD_TODAY_MIN}x avg.
+  Mean reversion means: price ${MEAN_REV_BELOW_MA_MIN}-${MEAN_REV_BELOW_MA_MAX}% below the 20-day MA, RSI under ${MEAN_REV_RSI_MAX}, RSI turning up.
 
 RAW_SCORE_MAX (${RAW_SCORE_MAX}) is the sum of max POSITIVE points only. The
 displayed score IS this raw sum plus the macro adjustment below — it can
 exceed ${RAW_SCORE_MAX} when that adjustment is positive, and floors at 0
 when negative signals and a negative macro adjustment combine.
 
-Labels (scoring v${SCORING_VERSION}): ${scoreThresholds().strong}+=STRONG BUY | ${scoreThresholds().soft}–${scoreThresholds().strong - 1}=SOFT BUY | ${scoreThresholds().watch}–${scoreThresholds().soft - 1}=WATCH | <${scoreThresholds().watch}=excluded. Each trade is labelled with the thresholds of the scoring version that scored its buy (v1: 116 / 73 / 29).
+Labels (scoring v${SCORING_VERSION}): ${scoreThresholds().strong}+=STRONG BUY | ${scoreThresholds().soft}–${scoreThresholds().strong - 1}=SOFT BUY | ${scoreThresholds().watch}–${scoreThresholds().soft - 1}=WATCH | <${scoreThresholds().watch}=excluded. Each trade is labelled with the thresholds of the scoring version that scored its buy (v1: ${scoreThresholds(1).strong} / ${scoreThresholds(1).soft} / ${scoreThresholds(1).watch}).
 
 Note for Claude: scores were normalized to a 0-100 scale in earlier app
 versions. Trades from before this version show a 0-100 scoreAtBuy; trades
@@ -8592,7 +8653,7 @@ function renderSettingsTab() {
       <div class="settings-row">
         <div>
           <div class="settings-label">Disable macro overlay</div>
-          <div class="settings-hint">Show pure technical signals only — ignores market condition adjustments</div>
+          <div class="settings-hint">Takes the market-condition points out of the score. It doesn't change the display line: on RISK_OFF and GEOPOLITICAL days, and for a weak sector's names, that still rises to ${ELEVATED_SCORE_THRESHOLD}, and this switch hides the banner that says so.</div>
         </div>
         <label class="toggle-wrap">
           <input type="checkbox" id="set-disable-macro" ${s.disableMacroOverlay?'checked':''} onchange="savePref('disableMacroOverlay',this.checked)">
@@ -8613,18 +8674,11 @@ function renderSettingsTab() {
     <div class="settings-section mt12">
       <div class="settings-section-title">Scoring Formula</div>
       <div class="score-table">
-        <div class="score-row"><span>Volume spike (1.5–3×+)</span><span>0–30 pts</span></div>
-        <div class="score-row"><span>Volume build (3-day rise)</span><span>+15 pts</span></div>
-        <div class="score-row"><span>Price momentum (2–4%+)</span><span>0–20 pts</span></div>
-        <div class="score-row"><span>RSI position</span><span>0–20 pts</span></div>
-        <div class="score-row"><span>Above 20-day MA</span><span>+10 pts</span></div>
-        <div class="score-row"><span>Relative strength vs market</span><span>0–15 pts</span></div>
-        <div class="score-row"><span>Consecutive up days</span><span>0–15 pts</span></div>
-        <div class="score-row"><span>Mean reversion setup</span><span>+20 pts</span></div>
-        <div class="score-row score-row-total"><span>Total (capped)</span><span>100 pts</span></div>
-        <div class="score-row"><span class="score-label-strong">STRONG BUY</span><span>80–100</span></div>
-        <div class="score-row"><span class="score-label-soft">SOFT BUY</span><span>50–79</span></div>
-        <div class="score-row"><span class="score-label-watch">WATCH</span><span>20–49</span></div>
+        ${scoringLegendRows().map(r => `<div class="score-row"><span>${r.name}</span><span>${legendPts(r.min)} to ${legendPts(r.max)} pts</span></div>`).join('')}
+        <div class="score-row score-row-total"><span>Maximum (sum of the best band of each)</span><span>${RAW_SCORE_MAX} pts, uncapped above</span></div>
+        <div class="score-row"><span>Macro adjustment</span><span>${s.disableMacroOverlay ? '0 (overlay off)' : 'by market condition'}</span></div>
+        ${scoreLabelBands().map(b => `<div class="score-row"><span class="score-label-${b.label === 'STRONG BUY' ? 'strong' : b.label === 'SOFT BUY' ? 'soft' : 'watch'}">${b.label}</span><span>${b.text}</span></div>`).join('')}
+        <div class="score-row"><span>Shown at all</span><span>${scoreThresholds().watch}+ (scoring v${SCORING_VERSION}); ${ELEVATED_SCORE_THRESHOLD}+ on raised days</span></div>
       </div>
     </div>
 
@@ -8805,6 +8859,7 @@ const WORKFLOW_NAMES = [
   'Capture movers/most-actives snapshot', 'Build float table',
 ];
 const WORKFLOW_HEALTH_DAYS = 8; // covers the weekly float-table run
+const WORKFLOW_HEALTH_ROW_LIMIT = 2000;
 function workflowHealthLines(runs, nowMs) {
   const sinceMs = nowMs - WORKFLOW_HEALTH_DAYS * 86400000;
   const pt = iso => new Date(iso).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -8843,9 +8898,9 @@ async function loadWorkflowHealth() {
     // rather than report on a truncated set.
     const { data, error } = await supabaseClient.from('workflow_runs')
       .select('workflow_name,actual_fired_at,job_status').gte('actual_fired_at', since)
-      .order('actual_fired_at', { ascending: false }).limit(2000);
+      .order('actual_fired_at', { ascending: false }).limit(WORKFLOW_HEALTH_ROW_LIMIT);
     if (error) throw error;
-    if (data.length >= 2000) { el.textContent = 'Too many runs to summarise (2000+ in 8 days) — not evaluated.'; return; }
+    if (data.length >= WORKFLOW_HEALTH_ROW_LIMIT) { el.textContent = `Too many runs to summarise (${WORKFLOW_HEALTH_ROW_LIMIT}+ in ${WORKFLOW_HEALTH_DAYS} days) — not evaluated.`; return; }
     el.textContent = '';
     for (const l of workflowHealthLines(data, Date.now())) {
       const d = document.createElement('div');
@@ -9075,8 +9130,8 @@ Performance by price tier:
 
 Performance by duration classification:
   ${durStats('DAY','Exit Today')}
-  ${durStats('3-DAY','Est. 2–3 market days')}
-  ${durStats('WEEK','Est. 4–5 market days')}
+  ${durStats('3-DAY',`Est. ${HOLD_RANGE_LABEL['3-DAY']}`)}
+  ${durStats('WEEK',`Est. ${HOLD_RANGE_LABEL.WEEK}`)}
 
 Performance by signal score at purchase:
   ${scoreLabelStatsLines(

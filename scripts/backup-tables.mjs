@@ -64,6 +64,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
+import { TABLE_RULES, MIN_ROWS, judgeTable, holdingsIn } from './lib/backup-rules.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -76,63 +77,6 @@ const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';
 
 const PAGE_SIZE = 1000; // PostgREST's default page cap -- paginate past it explicitly rather than assume any table stays under it forever.
 
-// Each rule returns { ok: true } to write normally, or
-// { ok: false, reason } to skip writing this table this run. A rule may
-// also just console.warn for a non-blocking flag (portfolio) without
-// affecting ok.
-const TABLE_RULES = {
-  trades(fresh, prior) {
-    if (fresh < prior) {
-      return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- trades is append-only with no delete call site anywhere in the app; any shrink means something is wrong, not normal usage` };
-    }
-    return { ok: true };
-  },
-  // trades_v2/signal_log (Phase 9 §1.5, 2026-09-15): the two tables Phase 7
-  // created and everything now writes to -- unbacked until this change.
-  // Same never-shrink posture as `trades` above, same reason: both are
-  // append-only with no delete call site anywhere in the app.
-  trades_v2(fresh, prior) {
-    if (fresh < prior) {
-      return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- trades_v2 is append-only with no delete call site anywhere in the app; any shrink means something is wrong, not normal usage` };
-    }
-    return { ok: true };
-  },
-  signal_log(fresh, prior) {
-    if (fresh < prior) {
-      return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- signal_log is append-only with no delete call site anywhere in the app; any shrink means something is wrong, not normal usage` };
-    }
-    return { ok: true };
-  },
-  settings(fresh, _prior) {
-    if (fresh < 1) {
-      return { ok: false, reason: `dropped to ${fresh} rows -- settings is a single-row table; anything below 1 means something is wrong` };
-    }
-    return { ok: true };
-  },
-  portfolio(fresh, prior) {
-    if (fresh === 0 && prior > 0) {
-      console.warn(`backup-tables: FLAG -- portfolio dropped to 0 rows (was ${prior}). Not blocked -- shrinking is normal (every sale deletes a row) -- but every position closing at once is unusual enough to be worth a glance.`);
-    }
-    return { ok: true }; // never aborts: shrinking is this table's normal operation
-  },
-  // signal_snapshot_at_buy (db/033, added here 2026-11-01): one row per
-  // position, never updated or deleted (anon has INSERT and SELECT only,
-  // db/034), so the same never-shrink posture. Unbacked from creation
-  // until 88 rows had accumulated, so nothing read from it could be
-  // pinned to a commit.
-  signal_snapshot_at_buy(fresh, prior) {
-    if (fresh < prior) {
-      return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- signal_snapshot_at_buy has no UPDATE or DELETE policy (db/034); any shrink means something is wrong` };
-    }
-    return { ok: true };
-  },
-  rating_snapshots(fresh, prior) {
-    if (fresh < prior) {
-      return { ok: false, reason: `shrank from ${prior} to ${fresh} rows -- rating_snapshots is append-only since 2026-11-02 (no purge call site left in the app); any shrink means something deleted rows` };
-    }
-    return { ok: true };
-  },
-};
 
 const TABLES = Object.keys(TABLE_RULES);
 
@@ -210,8 +154,9 @@ function readPriorBackup(filePath) {
   if (!Array.isArray(parsed)) {
     return { status: 'corrupt', reason: 'did not contain a JSON array' };
   }
-  return { status: 'ok', count: parsed.length };
+  return { status: 'ok', count: parsed.length, rows: parsed };
 }
+
 
 async function main() {
   // No no-op concept: every run does real work. Reported as false (not left
@@ -221,6 +166,10 @@ async function main() {
 
   const toWrite = [];
   const failures = [];
+  const fetchedCounts = {};
+  const priorCounts = {};
+  const priors = {};
+  const manifest = { run_at: new Date().toISOString(), floors: MIN_ROWS, tables: {} };
 
   for (const table of TABLES) {
     const filePath = path.join(BACKUP_DIR, `${table}.json`);
@@ -234,9 +183,14 @@ async function main() {
 
     const fresh = await fetchTable(table);
     const priorCount = prior.count;
+    fetchedCounts[table] = fresh.length; priorCounts[table] = priorCount; priors[table] = prior;
     console.log(`backup-tables: ${table} -- fetched ${fresh.length} rows, prior backup had ${priorCount}${prior.status === 'absent' ? ' (no prior backup -- first run)' : ''}.`);
 
-    const verdict = TABLE_RULES[table](fresh.length, priorCount);
+    const verdict = judgeTable(table, fresh.length, priorCount, {
+      priorHoldings: table === 'portfolio' ? holdingsIn(prior.rows) : 0,
+      tradesV2Fresh: fetchedCounts.trades_v2, tradesV2Prior: priorCounts.trades_v2,
+    });
+    manifest.tables[table] = { fetched: fresh.length, prior: priorCount, floor: MIN_ROWS[table], written: verdict.ok, reason: verdict.ok ? null : verdict.reason };
     if (verdict.ok) {
       toWrite.push({ table, filePath, fresh });
     } else {
@@ -249,6 +203,11 @@ async function main() {
     writeFileSync(filePath, JSON.stringify(fresh, null, 2) + '\n');
     console.log(`backup-tables: wrote ${table} (${fresh.length} rows).`);
   }
+  // What this run actually wrote, per table, committed beside the backups
+  // (the workflow adds data/backups/*.json): the record that a run wrote
+  // what it claims, readable without the run log.
+  writeFileSync(path.join(BACKUP_DIR, '_manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  console.log(`backup-tables: manifest -- ${Object.entries(manifest.tables).map(([t, m]) => `${t} ${m.written ? m.fetched : 'NOT WRITTEN'}`).join(', ')}.`);
 
   if (failures.length) {
     console.error(`backup-tables: FAILED for ${failures.map(f => f.table).join(', ')} -- see reasons above. ${toWrite.length} other table(s) still written and will still be committed.`);

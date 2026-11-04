@@ -7,7 +7,11 @@
 // that proves a proxy instead of the claim).
 'use strict';
 const assert = require('assert');
-const { readSource, run } = require('./_lib');
+const { readSource, run, virtualClock } = require('./_lib');
+// Virtual time (2026-11-03): see tests/queue-pacing.test.js. The 50ms wait below
+// must land before the 300ms requests finish; on real timers load could break that.
+const clock = virtualClock();
+const { Date, setTimeout } = clock; // shadow the globals: the eval below sees these
 
 const apiClientSrc = readSource('core/api-client.js');
 
@@ -40,10 +44,10 @@ async function testForegroundPreemptsQueuedBackgroundBurst() {
   // Enqueue the foreground request shortly after the burst starts — well
   // before the 50 background items could possibly have all dispatched
   // (only 1 worker, ~300ms each, so bg0 is likely still in flight).
-  await new Promise(r => setTimeout(r, 50));
+  await clock.runUntil(new Promise(r => setTimeout(r, 50)));
   const fgPromise = enqueue(mockRequest('FOREGROUND'), { engine: 'EDGE', priority: 'foreground' });
 
-  await Promise.all([...bgPromises, fgPromise]);
+  await clock.runUntil(Promise.all([...bgPromises, fgPromise]));
 
   const fgDispatchIndex = dispatchOrder.indexOf('FOREGROUND');
   const bgDispatchedBeforeFg = dispatchOrder.slice(0, fgDispatchIndex).filter(l => l.startsWith('bg')).length;
@@ -60,6 +64,28 @@ async function testForegroundPreemptsQueuedBackgroundBurst() {
   assert.ok(bgDispatchedBeforeFg <= MAX_CONCURRENT, `expected at most ${MAX_CONCURRENT} background items ahead of foreground (the ones already in flight), got ${bgDispatchedBeforeFg} — priority ordering is not preempting the queued burst`);
 }
 
+async function testQueuedWorkKeepsItsOrder() {
+  // Priority is the only thing that may reorder the queue. The test above can't
+  // see a newest-first queue, because its foreground item is also the newest
+  // (a mutant doing exactly that survived it, 2026-11-03). So: a foreground item
+  // with background work enqueued AFTER it, and background order checked.
+  const { enqueue, MAX_CONCURRENT } = loadFreshQueue();
+  const order = [];
+  const req = label => async () => { order.push(label); await new Promise(r => setTimeout(r, 300)); return label; };
+  const all = [];
+  for (let i = 0; i < 20; i++) all.push(enqueue(req(i), { engine: 'EDGE', priority: 'background' }));
+  await clock.runUntil(new Promise(r => setTimeout(r, 50)));
+  all.push(enqueue(req('FOREGROUND'), { engine: 'EDGE', priority: 'foreground' }));
+  for (let i = 20; i < 30; i++) all.push(enqueue(req(i), { engine: 'EDGE', priority: 'background' }));
+  await clock.runUntil(Promise.all(all));
+  const fg = order.indexOf('FOREGROUND');
+  assert.ok(fg >= 0 && fg <= MAX_CONCURRENT, `foreground dispatched at ${fg}, after background work that was still queued`);
+  const bg = order.filter(x => x !== 'FOREGROUND');
+  assert.deepStrictEqual(bg, bg.slice().sort((x, y) => x - y), 'background work must stay first in, first out');
+  assert.strictEqual(bg.length, 30);
+}
+
 (async () => {
   await run('priority-ordering: foreground preempts a queued background burst', testForegroundPreemptsQueuedBackgroundBurst);
+  await run('priority-ordering: nothing else reorders the queue (first in, first out within a priority)', testQueuedWorkKeepsItsOrder);
 })();

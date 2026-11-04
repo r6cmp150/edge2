@@ -113,6 +113,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
+import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
 import { scheduledScanGate } from './lib/scan-gate.mjs';
@@ -409,8 +410,13 @@ async function main() {
     try { insertedCount = JSON.parse(insertedBody).length; } catch { /* ignore-duplicates can return an empty body on an all-dup batch */ }
     console.log(`log-signals-edge: signal_log insert returned status ${insertRes.status}, ${insertedCount} row(s) in the response body (duplicates against an existing (signal_date, symbol, engine_source, tier) return no row, not an error).`);
 
+    // The insert's own response is filtered by SELECT RLS too, so a denied
+    // read makes "0 inserted" look like "all duplicates": the control
+    // settles which, and the re-read must find exactly what was inserted.
+    await assertReadable(SUPABASE_URL, headers, 'signal_log');
     const verifyRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?scan_session=eq.${scanRunId}&select=symbol,tier`, { headers });
     const verifyBody = await verifyRes.json();
+    assertReReadComplete('log-signals-edge signal_log', insertedCount, verifyBody.length);
     console.log(`log-signals-edge: re-selected ${verifyBody.length} row(s) actually present for scan_session=${scanRunId} (expected ${signalRows.length} minus any real same-day/same-tier duplicates).`);
   }
 }

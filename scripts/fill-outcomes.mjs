@@ -63,6 +63,7 @@ import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { signalPrecedesTrade, isMostRecentPriorSignal } from './lib/taken-precedence.mjs';
 import { selectByIds } from './lib/select-by-ids.mjs';
+import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -291,6 +292,12 @@ async function main() {
   const anonHeaders = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' };
   const selectCols = 'id,signal_date,symbol,engine_source,tier,first_shown_at,reference_price,ret_5m,ret_15m,ret_30m,ret_close,ret_1d,ret_3d,ret_5d,ret_close_split_in_window,ret_1d_split_in_window,ret_3d_split_in_window,ret_5d_split_in_window,outcomes_filled_at,taken_resolution';
   const orFilter = 'or=(ret_5m.is.null,ret_15m.is.null,ret_30m.is.null,ret_close.is.null,ret_1d.is.null,ret_3d.is.null,ret_5d.is.null,taken_resolution.eq.unresolved)';
+  // Positive controls (2026-11-02, auth step 4½): both tables are never
+  // empty, so an empty read is a denied one. Without these, an empty
+  // trades_v2 read would PERMANENTLY resolve signals as not-taken, and an
+  // empty signal_log read would credit the wrong signal day.
+  await assertReadable(SUPABASE_URL, anonHeaders, 'signal_log');
+  await assertReadable(SUPABASE_URL, anonHeaders, 'trades_v2');
   const rowsRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?select=${selectCols}&signal_date=gte.${cutoff}&${orFilter}`, { headers: anonHeaders });
   if (rowsRes.status >= 300) throw new Error(`signal_log pending-rows query failed: ${rowsRes.status} ${await rowsRes.text()}`);
   const rows = await rowsRes.json();
@@ -738,6 +745,7 @@ async function main() {
   if (touchedIds.length) {
     // Chunked: one URL holding every id overflowed at ~400 (lib/select-by-ids.mjs).
     const verifyBody = await selectByIds(SUPABASE_URL, 'signal_log', touchedIds, selectCols, anonHeaders);
+    assertReReadComplete('fill-outcomes signal_log', touchedIds.length, verifyBody.length);
     console.log(`fill-outcomes: re-selected ${verifyBody.length}/${touchedIds.length} touched row(s) via anon key:`);
     for (const row of verifyBody) console.log(`  ${row.id}: ${JSON.stringify(row)}`);
   }
@@ -759,6 +767,7 @@ async function main() {
 
   if (touchedTradeIds.length) {
     const verifyBody = await selectByIds(SUPABASE_URL, 'trades_v2', touchedTradeIds, tradesSelectCols, anonHeaders);
+    assertReReadComplete('fill-outcomes trades_v2', touchedTradeIds.length, verifyBody.length);
     console.log(`fill-outcomes: re-selected ${verifyBody.length}/${touchedTradeIds.length} touched trades_v2 row(s) via anon key:`);
     for (const row of verifyBody) console.log(`  ${row.id}: ${JSON.stringify(row)}`);
   }

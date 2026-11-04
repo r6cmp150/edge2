@@ -55,6 +55,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
+import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
 import { scheduledScanGate } from './lib/scan-gate.mjs';
@@ -530,8 +531,13 @@ async function main() {
     // ignore-duplicates POST can legitimately return 201 with an empty
     // body on an all-duplicate batch, which looks identical to "nothing
     // was ever inserted" unless checked against the table directly.
+    // The insert's own response is filtered by SELECT RLS too, so a denied
+    // read makes "0 inserted" look like "all duplicates": the control
+    // settles which, and the re-read must find exactly what was inserted.
+    await assertReadable(SUPABASE_URL, headers, 'signal_log');
     const verifyRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?scan_session=eq.${scanRunId}&select=symbol,tier`, { headers });
     const verifyBody = await verifyRes.json();
+    assertReReadComplete('log-signals-warrior signal_log', insertedCount, verifyBody.length);
     console.log(`log-signals-warrior: re-selected ${verifyBody.length} row(s) actually present for scan_session=${scanRunId} (expected ${signalRows.length} minus any real same-day/same-tier duplicates).`);
   }
 
@@ -550,8 +556,13 @@ async function main() {
     try { triggerInsertedCount = JSON.parse(triggerInsertedBody).length; } catch { /* ignore-duplicates can return an empty body on an all-dup batch */ }
     console.log(`log-signals-warrior: setup_triggers insert returned status ${triggerInsertRes.status}, ${triggerInsertedCount} row(s) in the response body (a trigger already recorded under the same triggered_at returns no row, not an error).`);
 
+    // Only here, after a successful insert: the table was empty until a trigger
+    // first fires (0 rows live, 2026-11-04), so empty can only mean denied once
+    // this run has inserted. tests/empty-read-controls.test.js holds the position.
+    await assertReadable(SUPABASE_URL, headers, 'setup_triggers');
     const triggerVerifyRes = await fetch(`${SUPABASE_URL}/rest/v1/setup_triggers?scan_session=eq.${scanRunId}&select=symbol,setup_id,triggered_at`, { headers });
     const triggerVerifyBody = await triggerVerifyRes.json();
+    assertReReadComplete('log-signals-warrior setup_triggers', triggerInsertedCount, triggerVerifyBody.length);
     console.log(`log-signals-warrior: re-selected ${triggerVerifyBody.length} setup_triggers row(s) actually present for scan_session=${scanRunId} (expected ${setupTriggerRows.length} minus any real same-day/same-setup/same-timestamp duplicates).`);
   }
 }

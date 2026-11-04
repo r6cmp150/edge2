@@ -15,7 +15,11 @@
 // bug is exactly why _drain is now elastic (see core/api-client.js).
 'use strict';
 const assert = require('assert');
-const { readSource, run } = require('./_lib');
+const { readSource, run, virtualClock } = require('./_lib');
+// Virtual time (2026-11-03): see tests/queue-pacing.test.js. This file asserts
+// the same rate band, so it had the same dependence on machine load.
+const clock = virtualClock();
+const { Date, setTimeout } = clock; // shadow the globals: the eval below sees these
 
 const apiClientSrc = readSource('core/api-client.js');
 
@@ -64,7 +68,7 @@ async function testMaxInFlightRespectedOnAShallowBurst() {
   const TOTAL = 30; // small burst, well under the 200-token buffer — isolates concurrency behavior from bucket exhaustion
   const promises = [];
   for (let i = 0; i < TOTAL; i++) promises.push(enqueue(mockRequest(), { engine: 'EDGE', priority: 'foreground' }));
-  await Promise.all(promises);
+  await clock.runUntil(Promise.all(promises));
 
   console.log(`Max concurrent in flight: ${maxInFlight} (expect exactly ${MAX_CONCURRENT}, not 1 — the original bug's signature)`);
   assert.strictEqual(maxInFlight, MAX_CONCURRENT, `expected max in-flight to reach MAX_CONCURRENT (${MAX_CONCURRENT}); got ${maxInFlight} — this is the exact symptom of the reverted fixed-batch bug if it regresses`);
@@ -90,7 +94,7 @@ async function testConcurrencyNeverExceedsCap() {
   const TOTAL = 60;
   const promises = [];
   for (let i = 0; i < TOTAL; i++) promises.push(enqueue(mockRequest(), { engine: 'EDGE', priority: 'foreground' }));
-  await Promise.all(promises);
+  await clock.runUntil(Promise.all(promises));
 
   console.log(`Max concurrent in flight: ${maxInFlight}, ever exceeded cap: ${overCapObserved}`);
   assert.strictEqual(overCapObserved, false, `concurrency cap ${MAX_CONCURRENT} was exceeded at some point during the run`);
@@ -126,7 +130,7 @@ async function testConcurrencyAndBucketBothHoldUnderGenuineExhaustion() {
   const t0 = Date.now();
   const promises = [];
   for (let i = 0; i < TOTAL; i++) promises.push(enqueue(mockRequest(), { engine: 'EDGE', priority: 'foreground' }));
-  await Promise.all(promises);
+  await clock.runUntil(Promise.all(promises));
   const totalMs = Date.now() - t0;
   const endTokens = readTokens();
 

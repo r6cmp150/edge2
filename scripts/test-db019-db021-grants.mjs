@@ -57,29 +57,42 @@ async function dump(label, res, meanings) {
     bucket = isEmpty ? 'weakEmptyOrFiltered' : 'ok';
   }
   console.log(`READ AS: ${meanings[bucket] || `(no interpretation supplied for a ${res.status} in the "${bucket}" bucket -- report this raw)`}`);
-  return body;
+  return { body, bucket };
+}
+
+// A check that only prints "expect X" passes on anything, an empty read
+// included (2026-11-02): each one now FAILS unless it saw what it expects.
+const failures = [];
+function expect(label, got, want) {
+  if (got === want) { console.log(`PASS ${label}: ${JSON.stringify(got)}`); return; }
+  console.error(`FAIL ${label}: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  failures.push(label);
+}
+function firstRow(label, rows) {
+  if (!Array.isArray(rows) || rows.length !== 1) throw new Error(`${label}: read back ${Array.isArray(rows) ? rows.length : 'no'} row(s), expected 1 -- an empty read is a denied read here, not a pass`);
+  return rows[0];
 }
 
 async function db019checkB() {
   console.log('\n=== db/019 CHECK B: outcome_filler attempts trades_v2.buy_price (NOT in the widened grant), real row, self-write ===');
   const rowRes = await fetch(`${SUPABASE_URL}/rest/v1/trades_v2?select=id,buy_price&limit=1`, { headers: anonHeaders });
   const rows = await rowRes.json();
-  if (!rows.length) { console.log('No trades_v2 rows exist -- cannot run this check meaningfully.'); return; }
-  const { id, buy_price } = rows[0];
+  const { id, buy_price } = firstRow('db/019 B row pick (trades_v2 is never empty)', rows);
   console.log(`Using real trades_v2 row id=${id}, current buy_price=${buy_price} -- PATCHing this SAME value back (safe either way it lands)`);
 
   const res = await fetch(`${SUPABASE_URL}/rest/v1/trades_v2?id=eq.${id}`, {
     method: 'PATCH', headers: roleHeaders, body: JSON.stringify({ buy_price }),
   });
-  await dump('db/019 CHECK B: PATCH trades_v2.buy_price (real row, same value)', res, {
+  const b19 = await dump('db/019 CHECK B: PATCH trades_v2.buy_price (real row, same value)', res, {
     ok: 'UNEXPECTED AND SERIOUS -- outcome_filler can write a column outside db/019\'s grant. The self-write kept this row\'s value unchanged, but the boundary itself is not where it should be.',
     jwtRejected401: 'JWT rejected outright, unrelated to buy_price specifically',
     requestRejected400: 'malformed request -- fix and re-run, not evidence about the grant',
     permissionRejected: 'expected and informative -- db/019 narrowed the grant to exactly five columns and buy_price is correctly outside it',
     weakEmptyOrFiltered: 'ambiguous against a known-real id -- investigate before trusting either way',
   });
+  expect('db/019 B: buy_price PATCH refused', b19.bucket, 'permissionRejected');
   const verify = await (await fetch(`${SUPABASE_URL}/rest/v1/trades_v2?id=eq.${id}&select=buy_price`, { headers: anonHeaders })).json();
-  console.log(`re-select (anon key) buy_price = ${verify[0]?.buy_price} -- expect ${buy_price} (unchanged)`);
+  expect('db/019 B: buy_price unchanged on re-read', firstRow('db/019 B re-read', verify).buy_price, buy_price);
 }
 
 async function db021checkA() {
@@ -94,14 +107,13 @@ async function db021checkA() {
     { headers: anonHeaders }
   );
   const rows = await rowRes.json();
-  if (!rows.length) { console.log('No signal_log row found with ret_5d_split_in_window=false -- cannot run this check. Skipped.'); return; }
-  const { id } = rows[0];
+  const { id } = firstRow('db/021 A row pick (a false flag must exist; a skip is not a pass)', rows);
   console.log(`Using real signal_log row id=${id} -- toggling ret_5d_split_in_window true then back to false, re-selecting after each write`);
 
   const setTrue = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}`, {
     method: 'PATCH', headers: { ...roleHeaders, Prefer: 'return=representation' }, body: JSON.stringify({ ret_5d_split_in_window: true }),
   });
-  await dump('db/021 CHECK A: PATCH ret_5d_split_in_window=true', setTrue, {
+  const a21 = await dump('db/021 CHECK A: PATCH ret_5d_split_in_window=true', setTrue, {
     ok: 'role switch happened AND ret_5d_split_in_window is genuinely writable by this role',
     jwtRejected401: 'JWT itself was rejected',
     requestRejected400: 'malformed request -- fix and re-run',
@@ -109,8 +121,9 @@ async function db021checkA() {
     weakEmptyOrFiltered: 'the row was invisible to this role (RLS filtered it) rather than the update being denied outright',
   });
   const verifyTrue = await (await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}&select=ret_5d_split_in_window`, { headers: anonHeaders })).json();
-  const landedTrue = verifyTrue[0]?.ret_5d_split_in_window;
-  console.log(`re-select (anon key) ret_5d_split_in_window = ${landedTrue} -- expect true`);
+  expect('db/021 A: toggle PATCH accepted', a21.bucket, 'ok');
+  const landedTrue = firstRow('db/021 A re-read', verifyTrue).ret_5d_split_in_window;
+  expect('db/021 A: toggle landed', landedTrue, true);
   if (landedTrue !== true) {
     console.error('db/021 CHECK A: the write did not actually land (re-select disagrees with a 2xx status) -- this is the PostgREST-200-empty-body RLS no-op this whole pass exists to catch. Report this, do not restore blindly if the row is now in an unexpected state.');
   }
@@ -118,7 +131,7 @@ async function db021checkA() {
   const setFalse = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}`, {
     method: 'PATCH', headers: { ...roleHeaders, Prefer: 'return=representation' }, body: JSON.stringify({ ret_5d_split_in_window: false }),
   });
-  await dump('db/021 CHECK A: restore PATCH ret_5d_split_in_window=false', setFalse, {
+  const r21 = await dump('db/021 CHECK A: restore PATCH ret_5d_split_in_window=false', setFalse, {
     ok: 'restore write accepted',
     jwtRejected401: 'JWT rejected on the restore write -- row may be left at true, needs manual fix',
     requestRejected400: 'malformed restore request -- row may be left at true, needs manual fix',
@@ -126,21 +139,21 @@ async function db021checkA() {
     weakEmptyOrFiltered: 'row invisible on the restore write -- row may be left at true, needs manual fix',
   });
   const verifyFalse = await (await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}&select=ret_5d_split_in_window`, { headers: anonHeaders })).json();
-  console.log(`re-select (anon key) ret_5d_split_in_window = ${verifyFalse[0]?.ret_5d_split_in_window} -- expect false (restored)`);
+  expect('db/021 A: restore PATCH accepted', r21.bucket, 'ok');
+  expect('db/021 A: restored to false', firstRow('db/021 A restore re-read', verifyFalse).ret_5d_split_in_window, false);
 }
 
 async function db021checkB() {
   console.log('\n=== db/021 CHECK B: outcome_filler attempts signal_log.reference_price (NOT in any grant for this role), real row, self-write ===');
   const rowRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?select=id,reference_price&limit=1`, { headers: anonHeaders });
   const rows = await rowRes.json();
-  if (!rows.length) { console.log('No signal_log rows exist -- cannot run this check meaningfully.'); return; }
-  const { id, reference_price } = rows[0];
+  const { id, reference_price } = firstRow('db/021 B row pick (signal_log is never empty)', rows);
   console.log(`Using real signal_log row id=${id}, current reference_price=${reference_price} -- PATCHing this SAME value back (safe either way it lands)`);
 
   const res = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}`, {
     method: 'PATCH', headers: roleHeaders, body: JSON.stringify({ reference_price }),
   });
-  await dump('db/021 CHECK B: PATCH signal_log.reference_price (real row, same value)', res, {
+  const b21 = await dump('db/021 CHECK B: PATCH signal_log.reference_price (real row, same value)', res, {
     ok: 'UNEXPECTED -- if this succeeds, no column grant is narrowing this role\'s access to reference_price',
     jwtRejected401: 'JWT rejected outright, unrelated to reference_price specifically',
     requestRejected400: 'malformed request -- fix and re-run',
@@ -148,13 +161,16 @@ async function db021checkB() {
     weakEmptyOrFiltered: 'ambiguous against a known-real id -- investigate before trusting either way',
   });
   const verify = await (await fetch(`${SUPABASE_URL}/rest/v1/signal_log?id=eq.${id}&select=reference_price`, { headers: anonHeaders })).json();
-  console.log(`re-select (anon key) reference_price = ${verify[0]?.reference_price} -- expect ${reference_price} (unchanged)`);
+  expect('db/021 B: reference_price PATCH refused', b21.bucket, 'permissionRejected');
+  expect('db/021 B: reference_price unchanged on re-read', firstRow('db/021 B re-read', verify).reference_price, reference_price);
 }
 
 async function main() {
   await db019checkB();
   await db021checkA();
   await db021checkB();
+  if (failures.length) { console.error(`\n${failures.length} check(s) FAILED: ${failures.join('; ')}`); process.exit(1); }
+  console.log('\nall grant checks passed');
 }
 
 main().catch(e => { console.error('FAILED', e.message, e.stack); process.exit(1); });

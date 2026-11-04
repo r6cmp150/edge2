@@ -33,6 +33,40 @@ function evalModule(src, { mocks = {}, expose = [] } = {}) {
   eval(src + '\n' + exposeStatements);
 }
 
+// A clock the test owns (2026-11-03), for anything whose assertion is about
+// time. Shadow the globals at the top of the test file and any source eval'd
+// there picks them up too:
+//   const clock = virtualClock(); const { Date, setTimeout } = clock;
+// Time moves only when clock.runUntil(promise) moves it, to the next timer, so
+// machine load cannot change a measured rate. A timer-based wait that nothing
+// will ever fire is a thrown deadlock, not a hang.
+function virtualClock(start = 1800000000000) {
+  const RealDate = global.Date;
+  let now = start, seq = 0;
+  const timers = [];
+  class VirtualDate extends RealDate {
+    constructor(...args) { if (args.length) super(...args); else super(now); }
+    static now() { return now; }
+  }
+  const setVirtualTimeout = (fn, ms = 0) => { timers.push({ at: now + ms, seq: seq++, fn }); return seq; };
+  const drainMicrotasks = () => new Promise(r => setImmediate(r));
+  async function runUntil(promise) {
+    let settled = false;
+    const mark = () => { settled = true; };
+    promise.then(mark, mark);
+    for (;;) {
+      await drainMicrotasks();
+      if (settled) return promise;
+      if (!timers.length) throw new Error('virtualClock: deadlock, nothing pending and the promise never settled');
+      timers.sort((a, b) => a.at - b.at || a.seq - b.seq);
+      const t = timers.shift();
+      now = t.at;
+      t.fn();
+    }
+  }
+  return { Date: VirtualDate, setTimeout: setVirtualTimeout, runUntil, now: () => now };
+}
+
 // Minimal pass/fail runner: runs an async fn, prints PASS/FAIL, sets
 // process.exitCode so `node tests/x.js` is a valid CI-style check without
 // needing a framework to interpret its output.
@@ -47,4 +81,4 @@ async function run(name, fn) {
   }
 }
 
-module.exports = { readSource, evalModule, run, REPO_ROOT };
+module.exports = { virtualClock, readSource, evalModule, run, REPO_ROOT };
