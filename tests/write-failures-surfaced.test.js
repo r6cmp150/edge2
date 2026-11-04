@@ -51,6 +51,8 @@ run('a failed buy snapshot reaches the banner with Retry, and the row is kept (p
   const f = c.state.snapshotWriteFailures.p1;
   assert.ok(f && f.row && f.row.position_id === 'p1' && f.row.snapshot.score === 80, 'the row is kept for Retry');
   assert.ok(persisted.includes('snapshotWriteFailures'), 'persisted');
+  // CHANGED 2026-11-04, declared: detail and buttons sit behind a tap now (tests/banner-one-line.test.js).
+  c.state.bannerExpanded = true; c.updateMarketBanner();
   assert.ok(banner.innerHTML.includes('ABC buy snapshot NOT saved') && banner.innerHTML.includes("retrySnapshotWrite('p1')"), banner.innerHTML);
 });
 

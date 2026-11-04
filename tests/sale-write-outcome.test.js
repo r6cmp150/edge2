@@ -48,6 +48,8 @@ run('refused for any other reason: red banner, what to do, Retry, and the sale K
   assert.strictEqual(f.code, 'SALE_FAILED');
   assert.deepStrictEqual(f.args, args, 'the only copy of the sale is kept, with everything Retry needs');
   assert.ok(persisted.includes('saleWriteFailures'), 'persisted: it survives a reload');
+  // CHANGED 2026-11-04, declared: detail and buttons sit behind a tap now (tests/banner-one-line.test.js).
+  global.state.bannerExpanded = true; global.__banner();
   assert.ok(el.innerHTML.includes('HUN sale NOT recorded') && el.innerHTML.includes("Don't re-submit it by hand") && el.innerHTML.includes('check the Sold tab after a refresh'));
   assert.ok(el.innerHTML.includes(`retrySaleWrite('${pos.id}')`));
   assert.strictEqual(el.style.color, 'var(--red)');
@@ -62,6 +64,8 @@ run('a thrown error (network, timeout) is SALE_FAILED too, never silent', quiet(
 run('a duplicate is said as the intended refusal, not as a loss, and only it is dismissable', quiet(async () => {
   const { el } = load({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "trades_v2_position_id_once"', details: 'Key (position_id)=(1761550000000) already exists.' } });
   assert.strictEqual(await global.__w(...args), 'SALE_DUPLICATE');
+  // CHANGED 2026-11-04, declared: detail and buttons sit behind a tap now (tests/banner-one-line.test.js).
+  global.state.bannerExpanded = true; global.__banner();
   assert.ok(el.innerHTML.includes('HUN sale was already recorded') && el.innerHTML.includes('refused, as designed') && el.innerHTML.includes('Nothing is lost'));
   assert.ok(!el.innerHTML.includes('NOT recorded'));
   assert.strictEqual(global.state.saleWriteFailures[pos.id].args, null, 'nothing to retry');

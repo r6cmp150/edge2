@@ -148,7 +148,8 @@ await run('banner says the position was closed elsewhere, and how to fix it', ()
   global.getMarketStatus = () => ({ color: 'x', label: 'OPEN', countdown: '' });
   // eslint-disable-next-line no-eval
   eval(settingLabelsSrc() + '\n' + fnSrc('app.js', 'settingsBannerLine') + '\n' + fnSrc('app.js', 'updateMarketBanner') + '\nglobal.__banner = updateMarketBanner;');
-  global.state = { persistFailure: null, positionSaveFailures: { a: { ticker: 'SNXX', code: 'POSITION_MISSING', message: '' } } };
+  // CHANGED 2026-11-04, declared: detail and buttons sit behind a tap now (tests/banner-one-line.test.js).
+  global.state = { bannerExpanded: true, persistFailure: null, positionSaveFailures: { a: { ticker: 'SNXX', code: 'POSITION_MISSING', message: '' } } };
   global.__banner();
   assert.ok(/SNXX was closed in another session/.test(el.innerHTML) && /Refresh to update/.test(el.innerHTML), el.innerHTML);
   global.state.positionSaveFailures = { a: { ticker: 'SNXX', code: 'POSITION_UNWRITABLE', message: '' } };
@@ -157,6 +158,7 @@ await run('banner says the position was closed elsewhere, and how to fix it', ()
   // persistFailure outranks it -- and the position notice is queued, not
   // dropped: it shows again the moment the persist failure clears.
   global.state.positionSaveFailures = { a: { ticker: 'SNXX', code: 'POSITION_MISSING', message: '' } };
+  global.state.bannerExpanded = false;
   global.state.persistFailure = { key: 'ownedPrevRSI', message: 'quota', at: 'x' };
   global.__banner();
   assert.ok(/Save failed — ownedPrevRSI/.test(el.innerHTML) && !/SNXX/.test(el.innerHTML), 'persistFailure wins the banner');

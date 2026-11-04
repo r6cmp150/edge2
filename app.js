@@ -1073,135 +1073,109 @@ function settingsBannerLine() {
   return null;
 }
 
+// ONE LINE, ALWAYS (2026-11-04). The banner is one fixed-height line above the cards.
+// Rendered at 390px, its failure text overflowed that line and was clipped, so "HUN
+// sale NOT recorded" lost its ticker and its instructions ran over the header and the
+// cards; and each failure hid every one below it, with no count, and market status too.
+// So: the most urgent problem's title, how many more, and market status stay on the
+// line. A tap opens every problem, in order, with its detail and its button, OVER the
+// cards rather than pushing them down. The order is the old priority: a save that has
+// stopped working, then sales, position saves, buy snapshots, scan batches, settings.
+function toggleBannerDetail() {
+  state.bannerExpanded = !state.bannerExpanded;
+  updateMarketBanner();
+}
+
 function updateMarketBanner() {
   const el = document.getElementById('market-banner');
   if (!el) return;
-  // persistFailure (core/store.js, 2026-09-04) takes over the banner
-  // entirely rather than sharing space with market status — a save that's
-  // silently stopped working is a more urgent fact than what session it
-  // is, and this is deliberately NOT muted the way the RVOL/Phase-5
-  // disclosures elsewhere are: those mean "one thing wasn't measured,"
-  // this means "state may not survive a reload."
+  const problems = [];
+  const add = (color, title, detail, button = '') => problems.push({ color, title, detail, button });
   if (state.persistFailure) {
-    el.style.color = 'var(--red)';
-    el.innerHTML = `
-      <div>
-        <span class="market-status-dot" style="background:var(--red)"></span>
-        <strong>Save failed — ${state.persistFailure.key}</strong>
-      </div>
-      <span class="market-countdown">Storage full? Free up space, then reload.</span>
-    `;
-    return;
+    add('var(--red)', `Save failed — ${state.persistFailure.key}`, 'Storage full? Free up space, then reload.');
   }
-  // A sale that isn't recorded outranks everything below: it's a real trade
-  // record that would otherwise be lost without anyone knowing
-  // (writeTradeToSupabase -> noteSaleWrite). SALE_FAILED shows first.
+  // SALE_FAILED first: a real trade record that would otherwise be lost
+  // (writeTradeToSupabase -> noteSaleWrite).
   const saleFails = Object.entries(state.saleWriteFailures || {}).map(([id, f]) => ({ id, ...f }))
     .sort((a, b) => (a.code === 'SALE_FAILED' ? 0 : 1) - (b.code === 'SALE_FAILED' ? 0 : 1));
-  if (saleFails.length) {
-    const f = saleFails[0];
-    const more = saleFails.length > 1 ? ` (+${saleFails.length - 1} more)` : '';
-    const failed = f.code === 'SALE_FAILED';
-    el.style.color = failed ? 'var(--red)' : 'var(--muted)';
-    el.innerHTML = failed ? `
-      <div>
-        <span class="market-status-dot" style="background:var(--red)"></span>
-        <strong>${f.ticker} sale NOT recorded${more}</strong>
-      </div>
-      <span class="market-countdown">The sale isn't in the database. Don't re-submit it by hand: tap Retry (safe — a second copy is refused), then check the Sold tab after a refresh.</span>
-      <button class="btn btn-sm btn-danger" onclick="retrySaleWrite('${f.id}')">Retry</button>
-    ` : `
-      <div>
-        <span class="market-status-dot" style="background:var(--muted)"></span>
-        <strong>${f.ticker} sale was already recorded${more}</strong>
-      </div>
-      <span class="market-countdown">A second copy of the same sale was refused, as designed. Nothing is lost — refresh the Sold tab to see it.</span>
-      <button class="btn btn-sm btn-ghost" onclick="dismissSaleNotice('${f.id}')">Dismiss</button>
-    `;
-    return;
+  for (const f of saleFails) {
+    if (f.code === 'SALE_FAILED') {
+      add('var(--red)', `${f.ticker} sale NOT recorded`, "The sale isn't in the database. Don't re-submit it by hand: tap Retry (safe — a second copy is refused), then check the Sold tab after a refresh.",
+        `<button class="btn btn-sm btn-danger" onclick="retrySaleWrite('${f.id}')">Retry</button>`);
+    } else {
+      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of the same sale was refused, as designed. Nothing is lost — refresh the Sold tab to see it.',
+        `<button class="btn btn-sm btn-ghost" onclick="dismissSaleNotice('${f.id}')">Dismiss</button>`);
+    }
   }
-  // Position save failures (2026-10-21, core/store.js savePositionToSupabase)
-  // take the banner for the same reason: the data is right but this tab is
-  // showing something it couldn't save, or a position that no longer exists.
-  const saveFails = Object.values(state.positionSaveFailures);
-  if (saveFails.length) {
-    const f = saveFails[saveFails.length - 1];
-    const more = saveFails.length > 1 ? ` (+${saveFails.length - 1} more)` : '';
+  // Position saves (core/store.js savePositionToSupabase): this tab is showing something
+  // it couldn't save, or a position that no longer exists. Newest first.
+  for (const f of Object.values(state.positionSaveFailures || {}).reverse()) {
     const text = {
       POSITION_MISSING: [`${f.ticker} was closed in another session`, 'Refresh to update.'],
       POSITION_UNWRITABLE: [`Couldn't save ${f.ticker}`, 'The position exists but the update was refused — changes since the last save are not stored.'],
       POSITION_UNKNOWN: [`Couldn't confirm ${f.ticker} was saved`, "Supabase didn't answer the check — reload to see what's stored."],
     }[f.code] || [`Couldn't save ${f.ticker}`, f.message];
-    el.style.color = 'var(--red)';
-    el.innerHTML = `
-      <div>
-        <span class="market-status-dot" style="background:var(--red)"></span>
-        <strong>${text[0]}${more}</strong>
-      </div>
-      <span class="market-countdown">${text[1]}</span>
-    `;
-    return;
+    add('var(--red)', text[0], text[1]);
   }
-  // A buy whose signal snapshot didn't save (2026-11-02): the trade is
-  // recorded, the signal it was bought on isn't -- recoverable only while
-  // this device still holds the row. Below sales and position saves (those
-  // are live trade records), above market status.
-  const snapFails = Object.entries(state.snapshotWriteFailures || {}).map(([id, f]) => ({ id, ...f }));
-  if (snapFails.length) {
-    const f = snapFails[0];
-    const more = snapFails.length > 1 ? ` (+${snapFails.length - 1} more)` : '';
-    el.style.color = 'var(--red)';
-    el.innerHTML = `
-      <div>
-        <span class="market-status-dot" style="background:var(--red)"></span>
-        <strong>${f.ticker} buy snapshot NOT saved${more}</strong>
-      </div>
-      <span class="market-countdown">The position is recorded; the signal it was bought on isn't. Tap Retry (safe — a second copy is refused).</span>
-      <button class="btn btn-sm btn-danger" onclick="retrySnapshotWrite('${f.id}')">Retry</button>
-    `;
-    return;
+  // A buy whose signal snapshot didn't save: the trade is recorded, the signal it was
+  // bought on isn't, recoverable only while this device still holds the row.
+  for (const [id, f] of Object.entries(state.snapshotWriteFailures || {})) {
+    add('var(--red)', `${f.ticker} buy snapshot NOT saved`, "The position is recorded; the signal it was bought on isn't. Tap Retry (safe — a second copy is refused).",
+      `<button class="btn btn-sm btn-danger" onclick="retrySnapshotWrite('${id}')">Retry</button>`);
   }
   const ratingFails = Array.isArray(state.ratingWriteFailures) ? state.ratingWriteFailures : [];
   if (ratingFails.length) {
     const rows = ratingFails.reduce((n, b) => n + (b.rows?.length || 0), 0);
     const dropped = state.ratingWriteFailuresDropped ? ` · ${state.ratingWriteFailuresDropped} older batch(es) dropped` : '';
-    el.style.color = 'var(--yellow)';
-    el.innerHTML = `
-      <div>
-        <span class="market-status-dot" style="background:var(--yellow)"></span>
-        <strong>${ratingFails.length} scan snapshot batch${ratingFails.length === 1 ? '' : 'es'} NOT saved (${rows} rows)${dropped}</strong>
-      </div>
-      <span class="market-countdown">The scan record of what was on screen didn't reach the database. Tap Retry (checks first, so nothing is saved twice).</span>
-      <button class="btn btn-sm btn-ghost" onclick="retryRatingWrites()">Retry</button>
-    `;
-    return;
+    add('var(--yellow)', `${ratingFails.length} scan snapshot batch${ratingFails.length === 1 ? '' : 'es'} NOT saved (${rows} rows)${dropped}`,
+      "The scan record of what was on screen didn't reach the database. Tap Retry (checks first, so nothing is saved twice).",
+      '<button class="btn btn-sm btn-ghost" onclick="retryRatingWrites()">Retry</button>');
   }
-  // Settings not running on Roman's saved values (2026-11-02): a phone copy
-  // that couldn't be read, values held only on this phone (in no backup),
-  // or settings on their built-in default. Below every lost-record line,
-  // above market status: the app works, but not on his configuration.
+  // Settings not running on Roman's saved values: the app works, but not on his
+  // configuration. Below every lost-record line.
   const settingsLine = settingsBannerLine();
   if (settingsLine) {
-    el.style.color = 'var(--yellow)';
-    el.innerHTML = `
-      <div>
-        <span class="market-status-dot" style="background:var(--yellow)"></span>
-        <strong>${settingsLine.title}</strong>
-      </div>
-      <span class="market-countdown">${settingsLine.detail}</span>
-      ${settingsLine.button ? '<button class="btn btn-sm btn-ghost" onclick="saveSettingsNow()">Save to Supabase</button>' : ''}
-    `;
-    return;
+    add('var(--yellow)', settingsLine.title, settingsLine.detail,
+      settingsLine.button ? '<button class="btn btn-sm btn-ghost" onclick="saveSettingsNow()">Save to Supabase</button>' : '');
   }
   const ms = getMarketStatus();
-  el.style.color = ms.color;
-  el.innerHTML = `
+  let html;
+  if (!problems.length) {
+    el.style.color = ms.color;
+    html = `
     <div>
       <span class="market-status-dot" style="background:${ms.color}"></span>
       <strong>${ms.label}</strong>
     </div>
     <span class="market-countdown">${ms.countdown}</span>
   `;
+  } else {
+    const top = problems[0];
+    const open = !!state.bannerExpanded;
+    el.style.color = top.color;
+    html = `
+    <button type="button" class="banner-line" aria-expanded="${open}" onclick="toggleBannerDetail()">
+      <span class="market-status-dot" style="background:${top.color}"></span>
+      <strong class="banner-title">${top.title}</strong>
+      ${problems.length > 1 ? `<span class="banner-count">+${problems.length - 1}</span>` : ''}
+      <span class="banner-chevron">${open ? '▴' : '▾'}</span>
+    </button>
+    <span class="market-countdown banner-status">${ms.label}</span>
+    ${open ? `<div class="banner-panel">
+      ${problems.map(p => `<div class="banner-row">
+        <div><span class="market-status-dot" style="background:${p.color}"></span><strong style="color:${p.color}">${p.title}</strong></div>
+        <div class="banner-detail">${p.detail}</div>
+        ${p.button}
+      </div>`).join('')}
+      <div class="banner-row banner-detail">${ms.label} · ${ms.countdown}</div>
+    </div>` : ''}
+  `;
+  }
+  // The clock calls this every 30 seconds: unchanged content isn't rewritten, so an open
+  // panel keeps its scroll and a tap on Retry can't land on a replaced button.
+  if (el._html === html) return;
+  el._html = html;
+  el.innerHTML = html;
 }
 
 // renderPortfolioTab()'s passive saves (peak price, momentum protection,

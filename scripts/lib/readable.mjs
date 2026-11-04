@@ -1,11 +1,11 @@
 // scripts/lib/readable.mjs — 2026-11-02, auth plan step 4½. Row-level
 // security answers a read it won't allow with an EMPTY LIST, not an error, so
 // "no rows" from a table is ambiguous: none exist, or this credential can't
-// see them. Call this only where the table CANNOT be empty, and say why at the
-// call site: its rows are never deleted (the backup's floors in scripts/lib/
-// backup-rules.mjs), or this run has just inserted into it. setup_triggers is
-// the second kind: it held 0 rows live on 2026-11-04, so its control runs only
-// after a successful insert. One row must come back before anything read from
+// see them. Call this only where the table CANNOT be empty, on evidence, not
+// assumption: its rows are never deleted (a backup floor), other rows' foreign keys
+// hold it (scan_runs), or this run has just inserted into it (setup_triggers, which
+// held 0 rows live on 2026-11-04). tests/empty-read-controls.test.js keeps the list,
+// and a table with no evidence there can't be passed here. One row must come back before anything read from
 // the table is acted on. If it doesn't, the run stops, red, and says why: it
 // never writes a resolution, fires a scan, or reports a check passed on the
 // strength of an empty read (tests/empty-read-sites.test.js).

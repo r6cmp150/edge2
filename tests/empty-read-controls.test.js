@@ -43,6 +43,42 @@ run('each script runs its control before the reads it guards', () => {
   }
 });
 
+// A positive control that can legitimately be empty is not a control. Every table one
+// is used on, and why it can't be empty. Live counts when this was written, read-only,
+// 2026-11-04 04:39Z: signal_log 2175, trades_v2 492, scan_runs 114, rating_snapshots
+// 3324, setup_triggers 0. Add a table only with evidence the test below can check.
+const CONTROLS = {
+  signal_log: { kind: 'FLOOR' },
+  trades_v2: { kind: 'FLOOR' },
+  rating_snapshots: { kind: 'FLOOR', appOnly: true }, // retryRatingWrites
+  scan_runs: { kind: 'HELD_BY_FOREIGN_KEY' }, // no backup, so no floor: signal_log rows reference it
+  setup_triggers: { kind: 'AFTER_INSERT' },
+};
+run('every positive control\'s table has evidence it cannot be empty, and the evidence still holds', async () => {
+  const { pathToFileURL } = require('url');
+  const fs = require('fs');
+  const path = require('path');
+  const { REPO_ROOT } = require('./_lib');
+  const { MIN_ROWS } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts', 'lib', 'backup-rules.mjs')).href);
+  const walk = d => fs.readdirSync(path.join(REPO_ROOT, d), { withFileTypes: true }).flatMap(e => (e.isDirectory() ? walk(path.join(d, e.name)) : /\.mjs$/.test(e.name) ? [path.join(d, e.name)] : []));
+  const used = new Set();
+  for (const f of walk('scripts')) {
+    if (f.endsWith('readable.mjs')) continue;
+    for (const m of readSource(f).matchAll(/assertReadable\([^)]*'([a-z_0-9]+)'\)/g)) used.add(m[1]);
+  }
+  assert.ok(used.size >= 4, 'the enumerator found ' + used.size);
+  for (const t of used) assert.ok(CONTROLS[t] && !CONTROLS[t].appOnly, `${t}: a positive control with no evidence the table can't be empty`);
+  for (const [t, c] of Object.entries(CONTROLS)) {
+    if (!c.appOnly) assert.ok(used.has(t), `${t}: listed, no control uses it`);
+    if (c.kind === 'FLOOR') assert.ok(MIN_ROWS[t] > 0, `${t}: no backup floor`);
+  }
+  const schema = fs.readdirSync(path.join(REPO_ROOT, 'db')).filter(f => f.endsWith('.sql')).map(f => readSource(`db/${f}`)).join('\n');
+  assert.ok(/foreign key \(scan_session\) references scan_runs\(id\)/.test(schema), 'scan_runs is held by the foreign key');
+  for (const t of ['signal_log', 'trades_v2', 'scan_runs']) {
+    assert.ok(!new RegExp(`create policy [^;]*on ${t} for delete`, 'i').test(schema), `${t}: a delete policy would end "never empty"`);
+  }
+});
+
 run('setup_triggers can truly be empty, so its control runs only after this run inserted', () => {
   const src = readSource('scripts/log-signals-warrior.mjs');
   const block = src.indexOf('if (setupTriggerRows.length) {'), failed = src.indexOf('setup_triggers insert failed');
