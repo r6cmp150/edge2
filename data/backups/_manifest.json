@@ -1,0 +1,63 @@
+{
+  "run_at": "2026-11-04T13:22:58.213Z",
+  "floors": {
+    "trades": 37,
+    "trades_v2": 451,
+    "signal_log": 1938,
+    "settings": 1,
+    "portfolio": 0,
+    "rating_snapshots": 2944,
+    "signal_snapshot_at_buy": 88
+  },
+  "tables": {
+    "trades": {
+      "fetched": 37,
+      "prior": 37,
+      "floor": 37,
+      "written": true,
+      "reason": null
+    },
+    "trades_v2": {
+      "fetched": 492,
+      "prior": 467,
+      "floor": 451,
+      "written": true,
+      "reason": null
+    },
+    "signal_log": {
+      "fetched": 2175,
+      "prior": 2045,
+      "floor": 1938,
+      "written": true,
+      "reason": null
+    },
+    "settings": {
+      "fetched": 1,
+      "prior": 1,
+      "floor": 1,
+      "written": true,
+      "reason": null
+    },
+    "portfolio": {
+      "fetched": 29,
+      "prior": 34,
+      "floor": 0,
+      "written": true,
+      "reason": null
+    },
+    "signal_snapshot_at_buy": {
+      "fetched": 157,
+      "prior": 137,
+      "floor": 88,
+      "written": true,
+      "reason": null
+    },
+    "rating_snapshots": {
+      "fetched": 3324,
+      "prior": 3184,
+      "floor": 2944,
+      "written": true,
+      "reason": null
+    }
+  }
+}
