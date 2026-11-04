@@ -24,7 +24,7 @@ function load(insertResult) {
   global.getMarketStatus = () => ({ color: 'x', label: 'OPEN', countdown: '' });
   global.supabaseClient = { from: () => ({ insert: () => ({ select: async () => { const r = typeof insertResult === 'function' ? insertResult() : insertResult; if (r instanceof Error) throw r; return r; } }) }) };
   // eslint-disable-next-line no-eval
-  eval(settingLabelsSrc() + '\n' + ['writeTradeToSupabase', 'noteSaleWrite', 'retrySaleWrite', 'dismissSaleNotice', 'settingsBannerLine', 'updateMarketBanner'].map(grab).join('\n') +
+  eval(settingLabelsSrc() + '\n' + ['saleVerdictProvenance', 'writeTradeToSupabase', 'noteSaleWrite', 'retrySaleWrite', 'dismissSaleNotice', 'settingsBannerLine', 'updateMarketBanner'].map(grab).join('\n') +
     '\nglobal.__w = writeTradeToSupabase; global.__retry = retrySaleWrite; global.__dismiss = dismissSaleNotice; global.__banner = updateMarketBanner;');
   return { persisted, el };
 }

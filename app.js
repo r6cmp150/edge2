@@ -6469,6 +6469,14 @@ function selectDecision(dec) {
 // of truth; this is purely additive persistence for later analysis/export.
 // Writes to trades_v2, not trades (cutover, 2026-09-05) — trades is
 // SELECT-only for anon from this point on (db/004).
+// db/035's provenance for a sale record: the record's own (every record this
+// build makes: not_recorded), else db/036's rule for a record an older build
+// made (a stored verdict is mixed_moment; none is not_recorded).
+function saleVerdictProvenance(record) {
+  if (record.verdictProvenance) return record.verdictProvenance;
+  return record.unifiedRecommendationAtSale != null ? 'mixed_moment' : 'not_recorded';
+}
+
 async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
   try {
     // The label of the BUY's score under the BUY's thresholds (spec §7.7:
@@ -6542,10 +6550,19 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       unified_composite_at_sale: record.unifiedCompositeAtSale,
       top_exit_factors_at_sale: record.topExitFactorsAtSale,
       top_hold_factors_at_sale: record.topHoldFactorsAtSale,
-      lock_in_profits_fired: record.lockInProfitsFired,
+      // NULL on a not_recorded row (db/035's CHECK): a false there would be a claim.
+      lock_in_profits_fired: saleVerdictProvenance(record) === 'not_recorded' ? null : record.lockInProfitsFired,
       peak_risk_score_at_sale: record.peakRiskScoreAtSale,
       peak_rsi_during_hold: record.peakRsiDuringHold,
       top_peak_risk_factors_at_sale: record.topPeakRiskFactorsAtSale,
+      // db/035: where the verdict above came from (every new sale:
+      // not_recorded, the verdict fields all null), and the last signal
+      // that predates the sale. A record made by a build before db/035 and
+      // RETRIED now (saleWriteFailures) names neither: it is classified by
+      // db/036's rule here, so the retry still succeeds once both columns
+      // are NOT NULL, rather than losing the trade.
+      verdict_provenance: saleVerdictProvenance(record),
+      signal_before_sale: record.signalBeforeSale ?? { state: 'NOT_RECORDED', reason: 'recorded by a build before db/035' },
       price_momentum_pts: pos.priceMomentumPts,
       vol_spike_pts: pos.volSpikePts,
       rsi_pts: pos.rsiPts,
@@ -6646,85 +6663,72 @@ function dismissSaleNotice(posId) {
   updateMarketBanner();
 }
 
-// Unified recommendation snapshot for a trade record at time of sale. Uses
-// pos.rsiAtBuy rather than any live RSI since a sale is a point-in-time
-// event with no "current" bar fetch of its own at this point in the flow.
-function computeUnifiedSaleFields(pos, salePrice, saleDate) {
-  // Registry dispatch (Phase 7) -- checked before EDGE's own math runs, not
-  // after: calcUnifiedRecommendation reads pos.duration internally
-  // (MAX_HOLD_DAYS[position.duration]), which is undefined for every
-  // Warrior position and silently disables that factor rather than
-  // throwing -- exactly the landmine warrior-engine-spec-v2.md's Phase 7
-  // section names (line ~1480). Guarding here means EDGE's function never
-  // runs against a Warrior position at all, not that its wrong answer gets
-  // caught afterward. EDGE-specific fields (composite, peak-risk score/
-  // factors) have no Warrior equivalent and stay null -- disclosed, not
-  // zero-filled -- since Warrior's evaluateExit returns only
-  // {status, reasons}, nothing resembling a composite score.
-  if (pos.engineSource && pos.engineSource !== 'EDGE') {
-    const dispatchedEngine = getEngine(pos.engineSource);
-    // The sale's own time (phase-10 §7.7). The form takes a date, not a
-    // time: recorded on the sale date, the recording instant is the best
-    // known time of the sale; recorded on a later day, the time is unknown
-    // (at: null), and the engine says it couldn't judge the time-of-day
-    // rules instead of judging them against the recording moment.
-    const saleAt = saleDate === ptDateStr(getPT()) ? Date.now() : null;
-    const exitResult = (dispatchedEngine && dispatchedEngine.evaluateExit)
-      ? dispatchedEngine.evaluateExit(pos, { price: salePrice, at: saleAt })
-      : neutralEngineExitFallback(pos, { price: salePrice });
-    const peakRsiDuringHold = state.ownedPeakRSI[pos.ticker] ?? pos.rsiAtBuy ?? null;
-    return {
-      unifiedRecommendationAtSale: (exitResult.status || '').replace(/_/g, ' '),
-      unifiedCompositeAtSale: null,
-      topExitFactorsAtSale: exitResult.status !== 'HOLDING' ? (exitResult.reasons || []).slice(1) : [],
-      topHoldFactorsAtSale: [],
-      lockInProfitsFired: false,
-      peakRiskScoreAtSale: null,
-      topPeakRiskFactorsAtSale: [],
-      peakRsiDuringHold,
-      fullUreFactorsAtSale: null,
-      fullPeakRiskFactorsAtSale: null,
-    };
-  }
-  const currentSignal = currentSignalForHolding(pos.ticker);
-  // The sale's own clock: its price AND its date (phase-10 §7.7). Until
-  // 2026-10-27 the hold was counted to the day the sale was RECORDED, so a
-  // Friday sale recorded on Monday stored Friday's price at Monday's hold.
-  const ur = calcUnifiedRecommendation({ ...pos, currentPrice: salePrice, rsi: pos.rsiAtBuy }, currentSignal, state.macroContext, undefined, saleDate);
-  // Independent of composite/hardFloor — tracked across the whole hold by
-  // renderPortfolioTab (Change 2), falls back to rsiAtBuy if this ticker was
-  // sold without ever being rendered in the Portfolio tab.
-  const peakRsiDuringHold = state.ownedPeakRSI[pos.ticker] ?? pos.rsiAtBuy ?? null;
-  if (ur.hardFloor) {
-    return {
-      unifiedRecommendationAtSale: ur.label,
-      unifiedCompositeAtSale: null,
-      // Phase 9 §3.4 review (2026-09-15): was hardcoded 'Stop-loss breach'
-      // regardless of WHICH hard floor fired -- correct before this session
-      // when that was the only one, wrong now that the max-loss floor is a
-      // second, distinct trigger. ur.factors[0].name is the real factor
-      // (either floor sets exactly one).
-      topExitFactorsAtSale: [ur.factors[0]?.name || 'Hard floor'],
-      topHoldFactorsAtSale: [],
-      lockInProfitsFired: false,
-      peakRiskScoreAtSale: null,
-      topPeakRiskFactorsAtSale: [],
-      peakRsiDuringHold,
-      fullUreFactorsAtSale: ur.factors,
-      fullPeakRiskFactorsAtSale: null,
-    };
+// What a sale record stores about the exit verdict (2026-11-02, phase-10
+// appendix "Decided: the at-sale verdict"). NO VERDICT IS COMPUTED AT SALE.
+// The old computation passed the sale's price and date but the BUY's RSI
+// (the card passes live RSI, so a stored label could never equal what the
+// card showed), render-time prevRSI/peak/momentum, the recording session's
+// macro condition, and the latest scan at RECORDING time, which for a sale
+// recorded after the fact is a scan taken after the sale: post-sale data in
+// the record of the sale. A verdict built that way is worse for analysis
+// than none, and a sale-moment one can't be built yet: prevRSI/peak/momentum are
+// render state (§7.6 step 2.5), even though the sale's time can now be known. So:
+//   verdictProvenance 'not_recorded', every verdict field an explicit null
+//   (never a default: lock_in_profits_fired false would be a claim);
+//   'sale_moment' stays reserved for a build that can compute one;
+//   'mixed_moment' is the historical rows' state (db/035), never written.
+// What IS recorded: the facts (price, dates; the hold is derived on read),
+// and the last scan signal that predates the sale (signalBeforeSale).
+const VERDICT_PROVENANCE = ['sale_moment', 'mixed_moment', 'not_recorded'];
+function computeSaleVerdictFields(pos, saleDate, saleAt = null) {
+  return {
+    verdictProvenance: 'not_recorded',
+    unifiedRecommendationAtSale: null,
+    unifiedCompositeAtSale: null,
+    topExitFactorsAtSale: null,
+    topHoldFactorsAtSale: null,
+    lockInProfitsFired: null,
+    peakRiskScoreAtSale: null,
+    topPeakRiskFactorsAtSale: null,
+    fullUreFactorsAtSale: null,
+    fullPeakRiskFactorsAtSale: null,
+    // The highest RSI the Portfolio renders saw (render-dependent, §7.6
+    // step 2.5), or null when none did. It used to fall back to rsiAtBuy,
+    // which reported the buy's RSI as the peak of a hold nobody observed.
+    peakRsiDuringHold: state.ownedPeakRSI[pos.ticker] ?? null,
+    signalBeforeSale: signalBeforeSale(pos, saleDate, saleAt),
+  };
+}
+
+// The last scan signal for this ticker that PREDATES the sale, stamped with
+// its own scan time, or why none can be established. With the sale's fill time,
+// the scan's own instant places it. With "Time not known" (saleAt null) only the
+// PT date can, so a scan on the sale date itself can't be put before or after the
+// fill. And only the latest scan is retained (ownedScores), so when it isn't before
+// the sale, the earlier ones are gone. Both are said, not guessed. -> { state: 'PREDATES_SALE', scanned_at, scan_date, scan_hhmm,
+//   score, label, scoring_version, scoring_hash, signal }
+//  | { state: 'NOT_ESTABLISHED', reason }
+function signalBeforeSale(pos, saleDate, saleAt = null) {
+  const none = reason => ({ state: 'NOT_ESTABLISHED', reason });
+  if (pos.engineSource && pos.engineSource !== 'EDGE') return none('not an EDGE position: no EDGE scan signal applies');
+  if (parseableDay(saleDate) == null) return none('the sale date is not a date');
+  const sig = currentSignalForHolding(pos.ticker);
+  if (!sig) return none('no scan has scored this ticker');
+  if (sig.notEvaluatedReason) return none(`the retained score was not evaluated (${sig.notEvaluatedReason})`);
+  if (sig.scannedAt == null) return none('the retained scan has no recorded scan time');
+  const scan = ptDateTimeOf(sig.scannedAt);
+  if (saleAt != null ? !(sig.scannedAt < saleAt) : !(scan.date < saleDate)) {
+    return none(saleAt != null
+      ? `the latest retained scan (${scan.date} ${scan.hhmm} PT) is not before the sale's fill, and earlier scans aren't kept`
+      : `the latest retained scan (${scan.date} ${scan.hhmm} PT) is not before the sale date ${saleDate}; the sale's time isn't known, so a same-day scan can't be placed before it, and earlier scans aren't kept`);
   }
   return {
-    unifiedRecommendationAtSale: ur.label,
-    unifiedCompositeAtSale: ur.composite,
-    topExitFactorsAtSale: ur.factors.filter(f => f.points < 0).sort((a, b) => a.points - b.points).slice(0, 2).map(f => f.name),
-    topHoldFactorsAtSale: ur.factors.filter(f => f.points > 0).sort((a, b) => b.points - a.points).slice(0, 2).map(f => f.name),
-    lockInProfitsFired: ur.label === 'LOCK IN PROFITS',
-    peakRiskScoreAtSale: ur.peakRisk ? ur.peakRisk.score : null,
-    topPeakRiskFactorsAtSale: ur.peakRisk ? ur.peakRisk.topFactors.map(f => f.name) : [],
-    peakRsiDuringHold,
-    fullUreFactorsAtSale: ur.factors,
-    fullPeakRiskFactorsAtSale: ur.peakRisk ? ur.peakRisk.factors : null,
+    state: 'PREDATES_SALE',
+    scanned_at: new Date(sig.scannedAt).toISOString(),
+    scan_date: scan.date, scan_hhmm: scan.hhmm,
+    score: sig.score ?? null, label: sig.signal ?? null,
+    scoring_version: sig.scoringVersion ?? null, scoring_hash: sig.scoringHash ?? null,
+    signal: sig,
   };
 }
 
@@ -6769,7 +6773,7 @@ async function confirmMarkSold(posId, btn) {
     : null;
   // Rule 5: did the position actually exit via the trailing stop threshold?
   const trailingStopTriggered = !!pos.momentumProtectionActivated && salePrice <= pos.peakPrice * 0.85;
-  const unifiedSaleFields = computeUnifiedSaleFields(pos, salePrice, saleDate);
+  const saleVerdictFields = computeSaleVerdictFields(pos, saleDate);
 
   const record = {
     id: Date.now().toString(),
@@ -6828,7 +6832,7 @@ async function confirmMarkSold(posId, btn) {
     distanceFromTargetAtSale: pos.target
       ? Math.round(((pos.target - salePrice) / pos.target) * 1000) / 10
       : null,
-    ...unifiedSaleFields,
+    ...saleVerdictFields,
   };
 
   state.sold.unshift(record);
@@ -7314,17 +7318,21 @@ function mapTradesV2ToSoldShape(row) {
     distanceFromTargetAtSale: row.distance_from_target,
     unifiedRecommendationAtSale: row.unified_recommendation_at_sale,
     unifiedCompositeAtSale: row.unified_composite_at_sale,
-    topExitFactorsAtSale: row.top_exit_factors_at_sale || [],
-    topHoldFactorsAtSale: row.top_hold_factors_at_sale || [],
+    // ?? not ||, and no !!: a sale with no verdict (not_recorded) must read
+    // back as null, not as "no factors" / "LOCK IN never fired" (db/035).
+    topExitFactorsAtSale: row.top_exit_factors_at_sale ?? null,
+    topHoldFactorsAtSale: row.top_hold_factors_at_sale ?? null,
     buyTime: row.buy_time,
     buyDayOfWeek: row.buy_day_of_week,
     buySession: row.buy_session,
     subTenEntryAdjustment: row.sub10_adjustment,
     groqProbabilityAtBuy: row.groq_at_purchase,
-    lockInProfitsFired: !!row.lock_in_profits_fired,
+    lockInProfitsFired: row.lock_in_profits_fired ?? null,
     peakRiskScoreAtSale: row.peak_risk_score_at_sale,
     peakRsiDuringHold: row.peak_rsi_during_hold,
-    topPeakRiskFactorsAtSale: row.top_peak_risk_factors_at_sale || [],
+    topPeakRiskFactorsAtSale: row.top_peak_risk_factors_at_sale ?? null,
+    verdictProvenance: row.verdict_provenance ?? null, // db/035; null only before it is applied
+    signalBeforeSale: row.signal_before_sale ?? null,
     // sellTimingResolved/bestExit*/priceAt5Days: writeSellTimingToSupabase
     // is disabled at this cutover (app.js:~1230), so these stay whatever
     // trades_v2 actually holds — null for every trade until the deferred
@@ -7354,7 +7362,7 @@ function mapTradesV2ToSoldShape(row) {
     macroAdjustmentPts: row.macro_adjustment_pts,
     maPctAtBuy: row.ma_pct_at_buy,
     rawScoreAtBuy: row.raw_score_at_buy,
-    fullUreFactorsAtSale: row.full_ure_factors_at_sale || [],
+    fullUreFactorsAtSale: row.full_ure_factors_at_sale ?? null,
     fullPeakRiskFactorsAtSale: row.full_peak_risk_factors_at_sale || null,
     // Phase 9 §4.2 (db/024, confirmed applied 2026-09-16) -- direct
     // reads, no `||` -- 0 is real and meaningful for spread_at_buy/
@@ -7444,16 +7452,38 @@ function withTimeout(promise, ms, message) {
 // mapSupabaseTradeToSoldShape() leaves null (not tracked in Supabase) — those
 // specific lines degrade to a labeled '—' rather than showing wrong numbers
 // when the report is Supabase-sourced (the default path).
+// THE AT-SALE VERDICT GATE (2026-11-02, db/035, phase-10 appendix). Every
+// report section that reads the stored at-sale verdict reads ONLY rows whose
+// verdict came from the sale's own moment. Every verdict recorded so far is
+// mixed_moment: the buy's RSI (never the RSI the card showed), render-time
+// inputs, and the scan current when the sale was RECORDED, which can
+// postdate the sale. Grouping outcomes by such a label, or correlating its
+// factors with outcomes, can show a pattern that isn't there. The sections
+// are gated, not relabelled: empty now ("no qualifying trades", with what was
+// excluded and why), they start working by themselves once sale_moment rows
+// exist. Rows from before db/035 read back without a provenance and are
+// excluded the same way.
+function saleMomentVerdicts(sold) {
+  return sold.filter(s => s.verdictProvenance === 'sale_moment');
+}
+function verdictGateNote(sold) {
+  const excluded = sold.filter(s => s.verdictProvenance !== 'sale_moment' && s.unifiedRecommendationAtSale != null).length;
+  return excluded
+    ? `${excluded} recorded verdict${excluded === 1 ? '' : 's'} excluded: computed from mixed-moment inputs (the buy's RSI, render-time state, a scan that can postdate the sale), not what the app showed at the sale.`
+    : 'No verdicts recorded from the sale\'s own moment yet.';
+}
+
 async function buildWinnerExitTimingSection(sold) {
   const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : 0;
 
-  const lockInTrades = sold.filter(s => s.lockInProfitsFired);
-  const holdStrongTrades = sold.filter(s => s.unifiedRecommendationAtSale === 'HOLD STRONG');
-  const peakPriceUnavailable = sold.some(s => s.peakPrice == null);
+  // Gated: only sale-moment verdicts (saleMomentVerdicts, above).
+  const gated = saleMomentVerdicts(sold);
+  const lockInTrades = gated.filter(s => s.lockInProfitsFired === true);
+  const holdStrongTrades = gated.filter(s => s.unifiedRecommendationAtSale === 'HOLD STRONG');
 
   const lockInBlock = (() => {
     if (!lockInTrades.length) return `Trades where LOCK IN PROFITS was showing at time of sale:
-  No completed trades with LOCK IN PROFITS on record yet.`;
+  No qualifying trades. ${verdictGateNote(sold)}`;
     const wins = lockInTrades.filter(s => s.pnlPct > 0);
     const withPeak = lockInTrades.filter(s => s.peakPrice != null && s.buyPrice);
     // "% of peak gain preserved" is only a meaningful question when a peak
@@ -7485,7 +7515,7 @@ async function buildWinnerExitTimingSection(sold) {
 
   const holdStrongBlock = await (async () => {
     if (!holdStrongTrades.length) return `Trades where HOLD STRONG was showing at time of sale:
-  No completed trades with HOLD STRONG on record yet.`;
+  No qualifying trades. ${verdictGateNote(sold)}`;
     const wins = holdStrongTrades.filter(s => s.pnlPct > 0);
     // Capped at the 25 most recent trades — this metric needs a live
     // next-day bar fetch per trade (no stored field for it), so the cap
@@ -7515,47 +7545,22 @@ async function buildWinnerExitTimingSection(sold) {
   (based on next day's close vs sale price)`;
   })();
 
-  const heldPastBlock = (() => {
-    const withPeak = sold.filter(s => s.peakPrice != null && s.buyPrice && (s.peakRsiDuringHold ?? 0) > 70);
-    if (!withPeak.length) {
-      return `Trades where you held PAST a LOCK IN PROFITS signal:
-  (approximated: trades where peak RSI during hold exceeded 70
-   but final outcome was lower than peak unrealized gain)
-  No qualifying trades on record yet${peakPriceUnavailable ? " (peakPrice isn't tracked for Supabase-sourced trades)" : ''}.`;
-    }
-    const heldPast = withPeak.filter(s => {
-      const peakGainPct = ((s.peakPrice - s.buyPrice) / s.buyPrice) * 100;
-      return s.pnlPct < peakGainPct;
-    });
-    const avgGiven = heldPast.length
-      ? avg(heldPast, s => (((s.peakPrice - s.buyPrice) / s.buyPrice) * 100) - s.pnlPct).toFixed(1)
-      : '0.0';
-    return `Trades where you held PAST a LOCK IN PROFITS signal:
-  (approximated: trades where peak RSI during hold exceeded 70
-   but final outcome was lower than peak unrealized gain)
-  Total: ${heldPast.length} | avg gain given back: ${avgGiven}%`;
-  })();
-
-  const rsiBucketBlock = (() => {
-    const withRsi = sold.filter(s => s.peakRsiDuringHold != null);
-    if (!withRsi.length) {
-      return `Peak RSI reached during hold vs final outcome:
-  No completed trades with peak RSI tracking on record yet.`;
-    }
-    const bucket = (label, predicate) => {
-      const t = withRsi.filter(predicate);
-      return `  ${label.padEnd(28)}${t.length} trades | avg outcome ${t.length ? avg(t, s=>s.pnlPct).toFixed(1) : '—'}%`;
-    };
-    return `Peak RSI reached during hold vs final outcome:
-${bucket('Peak RSI <65 during hold:', s => s.peakRsiDuringHold < 65)}
-${bucket('Peak RSI 65-75 during hold:', s => s.peakRsiDuringHold >= 65 && s.peakRsiDuringHold <= 75)}
-${bucket('Peak RSI 75+ during hold:', s => s.peakRsiDuringHold > 75)}`;
-  })();
+  // "Held past LOCK IN" and the peak-RSI buckets are LEFT OUT (2026-11-02),
+  // not gated: peak_rsi_during_hold is contaminated twice. It is a maximum
+  // over whichever Portfolio renders happened (phase-10 §7.6 step 2.5), and
+  // until 2026-11-02 it fell back to the buy's RSI when no render saw the
+  // position. Nothing marks which rows are render-complete, so no gate can
+  // select clean ones; they come back with the §7.6 step 2.5 fix.
+  const peakRsiLeftOut = `Peak RSI during hold (held past LOCK IN PROFITS; peak-RSI buckets vs outcome):
+  Not shown. peak_rsi_during_hold is the highest RSI the Portfolio tab
+  happened to render (and, before 2026-11-02, the buy's RSI when it never
+  rendered), so it describes app usage, not the stock. Returns once it is
+  derived from bars (phase-10 §7.6 step 2.5).`;
 
   const peakFactorsBlock = (() => {
     if (!lockInTrades.length) {
       return `Most common peak risk factors at time of LOCK IN PROFITS exits:
-  No LOCK IN PROFITS exits on record yet.`;
+  No qualifying trades. ${verdictGateNote(sold)}`;
     }
     const counts = {};
     lockInTrades.forEach(s => (s.topPeakRiskFactorsAtSale || []).forEach(name => { counts[name] = (counts[name] || 0) + 1; }));
@@ -7582,9 +7587,7 @@ ${lockInBlock}
 
 ${holdStrongBlock}
 
-${heldPastBlock}
-
-${rsiBucketBlock}
+${peakRsiLeftOut}
 
 ${peakFactorsBlock}`;
 }
@@ -7950,9 +7953,16 @@ ${macroAdjBlock}`;
 // data" signal — hard-floor stop-loss sales carry a single-factor array
 // ('Stop-loss breach') rather than an empty one, so they're included here
 // same as any other sale.
+// Gated hardest (2026-11-02): it correlates factors with OUTCOME, and a
+// mixed-moment factor can come from a scan taken after the outcome, so it is
+// structurally able to report a correlation that doesn't exist. Only
+// sale-moment verdicts; with fewer than 10 it says so instead of vanishing.
 function buildUreFactorAccuracySection(sold) {
-  const withFactors = sold.filter(s => s.fullUreFactorsAtSale && s.fullUreFactorsAtSale.length);
-  if (withFactors.length < 10) return '';
+  const withFactors = saleMomentVerdicts(sold).filter(s => Array.isArray(s.fullUreFactorsAtSale) && s.fullUreFactorsAtSale.length);
+  if (withFactors.length < 10) {
+    return `=== URE FACTOR ACCURACY ===
+No qualifying trades (${withFactors.length} of the 10 needed). ${verdictGateNote(sold)}`;
+  }
 
   const wins = withFactors.filter(s => s.pnlPct > 0);
   const losses = withFactors.filter(s => s.pnlPct <= 0);
@@ -8209,10 +8219,10 @@ Break-even win rate at this ratio: ${breakEvenWinRatePct!=null?breakEvenWinRateP
   // nothing enforces that every future label is), so every distinct
   // value actually seen is counted and shown, not forced into the old
   // three-bucket vocabulary.
+  // Gated on sale-moment verdicts (saleMomentVerdicts, 2026-11-02).
   const recAtSaleCounts = {};
-  let recAtSaleUnrecorded = 0;
-  sold.forEach(s => {
-    if (!s.unifiedRecommendationAtSale) { recAtSaleUnrecorded++; return; }
+  saleMomentVerdicts(sold).forEach(s => {
+    if (!s.unifiedRecommendationAtSale) return;
     recAtSaleCounts[s.unifiedRecommendationAtSale] = (recAtSaleCounts[s.unifiedRecommendationAtSale] || 0) + 1;
   });
   const recAtSaleLines = Object.entries(recAtSaleCounts)
@@ -8360,7 +8370,7 @@ ${volBucket(3.0,999,'3x+    ')}
 
 Unified recommendation at time of sale (real counts — see this section's
 own note in the code if this ever reads 0/0/0 again, that was the bug):
-${recAtSaleLines || '  (none recorded)'}${recAtSaleUnrecorded ? `\n  Not recorded (pre-dates unified-recommendation capture): ${recAtSaleUnrecorded}` : ''}
+${recAtSaleLines || `  No qualifying trades. ${verdictGateNote(sold)}`}
 
 Performance by signal type at purchase:
   VOL BUILD signal fired:
@@ -8594,8 +8604,9 @@ ${(()=>{
   // unifiedRecommendationAtSale is null on trades sold before this feature
   // existed (or during its beta-toggle period) — those simply don't match
   // any bucket below rather than being force-fit into one.
-  const withUnified = sold.filter(s => s.unifiedRecommendationAtSale);
-  if (!withUnified.length) return '  No completed trades with a unified recommendation on record yet.';
+  // Gated on sale-moment verdicts (saleMomentVerdicts, 2026-11-02).
+  const withUnified = saleMomentVerdicts(sold).filter(s => s.unifiedRecommendationAtSale);
+  if (!withUnified.length) return `  No qualifying trades. ${verdictGateNote(sold)}`;
 
   const bucket = (label, predicate) => {
     const t = withUnified.filter(predicate);

@@ -3191,6 +3191,69 @@ yesterday's dailyBar and still rank as current in the portfolio's "Highest
 current score" (which checks when the scan ran and which formula ran it,
 not which bar it read; see `portfolioScoreState`). Fix: stamp the refresh
 exactly as the main scan does, one helper for both.
+### Decided: the at-sale verdict is not computed; stored ones are marked (2026-11-02)
+
+**What was wrong.** `computeUnifiedSaleFields` computed the exit verdict
+when a sale was *recorded*, from inputs of several moments: the sale's
+price and date, but `rsi = rsiAtBuy` (the card passes live RSI, so a
+stored label can never equal what the card showed, for any trade),
+`prevRSI`/`peakPrice`/`momentumProtectionActivated` from whichever
+Portfolio renders happened, the recording session's macro condition, and
+`currentSignalForHolding` at recording, which for a sale recorded after the
+fact is a scan taken after the sale: **post-sale data in the record of the
+sale.** The factor "RSI declining from peak (X → Y)", −30, compares a
+render-time RSI with the buy's RSI; it is in 10 of 451 stored verdicts
+(4 of them LOCK IN PROFITS), and in 3 of them X equals Y ("92 → 92").
+`peak_rsi_during_hold` fell back to `rsiAtBuy` when no render saw the
+position.
+
+**Who read it.** No script. Four sections of the app's generated EDGE
+report: the recommendation-at-sale counts, UNIFIED RECOMMENDATION AT TIME
+OF SALE (label distribution with average outcome per label, top factors),
+WINNER EXIT TIMING (LOCK IN / HOLD STRONG outcomes, held-past-LOCK-IN,
+peak-RSI buckets, peak-risk factors), and URE FACTOR ACCURACY (factor
+presence in wins vs losses). Expectancy, win rate, P&L, the sell-timing
+"Did I sell too early?", the floor scoreboard and the forward test read
+none of it. Retracted: phase-9 §0.1's "22 of 37 sold while showing HOLD
+STRONG" and §4.4's quoted distribution (struck, with what replaces them).
+
+**The ruling.**
+- The 451 stored verdicts can't be recomputed (the sale-moment inputs were
+  never captured). They are MARKED: `trades_v2.verdict_provenance`
+  (db/035), write-once, `sale_moment` / `mixed_moment` / `not_recorded`.
+  Every stored verdict is `mixed_moment`; rows without one `not_recorded`.
+  The reason for marking is not a reader (only the report reads them, and
+  it is now gated) but the two populations: once forward writes change,
+  nothing else would tell them apart (taken_resolution, code_version).
+- **Forward: no verdict is computed at sale.** `verdict_provenance =
+  'not_recorded'`, every verdict column an explicit NULL (never a default:
+  db/035 drops `lock_in_profits_fired default false`). Recorded instead:
+  the facts (price, dates; the hold is derived on read) and
+  `signal_before_sale`, the last scan signal that PREDATES the sale with its
+  own `scanned_at`, or `NOT_ESTABLISHED` with the reason.
+- **`sale_moment` stays RESERVED: not cleanly detectable today.** Three
+  inputs block it. (1) The sale's time is never recorded (the form takes a
+  date; `sell_time` is the recording clock), so a same-day scan can't be
+  placed before the fill, and only the PT date can establish "predates".
+  (2) `prevRSI`, `peakPrice` and `momentumProtectionActivated` are render
+  state with no sale-moment value (§7.6 step 2.5). (3) The macro condition
+  is the recording session's. A sale-moment RSI is computable (prior daily
+  closes plus the sale price as today's close); the others are not. It is
+  reserved and unused: see "The verdict saved with a sale", which names a
+  fourth blocker, the scan signal, that keeps it unreachable.
+- **The report is gated, not relabelled**, on `sale_moment`: each section
+  says "No qualifying trades" with what it excluded and why. URE FACTOR
+  ACCURACY hardest: it correlates factors with outcomes, and a factor from a
+  post-outcome scan can produce a correlation that doesn't exist. The
+  peak-RSI buckets and "held past LOCK IN" are LEFT OUT, with the reason,
+  until §7.6 step 2.5: `peak_rsi_during_hold` is render-dependent and
+  nothing marks which rows aren't.
+- `marketClosesHeld` travels with this change on the weaker reason: the
+  at-sale hold count is not a column (`daysHeld` is derived on read); the
+  hold count reached stored data only inside the verdict's window factors,
+  which are no longer computed. Its inputs are `date`/`timestamptz`
+  columns, so its bad-date collapse can't have fired in stored data.
+
 ### Withdrawn: Monday insurance crons for EDGE (2026-11-02)
 
 ~~On Monday 11-02, Warrior delivered only through its two "Monday insurance"

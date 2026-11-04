@@ -63,10 +63,28 @@ before a single fact about the stock is evaluated. Add the usual "RSI
 neutral-bullish" (+15) and "Above 20-day MA" (+15) and it is at +60 —
 deep into HOLD STRONG — on a position the engine knows nothing about.
 
-The record matches: **22 of 37 trades were sold while the app was showing
+~~The record matches: **22 of 37 trades were sold while the app was showing
 HOLD STRONG**, and five of those were losses (CXM −4.55%, SLI −1.12%,
 SPCH −1.08%, TLYS −0.93%, ABR −0.39%). The engine was saying "hold
-strong" at the moment Roman was cutting a loss.
+strong" at the moment Roman was cutting a loss.~~
+
+**WITHDRAWN 2026-11-02, in full; not corrected.** The count came from
+`trades_v2.unified_recommendation_at_sale`, and that field never recorded
+what the app showed. It was computed when the sale was *recorded*, with the
+**buy's** RSI (the card passes live RSI, so the stored label cannot equal
+the displayed one for any trade, however promptly recorded), render-time
+inputs, and the latest scan at recording, which for a late recording is a
+scan taken after the sale. It measures something else, so there is no
+corrected figure to put here, and none should be: no stored field says
+what the app was showing at any sale (phase-10 appendix, "Decided: the
+at-sale verdict"; db/035 marks those rows `mixed_moment`).
+
+**What replaces it: the argument stands on the formula alone.** The
+duration block awards +20 and +10 from the calendar, so a WEEK position on
+day 1 is at +30 before any fact about the stock, and HOLD STRONG starts at
++30. That is a reading of the code, true of every position, and it needs
+no record of what was displayed. It was always the argument; the record
+was offered as confirmation and confirmed nothing.
 
 21 of 37 positions were classified WEEK and held an average of 1.7 days.
 The duration classification is buying the position 30 free points against
@@ -1802,9 +1820,18 @@ as trades_v2 has existed, regardless of what `unifiedRecommendationAtSale`
 (the real, live field, captured at every sale) actually said. Replaced
 with a direct count of `unifiedRecommendationAtSale`'s real values —
 free-text, not forced into the old three-bucket vocabulary, since nothing
-guarantees future labels fit it. Real output against production data
+guarantees future labels fit it. ~~Real output against production data
 (46 trades): `HOLD STRONG: 27, HOLD: 7, CONSIDER SELLING: 6, SELL NOW —
-Stop-loss hit: 4, LOCK IN PROFITS: 1, SELL SOON: 1` — no longer 0/0/0.
+Stop-loss hit: 4, LOCK IN PROFITS: 1, SELL SOON: 1` — no longer 0/0/0.~~
+
+**WITHDRAWN 2026-11-02.** That distribution counts a field computed from
+mixed-moment inputs (the buy's RSI, render-time state, a scan that can
+postdate the sale), not what the app said at the sale; see §0.1's
+withdrawal. What replaces it: the section is gated on
+`verdict_provenance = 'sale_moment'` (db/035) and reads "No qualifying
+trades" with the count it excluded, until a build records sale-moment
+verdicts. "The field the old section counted was never wired" was right;
+"captured at every sale" was not what it captured.
 
 **"DID I SELL TOO EARLY?"** — a new report section
 (`buildSellTooEarlySection`), the fuller both-directions/both-day-offset

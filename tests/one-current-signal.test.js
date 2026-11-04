@@ -52,7 +52,11 @@ run("another formula's stored score is not evaluated, and says so", () => {
 run('every reader goes through the resolver: card, modal, recommendations, badge, sale, exit alerts', () => {
   assert.ok(!/state\.signals\.find\([a-z]+ => [a-z]+\.ticker === [a-z.]+\) \|\| currentOwnedScore/.test(app), 'no "signals first, ownedScores second" reader left');
   assert.ok(!/s \|\| currentOwnedScore\(ticker\)/.test(app));
-  assert.strictEqual((app.match(/const currentSignal = currentSignalForHolding\(/g) || []).length, 3, 'portfolio card verdict, sale fields, nav badge');
+  // CHANGED 2026-11-02, declared: 3 -> 2. The sale no longer computes a
+  // verdict (db/035); it reads the resolver once, in signalBeforeSale, to
+  // record the last signal that predates the sale.
+  assert.strictEqual((app.match(/const currentSignal = currentSignalForHolding\(/g) || []).length, 2, 'portfolio card verdict, nav badge');
+  assert.ok(app.includes('  const sig = currentSignalForHolding(pos.ticker);\n  if (!sig) return none('), 'the sale record reads the resolver (signalBeforeSale)');
   assert.ok(app.includes('          currentSignalForHolding(ticker),\n          state.macroContext'), 'stock modal verdict');
   assert.ok(app.includes('const nowSig = currentSignalForHolding(p.ticker);'), 'portfolio card score');
   assert.ok(app.includes("const s = (held && !held.scoreOnly && !held.notEvaluatedReason) ? held : state.signals.find(x => x.ticker === ticker);"), 'stock modal score and breakdown');

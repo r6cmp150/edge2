@@ -23,27 +23,15 @@ run('calcUnifiedRecommendation counts the hold to asOfDate when given, to today 
   assert.deepStrictEqual(seen, ['2026-10-30', 'TODAY'], 'the sale date when given; a live card still counts to today');
 });
 
-run('the sale passes its own date all the way down, peak risk included', () => {
-  const sale = grab('computeUnifiedSaleFields');
-  assert.ok(app.includes('function computeUnifiedSaleFields(pos, salePrice, saleDate) {'));
-  assert.ok(sale.includes('state.macroContext, undefined, saleDate);'), 'computeUnifiedSaleFields hands saleDate to calcUnifiedRecommendation');
-  assert.ok(grab('confirmMarkSold').includes('computeUnifiedSaleFields(pos, salePrice, saleDate)'), 'confirmMarkSold hands it the entered sale date');
-  assert.ok(grab('calcUnifiedRecommendation').includes('calcPeakRiskScore(position, currentSignal, snap, asOfDate)'), 'threaded into the peak-risk score, also stored at sale');
-  const pr = grab('calcPeakRiskScore');
+// CHANGED 2026-11-02, declared: the sale no longer computes a verdict at
+// all (db/035), so there is no sale date to pass down. calcUnifiedRecommendation
+// and calcPeakRiskScore keep asOfDate (test above), reserved for a build that
+// can compute a sale-moment verdict.
+run('the sale computes no verdict; asOfDate stays threaded for a future sale-moment verdict', () => {
+  assert.ok(!app.includes('function computeUnifiedSaleFields('), 'the mixed-moment at-sale verdict is gone');
+  assert.ok(grab('confirmMarkSold').includes('computeSaleVerdictFields(pos, saleDate)'));
+  assert.ok(grab('calcUnifiedRecommendation').includes('calcPeakRiskScore(position, currentSignal, snap, asOfDate)'));
   assert.ok(app.includes('function calcPeakRiskScore(position, currentSignal, snap, asOfDate = null) {'));
-  for (const [name, src] of [['calcUnifiedRecommendation', grab('calcUnifiedRecommendation')], ['calcPeakRiskScore', pr]]) {
-    assert.ok(!/holdSpan\(position, ptDateStr\(getPT\(\)\)\)/.test(src), `${name} still counts the hold to today unconditionally`);
-  }
-  // Behaviourally, through computeUnifiedSaleFields with a spy.
-  const calls = [];
-  global.getEngine = () => null; global.currentSignalForHolding = () => null; // the one resolver (2026-10-28)
-  global.state = { signals: [], macroContext: null, ownedPeakRSI: {} };
-  global.calcUnifiedRecommendation = (...a) => { calls.push(a); return { label: 'HOLD', composite: 0, factors: [], hardFloor: false, peakRisk: null }; };
-  // eslint-disable-next-line no-eval
-  eval(sale + '\nglobal.__sale = computeUnifiedSaleFields;');
-  global.__sale({ ticker: 'X', engineSource: 'EDGE', rsiAtBuy: 50 }, 10, '2026-10-30');
-  assert.strictEqual(calls[0][4], '2026-10-30');
-  assert.strictEqual(calls[0][0].currentPrice, 10, "the sale's price and the sale's date, together");
 });
 
 run('the diagnostic for rows before the fix sits next to the field', () => {

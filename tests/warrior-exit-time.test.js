@@ -55,11 +55,16 @@ run('time unknown (recorded on a later day): time rules not judged, and said', a
   assert.ok(target.reasons.some(r => /Time of sale unknown/.test(r)));
 });
 
-run('the sale passes its time: now if recorded on the sale date, null if later', () => {
+// CHANGED 2026-11-02, declared: the sale no longer asks any engine for a
+// verdict (db/035, phase-10 appendix "Decided: the at-sale verdict"). The
+// time-of-sale behaviour above is still the engine's own (a live card passes
+// no time); what's asserted here now is that the sale calls no engine.
+run('the sale asks no engine for a verdict (db/035)', () => {
   const app = readSource('app.js');
-  const i = app.indexOf('function computeUnifiedSaleFields('); const f = app.slice(i, app.indexOf('\n}\n', i));
-  assert.ok(f.includes("const saleAt = saleDate === ptDateStr(getPT()) ? Date.now() : null;"));
-  assert.ok(f.includes('dispatchedEngine.evaluateExit(pos, { price: salePrice, at: saleAt })'));
+  const i = app.indexOf('function computeSaleVerdictFields('); const f = app.slice(i, app.indexOf('\n}\n', i));
+  assert.ok(i >= 0);
+  assert.ok(!/evaluateExit|neutralEngineExitFallback|calcUnifiedRecommendation/.test(f.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n')));
+  assert.ok(!app.includes('function computeUnifiedSaleFields('), 'the old at-sale verdict is gone');
 });
 
 run('weekdays come from the entered dates, not the recording day', () => {
