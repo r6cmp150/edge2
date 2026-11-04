@@ -3102,6 +3102,14 @@ fails when the value moves and the text doesn't.
     are generated from their constants.
   - 6 mutants killed, three of them moving the scorer itself.
 
+**Rule: a layout assertion in a test is not a substitute for rendering it (2026-11-04).**
+Anything that carries a warning gets both: a test, and a render at phone width that someone
+looks at. Two defects got past tests and were found only by looking, both at 390px. The
+market banner's fixed 36px clipped its text, so "HUN sale NOT recorded" lost its ticker on
+main while every other failure sat hidden behind it; the tests read its HTML and passed.
+Then "NOT RECORDED" clipped to "NOT RECO…" on the macro line, after a test had already
+asserted that the line can't wrap. The test held. Not wrapping is what caused the clip.
+
 **The queue tests, and a failure that is UNEXPLAINED (2026-11-03).**
 `tests/queue-pacing.test.js` failed once, at 23:26Z on 11-03, in a full strict run:
 serial, nothing else of ours running. It then passed on every rerun. It was written
@@ -3118,3 +3126,43 @@ only the test's name, so the numbers are gone; it now keeps the assertion's mess
   busy processes (live, 2026-11-04): 171–172/min, timers p95 58 ms late. Load slowed the
   timers and not the rate, which counts against "load" as the explanation.
 
+### THE SLOPE IS THE REASON DB/039 IS THE HIGHEST-VALUE ITEM IN THE QUEUE (2026-11-04)
+
+Within a day, across 1,354 EDGE rows shown and below the cut, the point estimate of return
+per score point is on the wrong side of zero: −0.0062 points at the close for rows first
+shown before 10:00 PT (se 0.0079, 14 days), −0.0030 across all rows (se 0.0044, 27 days).
+Source: signal_log at 8535a85, by `scripts/macro-sign-horizon.mjs`, which is on the local
+gated branch and not yet on main. Scoring versions are mixed in these rows.
+
+**Both are well inside noise. This is not a finding, and no conclusion follows from it.** It
+is the same signal_log whose coverage §7.2 was withdrawn over. But the score is the central
+premise of the app: it ranks stocks by it, and Roman buys from the top of the list. And §7.2
+had already reached "no RSI band predicts the immediate move" from another direction (one
+component, withdrawn for its coverage; this is the whole score). So nothing yet measures this
+properly, and it is not a macro footnote.
+
+**db/039 exists to answer it:** does the score rank same-day return in the morning window
+where Roman actually trades, exit-free? 44% of rating_snapshots rows at 8535a85 were captured
+06:00 to 09:59 PT (1,412 of 3,184, over 30 days), where the logger's morning rows cover 14
+days. Everything else built this week makes the records trustworthy; db/039 is what the
+trustworthy records are FOR.
+
+**db/039 is the BEST INSTRUMENT AVAILABLE, not a clean answer.** On the rows captured so far,
+its limits are:
+1. **60+ only.** Rows scoring under `RATING_SNAPSHOT_MIN_SCORE` aren't there (minimum 60,
+   median 70, at 8535a85), so it compares near the top against near the top, not the top
+   against the rest. A flat result inside that range would not mean the score ranks nothing.
+2. **Only on days Roman opened the app.** See the assumption below.
+3. **1,005 of the 3,184 rows were captured after the close** (16:00 PT on), with no same-day
+   return to measure.
+4. **Entry and exit are on different feeds.** Entry is the browser's IEX snapshot and the
+   outcome is SIP bars, the venue error measured at 0-2.7% by IEX share.
+
+**ASSUMPTION: the dataset exists only on days Roman opened the app, and we assume the days he
+opened it are not different in a way that matters to whether the score ranks return.** This
+is probably harmless, but it is an assumption, and nothing here tests it.
+
+These limits print with db/039's coverage line, as its first condition requires.
+
+**Order: the sell form's fill time first (half a session, and it unblocks exit-hour analysis
+too), then db/039, then the verdicts.**
