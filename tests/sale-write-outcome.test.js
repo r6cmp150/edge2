@@ -7,7 +7,7 @@
 // SALE_FAILED. A failed sale is kept, persisted, with what Retry needs.
 'use strict';
 const assert = require('assert');
-const { readSource, run: runNow } = require('./_lib');
+const { readSource, run: runNow, settingLabelsSrc } = require('./_lib');
 const queue = []; const run = (n, f) => queue.push([n, f]);
 
 const app = readSource('app.js');
@@ -24,7 +24,7 @@ function load(insertResult) {
   global.getMarketStatus = () => ({ color: 'x', label: 'OPEN', countdown: '' });
   global.supabaseClient = { from: () => ({ insert: () => ({ select: async () => { const r = typeof insertResult === 'function' ? insertResult() : insertResult; if (r instanceof Error) throw r; return r; } }) }) };
   // eslint-disable-next-line no-eval
-  eval(['writeTradeToSupabase', 'noteSaleWrite', 'retrySaleWrite', 'dismissSaleNotice', 'updateMarketBanner'].map(grab).join('\n') +
+  eval(settingLabelsSrc() + '\n' + ['writeTradeToSupabase', 'noteSaleWrite', 'retrySaleWrite', 'dismissSaleNotice', 'settingsBannerLine', 'updateMarketBanner'].map(grab).join('\n') +
     '\nglobal.__w = writeTradeToSupabase; global.__retry = retrySaleWrite; global.__dismiss = dismissSaleNotice; global.__banner = updateMarketBanner;');
   return { persisted, el };
 }
@@ -92,7 +92,9 @@ run('an unrecorded sale outranks every other banner, and the state is loaded acr
   global.state.positionSaveFailures = { p2: { ticker: 'CLF', code: 'POSITION_UNWRITABLE' } };
   await global.__w(...args);
   assert.ok(el.innerHTML.includes('HUN sale NOT recorded') && !el.innerHTML.includes('CLF'));
-  assert.ok(/'saleWriteFailures'\]\.forEach\(k => \{/.test(app), 'loadState restores it');
+  // CHANGED 2026-11-02, declared: the restore list gained snapshotWriteFailures
+  // and ratingWriteFailures after it (tests/write-failures-surfaced.test.js).
+  assert.ok(/'saleWriteFailures'[,\]][^\n]*\]\.forEach\(k => \{/.test(app), 'loadState restores it');
   const w = grab('writeTradeToSupabase');
   assert.ok(!/console\.error\('Supabase trade write failed/.test(w), 'no console-only failure path left');
 }));

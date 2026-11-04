@@ -120,6 +120,10 @@ run('three states, and a failed write never fails, delays or blocks the add', as
   let fail = false;
   global.insertSignalSnapshotAtBuy = async row => { if (fail) { const e = new Error('new row violates row-level security policy'); e.code = '42501'; throw e; } rows.push(row); };
   const store = {}; global.localStorage = { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = v; } };
+  // CHANGED 2026-11-02, declared: a failed snapshot is also kept for Retry and
+  // shown on the banner (tests/write-failures-surfaced.test.js covers that);
+  // here the helpers are stubs so this test stays about the three states.
+  global.state = { snapshotWriteFailures: {} }; global.noteSnapshotFailure = () => {}; global.clearSnapshotFailure = () => {};
   const app = readSource('app.js'); const ci = app.indexOf('const SNAPSHOT_LOG_KEY');
   // eslint-disable-next-line no-eval
   eval(grab('recordSignalSnapshotAtBuy') + app.slice(ci, app.indexOf('\n}\n', app.indexOf('function snapshotWritesSummaryText(')) + 2) +
@@ -136,7 +140,8 @@ run('three states, and a failed write never fails, delays or blocks the add', as
   const err = console.error; const seen = []; console.error = m => seen.push(m);
   try { assert.strictEqual(await global.__record(pos, null), false, 'a failed write resolves false: it never throws'); }
   finally { console.error = err; }
-  assert.ok(seen.some(m => /Not captured; the position is saved/.test(m)));
+  // CHANGED 2026-11-02, declared: "Not captured yet" -- Retry can still land it.
+  assert.ok(seen.some(m => /Not captured yet; the position is saved/.test(m)));
   // ...and counted where Roman can see it, not only in the console (db/034:
   // two days of 42501s went unnoticed because they were console-only).
   assert.strictEqual(global.__snapSummary(), '1 saved with their signal, 1 recorded with no signal on purpose, 1 failed (last: 42501: new row violates row-level security policy).',

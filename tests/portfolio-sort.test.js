@@ -592,3 +592,16 @@ run('exit side, nav badge: an earlier-close warning is COUNTED (never dropped) a
   assert.strictEqual(String(c.textContent), '2');
   assert.ok(!c.classList.has('badge-earlier-close') && c.title === '', 'not marked when nothing counted is on an earlier close');
 });
+
+run('an unknown hold length (start date not a date): unranked in the default sort, said on the card, never "0 closes"', async () => {
+  const ctx = renderCtx();
+  const r = await renderIn(ctx, 'TIME_LIMIT', fx => {
+    const g = fx.portfolio.find(p => p.ticker === 'GGG');
+    g.buyDate = 'not-a-date'; g.filledAt = 'also-not-a-date';
+  });
+  const card = r.list.split('<div class="portfolio-card">').find(c => c.includes('<div class="pf-ticker">GGG '));
+  assert.ok(card.includes('Not ranked by “Closest to time limit”: hold window unknown'), card.slice(0, 300));
+  assert.ok(card.includes('Hold length unknown'), 'the duration block says so');
+  assert.ok(!/Same day ·/.test(card), 'never "Same day"');
+  assert.ok(r.list.indexOf('pf-unranked-divider') < r.list.indexOf('<div class="pf-ticker">GGG '), 'below the divider');
+});

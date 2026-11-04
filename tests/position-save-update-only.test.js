@@ -11,7 +11,7 @@
 // failures must reach the market banner, not just the console.
 'use strict';
 const assert = require('assert');
-const { readSource, run } = require('./_lib');
+const { readSource, run, settingLabelsSrc } = require('./_lib');
 
 const fnSrc = (file, name) => {
   const m = readSource(file).match(new RegExp(`(async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`));
@@ -147,7 +147,7 @@ await run('banner says the position was closed elsewhere, and how to fix it', ()
   global.document = { getElementById: () => el };
   global.getMarketStatus = () => ({ color: 'x', label: 'OPEN', countdown: '' });
   // eslint-disable-next-line no-eval
-  eval(fnSrc('app.js', 'updateMarketBanner') + '\nglobal.__banner = updateMarketBanner;');
+  eval(settingLabelsSrc() + '\n' + fnSrc('app.js', 'settingsBannerLine') + '\n' + fnSrc('app.js', 'updateMarketBanner') + '\nglobal.__banner = updateMarketBanner;');
   global.state = { persistFailure: null, positionSaveFailures: { a: { ticker: 'SNXX', code: 'POSITION_MISSING', message: '' } } };
   global.__banner();
   assert.ok(/SNXX was closed in another session/.test(el.innerHTML) && /Refresh to update/.test(el.innerHTML), el.innerHTML);

@@ -888,6 +888,8 @@ let state = {
   warriorPreMarketVolumeCache: null, // { date, historyBySymbol: {symbol: [{date,volume}]} } — core/universe.js, pre-market-specific RVOL baseline (2026-09-04), daily cache — persisted
   warriorPreMarketRvolObservations: [], // [{capturedAt,date,symbol,ratio,todayPreMarketVolume,avgPreMarketVolume,daysInAverage}] — engines/warrior/gate.js, accumulates across mornings so a real pre-market RVOL threshold can eventually be set from data instead of the unvalidated placeholder — persisted, capped (see gate.js's _trimPreMarketRvolObservations)
   persistFailure: null, // { key, message, at } — core/store.js's persist(), set on ANY localStorage write failure (quota exhaustion, etc), cleared on the next successful persist() — surfaced via updateMarketBanner, not silent
+  snapshotWriteFailures: {}, // { [positionId]: { ticker, message, at, row } } -- a buy's signal_snapshot_at_buy row that failed to write; PERSISTED so Retry can land it (2026-11-02: a failure only counted in Settings is how 72 snapshots were lost)
+  ratingWriteFailures: [], // [{ at, message, rows }] -- rating_snapshots batches that failed to write; PERSISTED, capped at RATING_FAILURES_KEPT, Retry re-inserts after checking they didn't land
   saleWriteFailures: {}, // { [positionId]: { ticker, code: 'SALE_FAILED'|'SALE_DUPLICATE', message, at, args } } -- writeTradeToSupabase; PERSISTED, because the portfolio row is already deleted when the sale write runs: this is the only copy of an unrecorded sale until Retry lands it
   positionSaveFailures: {}, // { [positionId]: { ticker, code, message, at } } — backgroundSavePosition(), keyed by core/store.js's three zero-row codes; surfaced via updateMarketBanner. MISSING stays until reload; UNWRITABLE/UNKNOWN clear on that position's next successful save — session only, not persisted
   // warriorEdgarCikMapCache/warriorFloatCache RETIRED 2026-09-04: they backed
@@ -930,7 +932,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','analysisPeriods','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations','saleWriteFailures'].forEach(k => {
+  ['sold','analysisPeriods','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations','saleWriteFailures','snapshotWriteFailures','ratingWriteFailures'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -1041,6 +1043,36 @@ function getAHData(ticker) {
   return { ahPrice, regClose, ahChangePct };
 }
 
+const SETTING_LABELS = {
+  budget: 'budget', includeUnder2: 'include under $2', showWatch: 'show watch', minVolume: 'min volume',
+  forcePreMarketMode: 'force pre-market', riskPerTradePct: 'risk per trade', floatThresholdShares: 'float threshold',
+  maxLossPct: 'max loss floor', developerTools: 'developer tools',
+};
+// What the settings banner line says, or null when every setting is
+// Roman's saved value. Problems outrank phone-only, which outranks defaults.
+function noteDataReadProblem(table, message) {
+  (state.dataReadProblems = state.dataReadProblems || {})[table] = message;
+  if (typeof updateMarketBanner === 'function') updateMarketBanner();
+}
+function clearDataReadProblem(table) {
+  if (state.dataReadProblems && state.dataReadProblems[table]) { delete state.dataReadProblems[table]; if (typeof updateMarketBanner === 'function') updateMarketBanner(); }
+}
+function settingsBannerLine() {
+  // A read that came back empty where that can't be true outranks the
+  // settings lines: the app is showing this phone's copy, not Supabase's.
+  const reads = Object.values(state.dataReadProblems || {});
+  if (reads.length) return { title: 'Couldn\'t confirm data from Supabase', detail: `${reads.join('; ')}. A connection or permission problem looks the same as no data. Reload to try again.`, button: false };
+  const src = state.settingsSource || {};
+  const of = which => Object.keys(SETTING_LABELS).filter(k => src[k] === which).map(k => SETTING_LABELS[k]);
+  const problems = state.settingsProblems || [];
+  if (problems.length) return { title: 'Settings on this phone could not be read', detail: `${problems[0]}. Those settings are on their defaults until saved again.`, button: false };
+  const phone = of('phone');
+  if (phone.length) return { title: `${phone.length} setting${phone.length === 1 ? '' : 's'} only on this phone`, detail: `${phone.join(', ')}: not in Supabase or any backup yet. Tap Save to store ${phone.length === 1 ? 'it' : 'them'}.`, button: true };
+  const defaults = of('default');
+  if (defaults.length) return { title: `${defaults.length} setting${defaults.length === 1 ? '' : 's'} on built-in defaults`, detail: `${defaults.join(', ')}: never saved. Set ${defaults.length === 1 ? 'it' : 'them'} in Settings, or tap Save to keep the defaults.`, button: true };
+  return null;
+}
+
 function updateMarketBanner() {
   const el = document.getElementById('market-banner');
   if (!el) return;
@@ -1107,6 +1139,57 @@ function updateMarketBanner() {
         <strong>${text[0]}${more}</strong>
       </div>
       <span class="market-countdown">${text[1]}</span>
+    `;
+    return;
+  }
+  // A buy whose signal snapshot didn't save (2026-11-02): the trade is
+  // recorded, the signal it was bought on isn't -- recoverable only while
+  // this device still holds the row. Below sales and position saves (those
+  // are live trade records), above market status.
+  const snapFails = Object.entries(state.snapshotWriteFailures || {}).map(([id, f]) => ({ id, ...f }));
+  if (snapFails.length) {
+    const f = snapFails[0];
+    const more = snapFails.length > 1 ? ` (+${snapFails.length - 1} more)` : '';
+    el.style.color = 'var(--red)';
+    el.innerHTML = `
+      <div>
+        <span class="market-status-dot" style="background:var(--red)"></span>
+        <strong>${f.ticker} buy snapshot NOT saved${more}</strong>
+      </div>
+      <span class="market-countdown">The position is recorded; the signal it was bought on isn't. Tap Retry (safe — a second copy is refused).</span>
+      <button class="btn btn-sm btn-danger" onclick="retrySnapshotWrite('${f.id}')">Retry</button>
+    `;
+    return;
+  }
+  const ratingFails = Array.isArray(state.ratingWriteFailures) ? state.ratingWriteFailures : [];
+  if (ratingFails.length) {
+    const rows = ratingFails.reduce((n, b) => n + (b.rows?.length || 0), 0);
+    const dropped = state.ratingWriteFailuresDropped ? ` · ${state.ratingWriteFailuresDropped} older batch(es) dropped` : '';
+    el.style.color = 'var(--yellow)';
+    el.innerHTML = `
+      <div>
+        <span class="market-status-dot" style="background:var(--yellow)"></span>
+        <strong>${ratingFails.length} scan snapshot batch${ratingFails.length === 1 ? '' : 'es'} NOT saved (${rows} rows)${dropped}</strong>
+      </div>
+      <span class="market-countdown">The scan record of what was on screen didn't reach the database. Tap Retry (checks first, so nothing is saved twice).</span>
+      <button class="btn btn-sm btn-ghost" onclick="retryRatingWrites()">Retry</button>
+    `;
+    return;
+  }
+  // Settings not running on Roman's saved values (2026-11-02): a phone copy
+  // that couldn't be read, values held only on this phone (in no backup),
+  // or settings on their built-in default. Below every lost-record line,
+  // above market status: the app works, but not on his configuration.
+  const settingsLine = settingsBannerLine();
+  if (settingsLine) {
+    el.style.color = 'var(--yellow)';
+    el.innerHTML = `
+      <div>
+        <span class="market-status-dot" style="background:var(--yellow)"></span>
+        <strong>${settingsLine.title}</strong>
+      </div>
+      <span class="market-countdown">${settingsLine.detail}</span>
+      ${settingsLine.button ? '<button class="btn btn-sm btn-ghost" onclick="saveSettingsNow()">Save to Supabase</button>' : ''}
     `;
     return;
   }
@@ -1810,12 +1893,16 @@ function buildAIPrompt(stock, pos) {
   // position exists yet) but still get a duration classification, so the
   // "intended window" framing stays meaningful either way.
   const maxDays = MAX_HOLD_DAYS[duration] || 1; // one window table, in market closes (2026-10-09)
-  const daysHeld = pos ? holdSpan(pos, ptDateStr(getPT())).closes : 0;
+  const daysHeld = pos ? holdSpan(pos, ptDateStr(getPT())).closes : 0; // null = unknown (start date not a date)
   // Change: time window as a first-class factor in the Groq prompt, not just
   // a data line — remaining runway matters more the closer a position is to
   // its intended exit. Floored at 1 so an at/past-window position still gets
   // a (tight) window rather than a zero/negative one.
-  const daysRemaining = Math.max(1, maxDays - daysHeld);
+  const daysRemaining = daysHeld == null ? null : Math.max(1, maxDays - daysHeld);
+  // Unknown hold: the prompt says so instead of handing the model a full
+  // window nobody computed (null - n is arithmetic, not an answer).
+  const drDays = daysRemaining == null ? 'an unknown number of' : `${daysRemaining}`;
+  const drWindow = daysRemaining == null ? 'remaining window (its length is unknown: the hold start date is not a date)' : `${daysRemaining}-day remaining window`;
 
   const ctx = state.macroContext;
   const conditionLabel = ctx?.condition || 'N/A';
@@ -1918,7 +2005,7 @@ Momentum protection active: ${momentumActive ? 'YES' : 'NO'}
 Trailing stop if active: ${trailingStop != null ? `$${trailingStop.toFixed(2)}` : 'N/A'}
 ${unifiedPromptBlock}
 You are evaluating this position specifically within its
-remaining time window of ${daysRemaining} trading days.
+remaining time window of ${drDays} trading days.
 Base your probabilities on what is realistic within that
 exact timeframe given the current momentum, RSI, and volume.
 A target that requires significant movement in 1 day should
@@ -1929,11 +2016,11 @@ Respond in exactly this format with no extra text:
 
 CONTINUE HIGHER: {X}% likely
 Key factor: {one sentence — the single most important reason
-within the ${daysRemaining}-day remaining window}
+within the ${drWindow}}
 
 REACH TARGET ($${target.toFixed(2)}): {X}% likely
 Key factor: {one sentence — what would need to happen within
-${daysRemaining} days for this to succeed}`;
+${daysRemaining == null ? 'the remaining window' : `${daysRemaining} days`} for this to succeed}`;
     } else {
       prompt += `
 Purchase price: $${pos.buyPrice.toFixed(2)}
@@ -1943,7 +2030,7 @@ Held: ${marketDaysLabel(daysHeld)} of an intended ${maxDays}-market-day window
 Stop-loss: $${stop.toFixed(2)} (${distToStopPct.toFixed(1)}% away)
 ${unifiedPromptBlock}
 You are evaluating this position specifically within its
-remaining time window of ${daysRemaining} trading days.
+remaining time window of ${drDays} trading days.
 A stock that is losing with only 1 day remaining has much
 less recovery potential than the same stock with 5 days left.
 Factor the remaining time window heavily into your probability.
@@ -1952,11 +2039,11 @@ Respond in exactly this format with no extra text:
 
 FURTHER DROP: {X}% likely
 Key factor: {one sentence — the single most important reason
-within the ${daysRemaining}-day remaining window}
+within the ${drWindow}}
 
 REBOUND: {X}% likely
 Key factor: {one sentence — what would need to happen within
-${daysRemaining} days for a recovery}`;
+${daysRemaining == null ? 'the remaining window' : `${daysRemaining} days`} for a recovery}`;
     }
   }
 
@@ -2265,9 +2352,10 @@ const RATING_SNAPSHOT_MIN_SCORE = 60;
 async function writeRatingSnapshots(signals) {
   const toWrite = (signals || []).filter(s => s.score >= RATING_SNAPSHOT_MIN_SCORE);
   if (!toWrite.length) return;
+  let rows = null;
   try {
     const capturedAt = new Date().toISOString();
-    const rows = toWrite.map(s => ({
+    rows = toWrite.map(s => ({
       ticker: s.ticker,
       captured_at: capturedAt,
       score: s.score,
@@ -2278,10 +2366,81 @@ async function writeRatingSnapshots(signals) {
       macro_condition: s.macroCondition || null,
     }));
     const { error } = await supabaseClient.from('rating_snapshots').insert(rows);
-    if (error) { console.error('Supabase snapshot write failed:', error.message); return; }
+    if (error) { console.error('Supabase snapshot write failed:', error.message); noteRatingFailure(rows, error); return; }
   } catch(e) {
+    // A thrown write (network, timeout) used to stop at the console: no
+    // banner, nothing kept for Retry (2026-11-02). Now it's kept like any
+    // refused write. Rows that couldn't even be built are said as such.
     console.error('Supabase snapshot write failed:', e.message);
+    if (rows) { noteRatingFailure(rows, e); return; }
+    // The rows couldn't even be built: nothing retryable exists, so the batch
+    // is counted as dropped on the banner rather than queued as garbage.
+    state.ratingWriteFailuresDropped = (state.ratingWriteFailuresDropped || 0) + 1;
+    updateMarketBanner();
   }
+}
+
+// A failed rating_snapshots write reaches the banner too (2026-11-02): it was
+// console-only, and this table is the only record of the morning scans. The
+// batch is kept for Retry (capped; what's dropped is counted, never hidden).
+// rating_snapshots has no unique key, so Retry first checks whether the batch
+// landed after all (same captured_at and tickers) before inserting again.
+const RATING_FAILURES_KEPT = 20;
+function noteRatingFailure(rows, e) {
+  if (!Array.isArray(state.ratingWriteFailures)) state.ratingWriteFailures = [];
+  state.ratingWriteFailures.push({ at: rows[0]?.captured_at || new Date().toISOString(), message: `${e?.code ? e.code + ': ' : ''}${e?.message || e}`.slice(0, 200), rows });
+  if (state.ratingWriteFailures.length > RATING_FAILURES_KEPT) {
+    const dropped = state.ratingWriteFailures.length - RATING_FAILURES_KEPT;
+    state.ratingWriteFailures = state.ratingWriteFailures.slice(dropped);
+    state.ratingWriteFailuresDropped = (state.ratingWriteFailuresDropped || 0) + dropped;
+  }
+  persist('ratingWriteFailures');
+  updateMarketBanner();
+}
+async function retryRatingWrites() {
+  const pending = [...(state.ratingWriteFailures || [])];
+  const kept = [];
+  // FOURTH STATE: CANNOT TELL (2026-11-02). The landed check below reads
+  // rating_snapshots, and RLS answers a read it won't allow with an EMPTY
+  // list, not an error -- while the INSERT may still be allowed. Empty would
+  // then read as "not landed" and re-insert batches that did land. So first
+  // a positive control: the table is never empty (deletion stopped
+  // 2026-11-02; the backup's floor is 2944 rows), so if one row can't be
+  // read, nothing read here can be trusted. Then nothing is retried, every
+  // batch is kept, and the banner says why.
+  let visible = null;
+  try {
+    const { data, error } = await supabaseClient.from('rating_snapshots').select('captured_at').limit(1);
+    visible = error ? `the check read failed (${error.code ? error.code + ': ' : ''}${error.message})` : (data && data.length ? null : 'rating_snapshots reads back empty, which a denied read also looks like');
+  } catch (e) { visible = `the check read failed (${e?.message || e})`; }
+  if (visible) {
+    state.ratingWriteFailures = pending.map(b => ({ ...b, message: `cannot tell whether it landed: ${visible}; not retried, to avoid duplicates`.slice(0, 200) }));
+    persist('ratingWriteFailures');
+    updateMarketBanner();
+    return;
+  }
+  for (const b of pending) {
+    try {
+      // One batch = one captured_at (writeRatingSnapshots stamps the whole
+      // scan with one instant), so that alone finds it; tickers are compared
+      // here rather than sent as an in-list (no unchunked in-lists: tests/
+      // no-unchunked-in-list.test.js).
+      const { data: atThatInstant, error: readErr } = await supabaseClient.from('rating_snapshots')
+        .select('ticker').eq('captured_at', b.at);
+      if (readErr) throw readErr;
+      const want = new Set(b.rows.map(r => r.ticker));
+      const landed = (atThatInstant || []).filter(r => want.has(r.ticker));
+      if (landed.length >= b.rows.length) continue; // it had landed
+      if (landed.length > 0) { kept.push({ ...b, message: 'partly landed; not retried, to avoid duplicates' }); continue; }
+      const { error } = await supabaseClient.from('rating_snapshots').insert(b.rows);
+      if (error) throw error;
+    } catch (e) {
+      kept.push({ ...b, message: `${e?.code ? e.code + ': ' : ''}${e?.message || e}`.slice(0, 200) });
+    }
+  }
+  state.ratingWriteFailures = kept;
+  persist('ratingWriteFailures');
+  updateMarketBanner();
 }
 
 async function computePreMarketMovers(snapshots, candidates, allBars, newsMap) {
@@ -4194,9 +4353,44 @@ function recordSignalSnapshotAtBuy(position, snapshot) {
     absent_reason: snapshot ? null : 'no_signal',
   };
   return insertSignalSnapshotAtBuy(row).then(
-    () => { noteSnapshotWrite(snapshot ? 'saved' : 'no_signal', null); return true; },
-    e => { console.error(`signal_snapshot_at_buy write failed for ${position.ticker} (${position.id}): ${e.message}. Not captured; the position is saved.`); noteSnapshotWrite('failed', e); return false; },
+    () => { noteSnapshotWrite(snapshot ? 'saved' : 'no_signal', null); clearSnapshotFailure(position.id); return true; },
+    e => {
+      console.error(`signal_snapshot_at_buy write failed for ${position.ticker} (${position.id}): ${e.message}. Not captured yet; the position is saved.`);
+      noteSnapshotWrite('failed', e);
+      noteSnapshotFailure(position, row, e);
+      return false;
+    },
   );
+}
+
+// A failed buy snapshot reaches the BANNER (2026-11-02), not just the
+// Settings counter: the counter is how 72 snapshots were lost without anyone
+// seeing it. The row is kept (persisted) so Retry can land it. Retry is safe:
+// position_id is signal_snapshot_at_buy's primary key, so if the first write
+// did land, the retry comes back 23505 and counts as saved.
+function noteSnapshotFailure(position, row, e) {
+  if (!state.snapshotWriteFailures) state.snapshotWriteFailures = {};
+  state.snapshotWriteFailures[position.id] = { ticker: position.ticker, message: `${e?.code ? e.code + ': ' : ''}${e?.message || e}`.slice(0, 200), at: new Date().toISOString(), row };
+  persist('snapshotWriteFailures');
+  updateMarketBanner();
+}
+function clearSnapshotFailure(positionId) {
+  if (!state.snapshotWriteFailures?.[positionId]) return;
+  delete state.snapshotWriteFailures[positionId];
+  persist('snapshotWriteFailures');
+  updateMarketBanner();
+}
+async function retrySnapshotWrite(positionId) {
+  const f = state.snapshotWriteFailures?.[positionId];
+  if (!f || !f.row) return;
+  try {
+    await insertSignalSnapshotAtBuy(f.row);
+    noteSnapshotWrite(f.row.snapshot ? 'saved' : 'no_signal', null);
+    clearSnapshotFailure(positionId);
+  } catch (e) {
+    if (e && e.code === '23505') { clearSnapshotFailure(positionId); return; } // the first write had landed
+    noteSnapshotFailure({ id: positionId, ticker: f.ticker }, f.row, e);
+  }
 }
 
 // Snapshot write outcomes, counted where Roman can see them (2026-10-28).
@@ -4268,7 +4462,11 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
     rawAtrAtBuy:     sig?.atr        ?? null,
     trimmedAtrAtBuy: sig?.trimmedAtr ?? null,
     macroConditionAtBuy: sig?.macroCondition || null,
-    thresholdAtBuy: sig?.thresholdAtBuy ?? BASE_SCORE_THRESHOLD,
+    // Three states (2026-11-02): the cut the signal was shown against, or
+    // NULL when the position wasn't added from a signal. It used to default
+    // to the base line, a threshold nobody computed, which the report then
+    // counted as a normal-threshold buy.
+    thresholdAtBuy: sig?.thresholdAtBuy ?? null,
     barsAsOfAtBuy: sig?.barsAsOf ?? null, // db/031
     catalystSetup: sig?.catalystSetup || false,
     peakPrice:   price,
@@ -4767,6 +4965,7 @@ async function renderPortfolioTab() {
       return (nowPT.getHours() * 60 + nowPT.getMinutes()) / (12 * 60 + 30);
     }
     const daysHeld = holdSpan(p, ptDateStr(getPT())).closes;
+    if (daysHeld == null) return null; // unknown hold: the unknown bucket, never null/n = 0
     return daysHeld / (maxHoldDays[p.duration] || 1);
   };
 
@@ -5072,7 +5271,14 @@ async function renderPortfolioTab() {
     const daysLeft = isDurationless ? null : Math.max(0, maxHold - days);
     const durationPct = isDurationless ? null : Math.min(100, (days / maxHold) * 100);
     const durationCls = isDurationless ? null : (daysLeft <= 0 ? 'pf-dur-red' : daysLeft === 1 ? 'pf-dur-orange' : 'pf-dur-blue');
-    const durationBlockHtml = isDurationless
+    const durationBlockHtml = days == null && !isDurationless
+      ? `<div class="pf-duration">
+        <div class="pf-duration-row">
+          <span>Hold length unknown · ${durLabel}</span>
+          <span class="pf-sort-unknown">start date is not a date</span>
+        </div>
+      </div>`
+      : isDurationless
       ? `<div class="pf-duration">
         <div class="pf-duration-row">
           <span style="color:#a078ff;font-weight:600;letter-spacing:0.5px">SAME DAY</span>
@@ -5441,7 +5647,11 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap, 
   // tighter rule acting on positions needs its own recovery-counted replay
   // with a largest-single-contributor share (the BTDR rule) -- raise that as
   // its own proposal, never fold it into a units change.
-  if (maxHold != null) {
+  if (maxHold != null && days == null) {
+    // Unknown hold (2026-11-02): not "within the window" (+20) and "early"
+    // (+10), which is what null - maxHold and null < maxHold/2 gave.
+    add('Hold length not evaluated — the start date is not a date', 0);
+  } else if (maxHold != null) {
     const overdueDays = days - maxHold;
     if (overdueDays >= 2) {
       add('Severely past intended hold window', -50);
@@ -5676,11 +5886,11 @@ function calcPeakRiskScore(position, currentSignal, snap, asOfDate = null) {
   const maxHold = MAX_HOLD_DAYS[position.duration];
   if (maxHold != null && position.buyDate) {
     const days = holdSpan(position, asOfDate ?? ptDateStr(getPT())).closes; // market closes held (2026-10-09), to asOfDate when given
-    const overdueDays = days - maxHold;
+    const overdueDays = days == null ? null : days - maxHold; // unknown hold: not judged
     const pnlPct = price != null ? ((price - position.buyPrice) / position.buyPrice) * 100 : null;
     // > 2 market days over (was > 3 calendar) -- same real elapsed time; see
     // the Duration block in calcUnifiedRecommendation for why not tighter.
-    if (overdueDays > 2 && pnlPct != null && pnlPct > 0) {
+    if (overdueDays != null && overdueDays > 2 && pnlPct != null && pnlPct > 0) {
       add(`${marketDaysLabel(overdueDays)} past intended hold window, still winning`, -20);
     }
   }
@@ -6619,7 +6829,7 @@ async function confirmMarkSold(posId, btn) {
     rawAtrAtBuy:     pos.rawAtrAtBuy     ?? null,
     trimmedAtrAtBuy: pos.trimmedAtrAtBuy ?? null,
     macroConditionAtBuy: pos.macroConditionAtBuy || null,
-    thresholdAtBuy: pos.thresholdAtBuy ?? BASE_SCORE_THRESHOLD,
+    thresholdAtBuy: pos.thresholdAtBuy ?? null, // three states: see the add form
     barsAsOfAtBuy: pos.barsAsOfAtBuy ?? null, // db/031
     catalystSetup: pos.catalystSetup || false,
     duration: pos.duration,
@@ -7201,7 +7411,16 @@ async function loadSoldFromSupabase() {
   // trades_v2, not trades (cutover, 2026-09-05) — see writeTradeToSupabase.
   const { data, error } = await supabaseClient.from('trades_v2').select('*').order('sell_date', { ascending: false });
   if (error) throw error;
-  state.sold = (data || []).map(mapTradesV2ToSoldShape);
+  // trades_v2 is never empty (451+ sales, nothing deletes them), so an empty
+  // read is a denied or broken one (RLS returns [] for a read it won't
+  // allow): keep this phone's copy and say so, never overwrite it with
+  // nothing (2026-11-02, auth step 4½).
+  if (!data || !data.length) {
+    noteDataReadProblem('trades_v2', `the Sold list read back empty, so this phone's copy (${(state.sold || []).length} sales) is shown and kept`);
+    return;
+  }
+  clearDataReadProblem('trades_v2');
+  state.sold = data.map(mapTradesV2ToSoldShape);
   persist('sold');
   // This runs after first paint (see runDataLoadAndInit), so if the user
   // is already sitting on the Sold tab (or switches to it before this
@@ -7222,6 +7441,14 @@ async function loadSoldFromSupabase() {
 async function loadAnalysisPeriodsFromSupabase() {
   const { data, error } = await supabaseClient.from('analysis_periods').select('*').order('started_at', { ascending: true });
   if (error) throw error;
+  // analysis_periods CAN be empty (none started yet), so an empty read only
+  // means "can't tell" when this phone already holds periods: then keep
+  // them and say so, rather than overwrite them with nothing.
+  if ((!data || !data.length) && (state.analysisPeriods || []).length) {
+    noteDataReadProblem('analysis_periods', `analysis periods read back empty, so this phone's ${state.analysisPeriods.length} are shown and kept`);
+    return;
+  }
+  clearDataReadProblem('analysis_periods');
   state.analysisPeriods = data || [];
   persist('analysisPeriods');
   if (state.activeTab === 'analytics' && typeof renderAnalyticsTab === 'function') renderAnalyticsTab();
@@ -7930,6 +8157,14 @@ async function generateClaudeReport() {
   const totalPnL = sold.reduce((s,t) => s + t.pnlDollar, 0);
 
   const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : 0;
+  // Average over KNOWN holds only (2026-11-02): an unknown hold (null) used
+  // to count as 0 market days through `daysHeld || 0`.
+  const avgKnownHold = arr => {
+    const known = arr.filter(s => typeof s.daysHeld === 'number');
+    const excluded = arr.length - known.length;
+    if (!known.length) return excluded ? `unknown (${excluded} without a hold length)` : '—';
+    return `${avg(known, s => s.daysHeld).toFixed(1)}${excluded ? ` (${excluded} without a hold length excluded)` : ''}`;
+  };
   const avgWinPnL = avg(wins, s => s.pnlDollar).toFixed(2);
   const avgLossPnL = avg(losses, s => s.pnlDollar).toFixed(2);
   // Two independent measures, kept as two variables on purpose — a single
@@ -8134,7 +8369,7 @@ Signal data at purchase — wins vs losses:
   Avg volume ratio: wins ${avg(wins,s=>s.volRatioAtBuy||0).toFixed(2)}x | losses ${avg(losses,s=>s.volRatioAtBuy||0).toFixed(2)}x
   Avg risk score:   wins ${avg(wins,s=>s.riskAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.riskAtBuy||0).toFixed(1)}
   Avg signal score: wins ${avg(wins,s=>s.scoreAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.scoreAtBuy||0).toFixed(1)}
-  Avg hold time:    wins ${avg(wins,s=>s.daysHeld||0).toFixed(1)} | losses ${avg(losses,s=>s.daysHeld||0).toFixed(1)} market days held (Fri->Mon = 1; calendar days before 2026-10-09)
+  Avg hold time:    wins ${avgKnownHold(wins)} | losses ${avgKnownHold(losses)} market days held (Fri->Mon = 1; calendar days before 2026-10-09)
   Hold measured from: ${(() => { const c = {}; sold.forEach(s => { const b = s.holdBasis || 'order date (legacy row)'; c[b] = (c[b] || 0) + 1; }); return Object.entries(c).map(([b, k]) => `${k} ${b}`).join(', '); })()}
 
 RSI at purchase — win rate by bucket:
@@ -8245,8 +8480,9 @@ ${macroSectorWeaknessStats(          'SECTOR_WEAKNESS_*:   ')}
 ${macroCondStats('CHOPPY',            'CHOPPY:              ')}
 
 Threshold at time of purchase:
-${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) >= ELEVATED_SCORE_THRESHOLD, 'Trades bought under the elevated threshold:')}
-${thresholdBucket(s => (s.thresholdAtBuy ?? BASE_SCORE_THRESHOLD) < ELEVATED_SCORE_THRESHOLD, 'Trades bought under the normal threshold:   ')}
+${thresholdBucket(s => s.thresholdAtBuy != null && s.thresholdAtBuy >= ELEVATED_SCORE_THRESHOLD, 'Trades bought under the elevated threshold:')}
+${thresholdBucket(s => s.thresholdAtBuy != null && s.thresholdAtBuy < ELEVATED_SCORE_THRESHOLD, 'Trades bought under the normal threshold:   ')}
+${thresholdBucket(s => s.thresholdAtBuy == null, 'Threshold not recorded (not counted above):')}
 
 ${(()=>{
   // Change 4 (Data & Reporting) — entry timing, sub-$10 adjustment, Groq
@@ -10299,7 +10535,7 @@ async function checkTimeLimitAlerts() {
     // card and the report (holdSpan). Was businessDaysBetween, which ignored
     // holidays and always started at the order date.
     const daysHeld = holdSpan(pos, todayStr).closes;
-    if (daysHeld > threshold && !isDuplicateAlert(ticker, 'TIME_LIMIT')) {
+    if (daysHeld != null && daysHeld > threshold && !isDuplicateAlert(ticker, 'TIME_LIMIT')) {
       await sendNotification('EDGE Alert',
         `📅 ${ticker} has been held ${marketDaysLabel(daysHeld).toLowerCase()}. Your estimated duration was ${durationLabel}. Consider selling today before market open.`,
         `${ticker}_TIME_LIMIT`);

@@ -279,7 +279,11 @@ function classifySession(dateStr, hhmm) {
 // machine's timezone can't shift a day. Unlike businessDaysBetween (which
 // the live time-limit alert uses and which ignores holidays), this is the
 // definition every closed-trade hold figure uses.
+// Either date not a date -> null, UNKNOWN (2026-11-02), never 0 ("same
+// day"): the loop below never runs on an Invalid Date. Same defect and fix as
+// tradingDaysBetween. Every reader handles null (hold length unknown).
 function marketClosesHeld(startDateStr, endDateStr) {
+  if (parseableDay(startDateStr) == null || parseableDay(endDateStr) == null) return null;
   let count = 0;
   const cur = new Date(startDateStr + 'T12:00:00Z');
   const end = new Date(endDateStr + 'T12:00:00Z');
@@ -304,7 +308,9 @@ function marketClosesHeld(startDateStr, endDateStr) {
 // so in `basis` -- callers that aggregate must report the basis mix rather
 // than average two different measures.
 function holdSpan(t, endDateStr) {
-  const startDate = t.filledAt ? ptDateStr(getPT(new Date(t.filledAt))) : t.buyDate;
+  // startDate null when it isn't a date (an unparseable filledAt used to
+  // become the string "Invalid Date"); closes is then null too.
+  const startDate = parseableDay(t.filledAt ? ptDateStr(getPT(new Date(t.filledAt))) : t.buyDate);
   const basis = t.filledAt ? 'fill'
     : t.orderType ? 'order date (fill not recorded)'
     : 'order date (legacy row)';

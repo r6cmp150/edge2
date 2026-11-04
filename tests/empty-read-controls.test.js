@@ -66,3 +66,34 @@ run('every post-write re-read is asserted, never just printed', () => {
   assert.ok((g.match(/expect\('/g) || []).length >= 7, 'every check asserts');
 });
 
+run('the Sold list and analysis periods keep this phone\'s copy on an empty read, and say so', async () => {
+  const app = readSource('app.js');
+  const grab = name => { const i = app.search(new RegExp(`^(async )?function ${name}\\(`, 'm')); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
+  const mk = rows => {
+    const c = { state: { sold: [{ ticker: 'KEEP' }], analysisPeriods: [{ name: 'p1' }], activeTab: 'x' }, persisted: [], banner: 0, console };
+    c.persist = k => c.persisted.push(k);
+    c.updateMarketBanner = () => { c.banner++; };
+    c.mapTradesV2ToSoldShape = r => ({ ticker: r.ticker });
+    c.supabaseClient = { from: () => ({ select: () => ({ order: async () => ({ data: rows, error: null }) }) }) };
+    vm.createContext(c);
+    vm.runInContext(['noteDataReadProblem', 'clearDataReadProblem', 'loadSoldFromSupabase', 'loadAnalysisPeriodsFromSupabase'].map(grab).join('\n')
+      + ';Object.assign(globalThis, { loadSoldFromSupabase, loadAnalysisPeriodsFromSupabase });', c);
+    return c;
+  };
+  const e = mk([]);
+  await e.loadSoldFromSupabase(); await e.loadAnalysisPeriodsFromSupabase();
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(e.state.sold)), [{ ticker: 'KEEP' }], 'sold kept');
+  assert.strictEqual(e.state.analysisPeriods.length, 1, 'periods kept');
+  assert.ok(!e.persisted.length, 'nothing overwritten');
+  assert.ok(e.state.dataReadProblems.trades_v2 && e.state.dataReadProblems.analysis_periods && e.banner >= 2, 'said on the banner');
+  const ok = mk([{ ticker: 'NEW', name: 'p2' }]);
+  await ok.loadSoldFromSupabase();
+  assert.strictEqual(ok.state.sold[0].ticker, 'NEW'); assert.ok(ok.persisted.includes('sold'));
+});
+
+run('no read site may write on, or pass on, an empty read (auth step 5 does not start otherwise)', () => {
+  const src = readSource('tests/empty-read-sites.test.js');
+  const reg = src.slice(src.indexOf('const REGISTRY'), src.indexOf('\n};', src.indexOf('const REGISTRY')));
+  const bad = [...reg.matchAll(/verdict: (W|P)\b/g)].length;
+  assert.strictEqual(bad, 0, `${bad} read site(s) still WRITES_FROM_EMPTY or PASS_ON_EMPTY`);
+});

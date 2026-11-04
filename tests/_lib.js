@@ -81,4 +81,15 @@ async function run(name, fn) {
   }
 }
 
-module.exports = { virtualClock, readSource, evalModule, run, REPO_ROOT };
+// app.js's SETTING_LABELS table, as source: updateMarketBanner calls
+// settingsBannerLine (2026-11-02), which reads it, so a test that evals the
+// banner in isolation needs both.
+function settingLabelsSrc() {
+  const s = readSource('app.js');
+  const i = s.indexOf('const SETTING_LABELS = {');
+  if (i < 0) throw new Error('app.js: SETTING_LABELS not found');
+  return s.slice(i, s.indexOf('};', i) + 2);
+}
+
+module.exports = {
+  virtualClock, readSource, evalModule, run, REPO_ROOT, settingLabelsSrc };

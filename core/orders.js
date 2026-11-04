@@ -50,8 +50,13 @@ function getPendingOrders() {
 // was placed: a day order would have expired, a closed-market market order
 // should have filled at the open. The app can't know what the broker did, so
 // it never changes the order itself -- it keeps asking.
+// An order whose age is unknown (its date isn't a date, 2026-11-02) is
+// treated as stale: asking Roman costs a tap; assuming it's fresh would stop
+// asking about an order that may have expired.
 function isStalePendingOrder(p) {
-  return isPendingOrder(p) && marketClosesHeld(p.buyDate, ptDateStr(getPT())) >= 1;
+  if (!isPendingOrder(p)) return false;
+  const closes = marketClosesHeld(p.buyDate, ptDateStr(getPT()));
+  return closes == null || closes >= 1;
 }
 
 function _ptNow() {
