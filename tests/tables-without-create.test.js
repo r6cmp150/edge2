@@ -43,6 +43,15 @@ run('every table in use or in the backup has a CREATE in db/, or is listed as no
   assert.deepStrictEqual(stale, [], 'these now have a CREATE: take them off the list');
 });
 
+run('reading the schema is a prerequisite of auth step 4 in the plan, before step 4', () => {
+  const plan = readSource('claude/db-exposure-and-auth-plan.md');
+  const pre = plan.indexOf('PREREQUISITE OF STEP 4'), step4 = plan.indexOf('4. **Migration A, additive');
+  assert.ok(pre > 0 && pre < step4, 'stated, ahead of the step');
+  assert.ok(plan.includes('db/inspect-public-schema-read-only.sql'), 'names the query');
+  assert.ok(plan.includes("**Step 4 doesn't start until that is done.**"), 'as a gate, not a note');
+  for (const t of NO_CREATE) assert.ok(plan.slice(pre, step4).includes(`\`${t}\``), `names ${t}`);
+});
+
 run('the spec names every one, and the read-only inspection for them exists and writes nothing', () => {
   const spec = readSource('docs/phase-10-entry-gate-spec.md');
   const section = spec.slice(spec.indexOf('### TABLES WITH NO CREATE IN db/'));

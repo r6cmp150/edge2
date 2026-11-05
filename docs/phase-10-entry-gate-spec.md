@@ -3239,3 +3239,34 @@ never read. `db/inspect-public-schema-read-only.sql` returns every public table'
 definition. It is one SELECT, not yet run. Until it is, nothing about these tables' constraints
 should be stated as known; db/038 aborts on a CHECK on `rating_snapshots.score` or `label`
 because it can't rule one out.
+
+### Why fill-outcomes went red on first runs (2026-11-04)
+
+Seven red runs in 70 (2026-10-06 to 11-05, all logs read), every one the first of its day. Only
+the first run has much to write. They are two different failures, and neither is an ordering
+dependency between jobs. **Both have a fix on main. The second is not proven until the first
+run after `baf67e1`.**
+
+**What the stale check asserts:** at the end of a `--write` run, after its PATCHes, it reads every
+`unresolved` row and fails if `signal_date` + 9 calendar days has closed. Pass 2 uses the same
+constant and clock, so in one run any row Pass 2 saw has already been resolved.
+
+| Failure | Runs | Cause | Status |
+|---|---|---|---|
+| `TypeError: fetch failed` | 5: 10-27T00:01Z, 10-27T23:55Z, 10-29T00:14Z, 10-30T00:08Z, 10-30T23:58Z | The re-select after the PATCHes put every id in one URL, at 408 to 597 ids (371 worked). It never reached the stale check. | Fixed 11-01, `9adf28c`. The 11-04T00:48Z run re-selected 541 and passed. |
+| Stale check | 2: 11-03T02:33Z (5 rows), 11-05T00:59Z (9 rows) | Both read exactly 1,000 pending rows, so Pass 2 never saw these rows, while the check's own read did. | Paged, `baf67e1`. |
+
+**The evidence for the second:** the check failed on 2 of 2 runs at exactly 1,000, and on none of
+the others. The stuck rows are all from the date whose window had just closed. No candidate query
+failed and every PATCH succeeded, so a row Pass 2 had read would have been resolved. On both days
+the next run, reading under 1,000, made exactly as many transitions as there were stuck rows (5
+and 5, 9 and 9). It is still an inference: no log lists the rows that weren't read.
+
+**The ordering hypothesis doesn't hold.** Neither logger writes `taken_resolution`; a later
+fill-outcomes run resolved these rows only because its read was no longer cut. Warrior rows being
+named first is not a pattern: one of the 9 is EDGE, and the list has no order. **The check's window
+is right, and it should not change.** It did its job: it was the only thing that noticed the
+truncation, two days before anyone looked for it.
+
+**Paging can't make the check fire more,** because it now reads the same complete set Pass 2 does.
+It would still catch a real failure to resolve.
