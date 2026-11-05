@@ -2161,6 +2161,54 @@ days, not quiet ones.
    understood. "Trades where Momentum Protection activated: 0" was never
    evidence about the market. The feature could only fire if a render
    happened while a position was up 20%.
+
+   **Two facts about that zero, both true (2026-11-05).** The stored
+   "activated: 0" was never evidence about the market, because the field
+   was render-dependent: that stays true, and the paragraph above stands.
+   Separately, SIP bars now independently confirm zero: none of 464 sold
+   trades reached +20% in the regular session during its hold, even on
+   the upper bound that runs to the recorded sale time. That second fact
+   is new, and it is evidence about the market. A reader who sees only the
+   second should not conclude the first was wrong: the first is about what
+   the field could know, the second about what happened.
+   (`scripts/audit-render-sampled-inputs.mjs`, trades_v2 at `164099a`.)
+
+   **Mark filled writes a value that then looks like a measurement.**
+   Of the 24 trades whose stored peak is above the bar-derived
+   regular-session high, 22 are because Mark filled sets `peakPrice` to
+   the fill price (`app.js`, `peakPrice: fillPrice`) and the stock never
+   traded above it after the fill. The stored peak is then the buy price,
+   by construction, read later as "the highest it went". That is the
+   §7.7 family again: an action writing a value a reader takes for an
+   observation. (Of the other two: one high came in extended hours, which
+   decision (i) excludes; CBRG 2026-09-27 is unexplained.)
+
+   **Measured 2026-11-05, and parked behind db/039 and Roman's SQL.**
+   Step 2.5 was measured before being built, against the approval's own
+   question (which labels change, and in which direction):
+   - **Current positions: 0 of 11 change label.** 9 of 11 were below their
+     stop, where the hard floor returns before any step 2.5 input is read;
+     on the other two, neither momentum protection nor "RSI declining"
+     comes out differently. (Portfolio at `164099a`, market data
+     2026-11-05 19:55Z; `scripts/audit-step25-current.mjs`.)
+   - **History: no EDGE label can change through the peak.** In EDGE the
+     peak is read only inside momentum protection, which activates on 0
+     of 464 either way. Derived peaks are higher, but by little: within
+     0.5% on 266, higher by more than 0.5% on 174, lower on 24; median
+     +0.35%, p90 +1.69%. Peak RSI during hold is not a verdict input; the
+     derived value is lower (median -3.6 points on 179 multi-day holds),
+     which moves the WINNER EXIT TIMING ">70" count from 4 to 2.
+   - **What can still change a label:** `prevRSI` day over day, only
+     between HOLD STRONG and LOCK IN PROFITS (composite >= 30, in profit),
+     and any future position that reaches +20%. The render's `prevRSI` was
+     never stored, so that one channel is unmeasured on history.
+
+   So step 2.5 was **measured at zero label changes: it fixes the record
+   rather than the recommendation.** That does not justify two to three
+   sessions ahead of db/039, which tests whether the app's central premise
+   works at all. It still has to happen: a view writing values a decision
+   reads is a live defect, and removing those writes closes the surface
+   the resurrection race used. But it is not urgent.
 3. **Report-gap fix** (Appendix): ENTRY TIMING prints all four session
    values, every weekday present in the data, and a not-recorded bucket,
    with counts that sum to the total — both copies in `app.js`.
@@ -2441,6 +2489,15 @@ commit is missing, failed or still going.
   `scripts/run-tests.mjs` now sets CI's variables and TZ=UTC unless told otherwise (`--local-env`), so the two diverge only for reasons chosen. What still differs is the
   operating system and the Node version, and it prints them. Those aren't reproduced, so `check-push` is still what declares a push done.
 - **The leak detector did its job.** It failed in the environment where the leak mattered, and the test was wrong. Do not weaken it for being noisy.
+
+**AN AUDIT COMPUTES WITH THE APP'S OWN FUNCTION, NOT A REIMPLEMENTATION OF IT (2026-11-05).** Load the
+function (`core/indicators.js`'s `calcRSI`, not a copy of it), because the question an audit answers is what the app
+computes. A reimplementation that agrees is luck. The instance: the step 2.5 audit first carried Wilder-smoothed RSI,
+where the app averages the last 14 changes; it was replaced by the app's `calcRSI` before any figure left it, and the
+median it reported happened to agree to the decimal. `tests/audit-render-sampled-inputs.test.js` holds it to the app's
+function. Same audit, same day, the other catch: rate-limited (429) requests had become nulls and dropped 305 of 464
+rows quietly. Rate limits are now waited out and any other failure stops the run; a row is never dropped without
+being named.
 
 **A failure that reports only to a channel nobody reads is a reminder with
 extra steps.** (Added 2026-11-01.) Fill outcomes failed the first of its
@@ -3296,6 +3353,18 @@ definition. It is one SELECT, not yet run. Until it is, nothing about these tabl
 should be stated as known; db/038 aborts on a CHECK on `rating_snapshots.score` or `label`
 because it can't rule one out.
 
+**It has three dependents (2026-11-05):** auth step 4's policies, written against five tables whose definitions we
+have never read; the backup's key uniqueness for four tables, inferred from data; and **a local schema to test
+migrations against.** Without the real CREATE statements nothing can be reconstructed locally, so every migration
+sent to Roman is untested against a real database until he runs it. A mistake fails loudly there, but the time it
+costs is his, which is the scarce resource. The third is the one that buys his time back.
+
+**No rollback of db/035 may use CASCADE.** db/038 (gated) adds a write-once trigger on `trades_v2` that calls db/035's
+`trades_v2_reject_provenance_change`, and aborts if that function is missing. That guards the forward case only.
+Backwards, a plain `drop function` is refused by Postgres while a trigger uses it, which fails loudly and is fine;
+`drop function ... cascade` would remove db/038's trigger with it, quietly, and the verdict capture would stop being
+write-once with nothing to show it.
+
 ### Why fill-outcomes went red on first runs (2026-11-04)
 
 Seven red runs in 70 (2026-10-06 to 11-05, all logs read), every one the first of its day. Only
@@ -3448,7 +3517,7 @@ it says what was on screen, not what was true. Step 2.5 is what fixes the inputs
 
 **Sizes, estimated from reading the code on 2026-11-05, not measured, for the reviewer. Nothing goes to Roman until the reviewer has ruled.**
 - **A: about half a session, plus one migration.** As scoped on 11-03. Every captured card is `CAPTURED_FILL_UNKNOWN` until db/038 stores a fill, and its column could join db/038 while that is unrun.
-- **Step 2.5: about 2 to 3 sessions, and no SQL expected.** The derivation mostly exists for the display panel (`computeIntradayPanel`, `fetchIntradaySipBars`).
+- **Step 2.5: about 2 to 3 sessions, and no SQL expected. Parked behind db/039 and Roman's SQL (2026-11-05): measured at zero label changes, so it fixes the record rather than the recommendation (§7.6 step 2.5).** The derivation mostly exists for the display panel (`computeIntradayPanel`, `fetchIntradaySipBars`).
   - Hold high, with its split check, IEX fallback label and NULL on a partial fetch: about half a session.
   - The exit engine's inputs, "computed from 7 of 9 factors", and the renamed day-over-day RSI factor: about 1 session. It is where the risk is: the inputs have 77 references, and the exit advice changes.
   - The render stops writing, and the sale's recorder fields derive from bars: about half a session. The three `backgroundSavePosition` calls go, which closes the surface the resurrection race used.
