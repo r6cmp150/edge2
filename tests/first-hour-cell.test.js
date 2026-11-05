@@ -49,12 +49,54 @@ await run('the boundaries are the cell\'s, and a losing trade is not a win', () 
   near(c.minusBest, -4, 'the best trade removed');
 });
 
+await run('the split: the Sunday orders are out of the time cells, and they are counted', () => {
+  const pop = m.population(rows), firm = pop.filter(r => !m.notAtThatTime(r));
+  const v2 = r => r.code_version && r.code_version.scoring === 2;
+  const c = (list, a, b) => m.cell(list.filter(r => m.inCell(r, a, b)));
+  assert.strictEqual(pop.filter(m.notAtThatTime).length, 24);
+  near(m.cell(pop.filter(m.notAtThatTime)).pnl, -213.25, 'the Sunday orders');
+  const morning = c(firm, '07:30', '10:00');
+  assert.deepStrictEqual([morning.n, morning.days, morning.profitableDays], [231, 20, 12]);
+  near(morning.pnl, 734.15, 'morning');
+  near(morning.minusBest, 604.15, 'morning minus best');
+  const oldMorning = c(firm.filter(r => !v2(r)), '07:30', '10:00');
+  assert.deepStrictEqual([oldMorning.n, oldMorning.days, oldMorning.profitableDays], [65, 13, 7]);
+  near(oldMorning.pnl, 87.10, 'morning before v2');
+  near(oldMorning.minusBest, -42.90, 'and it loses without its best trade');
+  const late = c(firm, '10:00', '13:00');
+  assert.deepStrictEqual([late.n, late.days, late.profitableDays], [96, 15, 8]);
+  near(late.pnl, -41.65, 'late morning');
+  const after = c(firm, '13:00', '24:00');
+  assert.deepStrictEqual([after.n, after.days, after.profitableDays], [27, 10, 3]);
+  near(after.pnl, -177.85, 'after the close');
+  assert.strictEqual(c(firm.filter(v2), '13:00', '24:00').n, 0, 'and none under v2');
+});
+
+await run('the same days: 07:30-09:59 against 07:00-07:29 is not clearly better', () => {
+  const pop = m.population(rows);
+  const s = m.sameDay(pop, ['07:00', '07:30'], ['07:30', '10:00']);
+  assert.deepStrictEqual([s.days, s.better], [12, 7]);
+  assert.strictEqual(s.p.toFixed(3), '0.387');
+  near(s.meanDiff, 0.96, 'mean difference');
+  const l = m.sameDay(pop, ['10:00', '13:00'], ['07:30', '10:00']);
+  assert.deepStrictEqual([l.days, l.better], [10, 4]);
+  // A check on the test itself: every day better gives (1/2)^n.
+  const fake = ['a', 'b', 'c'].flatMap(d => [{ buy_date: d, buy_time: '07:10', pnl_pct: 0 }, { buy_date: d, buy_time: '08:00', pnl_pct: 1 }]).map(x => ({ ...x, buy_date: '2026-10-0' + (x.buy_date.charCodeAt(0) - 96 + 4) }));
+  const f = m.sameDay(fake, ['07:00', '07:30'], ['07:30', '10:00']);
+  assert.deepStrictEqual([f.days, f.better, f.p], [3, 3, 0.125]);
+  // A CLOSED row isn't a trade at its stamp, so it can't make a day count or move its average.
+  const withClosed = [...fake, { buy_date: '2026-10-05', buy_time: '08:00', pnl_pct: -99, buy_session: 'CLOSED' }];
+  assert.deepStrictEqual(m.sameDay(withClosed, ['07:00', '07:30'], ['07:30', '10:00']).better, 3);
+});
+
 await run('the spec records it, with its limits', () => {
   const spec = readSource('docs/phase-10-entry-gate-spec.md').replace(/\s+/g, ' ');
   assert.ok(spec.includes('The 07:00–07:29 cell on the whole book'));
   assert.ok(spec.includes('| **118** | **18** | **50.4%** | **−0.95%** | **−$400.28** | **−$440.28** | **5 of 18** |'));
-  assert.ok(spec.includes('v2 has not reversed it'));
-  assert.ok(spec.includes('07:00–07:29 is not the only weak cell'));
+  assert.ok(spec.includes('v2 has not reversed them'));
+  assert.ok(spec.includes('Compared on the same days, it is not clearly better'), 'the correction');
+  assert.ok(spec.includes('never as evidence that early entries are bad'), 'and §3.4 still says so');
+  assert.ok(spec.includes('BEKE and AGNT'), 'why the next run\'s n differs');
   assert.ok(spec.includes("Roman's timing analysis calls unjudged at n=5"), 'the word is the timing analysis\'s, not this spec\'s');
 });
 })();

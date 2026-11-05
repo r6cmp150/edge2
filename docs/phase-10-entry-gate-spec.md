@@ -3480,11 +3480,51 @@ first: n=70, −$377.03, 14 days at b4620bc, and the same 252 population.
 | 07:30–09:59 | 245 | 21 | 64.0% | +0.33% | +$568.40 | +$438.40 | 12 of 21 |
 | 10:00 on | 133 | 21 | 48.1% | −0.86% | −$267.00 | −$310.50 | 9 of 21 |
 
-**It holds, on 18 days, and v2 has not reversed it.** Inside v2 the same gap is there: 07:00–07:29 wins 48.9% against 67.5% for 07:30–09:59 (+0.78%, +$647.05, 5 of 7 days).
-**But it is milder under v2:** −0.18% against −1.48%, on 4 days, so that can't say whether the cell has improved or those days were kind.
+**The cell's own figures hold on 18 days, and v2 has not reversed them.** They are milder under v2: −0.18% against −1.48%, on 4 days, which can't say whether the cell has improved or those days were kind. **What that does not establish is corrected in the next section: compared on the same days, the difference is not clear.**
 
 **What limits it:**
-- **07:00–07:29 is not the only weak cell.** 10:00 on is nearly as poor per trade (−0.86%), though its days split more evenly. The contrast is with 07:30–09:59, not with everything else.
 - **Stamp, not fill.** The stamp is at or after the buy, so a row here may have been bought earlier. On the tape, 45 of the 48 v2 buys traded within ±10 minutes of the stamp, the test §3.4 uses (68 of 70 before).
 - **2 buys stamped in the cell were still open at the pin** (BEKE and AGNT, 11-04), so they aren't in these figures.
 - **06:30–06:59 is still n=5, all before v2.** It isn't evidence that earlier is safe.
+
+### The cells split, and on the same days (2026-11-05)
+
+`node scripts/audit-first-hour-cell.mjs`, `trades_v2` at 164099a, the same 501. **The 24 Sunday orders are out of these cells:** one evening, 09-27, stamped 07:xx (14) and 16:xx (10), −$213.25, 0 of 1 days, and none of them is a trade at that time of day. They had been inside "07:30–09:59" and "13:00 on".
+
+| Whole book | n | Days | Win | Avg | P&L | Minus best trade | Profitable days |
+|---|---|---|---|---|---|---|---|
+| 07:00–07:29 | 118 | 18 | 50.4% | −0.95% | −$400.28 | −$440.28 | 5 of 18 |
+| 07:30–09:59 | 231 | 20 | 66.2% | +0.53% | +$734.15 | +$604.15 | 12 of 20 |
+| 10:00–12:59 | 96 | 15 | 50.0% | −0.30% | −$41.65 | −$85.15 | 8 of 15 |
+| 13:00 on | 27 | 10 | 44.4% | −2.45% | −$177.85 | −$188.85 | 3 of 10 |
+
+| Before v2 | n | Days | Win | Avg | P&L | Minus best trade | Profitable days |
+|---|---|---|---|---|---|---|---|
+| 07:00–07:29 | 70 | 14 | 51.4% | −1.48% | −$377.03 | −$411.53 | 4 of 14 |
+| 07:30–09:59 | 65 | 13 | 63.1% | −0.11% | +$87.10 | −$42.90 | 7 of 13 |
+| 10:00–12:59 | 61 | 12 | 57.4% | −0.22% | +$25.15 | −$5.85 | 6 of 12 |
+| 13:00 on | 27 | 10 | 44.4% | −2.45% | −$177.85 | −$188.85 | 3 of 10 |
+
+| Scoring v2 | n | Days | Win | Avg | P&L | Minus best trade | Profitable days |
+|---|---|---|---|---|---|---|---|
+| 07:00–07:29 | 48 | 4 | 48.9% | −0.18% | −$23.25 | −$63.25 | 1 of 4 |
+| 07:30–09:59 | 166 | 7 | 67.5% | +0.78% | +$647.05 | +$577.75 | 5 of 7 |
+| 10:00–12:59 | 35 | 3 | 37.1% | −0.43% | −$66.80 | −$110.30 | 2 of 3 |
+| 13:00 on | 0 | | | | | | |
+
+**Compared on the same days, it is not clearly better.** A cell comparison also compares which days each cell fell on.
+| Same days, average percent per trade | Better on | Mean difference | Sign test, one-sided |
+|---|---|---|---|
+| 07:30–09:59 against 07:00–07:29, whole book | 7 of 12 days | +0.96 points, mostly two days (09-29, 08-17) | p 0.387 |
+| The same, before v2 | 5 of 8 | +1.23 points | p 0.363 |
+| The same, v2 | 2 of 4 | +0.43 points | p 0.688 |
+| 07:30–09:59 against 10:00–12:59, whole book | 4 of 10 | −0.06 points | p 0.828 |
+
+**What this supports:**
+- **07:30–09:59 has done best in aggregate, but most of that is one stretch.** 166 of its 231 trades and +$647.05 of its +$734.15 are v2's seven days, and before v2 it loses without its best trade. It is not yet a timing result.
+- **That doesn't show the 07:00–07:29 cell is harmless either.** 12 shared days can only detect a large difference, so this isn't a null to quote as "the hour doesn't matter".
+- **10:00–12:59 is neutral at best,** and on the same days not distinguishable from 07:30–09:59.
+- **13:00 on is the poorest cell, and there is nothing to stop:** no buy stamped after the close since 09-30, none under v2. By §3.4, 14 of its rows may be closing fills typed in later.
+- **§3.4's standing instruction holds:** cite the rule "as a precaution in force, never as evidence that early entries are bad." Its third confound, early-scan bars, is also untested here.
+
+BEKE and AGNT (11-04) were still open at this pin, so a later rerun's n differs for that reason.
