@@ -7128,7 +7128,7 @@ No snapshot history yet — snapshots are recorded after each screener run for s
   let data;
   try {
     const res = await withTimeout(
-      readAllRows(() => supabaseClient.from('rating_snapshots').select('ticker, captured_at, score', { count: 'exact' }).order('captured_at', { ascending: true }).order('id', { ascending: true })),
+      readAllRows(() => supabaseClient.from('rating_snapshots').select('id, ticker, captured_at, score', { count: 'exact' }).order('captured_at', { ascending: true }).order('id', { ascending: true })),
       30000,
       'Supabase rating_snapshots query timed out after 30s'
     );
@@ -9477,7 +9477,7 @@ async function exportAndArchiveDatabase() {
 
     let snapshotRows = [];
     try {
-      const { data, error } = await readAllRows(() => supabaseClient.from('rating_snapshots').select('ticker, captured_at', { count: 'exact' }).order('id', { ascending: true }));
+      const { data, error } = await readAllRows(() => supabaseClient.from('rating_snapshots').select('id, ticker, captured_at', { count: 'exact' }).order('id', { ascending: true }));
       if (!error && data) snapshotRows = data;
     } catch(e) {}
 

@@ -241,9 +241,11 @@ function mapPositionToSupabaseRow(position) {
 
 // Every row a query matches (2026-11-04). PostgREST answers any read with at most
 // 1,000 rows and no error, so an unpaged read of a bigger table quietly returns
-// part of it. `query` builds the select with { count: 'exact' } and an order with
-// a unique tie-break; completeness comes from that count. Same { data, error }
-// shape as the read it replaces, and never partial rows.
+// part of it. `query` builds the select with { count: 'exact' } and an order ending
+// on a unique key, and selects that key: without a total order, pages can skip or
+// repeat rows. Completeness comes from the count, after dropping any row a write
+// during the read repeated. Same { data, error } shape as the read it replaces, and
+// never partial rows.
 const READ_PAGE_SIZE = 1000;
 async function readAllRows(query) {
   const rows = [];
@@ -253,8 +255,9 @@ async function readAllRows(query) {
     if (count == null) return { data: null, error: new Error('no row count back, so completeness is unknown') };
     rows.push(...(data || []));
     if (rows.length >= count || !data || !data.length) {
-      if (rows.length !== count) return { data: null, error: new Error(`read ${rows.length} rows of ${count}`) };
-      return { data: rows, error: null };
+      const unique = [...new Map(rows.map(r => [r.id, r])).values()];
+      if (unique.length !== count) return { data: null, error: new Error(`read ${unique.length} rows of ${count}`) };
+      return { data: unique, error: null };
     }
   }
 }

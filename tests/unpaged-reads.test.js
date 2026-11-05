@@ -145,10 +145,10 @@ run('fetchAllRows: all rows across pages; a short read, no count, or a failure t
     assert.strictEqual(headers.Prefer, 'count=exact');
     return fakeRes(206, rows3628.slice(from, Math.min(to + 1, from + 1000)), `${from}-${to}/${n}`);
   };
-  assert.strictEqual((await fetchAllRows('u', {}, 'L', server(3628))).length, 3628);
-  await assert.rejects(fetchAllRows('u', {}, 'L', server(5000)), /read 3628 rows of 5000/);
-  await assert.rejects(fetchAllRows('u', {}, 'L', async () => fakeRes(200, rows3628.slice(0, 1000), null)), /no authoritative row count/);
-  await assert.rejects(fetchAllRows('u', {}, 'L', async () => fakeRes(401, {}, null)), /L failed: 401/);
+  assert.strictEqual((await fetchAllRows('u?order=id', {}, 'L', server(3628))).length, 3628);
+  await assert.rejects(fetchAllRows('u?order=id', {}, 'L', server(5000)), /read 3628 rows of 5000/);
+  await assert.rejects(fetchAllRows('u?order=id', {}, 'L', async () => fakeRes(200, rows3628.slice(0, 1000), null)), /no authoritative row count/);
+  await assert.rejects(fetchAllRows('u?order=id', {}, 'L', async () => fakeRes(401, {}, null)), /L failed: 401/);
 });
 
 run('the pending-rows read cannot resolve part of a group again: it pages, and on a stable order', () => {

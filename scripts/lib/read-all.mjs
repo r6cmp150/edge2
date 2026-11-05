@@ -2,11 +2,17 @@
 // PostgREST answers any read with at most 1,000 rows, status 200 and no error,
 // so an unpaged read of a table past that silently truncates. fill-outcomes read
 // exactly 1,000 of its pending rows this way on 2026-11-03 and 2026-11-05.
-// Completeness comes from Postgres's own count, not from a short page. `url` must
-// carry an order= with a unique tie-break, or rows can repeat or vanish across pages.
+// Completeness comes from Postgres's own count, not from a short page.
+//
+// `url` MUST end its order= on a unique key (2026-11-04). Without an ORDER BY Postgres
+// guarantees no order, so rows can be skipped or repeated between pages, more so under
+// concurrent writes. A total order stops skips from updates. An insert sorting before the
+// current page can still repeat a row (the count rises with it), so rows are deduplicated
+// by `key`, and the deduplicated total is what has to match.
 const PAGE_SIZE = 1000;
 
-export async function fetchAllRows(url, headers, label, fetchImpl = fetch) {
+export async function fetchAllRows(url, headers, label, fetchImpl = fetch, key = 'id') {
+  if (!/[?&]order=/.test(url)) throw new Error(`${label}: a paged read needs an order= ending on a unique key`);
   const rows = [];
   for (;;) {
     const res = await fetchImpl(url, { headers: { ...headers, Prefer: 'count=exact', Range: `${rows.length}-${rows.length + PAGE_SIZE - 1}` } });
@@ -16,9 +22,11 @@ export async function fetchAllRows(url, headers, label, fetchImpl = fetch) {
     const page = await res.json();
     rows.push(...page);
     if (rows.length >= Number(total[1]) || !page.length) {
-      if (rows.length !== Number(total[1])) throw new Error(`${label}: read ${rows.length} rows of ${total[1]}`);
-      console.log(`${label}: read ${rows.length} row(s), matching Postgres's count of ${total[1]}.`);
-      return rows;
+      const unique = [...new Map(rows.map(r => [r[key], r])).values()];
+      if (unique.length !== Number(total[1])) throw new Error(`${label}: read ${unique.length} rows of ${total[1]}`);
+      const repeats = rows.length - unique.length;
+      console.log(`${label}: read ${unique.length} row(s), matching Postgres's count of ${total[1]}${repeats ? `, after dropping ${repeats} repeated by a write during the read` : ''}.`);
+      return unique;
     }
   }
 }

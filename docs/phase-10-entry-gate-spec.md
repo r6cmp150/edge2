@@ -2398,6 +2398,11 @@ without logging whether Pass 2 had seen the rows it named, so that diagnosis is 
 each pass saw, how many transitions it made, and whether any read came back at a page limit.
 `tests/job-counts.test.js` holds this for what the scheduled jobs read today.
 
+**EVERY MUTATION REPORT STATES THAT ITS BASELINE PASSED (2026-11-04),** as a required line. A
+fourth instance of the same family: a set of 9 "kills" on 11-04 ran against a test that was already
+failing, and a failing test kills everything. `scripts/lib/mutants.cjs` runs the baseline first,
+prints it as the first line, and stops if it fails, so a report without that line is visibly wrong.
+
 **A failure that reports only to a channel nobody reads is a reminder with
 extra steps.** (Added 2026-11-01.) Fill outcomes failed the first of its
 three evening runs on five days running (10-26 to 10-30 PT; GitHub run
@@ -3289,3 +3294,28 @@ On those two dates the Warrior logger ran after EDGE, so the tail was all Warrio
 Warrior logs first and the tail is EDGE. So the cut followed row order, and this adds to the case
 for truncation. Why the read returned rows in that order isn't known (it had no ORDER BY), and one
 row doesn't fit: EDGE COTY, position 77 of 128.
+
+### A PAGED READ NEEDS A TOTAL ORDER (2026-11-04)
+
+Without an ORDER BY Postgres guarantees no order. Roughly insertion order is what a sequential
+scan usually gives, which is why the stuck rows above mostly followed creation order and why EDGE
+COTY didn't. Offset paging over an unordered read can skip or repeat rows, more so under concurrent
+writes, **with the row count still matching.** Every paged read must end its order on a unique key;
+`tests/paged-reads-ordered.test.js` fails one that doesn't, per table.
+
+**What shipped without it:**
+- **The backup, from 2026-09-05 until `db41bfc`, for every table.** Its comment reasoned that a backup
+  doesn't need a stable order. **No committed backup shows damage:** 0 repeated ids across all 36
+  backups over 1,000 rows (9 of signal_log, 27 of rating_snapshots, at 92a77fa). Each read was required
+  to match Postgres's count, so a skipped row would have to appear with a repeat. No pin is affected.
+  That was luck, not a guarantee.
+- **The backup's whole-file tables, still, until this change.** All under 1,000 rows, so one page.
+- **`measure-iex-vs-sip-scoring.mjs`, broken by `baf67e1`:** ordered on `id`, which
+  `signal_snapshot_at_buy` doesn't have. Its key is `position_id`. A live read would have failed
+  loudly; `--rev` was unaffected. The test now checks the key per table.
+
+**What a total order doesn't do:** an insert sorting before the current page can still repeat a row.
+So reads drop repeats by key, and the deduplicated total is what must match the count. Month-file
+backups merge by id and compare with a fresh count. **Uniqueness of `id` on `rating_snapshots`,
+`trades`, `portfolio` and `settings` is inferred, not read,** as they have no CREATE in db/: the data
+shows it, the schema inspection will confirm it, and a repeated key is refused, not trusted.

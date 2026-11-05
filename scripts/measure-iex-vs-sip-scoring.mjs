@@ -59,7 +59,7 @@ const rev = argv.includes('--rev') ? argv[argv.indexOf('--rev') + 1] : null;
 if (!rev === !argv.includes('--live')) { console.error('usage: --rev <commit> | --live'); process.exit(2); }
 const raw = rev
   ? JSON.parse(execSync(`git show ${rev}:data/backups/signal_snapshot_at_buy.json`, { cwd: ROOT, maxBuffer: 1e9 }).toString())
-  : await fetchAllRows(`${SB}/rest/v1/signal_snapshot_at_buy?select=*&order=id`, { apikey: KEY, Authorization: `Bearer ${KEY}` }, 'signal_snapshot_at_buy read');
+  : await fetchAllRows(`${SB}/rest/v1/signal_snapshot_at_buy?select=*&order=position_id`, { apikey: KEY, Authorization: `Bearer ${KEY}` }, 'signal_snapshot_at_buy read', fetch, 'position_id');
 if (!Array.isArray(raw)) throw new Error(JSON.stringify(raw));
 const rows = raw.filter(r => r.snapshot).sort((a, b) => Number(a.position_id) - Number(b.position_id));
 console.log(`Source: ${rev ? `data/backups/signal_snapshot_at_buy.json at ${rev}` : `LIVE signal_snapshot_at_buy at ${new Date().toISOString()} -- NOT QUOTABLE`}`);

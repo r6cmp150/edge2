@@ -69,7 +69,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
-import { TABLE_RULES, MIN_ROWS, judgeTable, holdingsIn } from './lib/backup-rules.mjs';
+import { TABLE_RULES, MIN_ROWS, WHOLE_FILE_KEY, repeatedKeys, judgeTable, holdingsIn } from './lib/backup-rules.mjs';
 import { SHARDED, MAX_FILE_BYTES, runShardedTable, writeShards } from './lib/backup-shards.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -87,11 +87,11 @@ const PAGE_SIZE = 1000; // PostgREST's default page cap -- paginate past it expl
 
 const TABLES = Object.keys(TABLE_RULES);
 
-// No `order=` clause: not every table's primary key column is confirmed
-// (trades/settings/rating_snapshots use `id`; portfolio's own key is
-// `position_id` -- see savePositionToSupabase's onConflict). A backup
-// doesn't need a stable row order, so this avoids assuming a column name
-// that isn't actually shared across all four tables.
+// Every read orders on a unique key (2026-11-04; WHOLE_FILE_KEY, shardApi). This
+// used to have no order=, on the reasoning that a backup doesn't need a stable row
+// order. It does: offset paging over an unordered read can skip or repeat rows with
+// the count still matching. No committed backup shows it (0 repeated ids in the 36
+// over 1,000 rows at 92a77fa), but that was luck, not a guarantee.
 //
 // COMPLETENESS IS VERIFIED, NOT INFERRED (revised 2026-09-05): the first
 // draft treated `page.length < PAGE_SIZE` as "that was the last page."
@@ -108,7 +108,7 @@ const TABLES = Object.keys(TABLE_RULES);
 // from response size, and the loop keeps requesting until it's actually
 // fetched that many -- with a final assert as a second, independent
 // check that the two numbers actually agree.
-async function fetchTable(table, query = 'select=*') {
+async function fetchTable(table, query) {
   const rows = [];
   let offset = 0;
   let total = null;
@@ -227,7 +227,16 @@ async function main() {
       continue;
     }
 
-    const fresh = await fetchTable(table);
+    const key = WHOLE_FILE_KEY[table];
+    const fresh = await fetchTable(table, `select=*&order=${key}`);
+    const repeated = repeatedKeys(fresh, key);
+    if (repeated) {
+      const reason = `read ${repeated} repeated ${key}(s) -- a read that repeats rows can also have skipped others`;
+      console.error(`backup-tables: SKIPPING ${table} this run -- ${reason}. Its last committed backup is left untouched. Other tables are not affected.`);
+      manifest.tables[table] = { fetched: fresh.length, prior: prior.count, floor: MIN_ROWS[table], written: false, reason };
+      failures.push({ table, reason });
+      continue;
+    }
     const priorCount = prior.count;
     fetchedCounts[table] = fresh.length; priorCounts[table] = priorCount; priors[table] = prior;
     console.log(`backup-tables: ${table} -- fetched ${fresh.length} rows, prior backup had ${priorCount}${prior.status === 'absent' ? ' (no prior backup -- first run)' : ''}.`);

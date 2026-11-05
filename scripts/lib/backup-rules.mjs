@@ -94,6 +94,14 @@ export const MIN_ROWS = {
   signal_snapshot_at_buy: 88,
 };
 
+// The unique key each whole-file table's paged read orders on (2026-11-04). Without an
+// ORDER BY Postgres guarantees no order, so pages can skip or repeat rows while the row
+// count still matches. signal_snapshot_at_buy has no id column. For trades, portfolio and
+// settings there is no CREATE in db/, so uniqueness is not known from the schema, and a
+// repeated key in the read is refused rather than trusted.
+export const WHOLE_FILE_KEY = { trades: 'id', trades_v2: 'id', settings: 'id', portfolio: 'id', signal_snapshot_at_buy: 'position_id' };
+export const repeatedKeys = (rows, key) => rows.length - new Set(rows.map(r => r[key])).size;
+
 // Holdings in a portfolio backup: rows that aren't pending orders (core/
 // orders.js isPendingOrder: an order type with no fill).
 export const holdingsIn = rows => (rows || []).filter(r => !(r.order_type != null && r.filled_at == null)).length;
