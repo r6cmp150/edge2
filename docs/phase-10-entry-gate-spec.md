@@ -3431,3 +3431,33 @@ the card and the stored copy have to share inputs. No estimate goes to Roman bef
 departure from it: the source column is `sell_filled_at_source` with `entered` / `default` / `not_known`, because
 a stored source is what separates a typed fill from an accepted default, and the scope's "auto-now" state is what
 `default` records.
+
+### The win/loss ratio question is OPEN AGAIN (2026-11-05)
+
+"The binding problem is the win/loss ratio" came from +$8.96 and −$16.69, quoted as current all week. Those are the first 292
+trades, all before scoring v2 (`trades_v2` at 164099a; the same figures at 80f52fb).
+
+| Population | Trades | Win rate | Avg win | Avg loss | Ratio | Expectancy | Position |
+|---|---|---|---|---|---|---|---|
+| Before v2 | 292 | 55.2% | $8.96 | −$16.69 | 0.54 | −$2.34 | $408 |
+| Scoring v2 | 249 | 59.6% | $10.98 | −$10.57 | 1.04 | +$2.24 | $563 |
+| All | 541 | 57.3% | $9.96 | −$13.93 | 0.72 | −$0.24 | $480 |
+
+Under v2, break-even falls near 49%. **That doesn't show v2 fixed it.** The 249 trades were bought on just 7 dates (10-27 to 11-04), so
+the effective sample is seven days, not 249 trades; they overlap a period already known to have been favourable; and scoring wasn't the
+only change. The honest position is that the ratio question is open, and neither population should be quoted alone.
+
+### Buys stamped inside the blocked window (2026-11-05)
+
+**48 of the 249 v2 buys, 19%, are stamped 07:00 to 07:29 PT** (`trades_v2` at 164099a), the window with evidence against it. The gate
+warns and doesn't prevent, deliberately: a gate on advice must not block recording.
+- **What they are:** all 48 are market orders, on weekdays, in the REGULAR session, and each was added to the app in the same minute as its
+  stamp. None is a Sunday-style order or a pre-market order filled at the open. None is before 07:00.
+- **On four dates:** 10-28 (9), 10-29 (3), 11-03 (17), 11-04 (19). The effective sample is 4 days, not 48 buys.
+- **The stamp is the recording clock.** So it says when he recorded the buy, which is at or after the buy. On the SIP tape, within a minute of
+  the stamp, the buy price traded on 38 of the 48. It didn't on 10, so those were bought earlier than stamped or have some other mismatch, and
+  this can't say which. For the 38, the tape is consistent with a prompt recording, but a price that traded then may also have traded earlier.
+- **36 of the 48 were sold within the hour.** Their outcome isn't computed here.
+- **So the 48 may understate how early he is buying, not overstate it.** A stamp at 07:05 means the buy was at or before 07:05, so some of these may
+  have been bought before 07:00, which is the 06:30 to 07:00 window this spec calls unjudged, not safe. The 10 non-matching rows, and DNUT matching only
+  pre-market, point the same way. If a broker export ever arrives, those 10 are among the rows it would settle.

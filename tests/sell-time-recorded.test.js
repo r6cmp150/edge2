@@ -15,6 +15,16 @@ run('sell_time is the clock at recording, never anything the form was given', ()
   assert.ok(grab('writeTradeToSupabase').includes('sell_time: record.sellTime,'), 'and written as it is');
 });
 
+run('the ratio question is recorded as open, with both populations', () => {
+  const spec = readSource('docs/phase-10-entry-gate-spec.md').replace(/\s+/g, ' ');
+  assert.ok(spec.includes('The win/loss ratio question is OPEN AGAIN'));
+  assert.ok(spec.includes('| Before v2 | 292 |') && spec.includes('| Scoring v2 | 249 |'), 'both');
+  assert.ok(spec.includes("**That doesn't show v2 fixed it.**"));
+  assert.ok(spec.includes('48 of the 249 v2 buys, 19%'), 'and the buys in the blocked window');
+  assert.ok(spec.includes('the effective sample is seven days'), 'seven days, not 249 trades');
+  assert.ok(spec.includes('may understate how early he is buying'), 'and which way the stamp errs');
+});
+
 run('the gap and the decision are stated in the spec', () => {
   const spec = readSource('docs/phase-10-entry-gate-spec.md').replace(/\s+/g, ' ');
   assert.ok(spec.includes('means "recorded at", for every row ever written'));
