@@ -3216,8 +3216,26 @@ it can't reach 1,000, and a new unpaged read fails it.
   read the oldest 1,000 of 2,250 filled rows, but its last logged run on 09-15 read 95), and
   every `trades_v2` read.
 
+**Rendering, extended (2026-11-04):** the rule above now applies to any text stating a number,
+warning or not. "The warning is gone so the rule does not apply" is how a rule erodes.
+
 **Figures from reports:** the report's trade sections read `trades_v2`, which has never held
 1,000 rows, so §1, §2, §3, §3.5 and the forward test (292 and 451 trades) are not affected, and
 signal_log figures came from scripts that page or from backups that page. The one way a report
 figure is affected is if it came from a pasted score history or archive section: look for
 "Total snapshots recorded: 1000" or "Rating snapshot total rows: 1000".
+
+### TABLES WITH NO CREATE IN db/ (2026-11-04)
+
+Five tables were created outside the numbered migrations: `db_meta`, `portfolio`,
+`rating_snapshots`, `settings`, `trades`. **For these we don't know what constraints exist; we
+infer the schema from behaviour.** Listed from a search of db/ against every table the code and
+the backup use, kept true by `tests/tables-without-create.test.js`. The list can't show a public
+table nothing here names: the anon key can't read the schema (REST root: 401, "Secret API key
+required", live 2026-11-05).
+
+This bears on the auth plan: step 4 writes policies against tables whose definitions we have
+never read. `db/inspect-public-schema-read-only.sql` returns every public table's real
+definition. It is one SELECT, not yet run. Until it is, nothing about these tables' constraints
+should be stated as known; db/038 aborts on a CHECK on `rating_snapshots.score` or `label`
+because it can't rule one out.
