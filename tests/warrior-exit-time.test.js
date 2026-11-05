@@ -55,10 +55,10 @@ run('time unknown (recorded on a later day): time rules not judged, and said', a
   assert.ok(target.reasons.some(r => /Time of sale unknown/.test(r)));
 });
 
-run('the sale passes its time: the fill the form was given', () => {
+run('the sale passes its time: now if recorded on the sale date, null if later', () => {
   const app = readSource('app.js');
   const i = app.indexOf('function computeUnifiedSaleFields('); const f = app.slice(i, app.indexOf('\n}\n', i));
-  assert.ok(f.includes('function computeUnifiedSaleFields(pos, salePrice, saleDate, saleAt)') && !f.includes('Date.now()'), 'never the recording moment');
+  assert.ok(f.includes("const saleAt = saleDate === ptDateStr(getPT()) ? Date.now() : null;"));
   assert.ok(f.includes('dispatchedEngine.evaluateExit(pos, { price: salePrice, at: saleAt })'));
 });
 

@@ -6418,9 +6418,7 @@ function renderIntradayLineCard(panel, priceTag = '') {
 function openMarkSoldModal(posId, currentPrice, withheldCloseAsOf = null) {
   const pos = state.portfolio.find(p => p.id === posId);
   if (pos && isPendingOrder(pos)) { showAlert('This is a pending order, not a position -- mark it filled first.'); return; }
-  const now = getPT();
-  const today = ptDateStr(now); // PT, not the UTC date (CLAUDE.md getPT rule)
-  const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const today = ptDateStr(getPT()); // PT, not the UTC date (CLAUDE.md getPT rule)
   const sellTypeOpts = ORDER_TYPES.map(([v, l]) => `<option value="${v}"${v === 'market' ? ' selected' : ''}>${l}</option>`).join('');
   const priceUnavailable = currentPrice == null;
   showModal(`<div class="modal-handle"></div>
@@ -6436,20 +6434,13 @@ function openMarkSoldModal(posId, currentPrice, withheldCloseAsOf = null) {
           <input id="sold-price" class="form-input" type="number" step="0.01" value="${priceUnavailable ? '' : currentPrice.toFixed(2)}" placeholder="${priceUnavailable ? 'Fill price' : ''}">
         </div>
         <div class="form-group">
-          <label class="form-label">Sell order type</label>
-          <select id="sold-order-type" class="form-input">${sellTypeOpts}</select>
+          <label class="form-label">Date Sold</label>
+          <input id="sold-date" class="form-input" type="date" value="${today}">
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Date Sold</label>
-          <input id="sold-date" class="form-input" type="date" value="${today}" oninput="if (this.value !== '${today}') document.getElementById('sold-time').value = ''">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Fill time (PT)</label>
-          <input id="sold-time" class="form-input" type="time" value="${hhmm}" data-default="${hhmm}">
-          <label class="form-check"><input id="sold-time-unknown" type="checkbox" onchange="document.getElementById('sold-time').disabled = this.checked"> Time not known</label>
-        </div>
+      <div class="form-group">
+        <label class="form-label">Sell order type</label>
+        <select id="sold-order-type" class="form-input">${sellTypeOpts}</select>
       </div>
       <div class="form-group">
         <label class="form-label">Why did you sell?</label>
@@ -6658,7 +6649,7 @@ function dismissSaleNotice(posId) {
 // Unified recommendation snapshot for a trade record at time of sale. Uses
 // pos.rsiAtBuy rather than any live RSI since a sale is a point-in-time
 // event with no "current" bar fetch of its own at this point in the flow.
-function computeUnifiedSaleFields(pos, salePrice, saleDate, saleAt) {
+function computeUnifiedSaleFields(pos, salePrice, saleDate) {
   // Registry dispatch (Phase 7) -- checked before EDGE's own math runs, not
   // after: calcUnifiedRecommendation reads pos.duration internally
   // (MAX_HOLD_DAYS[position.duration]), which is undefined for every
@@ -6672,9 +6663,12 @@ function computeUnifiedSaleFields(pos, salePrice, saleDate, saleAt) {
   // {status, reasons}, nothing resembling a composite score.
   if (pos.engineSource && pos.engineSource !== 'EDGE') {
     const dispatchedEngine = getEngine(pos.engineSource);
-    // The sale's own time (phase-10 §7.7): the fill the form was given, never
-    // the recording moment. Not known: at is null, and the engine says it couldn't
-    // judge the time-of-day rules rather than judging them against a guess.
+    // The sale's own time (phase-10 §7.7). The form takes a date, not a
+    // time: recorded on the sale date, the recording instant is the best
+    // known time of the sale; recorded on a later day, the time is unknown
+    // (at: null), and the engine says it couldn't judge the time-of-day
+    // rules instead of judging them against the recording moment.
+    const saleAt = saleDate === ptDateStr(getPT()) ? Date.now() : null;
     const exitResult = (dispatchedEngine && dispatchedEngine.evaluateExit)
       ? dispatchedEngine.evaluateExit(pos, { price: salePrice, at: saleAt })
       : neutralEngineExitFallback(pos, { price: salePrice });
@@ -6748,9 +6742,6 @@ async function confirmMarkSold(posId, btn) {
   // Fill-before-sale, validated here rather than as a cross-type SQL CHECK
   // (db/027 header): the sale can't be dated before the buy filled.
   const hold = holdSpan(pos, saleDate);
-  const soldTimeEl = document.getElementById('sold-time');
-  const saleFill = readSaleFill(saleDate, soldTimeEl.value, pos.filledAt, { notKnown: document.getElementById('sold-time-unknown').checked, defaultTime: soldTimeEl.dataset.default });
-  if (saleFill.error) { showAlert(saleFill.error); return; }
   if (saleDate < hold.startDate) { showAlert(`The sale date (${saleDate}) can't be before the buy ${hold.basis === 'fill' ? 'filled' : 'order date'} (${hold.startDate}).`); return; }
 
   // Supabase is now the source of truth for portfolio — await the delete
@@ -6778,7 +6769,7 @@ async function confirmMarkSold(posId, btn) {
     : null;
   // Rule 5: did the position actually exit via the trailing stop threshold?
   const trailingStopTriggered = !!pos.momentumProtectionActivated && salePrice <= pos.peakPrice * 0.85;
-  const unifiedSaleFields = computeUnifiedSaleFields(pos, salePrice, saleDate, saleFill.at);
+  const unifiedSaleFields = computeUnifiedSaleFields(pos, salePrice, saleDate);
 
   const record = {
     id: Date.now().toString(),
@@ -6828,8 +6819,10 @@ async function confirmMarkSold(posId, btn) {
     codeVersion: pos.codeVersion ?? null, // db/028: the buy's version, for labelling this trade later
     trailingStopTriggered,
     rsiSuspendedAtGainPct: pos.rsiSuspendedAtGainPct ?? null,
-    sellTime: saleFill.hhmm, // the fill as entered, or null if not known; never the recording moment
-    sellTimeSource: saleFill.source, // entered | default | not_known
+    sellTime: (() => {
+      const pt = getPT();
+      return `${String(pt.getHours()).padStart(2,'0')}:${String(pt.getMinutes()).padStart(2,'0')}`;
+    })(),
     // The SALE date's weekday, not the recording day's (phase-10 §7.7).
     sellDayOfWeek: DAY_NAMES[new Date(saleDate + 'T12:00:00Z').getUTCDay()],
     distanceFromTargetAtSale: pos.target

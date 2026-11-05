@@ -3330,33 +3330,6 @@ So reads drop repeats by key, and the deduplicated total is what must match the 
 backups merge by id and compare with a fresh count. **Uniqueness of `id` on `rating_snapshots`,
 `trades`, `portfolio` and `settings` is inferred, not read,** as they have no CREATE in db/: the data
 shows it, the schema inspection will confirm it, and a repeated key is refused, not trusted.
-
-### TWO ERAS OF sell_time (2026-11-04)
-
-The sell form now takes a fill time, as the buy form does, and `trades_v2.sell_time` stores it.
-No SQL: the column's comment already said "SELL FILL time". It was false until now. **Never pool
-the two eras in an exit-hour figure without saying so.**
-
-**A row's era is a stored value, read from the row:** `sale_code_version.app`, the build that ran the
-sale (db/028), through `sellTimeEra` in `scripts/lib/sell-time-era.mjs`. It is never reconstructed
-from a date against a deploy time. A phone on a cached older build keeps stamping that build, so
-its rows land in the right era, which a date boundary would get wrong.
-- **Rows before this build:** `sell_time` is the moment the sale was recorded. It equals
-  `created_at` to the minute on 286 of 292 rows at b4620bc. It says when Roman typed, not when he sold.
-- **Rows from this build on:** three states, never a guess. The fill as **entered**, the **default**
-  accepted (the field starts at the current time, as the buy form's does), or **not known**, which is
-  `sell_time` NULL and is never blocked. Requiring a time would force a guess, and a guess stored as a
-  fill is the defect this replaces.
-- **`sell_time_source` records which, and is GATED on db/038 (it's a new column).** Exit-hour analysis
-  uses `entered` rows only and reports how many it excluded. Until db/038 runs the source is known to
-  the form and not stored, so rows from this build with `sell_time_source` NULL can't be told apart:
-  they are excluded from `entered`-only figures, and a NULL `sell_time` among them still means not known.
-- **Selling on an earlier day:** changing the date clears the time, so today's clock can't be
-  stored against another day.
-- **The exit rules now judge the fill.** Warrior's time-of-day rules got the recording moment, or
-  said they couldn't judge when a sale was recorded on a later day. They now get the fill, and still
-  say they couldn't judge when it is not known.
-
 ### Whether cross-test interference could explain the queue-pacing failure (2026-11-04)
 
 "There's no parallel set to move it out of" was true of parallel files and was too broad as a dismissal.
@@ -3372,3 +3345,20 @@ run, passed alone is that signature, so the failure stays UNEXPLAINED.
 
 `queue-pacing.test.js` now runs on a virtual clock, so it can't recur there; `queue-pacing-real-clock.test.js`
 is where it would show, with its numbers.
+
+### `sell_time` means "recorded at", for every row ever written; the fill goes in `sell_filled_at` (2026-11-05)
+
+**The decision.** A separate column makes the mistake impossible, and a shared one only makes it guarded. A
+guard in the app's own reads doesn't protect a hand-written query in January. The sell form's fill time was
+on main for about two hours as `644f5b0`, storing the fill in `sell_time`, and it has been taken back off.
+**0 sales were written on that build** (of the latest 400 `trades_v2` rows, live 2026-11-05 05:17Z).
+
+**A row with `sale_code_version.app = '20261105033000'` would hold a fill in `sell_time`.** A phone still on
+that cached build could write one before it updates. None exists at the time above, and any later one is the
+exception to the first line of this section.
+
+**THE GAP, stated: between now and db/038, sales store no fill time at all.** The form doesn't ask for one,
+because asking and discarding is worse than not asking. Exit-hour analysis has nothing to read until then, and
+`sell_time` must never stand in for it. The field, `sell_filled_at` and its source ride with db/038, which also
+corrects db/027's false column comment. Analysis has to handle a missing fill regardless ("Time not known"),
+while nothing would have made it handle a column with two meanings.
