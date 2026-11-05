@@ -3459,5 +3459,32 @@ warns and doesn't prevent, deliberately: a gate on advice must not block recordi
   this can't say which. For the 38, the tape is consistent with a prompt recording, but a price that traded then may also have traded earlier.
 - **36 of the 48 were sold within the hour.** Their outcome isn't computed here.
 - **So the 48 may understate how early he is buying, not overstate it.** A stamp at 07:05 means the buy was at or before 07:05, so some of these may
-  have been bought before 07:00, which is the 06:30 to 07:00 window this spec calls unjudged, not safe. The 10 non-matching rows, and DNUT matching only
+  have been bought before 07:00, which is the 06:30 to 07:00 window that Roman's timing analysis calls unjudged at n=5, not safe. The 10 non-matching rows, and DNUT matching only
   pre-market, point the same way. If a broker export ever arrives, those 10 are among the rows it would settle.
+
+### The 07:00–07:29 cell on the whole book (2026-11-05)
+
+An update of §3.4, not a separate thin cell: `node scripts/audit-first-hour-cell.mjs`, `trades_v2` at 164099a. Same method as the timing analysis, and it
+excludes the same rows: 22 `sell_price_unverified` and the 18 rows of the 9 resurrected pairs, so 501 of 541 sold trades. It reproduces the published cell
+first: n=70, −$377.03, 14 days at b4620bc, and the same 252 population.
+
+| 07:00–07:29 | n | Days | Win | Avg | P&L | Minus best trade | Profitable days |
+|---|---|---|---|---|---|---|---|
+| **Whole book** | **118** | **18** | **50.4%** | **−0.95%** | **−$400.28** | **−$440.28** | **5 of 18** |
+| Before v2 | 70 | 14 | 51.4% | −1.48% | −$377.03 | −$411.53 | 4 of 14 |
+| Scoring v2 | 48 | 4 | 48.9% | −0.18% | −$23.25 | −$63.25 | 1 of 4 |
+
+| Other cells, whole book | n | Days | Win | Avg | P&L | Minus best trade | Profitable days |
+|---|---|---|---|---|---|---|---|
+| 06:30–06:59 | 5 | 5 | 100% | +1.14% | +$13.05 | +$8.05 | 5 of 5 |
+| 07:30–09:59 | 245 | 21 | 64.0% | +0.33% | +$568.40 | +$438.40 | 12 of 21 |
+| 10:00 on | 133 | 21 | 48.1% | −0.86% | −$267.00 | −$310.50 | 9 of 21 |
+
+**It holds, on 18 days, and v2 has not reversed it.** Inside v2 the same gap is there: 07:00–07:29 wins 48.9% against 67.5% for 07:30–09:59 (+0.78%, +$647.05, 5 of 7 days).
+**But it is milder under v2:** −0.18% against −1.48%, on 4 days, so that can't say whether the cell has improved or those days were kind.
+
+**What limits it:**
+- **07:00–07:29 is not the only weak cell.** 10:00 on is nearly as poor per trade (−0.86%), though its days split more evenly. The contrast is with 07:30–09:59, not with everything else.
+- **Stamp, not fill.** The stamp is at or after the buy, so a row here may have been bought earlier. On the tape, 45 of the 48 v2 buys traded within ±10 minutes of the stamp, the test §3.4 uses (68 of 70 before).
+- **2 buys stamped in the cell were still open at the pin** (BEKE and AGNT, 11-04), so they aren't in these figures.
+- **06:30–06:59 is still n=5, all before v2.** It isn't evidence that earlier is safe.
