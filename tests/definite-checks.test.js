@@ -64,8 +64,24 @@ await run('db/040 run 2 probes what it repaired, and its expected counts match i
   for (const s of ['PREDATES_SALE without scanned_at', 'NOT_RECORDED without reason', 'trades_v2.code_version: empty', 'sale_code_version: empty', 'portfolio.code_version: empty', 'scan_runs.code_version: empty', 'signal_log.code_version: empty', 'prefilter_rule: empty']) assert.ok(r2.includes(s), s);
 });
 
+await run('db/041: guarded on exactly the two rows, both tables NOT NULL, and run 2 copies real rows', () => {
+  const sql = readSource('db/041_engine_source_not_null.sql'), r2 = readSource('db/041-run-2-behaviour.sql');
+  assert.ok(sql.includes("if nulls is distinct from 'CMPX 2026-09-02, EGHT 2026-09-04' then"), 'exactly those two');
+  assert.ok(/from trades_v2 where engine_source = 'WARRIOR';\s*if n > 0 then raise exception/.test(sql), 'the elimination premise is checked, not assumed');
+  assert.ok(/from portfolio where engine_source is null;\s*if n > 0 then raise exception/.test(sql), 'no NULL position');
+  assert.ok(sql.includes('alter table trades_v2 alter column engine_source set not null;') && sql.includes('alter table portfolio alter column engine_source set not null;'));
+  assert.ok(sql.indexOf("update trades_v2 set engine_source = 'EDGE'") > sql.indexOf('end $$;'), 'the backfill runs after the guard');
+  assert.strictEqual((r2.match(/, 'not_null', '|, 'check', '/g) || []).length, 4); assert.strictEqual((r2.match(/, 'key', '/g) || []).length, 2);
+  assert.ok(r2.includes('nr = 4 and np = 2 and left_over = 0'));
+  assert.ok(/insert into %I select \(jsonb_populate_record\(null::%I, \$1\)\)\.\*/.test(r2), 'copies a real row');
+});
+
 await run('the rule is in §7.7, with its case and the harness', () => {
   const spec = readSource('docs/phase-10-entry-gate-spec.md').replace(/\s+/g, ' ');
-  for (const s of ['A CHECK CONSTRAINT MUST BE PROVABLY NON-NULL FOR EVERY INPUT, OR IT PASSES ON UNKNOWN', 'db/035 run 4 refused 3 of 4', 'Count is not behaviour.', 'as hollow as a comment', 'The schema harness (2026-11-05).', 'the dump has no grants']) assert.ok(spec.includes(s), s);
+  for (const s of ['A CHECK CONSTRAINT MUST BE PROVABLY NON-NULL FOR EVERY INPUT, OR IT PASSES ON UNKNOWN', 'db/035 run 4 refused 3 of 4', 'Count is not behaviour.', 'as hollow as a comment', 'The schema harness (2026-11-05).', 'the dump has no grants',
+    'UNDERSTANDING A DEFECT CLASS DOES NOT PREVENT WRITING A NEW INSTANCE OF IT. ONLY EXECUTING THE THING DOES.',
+    'A VERIFICATION THAT REPORTS THE WRONG REASON WHEN IT FAILS IS BARELY BETTER THAN ONE THAT DOES NOT RUN.',
+    'THE STANDARD SHAPE FOR VERIFYING A CONSTRAINT: COPY A REAL ROW.', 'engine_source is never NULL (db/041, 2026-11-05).',
+    'The portfolio half goes beyond what was approved, and is declared']) assert.ok(spec.includes(s), s);
 });
 })();

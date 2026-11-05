@@ -2549,6 +2549,20 @@ verdict with nothing captured; a fill time with no source). Write every branch d
   Postgres; that is the gap this closes. A standing test, `tests/definite-checks.test.js`, refuses the
   missing-key pattern in any new migration, but the harness is the authority: the test reads text, the harness runs
   the check.
+- **UNDERSTANDING A DEFECT CLASS DOES NOT PREVENT WRITING A NEW INSTANCE OF IT. ONLY EXECUTING THE THING DOES.** The
+  harness's first catch was in db/038 revision a, written the same day: `verdict_display_consistent` accepted a
+  CAPTURED state with nothing captured, and `sell_filled_at_consistent` a fill time with no source. Both were the class
+  that had just been diagnosed in db/035 and db/028, by the person who had just diagnosed it, and both were found before
+  Roman saw the file only because it was run.
+- **A VERIFICATION THAT REPORTS THE WRONG REASON WHEN IT FAILS IS BARELY BETTER THAN ONE THAT DOES NOT RUN.** The same run
+  found revision a's run 2 fragile: a wrongly allowed probe wrote, the next probe then died on the write-once trigger, and
+  the block failed with "is write-once" and no RESULT line, which points at the wrong constraint. Every probe now rolls
+  itself back (it raises inside its own block after a write), so each failure is reported as itself.
+- **THE STANDARD SHAPE FOR VERIFYING A CONSTRAINT: COPY A REAL ROW.** Insert a copy of an existing row with one column
+  changed. A value the constraint refuses stops at its own error (23514 CHECK, 23502 NOT NULL); a value it accepts goes
+  on to collide with the primary key it copied (23505), which proves it passed. Two distinguishable outcomes, nothing
+  is ever written, and when the probe is wrong the error points toward a false FAIL rather than a silent write.
+  db/040 run 2 and db/041 run 2 use it; every future constraint verification does.
 
 **THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
 mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which
@@ -3476,6 +3490,13 @@ never read. `db/inspect-public-schema-read-only.sql` returns every public table'
 definition. It is one SELECT, not yet run. Until it is, nothing about these tables' constraints
 should be stated as known; db/038 aborts on a CHECK on `rating_snapshots.score` or `label`
 because it can't rule one out.
+
+**engine_source is never NULL (db/041, 2026-11-05).** EGHT and CMPX, re-entered 2026-09-09 without an engine, are
+set to EDGE by elimination, not assumption: no trade has ever been WARRIOR, and the app already reads a missing engine
+as EDGE, so the record now says what the app believes. Both `trades_v2` and `portfolio` become NOT NULL. The
+portfolio half goes beyond what was approved, and is declared: a sale copies its engine from its position, and positions
+load only from portfolio, so with only trades_v2 NOT NULL a NULL position would make recording its sale fail, a gate on
+recording. Guarded on exactly those two rows, no NULL position, and no WARRIOR trade.
 
 **The schema harness (2026-11-05).** Roman ran the inspection query; its output is
 `C:\Users\cmp15\edge2\live-schema-2026-11-05.json`, excluded from git in every worktree (never commit it: it maps the
