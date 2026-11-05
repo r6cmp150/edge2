@@ -10,13 +10,13 @@ const { run, REPO_ROOT } = require('./_lib');
 const m = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/audit-peak-gain.mjs')).href);
 // 2026-10-08 is PDT: 06:30 PT = 13:30Z, 13:00 PT = 20:00Z.
 const bar = (iso, h) => ({ t: iso, h });
-const trade = (o = {}) => ({ buy_date: '2026-10-08', sell_date: '2026-10-08', buy_price: 10, sell_price: 11, buy_time: '07:00', sell_time: '12:00', filled_at: '2026-10-08T14:00:00Z', ...o });
+const trade = (o = {}) => ({ buy_date: '2026-10-08', sell_date: '2026-10-08', buy_price: 10, sell_price: 11, buy_time: '06:31', sell_time: '12:00', filled_at: '2026-10-08T14:00:00Z', ...o });
 const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
 
 await run('the peak counts only regular-session bars after the fill and up to the recorded sale', () => {
   const bars = [
     bar('2026-10-08T12:00:00Z', 30),   // pre-market
-    bar('2026-10-08T13:59:00Z', 20),   // before the fill
+    bar('2026-10-08T13:59:00Z', 20),   // after the 06:31 PT order, before the fill
     bar('2026-10-08T15:00:00Z', 12),   // the peak
     bar('2026-10-08T19:30:00Z', 25),   // after the recorded 12:00 PT sale
     bar('2026-10-08T21:00:00Z', 40),   // after hours
@@ -36,7 +36,7 @@ await run('no bar in range is NULL, not a peak of zero; a peak at or below the b
 
 await run('a multi-day hold has a lower bound that stops before the sale day; an unfilled order starts at its order time', () => {
   const t = trade({ sell_date: '2026-10-09', filled_at: null, buy_time: '07:00' }); // 07:00 PT = 14:00Z
-  const bars = [bar('2026-10-08T13:45:00Z', 50), bar('2026-10-08T15:00:00Z', 11), bar('2026-10-09T14:00:00Z', 13)];
+  const bars = [bar('2026-10-08T13:45:00Z', 50), bar('2026-10-08T15:00:00Z', 11), bar('2026-10-09T12:00:00Z', 40), bar('2026-10-09T14:00:00Z', 13)]; // day two's pre-market is in the hold, and not the peak
   const g = m.giveBack(t, bars);
   near(g.peak, 30, 'upper: through the sale day'); near(g.lowerPeak, 10, 'lower: before it');
 });
