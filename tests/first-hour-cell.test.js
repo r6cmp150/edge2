@@ -47,6 +47,9 @@ await run('the boundaries are the cell\'s, and a losing trade is not a win', () 
   const c = m.cell([{ pnl_dollars: 10, pnl_pct: 1, buy_date: 'a' }, { pnl_dollars: -4, pnl_pct: -1, buy_date: 'a' }, { pnl_dollars: 0, pnl_pct: 0, buy_date: 'b' }]);
   assert.deepStrictEqual([c.wins, c.losses, c.days, c.profitableDays], [1, 1, 2, 1]);
   near(c.minusBest, -4, 'the best trade removed');
+  assert.deepStrictEqual([c.largestDay.date, c.largestDay.pnl, c.largestDay.sharePct], ['a', 6, 100], 'the share from its largest day');
+  const lose = m.cell([{ pnl_dollars: -8, pnl_pct: -1, buy_date: 'a' }, { pnl_dollars: -2, pnl_pct: -1, buy_date: 'b' }, { pnl_dollars: 5, pnl_pct: 1, buy_date: 'c' }]);
+  assert.deepStrictEqual([lose.largestDay.date, lose.largestDay.sharePct], ['a', 160], 'for a loss, the worst day, in the total\'s direction');
 });
 
 await run('the split: the Sunday orders are out of the time cells, and they are counted', () => {
@@ -97,6 +100,10 @@ await run('the spec records it, with its limits', () => {
   assert.ok(spec.includes('Compared on the same days, it is not clearly better'), 'the correction');
   assert.ok(spec.includes('never as evidence that early entries are bad'), 'and §3.4 still says so');
   assert.ok(spec.includes('BEKE and AGNT'), 'why the next run\'s n differs');
+  assert.ok(spec.includes('Nothing about time of day is established.'), 'the wording for Roman');
+  assert.ok(spec.indexOf("ANY FIGURE FOR ROMAN GOES THROUGH ITS SOURCE DOCUMENT'S OWN METHOD") > spec.indexOf('### 7.7'), 'the rule, in §7.7');
+  assert.ok(spec.includes('This binds the reviewer as well as the implementer.'));
+  assert.ok(spec.includes("A PUSH ISN'T DONE UNTIL ITS CI RUN HAS BEEN READ"));
   assert.ok(spec.includes("Roman's timing analysis calls unjudged at n=5"), 'the word is the timing analysis\'s, not this spec\'s');
 });
 })();

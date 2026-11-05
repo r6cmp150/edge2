@@ -40,6 +40,8 @@ export function cell(rows) {
     avgPct: pct.reduce((a, b) => a + b, 0) / pct.length,
     pnl, minusBest: pnl - Math.max(...dollars),
     profitableDays: [...byDay.values()].filter(x => x > 0).length,
+    // How much of the total one day is: the largest day in the total's own direction.
+    largestDay: (() => { const e = [...byDay.entries()].sort((a, b) => (pnl >= 0 ? b[1] - a[1] : a[1] - b[1]))[0]; return { date: e[0], pnl: e[1], sharePct: pnl ? (100 * e[1]) / pnl : null }; })(),
   };
 }
 export const inCell = (r, from, to) => hm(r) >= from && hm(r) < to;
@@ -68,7 +70,7 @@ export function sameDay(rows, [a1, a2], [b1, b2]) {
   for (let k = 0; k <= n; k++) { if (k >= better) tail += c; c = (c * (n - k)) / (k + 1); }
   return { days: n, better, meanDiff: n ? diffs.reduce((x, y) => x + y, 0) / n : null, p: n ? tail / 2 ** n : null, byDay: both.map((d, i) => [d, diffs[i]]) };
 }
-const fmt = c => (c.n ? `n ${String(c.n).padStart(3)}, ${String(c.days).padStart(2)} days, win ${c.winRate.toFixed(1)}%, avg ${c.avgPct >= 0 ? '+' : ''}${c.avgPct.toFixed(2)}%, P&L ${c.pnl >= 0 ? '+' : '−'}$${Math.abs(c.pnl).toFixed(2)}, minus best ${c.minusBest >= 0 ? '+' : '−'}$${Math.abs(c.minusBest).toFixed(2)}, profitable days ${c.profitableDays}/${c.days}` : 'n 0');
+const fmt = c => (c.n ? `n ${String(c.n).padStart(3)}, ${String(c.days).padStart(2)} days, win ${c.winRate.toFixed(1)}%, avg ${c.avgPct >= 0 ? '+' : ''}${c.avgPct.toFixed(2)}%, P&L ${c.pnl >= 0 ? '+' : '−'}$${Math.abs(c.pnl).toFixed(2)}, minus best ${c.minusBest >= 0 ? '+' : '−'}$${Math.abs(c.minusBest).toFixed(2)}, profitable days ${c.profitableDays}/${c.days}, largest day ${c.largestDay.date.slice(5)} ${c.largestDay.sharePct == null ? 'n/a' : `${c.largestDay.sharePct.toFixed(0)}%`}` : 'n 0');
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const rev = process.argv[2] || '164099a';

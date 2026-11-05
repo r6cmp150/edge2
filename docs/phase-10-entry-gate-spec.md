@@ -2426,6 +2426,18 @@ only surfaces once data has accumulated behind it. On 11-04 the fill time went i
 scope, and no report said so. It was caught with 0 sales behind it, which was luck. The repo spec being canonical
 is the structural fix: that scope lived in a session and a project neither reader could see.
 
+**ANY FIGURE FOR ROMAN GOES THROUGH ITS SOURCE DOCUMENT'S OWN METHOD BEFORE IT REACHES HIM (2026-11-05). This binds the reviewer as well as the implementer.**
+The checks: the stated exclusions; distinct days, not n; the figure without its best trade; the share from its largest day; and the paired same-day
+comparison where the claim is about hours. A figure that hasn't been through them is said to be unchecked and is held, whoever handed it over. The common
+factor in five errors in two days was reaching the conclusion first and looking for the check afterwards: a 79.1% with its definition unstated, §7.2 with its
+coverage unchecked, "the second time" conflating two measurements, a fifth percentile read as a proportion, and a cell quoted without the method its own
+document prescribes. `scripts/audit-first-hour-cell.mjs` prints all of these for the time cells.
+
+**A PUSH ISN'T DONE UNTIL ITS CI RUN HAS BEEN READ (2026-11-05).** Tests on main went red at cae6644 and stayed red for five pushes, each reported from a
+local runner on the exact tree, with no one reading the Actions result. The harness's new leak detector was right: `workflow-instrumentation` deleted a
+GITHUB_ENV that only CI sets, so it passed locally. Roman gets an email for each. `tests/global-state-leaks.test.js` now runs the files that touch these
+variables with them set.
+
 **A failure that reports only to a channel nobody reads is a reminder with
 extra steps.** (Added 2026-11-01.) Fill outcomes failed the first of its
 three evening runs on five days running (10-26 to 10-30 PT; GitHub run
@@ -2838,6 +2850,8 @@ redesign, not a step; it needs §5's re-test behind it.
   `x.state !== 'EARLIER_SESSION'`) is a refactor; drop it from the set
   rather than "killing" it with a lint, and test the invariant that makes
   it equivalent at the producer instead.
+- **The rule's second catch (2026-11-05):** in `scripts/audit-first-hour-cell.mjs`, the Sunday orders fell on a day with no other cell, so real data could
+  not detect them leaking into the same-day comparison. A mutant survived, and a fixture now reaches the hole real data can't.
 - **A mutant must resemble the code it guards.** `tests/anon-write-paths.test.js`
   first matched a supabase-js chain only when a `;` came within 200
   characters, so it never saw the sale insert, whose object literal runs to
@@ -3526,5 +3540,6 @@ first: n=70, −$377.03, 14 days at b4620bc, and the same 252 population.
 - **10:00–12:59 is neutral at best,** and on the same days not distinguishable from 07:30–09:59.
 - **13:00 on is the poorest cell, and there is nothing to stop:** no buy stamped after the close since 09-30, none under v2. By §3.4, 14 of its rows may be closing fills typed in later.
 - **§3.4's standing instruction holds:** cite the rule "as a precaution in force, never as evidence that early entries are bad." Its third confound, early-scan bars, is also untested here.
+- **Nothing about time of day is established.** The wording for Roman: the gate stays a precaution; 07:30–10:00 has done best overall but mostly in one good week; on days he bought in both windows the difference is unclear; the after-close cell was poorest and he has already stopped.
 
 BEKE and AGNT (11-04) were still open at this pin, so a later rerun's n differs for that reason.

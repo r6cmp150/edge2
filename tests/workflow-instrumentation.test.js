@@ -9,7 +9,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { run, REPO_ROOT } = require('./_lib');
+// restoring: these set and delete GITHUB_ENV, which CI sets for real. It leaked only on CI (2026-11-05).
+const { run: harnessRun, restoring, REPO_ROOT } = require('./_lib');
+const run = (name, fn) => harnessRun(name, restoring(fn));
 
 const MOD = pathToFileURL(path.join(REPO_ROOT, 'scripts/lib/workflow-instrumentation.mjs')).href;
 let n = 0;

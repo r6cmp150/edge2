@@ -96,6 +96,19 @@ await run('every test file reports through the harness, so none is outside this'
   assert.deepStrictEqual(bare, []);
 });
 
+await run('a file that touches the variables CI sets for real passes with them set, as on CI', () => {
+  // Five pushes went red on CI and green here: the leak needs GITHUB_ENV to exist before the test.
+  const env = { ...process.env, GITHUB_ACTIONS: 'true', GITHUB_ENV: path.join(os.tmpdir(), `edge2-ci-env-${process.pid}`), GITHUB_EVENT_NAME: 'push', GITHUB_RUN_ID: '1', CI: 'true' };
+  fs.writeFileSync(env.GITHUB_ENV, '');
+  const dir = path.join(REPO_ROOT, 'tests');
+  const names = fs.readdirSync(dir).filter(f => f.endsWith('.test.js') && /GITHUB_|process\.env\.CI\b/.test(fs.readFileSync(path.join(dir, f), 'utf8')) && f !== 'global-state-leaks.test.js');
+  assert.ok(names.includes('workflow-instrumentation.test.js'), 'the enumeration sees the file that leaked');
+  for (const f of names) {
+    const r = spawnSync(process.execPath, [path.join(dir, f)], { cwd: REPO_ROOT, encoding: 'utf8', env });
+    assert.strictEqual(r.status, 0, `${f} fails with CI's variables set:\n${(r.stdout + r.stderr).split('\n').filter(l => /FAIL|left global/.test(l)).join('\n')}`);
+  }
+});
+
 await run('the rule is in §7.7, beside the others', () => {
   const spec = fs.readFileSync(path.join(REPO_ROOT, 'docs/phase-10-entry-gate-spec.md'), 'utf8').replace(/\s+/g, ' ');
   assert.ok(spec.indexOf('ANY TEST THAT MUTATES GLOBAL STATE') > spec.indexOf('### 7.7'));
