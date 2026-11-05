@@ -1594,6 +1594,7 @@ input:checked + .toggle-slider::before { transform: translateX(20px); }
 }
 .form-input:focus { outline: none; border-color: var(--blue); }
 .form-row { display: flex; gap: 10px; }
+.form-check { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .form-row .form-group { flex: 1; }
 .decision-btns { display: flex; gap: 8px; margin-top: 6px; }
 .decision-btn {

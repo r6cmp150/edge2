@@ -25,9 +25,9 @@ run('calcUnifiedRecommendation counts the hold to asOfDate when given, to today 
 
 run('the sale passes its own date all the way down, peak risk included', () => {
   const sale = grab('computeUnifiedSaleFields');
-  assert.ok(app.includes('function computeUnifiedSaleFields(pos, salePrice, saleDate) {'));
+  assert.ok(app.includes('function computeUnifiedSaleFields(pos, salePrice, saleDate, saleAt) {'));
   assert.ok(sale.includes('state.macroContext, undefined, saleDate);'), 'computeUnifiedSaleFields hands saleDate to calcUnifiedRecommendation');
-  assert.ok(grab('confirmMarkSold').includes('computeUnifiedSaleFields(pos, salePrice, saleDate)'), 'confirmMarkSold hands it the entered sale date');
+  assert.ok(grab('confirmMarkSold').includes('computeUnifiedSaleFields(pos, salePrice, saleDate, saleFill.at)'), 'confirmMarkSold hands it the entered sale date');
   assert.ok(grab('calcUnifiedRecommendation').includes('calcPeakRiskScore(position, currentSignal, snap, asOfDate)'), 'threaded into the peak-risk score, also stored at sale');
   const pr = grab('calcPeakRiskScore');
   assert.ok(app.includes('function calcPeakRiskScore(position, currentSignal, snap, asOfDate = null) {'));

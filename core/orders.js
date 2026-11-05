@@ -161,6 +161,24 @@ function readOrderEntry(prefix, buyDate) {
   return _readFillInstant(document.getElementById(`${prefix}-fill-date`).value, document.getElementById(`${prefix}-fill-time`).value, buyDate, orderType);
 }
 
+// The sale's fill, from the sell form (2026-11-04). Until this field, sell_time
+// was the moment the sale was recorded, so nothing could say what hour a sale
+// happened. Can't be in the future or before the buy filled. buyFilledAt is null
+// on positions from before db/027: there, only the form's date check applies.
+//
+// Three states, never a guess (2026-11-04): entered, the default accepted, or not
+// known. Requiring a time would force a guess, and a guess stored as a fill is the
+// defect this field exists to fix. defaultTime is what the form started at.
+function readSaleFill(saleDate, saleTime, buyFilledAt, { notKnown = false, defaultTime = null } = {}) {
+  if (notKnown) return { hhmm: null, at: null, source: 'not_known' };
+  if (!saleDate || !/^\d{2}:\d{2}$/.test(saleTime || '')) return { error: 'Enter the time the sale filled (PT), or tick "Time not known".' };
+  const [h, m] = saleTime.split(':').map(Number);
+  const at = ptWallClockToInstant(saleDate, h, m).getTime();
+  if (at > Date.now() + 60000) return { error: "The sale's fill time can't be in the future." };
+  if (buyFilledAt && at < Date.parse(buyFilledAt)) return { error: "The sale's fill time can't be before the buy filled." };
+  return { hhmm: saleTime, at, source: saleTime === defaultTime ? 'default' : 'entered' };
+}
+
 // Shared by the add forms and Mark filled. A fill can't precede the order
 // date or be in the future.
 function _readFillInstant(fillDate, fillTime, buyDate, orderType) {

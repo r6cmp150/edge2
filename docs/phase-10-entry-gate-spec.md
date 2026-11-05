@@ -3319,3 +3319,29 @@ So reads drop repeats by key, and the deduplicated total is what must match the 
 backups merge by id and compare with a fresh count. **Uniqueness of `id` on `rating_snapshots`,
 `trades`, `portfolio` and `settings` is inferred, not read,** as they have no CREATE in db/: the data
 shows it, the schema inspection will confirm it, and a repeated key is refused, not trusted.
+
+### TWO ERAS OF sell_time (2026-11-04)
+
+The sell form now takes a fill time, as the buy form does, and `trades_v2.sell_time` stores it.
+No SQL: the column's comment already said "SELL FILL time". It was false until now. **Never pool
+the two eras in an exit-hour figure without saying so.**
+
+**A row's era is a stored value, read from the row:** `sale_code_version.app`, the build that ran the
+sale (db/028), through `sellTimeEra` in `scripts/lib/sell-time-era.mjs`. It is never reconstructed
+from a date against a deploy time. A phone on a cached older build keeps stamping that build, so
+its rows land in the right era, which a date boundary would get wrong.
+- **Rows before this build:** `sell_time` is the moment the sale was recorded. It equals
+  `created_at` to the minute on 286 of 292 rows at b4620bc. It says when Roman typed, not when he sold.
+- **Rows from this build on:** three states, never a guess. The fill as **entered**, the **default**
+  accepted (the field starts at the current time, as the buy form's does), or **not known**, which is
+  `sell_time` NULL and is never blocked. Requiring a time would force a guess, and a guess stored as a
+  fill is the defect this replaces.
+- **`sell_time_source` records which, and is GATED on db/038 (it's a new column).** Exit-hour analysis
+  uses `entered` rows only and reports how many it excluded. Until db/038 runs the source is known to
+  the form and not stored, so rows from this build with `sell_time_source` NULL can't be told apart:
+  they are excluded from `entered`-only figures, and a NULL `sell_time` among them still means not known.
+- **Selling on an earlier day:** changing the date clears the time, so today's clock can't be
+  stored against another day.
+- **The exit rules now judge the fill.** Warrior's time-of-day rules got the recording moment, or
+  said they couldn't judge when a sale was recorded on a later day. They now get the fill, and still
+  say they couldn't judge when it is not known.
