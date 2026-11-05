@@ -79,7 +79,9 @@ jobs:
         run: |
           git config user.name "backup-tables-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add data/backups/*.json
+          # -A, not a glob: month files live in subfolders, and the move to them
+          # deletes the old single file.
+          git add -A data/backups
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0

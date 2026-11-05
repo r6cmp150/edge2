@@ -3166,3 +3166,28 @@ These limits print with db/039's coverage line, as its first condition requires.
 
 **Order: the sell form's fill time first (half a session, and it unblocks exit-hour analysis
 too), then db/039, then the verdicts.**
+
+### Backups of signal_log and rating_snapshots are monthly files (2026-11-04)
+
+`data/backups/signal_log.json` was 46.3 MB at f66fe02, growing 2.9 MB a trading day (20.6 MB
+at de95a93 on 10-22), which reaches GitHub's 100 MiB block about 20 trading days on. A refused
+push loses every table's backup that day, and the backup is the recovery path the auth plan
+rests on. An earlier estimate of 41 days used compact row sizes; the committed file was indented.
+
+- **Layout:** `data/backups/<table>/YYYY-MM.json`, one row per line, by `created_at` /
+  `captured_at`. Only months whose text changed are rewritten. At the same rows, signal_log
+  went from 46.3 MB to about 25 MB. Restore by concatenating a table's month files.
+- **A pin needs `backupRowsAtRev` for commits after the move.** Scripts pinned to an older
+  commit keep working, because the old file is still there at that commit. Scripts that take
+  a commit as an argument already use it.
+- **A daily read is not "new rows only".** signal_log rows are PATCHed for about 7.5 days after
+  insert, and its ids are UUIDs. It re-reads 14 days, every unsettled row (141 older than the
+  window, live 2026-11-04), and anything settled since the last run. rating_snapshots also reads
+  by id, because a retried batch keeps its old `captured_at`.
+- **Once a month a full read takes everything else** and records `changed_outside_window`.
+  Until then, a PATCH to an old settled row (`audit-signal-log-splits.mjs`) is not in the
+  backup. That is the cost of not reading everything daily, and that count is how to judge it.
+- **The guarantee moved from a file's rows to the table's rows across all its files.** Refused,
+  with nothing written and the run red: a month file missing or different from the last manifest;
+  rows held (prior + read, by id) not exactly the live count, which sees a delete hidden by an
+  insert; the floor or never-shrink rule on the total; any file over 90 MiB.

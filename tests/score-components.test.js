@@ -13,6 +13,7 @@
 // 2. Every reader agrees with the one formula: the score breakdown's rows,
 //    rsi_pts capture, and the display text carries no performance claim.
 'use strict';
+const { pathToFileURL } = require('url');
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -87,10 +88,12 @@ function compare(args, macro, disable) {
 
 const CONDS = [null, 'RISK_OFF', 'BROAD_RALLY', 'CHOPPY', 'MOMENTUM_DAY', 'TECH_ROTATION_OUT'];
 
-run('score formula: scoreStock identical to pre-refactor on every committed EDGE snapshot', () => {
+run('score formula: scoreStock identical to pre-refactor on every committed EDGE snapshot', async () => {
+  const { readBackupRows } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/lib/backup-shards.mjs')).href);
+  const signalLogRows = readBackupRows(path.join(REPO_ROOT, 'data/backups'), 'signal_log');
   if (!OLD) return;
-  const raw = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'data/backups/signal_log.json'), 'utf8'));
-  const rows = (Array.isArray(raw) ? raw : raw.rows).filter(r => r.engine_source === 'EDGE' && r.signal_snapshot?.bars?.length);
+  const raw = signalLogRows;
+  const rows = raw.filter(r => r.engine_source === 'EDGE' && r.signal_snapshot?.bars?.length);
   assert.ok(rows.length > 100, `expected the committed signal_log backup to hold real EDGE snapshots, found ${rows.length}`);
   for (const r of rows) {
     const o = r.signal_snapshot;

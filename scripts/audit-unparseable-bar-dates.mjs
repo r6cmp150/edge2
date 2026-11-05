@@ -14,6 +14,7 @@
 // Usage:
 //   node scripts/audit-unparseable-bar-dates.mjs --rev <commit>   pinned: data/backups at that commit
 //   node scripts/audit-unparseable-bar-dates.mjs --live           live tables (not quotable)
+import { backupRowsAtRev } from './lib/backup-shards.mjs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +28,7 @@ if (!rev === !live) { console.error('pass exactly one of --rev <commit> or --liv
 
 async function rows(table, select = '*', order = 'id') {
   if (rev) {
-    try { return JSON.parse(execSync(`git show ${rev}:data/backups/${table}.json`, { cwd: ROOT, maxBuffer: 2e9 }).toString()); }
+    try { return backupRowsAtRev(rev, table, ROOT); }
     catch (_) { return null; } // not in that backup
   }
   const out = [];

@@ -30,6 +30,7 @@
 // whose >= count is closest to the old count at L (ties: the higher line,
 // the stricter choice). Scores are multiples of 5 before and after, so no
 // other value can select differently.
+import { backupRowsAtRev } from './lib/backup-shards.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -62,9 +63,9 @@ function scorer(src) {
 const OLD = scorer(execSync(`git show ${BASE_COMMIT}:core/edge-scoring.js`, { cwd: ROOT, maxBuffer: 1e8 }).toString());
 const NEW = scorer(read('core/edge-scoring.js'));
 
-const raw = JSON.parse(execSync(`git show ${DATA_REV}:data/backups/signal_log.json`, { cwd: ROOT, maxBuffer: 1e9 }).toString());
+const raw = backupRowsAtRev(DATA_REV, 'signal_log', ROOT);
 console.log(`data: data/backups/signal_log.json at ${DATA_REV}; old formula: core/edge-scoring.js at ${BASE_COMMIT}; new formula: working tree`);
-let rows = (Array.isArray(raw) ? raw : raw.rows).filter(r => r.engine_source === 'EDGE' && r.signal_snapshot?.bars?.length);
+let rows = raw.filter(r => r.engine_source === 'EDGE' && r.signal_snapshot?.bars?.length);
 
 // --exclude-artifacts (2026-10-27, phase-10 §7.6 step 2 recheck): drop, from
 // BOTH sides, rows that were not a real signal when scored. Decided from

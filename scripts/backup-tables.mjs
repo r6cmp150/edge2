@@ -60,15 +60,22 @@
 // GitHub Actions shows a failed run with the reason in the log, while
 // the tables that were fine still get committed. A backup job whose only
 // failure mode is silence is not a backup job.
+//
+// MONTHLY FILES (2026-11-04): signal_log and rating_snapshots are written to
+// data/backups/<table>/YYYY-MM.json, read mostly by what can still change, and
+// judged on the table's total across its files. See scripts/lib/backup-shards.mjs.
+// To restore either: concatenate its month files; each is a JSON array.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { TABLE_RULES, MIN_ROWS, judgeTable, holdingsIn } from './lib/backup-rules.mjs';
+import { SHARDED, MAX_FILE_BYTES, runShardedTable, writeShards } from './lib/backup-shards.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
-const BACKUP_DIR = path.join(REPO_ROOT, 'data', 'backups');
+// BACKUP_DIR is overridable so a run can be tried against a scratch copy.
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(REPO_ROOT, 'data', 'backups');
 
 // Same public anon key already embedded in core/store.js -- public by
 // construction, not a secret this script introduces.
@@ -101,12 +108,12 @@ const TABLES = Object.keys(TABLE_RULES);
 // from response size, and the loop keeps requesting until it's actually
 // fetched that many -- with a final assert as a second, independent
 // check that the two numbers actually agree.
-async function fetchTable(table) {
+async function fetchTable(table, query = 'select=*') {
   const rows = [];
   let offset = 0;
   let total = null;
   for (;;) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=*`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
       headers: {
         apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
@@ -134,6 +141,26 @@ async function fetchTable(table) {
     throw new Error(`${table}: fetched ${rows.length} rows but Content-Range reported ${total} total -- pagination did not retrieve every row, refusing to treat this as a complete backup`);
   }
   return rows;
+}
+
+// The month-file tables' reads: ordered by id, because merging depends on no row
+// being skipped or repeated between pages. The count comes from Postgres, with no
+// rows sent, so checking it costs nothing against the egress quota.
+const shardApi = {
+  readRows: (table, filter) => fetchTable(table, `select=*&order=id${filter ? `&${filter}` : ''}`),
+  async countRows(table) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=id`, {
+      method: 'HEAD',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'count=exact' },
+    });
+    const m = (res.headers.get('content-range') || '').match(/\/(\d+)$/);
+    if (!res.ok || !m) throw new Error(`${table}: no authoritative row count (HTTP ${res.status}, "${res.headers.get('content-range')}")`);
+    return Number(m[1]);
+  },
+};
+
+function readLastManifest() {
+  try { return JSON.parse(readFileSync(path.join(BACKUP_DIR, '_manifest.json'), 'utf8')); } catch (_) { return null; }
 }
 
 // Distinguishes "no prior backup" from "prior backup is corrupt" --
@@ -170,8 +197,27 @@ async function main() {
   const priorCounts = {};
   const priors = {};
   const manifest = { run_at: new Date().toISOString(), floors: MIN_ROWS, tables: {} };
+  const lastManifest = readLastManifest();
+  const shardsToWrite = [];
 
   for (const table of TABLES) {
+    if (SHARDED[table]) {
+      const last = lastManifest?.tables?.[table] ? { ...lastManifest.tables[table], run_at: lastManifest.run_at } : null;
+      let out;
+      try {
+        out = await runShardedTable({ table, dir: BACKUP_DIR, api: shardApi, nowMs: Date.now(), last, forceFull: process.env.BACKUP_FULL === '1' });
+      } catch (e) {
+        out = { ok: false, reason: e.message, entry: { ...(last?.shards ? { shards: last.shards, last_full_month: last.last_full_month ?? null } : {}), written: false, reason: e.message } };
+      }
+      manifest.tables[table] = { floor: MIN_ROWS[table], ...out.entry };
+      console.log(`backup-tables: ${table} -- ${out.entry.mode || 'not read'}: read ${out.entry.read ?? '?'} rows, live ${out.entry.live ?? '?'}, prior ${out.entry.prior ?? '?'}.`);
+      if (out.ok) shardsToWrite.push({ table, ...out });
+      else {
+        console.error(`backup-tables: SKIPPING ${table} this run -- ${out.reason}. Its last committed files are left untouched. Other tables are not affected.`);
+        failures.push({ table, reason: out.reason });
+      }
+      continue;
+    }
     const filePath = path.join(BACKUP_DIR, `${table}.json`);
     const prior = readPriorBackup(filePath);
 
@@ -200,8 +246,20 @@ async function main() {
   }
 
   for (const { table, filePath, fresh } of toWrite) {
-    writeFileSync(filePath, JSON.stringify(fresh, null, 2) + '\n');
+    const text = JSON.stringify(fresh, null, 2) + '\n';
+    if (Buffer.byteLength(text) > MAX_FILE_BYTES) {
+      const reason = `${table}.json would be ${Buffer.byteLength(text)} bytes, over the ${MAX_FILE_BYTES} limit -- refused so the push doesn't fail for every table`;
+      console.error(`backup-tables: SKIPPING ${table} this run -- ${reason}.`);
+      manifest.tables[table].written = false; manifest.tables[table].reason = reason;
+      failures.push({ table, reason });
+      continue;
+    }
+    writeFileSync(filePath, text);
     console.log(`backup-tables: wrote ${table} (${fresh.length} rows).`);
+  }
+  for (const { table, texts, removeLegacy, total } of shardsToWrite) {
+    const months = writeShards(BACKUP_DIR, table, texts, removeLegacy);
+    console.log(`backup-tables: wrote ${table} (${total} rows across ${Object.keys(texts).length} files; rewrote ${months.join(', ') || 'none'}).`);
   }
   // What this run actually wrote, per table, committed beside the backups
   // (the workflow adds data/backups/*.json): the record that a run wrote
@@ -210,7 +268,7 @@ async function main() {
   console.log(`backup-tables: manifest -- ${Object.entries(manifest.tables).map(([t, m]) => `${t} ${m.written ? m.fetched : 'NOT WRITTEN'}`).join(', ')}.`);
 
   if (failures.length) {
-    console.error(`backup-tables: FAILED for ${failures.map(f => f.table).join(', ')} -- see reasons above. ${toWrite.length} other table(s) still written and will still be committed.`);
+    console.error(`backup-tables: FAILED for ${failures.map(f => f.table).join(', ')} -- see reasons above. ${toWrite.length + shardsToWrite.length} other table(s) still written and will still be committed.`);
     process.exit(1);
   }
   console.log('backup-tables: all tables passed their rule and were written.');

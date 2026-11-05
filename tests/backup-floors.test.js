@@ -58,8 +58,9 @@ run('the backup runs main() unconditionally, judges every table through judgeTab
   const code = src.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
   assert.ok(/\nmain\(\)\.catch\(/.test(code), 'main() runs at top level');
   assert.ok(!/import\.meta\.url\s*===/.test(code), 'no "run only when executed" guard that could silently skip the backup');
-  assert.ok(code.includes('const verdict = judgeTable(table, fresh.length, priorCount, {'), 'the floor is checked for every table');
+  assert.ok(code.includes('const verdict = judgeTable(table, fresh.length, priorCount, {'), 'the floor is checked for every whole-file table');
+  assert.ok(readSource('scripts/lib/backup-shards.mjs').includes('judgeTable(table, merged.size, held.length, {})'), 'and on the total of every month-file table');
   assert.ok(!/TABLE_RULES\[table\]\(/.test(code), 'no table bypasses the floor by calling its rule directly');
   assert.ok(code.includes("writeFileSync(path.join(BACKUP_DIR, '_manifest.json')"), 'manifest written');
-  assert.ok(readSource('.github/workflows/backup-tables.yml').includes('git add data/backups/*.json'), 'and committed with the backups');
+  assert.ok(readSource('.github/workflows/backup-tables.yml').includes('git add -A data/backups'), 'and committed with the backups, month folders and the old file\'s removal included');
 });

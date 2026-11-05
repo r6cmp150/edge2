@@ -57,7 +57,8 @@ const REGISTRY = {
   'scripts/audit-signal-log-splits.mjs|signal_log': [
     { verdict: OK, empty: 'guarded by assertReadable(signal_log) first', denied: 'the control throws: the audit fails instead of passing on nothing (fixed 2026-11-02; was PASS_ON_EMPTY)' }],
   'scripts/backup-tables.mjs|${table}': [
-    { verdict: OK, empty: 'judged by backup-rules floors and the portfolio rule', denied: 'refused: below the floor' }],
+    { verdict: OK, empty: 'judged by backup-rules floors and the portfolio rule', denied: 'refused: below the floor' },
+    { verdict: OK, empty: 'month-file tables: the count the rows we hold must equal; no count at all throws', denied: 'a count of 0 against the rows we hold: refused, nothing written' }],
   'scripts/fill-outcomes.mjs|signal_log': [
     { verdict: OK, empty: 'pending rows: guarded by assertReadable(signal_log) at the start of the run', denied: 'the control throws first: the run fails red (fixed 2026-11-02; was SILENT)' },
     { verdict: OK, empty: 'later-signal query: same run, same control', denied: 'the control throws first (fixed 2026-11-02; was WRITES_FROM_EMPTY: credited the wrong day)' },

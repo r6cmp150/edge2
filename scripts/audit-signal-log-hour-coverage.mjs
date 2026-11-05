@@ -9,6 +9,7 @@
 // computed on).
 //
 //   node scripts/audit-signal-log-hour-coverage.mjs --rev <commit> [--asof YYYY-MM-DD] [--engine EDGE]
+import { backupRowsAtRev } from './lib/backup-shards.mjs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,8 +19,8 @@ const arg = n => { const i = process.argv.indexOf(n); return i < 0 ? null : proc
 const rev = arg('--rev'), asof = arg('--asof'), engine = arg('--engine') || 'EDGE';
 if (!rev) { console.error('usage: --rev <commit> [--asof YYYY-MM-DD] [--engine EDGE|WARRIOR]'); process.exit(2); }
 
-const raw = JSON.parse(execSync(`git show ${rev}:data/backups/signal_log.json`, { cwd: ROOT, maxBuffer: 2e9 }).toString());
-const all = (Array.isArray(raw) ? raw : raw.rows).filter(r => r.engine_source === engine);
+const raw = backupRowsAtRev(rev, 'signal_log', ROOT);
+const all = raw.filter(r => r.engine_source === engine);
 const pt = iso => {
   const p = {};
   for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(iso))) p[x.type] = x.value;

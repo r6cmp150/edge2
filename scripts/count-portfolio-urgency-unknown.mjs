@@ -8,6 +8,7 @@
 //   node scripts/count-portfolio-urgency-unknown.mjs --rev <commit>   pinned: data/backups at that commit
 //   node scripts/count-portfolio-urgency-unknown.mjs --live           the live tables (not quotable)
 // --today YYYY-MM-DD fixes the date the hold is counted to (default: today PT).
+import { backupRowsAtRev } from './lib/backup-shards.mjs';
 import { readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
@@ -22,7 +23,7 @@ const rev = arg('--rev'), live = arg('--live');
 if (!rev === !live) { console.error('pass exactly one of --rev <commit> or --live'); process.exit(2); }
 
 async function rows(table) {
-  if (rev) return JSON.parse(execSync(`git show ${rev}:data/backups/${table}.json`, { cwd: ROOT, maxBuffer: 1e9 }).toString());
+  if (rev) return backupRowsAtRev(rev, table, ROOT);
   const out = [];
   for (let from = 0; ; from += 1000) {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=*&order=id.asc`, {
