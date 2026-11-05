@@ -119,6 +119,13 @@ removed (Roman's decision).
    (REST root: 401, "Secret API key required"), so what is public has only ever
    been inferred too: the six shark-attack tables above are public and unnamed by
    this code, and there may be others.
+   - **It has two dependents, so its priority is higher than step 4 alone
+     suggests:**
+     1. Step 4's policies, as above.
+     2. **The backup's guarantee.** It keys on `id` for `rating_snapshots`, `trades`,
+        `portfolio` and `settings`, and that uniqueness is inferred from the data, not
+        read from a schema. If `rating_snapshots.id` weren't unique, a repeat would
+        collapse in the merge and only show as a count mismatch.
    - **Roman runs `db/inspect-public-schema-read-only.sql`** (one SELECT, after
      db/035, not before) and the result is read and recorded here.
    - **Step 4 doesn't start until that is done.** Its policies, and the first

@@ -2403,6 +2403,16 @@ fourth instance of the same family: a set of 9 "kills" on 11-04 ran against a te
 failing, and a failing test kills everything. `scripts/lib/mutants.cjs` runs the baseline first,
 prints it as the first line, and stops if it fails, so a report without that line is visibly wrong.
 
+**ANY TEST THAT MUTATES GLOBAL STATE (console, Date, fetch, timers, env) RESTORES IT, AND THE APPARATUS
+DETECTS LEAKAGE RATHER THAN TRUSTING DISCIPLINE (2026-11-04).** The fifth instance, twice over: a stub
+that swapped `console.error` hid FAIL output, and a muted `console.log` swallowed a PASS line while the
+file still passed. All five are one failure: the apparatus losing the thing it was built to report.
+`_lib.run` now runs a file's tests one at a time, fails a test that leaves a global changed and names
+it, puts it back for the next test, and prints results through streams no test can swap. The runner
+fails a file as LOST if its result lines don't add up to the count it declared. On first run this found
+7 files leaving a stub in place (5 `fetch`, 2 console), none of them the queue tests; they now declare
+it with `restoring`. `tests/global-state-leaks.test.js` holds it, through the real runner.
+
 **A failure that reports only to a channel nobody reads is a reminder with
 extra steps.** (Added 2026-11-01.) Fill outcomes failed the first of its
 three evening runs on five days running (10-26 to 10-30 PT; GitHub run
@@ -3129,7 +3139,8 @@ asserted that the line can't wrap. The test held. Not wrapping is what caused th
 serial, nothing else of ours running. It then passed on every rerun. It was written
 off as "load-sensitive", with no evidence: `scripts/run-tests.mjs` runs files one at a
 time, and 3 runs under 12 busy processes on 8 cores all passed. **The cause is not
-known, and whether there is a defect in real pacing is not known.** The runner had kept
+known, and whether there is a defect in real pacing is not known.** "Nothing else of ours running"
+is not something any surviving record can show: the transcript here starts at 01:38Z on 11-04. The runner had kept
 only the test's name, so the numbers are gone; it now keeps the assertion's message.
 - `queue-pacing`, `concurrency` and `priority-ordering` run on `_lib.virtualClock`, so
   they are deterministic. They prove the bucket's arithmetic and can't see real timers.
@@ -3345,3 +3356,19 @@ its rows land in the right era, which a date boundary would get wrong.
 - **The exit rules now judge the fill.** Warrior's time-of-day rules got the recording moment, or
   said they couldn't judge when a sale was recorded on a later day. They now get the fill, and still
   say they couldn't judge when it is not known.
+
+### Whether cross-test interference could explain the queue-pacing failure (2026-11-04)
+
+"There's no parallel set to move it out of" was true of parallel files and was too broad as a dismissal.
+**Interference from another process cannot be ruled out. Interference in memory can.** Failed in a full
+run, passed alone is that signature, so the failure stays UNEXPLAINED.
+
+| Route | Verdict | Why |
+|---|---|---|
+| Another test file's globals | Ruled out | `run-tests.mjs` gives each file its own process, one after another, so memory can't carry over. |
+| Another test in the same file | Ruled out by reading | The version that failed (044bf0e) has two tests awaited in order, each on a fresh bucket, and stubs no console, Date or fetch. |
+| Anything outside the process, on the wall clock | **Cannot be ruled out** | That version timed real timers, so anything stalling the machine reaches it: a process of ours, the OS, a sleep. The load test only exercised CPU, 3 runs. |
+| The code under test at that moment | **Cannot be ruled out** | It ran on a working tree, and nothing records its state at 23:26Z. |
+
+`queue-pacing.test.js` now runs on a virtual clock, so it can't recur there; `queue-pacing-real-clock.test.js`
+is where it would show, with its numbers.

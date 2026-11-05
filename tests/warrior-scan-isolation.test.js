@@ -17,7 +17,8 @@
 // by anything Warrior-side — proving isolation, not just asserting it.
 'use strict';
 const assert = require('assert');
-const { readSource, run } = require('./_lib');
+const { readSource, run: harnessRun, restoring } = require('./_lib');
+const run = (name, fn) => harnessRun(name, restoring(fn));
 
 const warriorSrc = readSource('engines/warrior/index.js');
 

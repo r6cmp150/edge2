@@ -70,16 +70,76 @@ function virtualClock(start = 1800000000000) {
 // Minimal pass/fail runner: runs an async fn, prints PASS/FAIL, sets
 // process.exitCode so `node tests/x.js` is a valid CI-style check without
 // needing a framework to interpret its output.
-async function run(name, fn) {
+//
+// The apparatus must not lose what it was built to report (2026-11-04, phase-10
+// §7.7). A test that muted console hid another test's PASS line, and earlier a stub
+// that swapped console.error hid FAIL output. So:
+//   - tests in a file run one at a time, whether or not the caller awaits;
+//   - any test that leaves console, Date, fetch, timers or process.env changed
+//     FAILS, naming what it left, and it is put back for the next test;
+//   - results print through streams kept at load, which no test can swap;
+//   - the file's total goes to the runner, which fails a file whose lines don't add up.
+const realOut = process.stdout.write.bind(process.stdout);
+const realErr = process.stderr.write.bind(process.stderr);
+const realInspect = require('util').inspect;
+const WATCHED = [
+  ['console.log', () => console.log, v => { console.log = v; }],
+  ['console.warn', () => console.warn, v => { console.warn = v; }],
+  ['console.error', () => console.error, v => { console.error = v; }],
+  ['console.info', () => console.info, v => { console.info = v; }],
+  ['fetch', () => global.fetch, v => { global.fetch = v; }],
+  ['Date', () => global.Date, v => { global.Date = v; }],
+  ['Date.now', () => global.Date.now, v => { global.Date.now = v; }],
+  ['setTimeout', () => global.setTimeout, v => { global.setTimeout = v; }],
+  ['setInterval', () => global.setInterval, v => { global.setInterval = v; }],
+];
+function snapshotGlobals() {
+  return { values: WATCHED.map(([, get]) => get()), env: { ...process.env } };
+}
+// What a test left changed, each restored. Date is restored before Date.now, which reads it.
+function restoreLeaks(before) {
+  const leaked = [];
+  WATCHED.forEach(([name, get, set], i) => {
+    if (get() !== before.values[i]) { leaked.push(name); set(before.values[i]); }
+  });
+  for (const k of new Set([...Object.keys(process.env), ...Object.keys(before.env)])) {
+    if (process.env[k] !== before.env[k]) {
+      leaked.push(`process.env.${k}`);
+      if (before.env[k] === undefined) delete process.env[k]; else process.env[k] = before.env[k];
+    }
+  }
+  return leaked;
+}
+// For a test that stubs a global it doesn't otherwise clean up: says so, and puts it back.
+const restoring = fn => async () => {
+  const before = snapshotGlobals();
+  try { return await fn(); } finally { restoreLeaks(before); }
+};
+let tail = Promise.resolve();
+let ran = 0;
+async function runOne(name, fn) {
+  ran++;
+  const before = snapshotGlobals();
+  let error = null;
   try {
     await fn();
-    console.log(`\nPASS: ${name}`);
   } catch (e) {
-    console.error(`\nFAIL: ${name}`);
-    console.error(e);
+    error = e;
+  }
+  const leaked = restoreLeaks(before);
+  if (!error && leaked.length) error = new Error(`this test left global state changed: ${leaked.join(', ')}. Restore it, or it can hide another test's result.`);
+  if (error) {
+    realErr(`\nFAIL: ${name}\n${realInspect(error)}\n`);
     process.exitCode = 1;
+  } else {
+    realOut(`\nPASS: ${name}\n`);
   }
 }
+function run(name, fn) {
+  tail = tail.then(() => runOne(name, fn));
+  return tail;
+}
+process.on('exit', () => { if (ran) realOut(`\nTESTS RUN: ${ran}\n`); });
 
 // app.js's SETTING_LABELS table, as source: updateMarketBanner calls
 // settingsBannerLine (2026-11-02), which reads it, so a test that evals the
@@ -92,4 +152,4 @@ function settingLabelsSrc() {
 }
 
 module.exports = {
-  virtualClock, readSource, evalModule, run, REPO_ROOT, settingLabelsSrc };
+  virtualClock, readSource, evalModule, run, restoring, REPO_ROOT, settingLabelsSrc };

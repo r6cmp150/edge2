@@ -10,7 +10,8 @@
 // silently reading as not-checked.
 'use strict';
 const assert = require('assert');
-const { readSource, run, evalModule } = require('./_lib');
+const { readSource, run: harnessRun, restoring, evalModule } = require('./_lib');
+const run = (name, fn) => harnessRun(name, restoring(fn));
 
 function loadFloatTable(fetchMock, dateStr) {
   global.getPT = () => new Date(`${dateStr}T13:00:00Z`);

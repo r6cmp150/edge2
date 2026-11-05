@@ -17,7 +17,8 @@
 // this suite while testing the real surrounding logic.
 'use strict';
 const assert = require('assert');
-const { readSource, run } = require('./_lib');
+const { readSource, run: harnessRun, restoring } = require('./_lib');
+const run = (name, fn) => harnessRun(name, restoring(fn));
 
 const appSrc = readSource('app.js');
 

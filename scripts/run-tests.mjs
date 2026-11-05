@@ -10,6 +10,7 @@
 //   DEAD     non-zero exit and no PASS/FAIL line: it crashed before reporting
 //   SILENT   exit 0 and no PASS/FAIL line: it ran nothing it reported
 //   TIMEOUT  killed after the time limit
+//   LOST     it said it ran N tests and N result lines didn't arrive
 // Exit 0 only if every file is PASS and there is at least one file; else 1.
 // Its own failure modes are tested: tests/run-tests-checker.test.js runs it
 // on a directory of deliberately broken files and expects each class.
@@ -34,12 +35,18 @@ const results = files.map(f => {
   // reported by name alone can't be explained later (2026-11-03: queue-pacing).
   const fails = [...out.matchAll(/^FAIL: (.*)\r?\n(?:\s*\n)*(?!FAIL: |PASS: )([^\r\n]*)/gm)].map(m => (m[2] ? `${m[1]} :: ${m[2].slice(0, 400)}` : m[1]));
   const bareFails = (out.match(/^FAIL: /gm) || []).length;
+  // tests/_lib.js says how many tests it ran. A file whose result lines don't add up
+  // lost one (2026-11-04: a muted console swallowed a PASS line, and the file still passed).
+  const declaredMatch = out.match(/^TESTS RUN: (\d+)$/m);
+  const declared = declaredMatch ? Number(declaredMatch[1]) : null;
   let verdict;
   if (r.error && r.error.code === 'ETIMEDOUT') verdict = 'TIMEOUT';
   else if (fails.length || bareFails) verdict = 'FAIL';
+  else if (declared != null && declared !== passes) verdict = 'LOST';
   else if (passes === 0) verdict = r.status === 0 ? 'SILENT' : 'DEAD';
   else verdict = r.status === 0 ? 'PASS' : 'FAIL'; // PASS lines but a non-zero exit: something failed unreported
   const detail = verdict === 'PASS' ? null
+    : verdict === 'LOST' ? `ran ${declared} test(s), ${passes} result line(s)`
     : verdict === 'FAIL' ? (fails.join(' | ') || (bareFails && `${bareFails} FAIL line(s)`) || `exit ${r.status} after ${passes} PASS line(s)`)
     : (out.trim().split('\n').filter(Boolean).slice(0, 3).join(' / ') || '(no output at all)');
   return { file: f, verdict, passes, exit: r.status, detail };
