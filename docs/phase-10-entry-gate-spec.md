@@ -2529,6 +2529,27 @@ function. Same audit, same day, the other catch: rate-limited (429) requests had
 rows quietly. Rate limits are now waited out and any other failure stops the run; a row is never dropped without
 being named.
 
+**A CHECK CONSTRAINT MUST BE PROVABLY NON-NULL FOR EVERY INPUT, OR IT PASSES ON UNKNOWN (2026-11-05).** Postgres
+accepts a row when a CHECK is TRUE *or NULL*. `jsonb_typeof(x -> 'key')` is NULL when the key is absent, and so is
+`x ->> 'key' = '...'`, so a check written that way never required its key. The case: db/035 run 4 refused 3 of 4,
+accepting `{"state":"PREDATES_SALE"}` with no `scanned_at`: `true AND NULL` is NULL, and NULL passes.
+`{"state":"NOT_RECORDED"}` with no reason passed the same way, and so did `{}`. The same pattern was in db/028's
+code_version checks on four tables and the sale stamp (`{}` accepted), and in db/032's prefilter_rule. **db/040
+repairs all seven**, and the schema harness found two more in db/038 revision a before it was sent (a CAPTURED
+verdict with nothing captured; a fill time with no source). Write every branch definite: `coalesce(jsonb_typeof(x ->
+'key'), '') = 'string'`, `coalesce(x ->> 'state', '') = '...'`. Where NULL is intended, say so with `col is null or
+...` rather than leaving it to the three-valued logic, so intent and accident read differently.
+- **The broader point.** We have treated database constraints as the strongest guarantee available ("observe-only
+  enforced in the database too", "the revision stamp cannot lag"). This is the first evidence that a constraint can be
+  as hollow as a comment. A constraint is a claim until a behaviour run has tried to break it.
+- **Count is not behaviour.** db/035 run 2 said `checks: 2` and passed, an hour before run 4 said 3 of 4. A
+  verification that counts constraints in `pg_constraint` proves they exist, not that they refuse anything.
+- **Nothing had executed the constraint.** The parse check passed and the local tests passed. Every migration now
+  goes through the schema harness first (below), which runs it against the reconstructed live schema in real
+  Postgres; that is the gap this closes. A standing test, `tests/definite-checks.test.js`, refuses the
+  missing-key pattern in any new migration, but the harness is the authority: the test reads text, the harness runs
+  the check.
+
 **THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
 mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which
 is luck next to "cannot happen". `scripts/lib/mutants.cjs` now refuses a dirty tree (a leftover mutant shows as a
@@ -3392,6 +3413,17 @@ never read. `db/inspect-public-schema-read-only.sql` returns every public table'
 definition. It is one SELECT, not yet run. Until it is, nothing about these tables' constraints
 should be stated as known; db/038 aborts on a CHECK on `rating_snapshots.score` or `label`
 because it can't rule one out.
+
+**The schema harness (2026-11-05).** Roman ran the inspection query; its output is
+`C:\Users\cmp15\edge2\live-schema-2026-11-05.json`, excluded from git in every worktree (never commit it: it maps the
+production schema beside a public anon key). The harness lives outside the repo, in `C:\Users\cmp15\edge2-schema-harness`
+(PGlite 0.5.11, pinned, installed with `--ignore-scripts`, no dependencies of its own; the repo keeps zero dependencies
+and CI installs nothing). Before adopting it, a probe checked the role system, not just DDL: 20 of 20 (RLS refusing with
+42501, `has_table_privilege` ignoring RLS, column grants, `pg_policies`, SECURITY INVOKER against DEFINER, FORCE RLS,
+write-once triggers, event triggers, table comments). It reproduces a migration's defect before it tests the fix
+(db/035 run 4's 3 of 4 came back first). **What it can't do yet:** the dump has no grants, so db/037, which only changes
+grants, can't be tested until the live grants are dumped; and the dump has no server version (the probe ran on
+PostgreSQL 18.6), so a version difference is not ruled out until `select version();` is run live.
 
 **It has three dependents (2026-11-05):** auth step 4's policies, written against five tables whose definitions we
 have never read; the backup's key uniqueness for four tables, inferred from data; and **a local schema to test
