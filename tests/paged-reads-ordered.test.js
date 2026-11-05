@@ -123,11 +123,11 @@ await run('a mutation run refuses a failing baseline, and its report states the 
   const failed = runMutants('bad.test.js', M, { cwd: dir, print: l => lines.push(l) });
   assert.strictEqual(failed.baseline, false);
   assert.strictEqual(failed.killed, 0, 'a failing baseline kills nothing');
-  assert.match(lines[0], /^BASELINE: FAILED/);
+  assert.match(lines[1], /^BASELINE: FAILED/);
   lines.length = 0;
   const ok = runMutants('good.test.js', M, { cwd: dir, print: l => lines.push(l) });
   assert.strictEqual(ok.killed, 1);
-  assert.match(lines[0], /^BASELINE: passed/, 'the first line, always');
+  assert.match(lines[1], /^BASELINE: passed/, 'right after the tree, always');
   assert.strictEqual(fs.readFileSync(path.join(dir, 'x.js'), 'utf8'), 'module.exports = 1;\n', 'the file is restored');
 });
 

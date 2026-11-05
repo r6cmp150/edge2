@@ -2401,7 +2401,7 @@ each pass saw, how many transitions it made, and whether any read came back at a
 **EVERY MUTATION REPORT STATES THAT ITS BASELINE PASSED (2026-11-04),** as a required line. A
 fourth instance of the same family: a set of 9 "kills" on 11-04 ran against a test that was already
 failing, and a failing test kills everything. `scripts/lib/mutants.cjs` runs the baseline first,
-prints it as the first line, and stops if it fails, so a report without that line is visibly wrong.
+prints it before any mutant, and stops if it fails, so a report without that line is visibly wrong.
 
 **ANY TEST THAT MUTATES GLOBAL STATE (console, Date, fetch, timers, env) RESTORES IT, AND THE APPARATUS
 DETECTS LEAKAGE RATHER THAN TRUSTING DISCIPLINE (2026-11-04).** The fifth instance, twice over: a stub
@@ -2412,6 +2412,19 @@ it, puts it back for the next test, and prints results through streams no test c
 fails a file as LOST if its result lines don't add up to the count it declared. On first run this found
 7 files leaving a stub in place (5 `fetch`, 2 console), none of them the queue tests; they now declare
 it with `restoring`. `tests/global-state-leaks.test.js` holds it, through the real runner.
+
+**ANY TEST RUN WHOSE RESULT MAY BE REPORTED RECORDS THE TREE IT RAN AGAINST (2026-11-04):** the commit,
+or dirty plus a hash of the changes. The sixth instance, and a different kind: the other five lost
+evidence after the fact, and this one never had it. The queue-pacing failure ran on a working tree
+and nothing recorded its state, which is part of why it can never be explained. The runner prints it
+as its first line, before any test can change what it says, and the mutation harness opens with it.
+`tests/tree-record.test.js` holds it.
+
+**IF A BUILD DEPARTS FROM AN APPROVED SCOPE, THE REPORT THAT DELIVERS IT SAYS SO (2026-11-05),** in the same
+message, naming what changed and why: a line in the delivery, like a declared test change. A silent substitution
+only surfaces once data has accumulated behind it. On 11-04 the fill time went into `sell_time` against the 11-03
+scope, and no report said so. It was caught with 0 sales behind it, which was luck. The repo spec being canonical
+is the structural fix: that scope lived in a session and a project neither reader could see.
 
 **A failure that reports only to a channel nobody reads is a reminder with
 extra steps.** (Added 2026-11-01.) Fill outcomes failed the first of its
@@ -3362,3 +3375,59 @@ because asking and discarding is worse than not asking. Exit-hour analysis has n
 `sell_time` must never stand in for it. The field, `sell_filled_at` and its source ride with db/038, which also
 corrects db/027's false column comment. Analysis has to handle a missing fill regardless ("Time not known"),
 while nothing would have made it handle a column with two meanings.
+
+### The verdict saved with a sale: A is the deliverable, B is not commissioned (2026-11-05)
+
+Scoped 2026-11-03, when the build queue was set. **Roman's choice, 2026-11-05: A.** He asked whether
+it is accurate enough. It is more accurate than B: B is a rebuild missing its largest inputs, and A
+is a recording. Not built yet.
+
+**A: the verdict as displayed, captured, not recomputed.**
+- **What it stores:** the card's verdict verbatim, with its inputs (price and quote state, RSI, previous
+  RSI, peak, momentum state, the signal's score and scan time, macro condition, hold count) and when
+  it rendered. Nothing is recomputed. The card's verdict lives only inside `renderPortfolioTab`'s loop
+  today, so the render keeps it in a per-position session cache and the sell form reads that.
+- **That is a render-time write a record reads,** which `view-no-decision-writes` forbids. It is legitimate
+  only because the captured object IS the display, so it is a declared entry on that ratchet.
+- **Scoped cost, 11-03:** about half a session, plus one migration (`verdict_displayed_at_sale` jsonb, its
+  state column, a CHECK, write-once, the column comment).
+
+| State | Meaning |
+|---|---|
+| `CAPTURED_BEFORE_FILL` | The card rendered before the fill. |
+| `CAPTURED_AFTER_FILL` | The card rendered after the fill. **The normal case, not a defect:** Roman records a sale after placing it. The report says it neutrally, as the gap in minutes, so a reader can judge whether it mattered on that row. |
+| `CAPTURED_FILL_UNKNOWN` | The card was on screen, and nothing places it against the fill: "Time not known", or an accepted default. |
+| `NOT_DISPLAYED` | No render was available for this position, or the sale is recorded on a later day. |
+
+**Only an entered fill can place the card.** An accepted default can't: the field starts when the form opens,
+after the card rendered, so comparing against it would always say `CAPTURED_BEFORE_FILL`, which is false. **Until
+db/038 stores a fill and its source, every captured card is `CAPTURED_FILL_UNKNOWN`.** The before/after split
+isn't available sooner than that.
+
+**The report gives the distribution of recording minus fill, in minutes,** so "a few minutes" is measured, not
+assumed: `created_at` minus `sell_filled_at`, on `entered` rows only. **It isn't published before db/038:** defaults
+sit near zero by construction and would make it look better than it is. Until then the report says why it is
+absent, rather than showing an empty section.
+
+**B: the verdict reconstructed as of the fill, from bars. NOT COMMISSIONED, and nothing is built on
+`signal_before_sale` to approximate it.** `signal_before_sale` (db/035) serves the analysis angle by itself.
+
+**`sale_moment` stays reserved and unused.** It is reserved for a verdict whose every input comes from the
+fill moment, which is currently unreachable, because of four blockers:
+1. The fill time: solved with db/038, where one was entered.
+2. `prevRSI`, peak and momentum protection are render state: addressable through §7.6 step 2.5, not built.
+3. The macro condition: dissolved by the observe-only pin, once it ships. With the overlay pinned the macro
+   factor drops out of the verdict entirely. It is not listed at zero (the real function, on the gated
+   branch: `RISK_OFF` pinned gives 105 and 7 factors, none macro; unpinned 85 and 8, with `Macro: RISK_OFF`, −20).
+4. **The scan signal and the snapshot, the reason it stays unreachable:** the score, volume ratio, distance
+   from the 20-day MA, catalyst, up-day count, today's high and the previous close have no value at the fill.
+   News isn't stored, and partial-day volume at a past minute isn't known. The last scan before the sale is
+   a different moment.
+
+**Step 2.5 still has to be sized.** Roman's complaint was that a stored label could never match the card, so
+the card and the stored copy have to share inputs. No estimate goes to Roman before it is sized.
+
+**The fill is back on the 11-03 scope,** in its own column (see "`sell_time` means "recorded at""). One declared
+departure from it: the source column is `sell_filled_at_source` with `entered` / `default` / `not_known`, because
+a stored source is what separates a typed fill from an accepted default, and the scope's "auto-now" state is what
+`default` records.

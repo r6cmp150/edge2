@@ -4,8 +4,10 @@
 // mutants: [[file, oldText, newText, name], ...]; each oldText must occur exactly once.
 const fs = require('fs');
 const { spawnSync } = require('child_process');
+const { treeState } = require('./tree-state.cjs');
 
 function runMutants(test, mutants, { cwd = process.cwd(), print = console.log } = {}) {
+  print(`TREE: ${treeState(cwd)}`);
   const runTest = () => spawnSync('node', [test], { cwd, encoding: 'utf8' }).status === 0;
   if (!runTest()) {
     print(`BASELINE: FAILED (${test}). No mutants run: a failing test "kills" everything.`);

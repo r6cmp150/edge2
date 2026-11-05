@@ -19,12 +19,18 @@
 import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 
 const args = process.argv.slice(2);
 const flag = n => { const i = args.indexOf(n); return i < 0 ? null : args[i + 1]; };
 const dir = path.resolve(args.find(a => !a.startsWith('--') && a !== flag('--timeout-ms')) || 'tests');
 const timeoutMs = Number(flag('--timeout-ms') || 600000);
 const json = args.includes('--json');
+
+const { treeState } = createRequire(import.meta.url)('./lib/tree-state.cjs');
+// Before any test runs: a test can't change what this says it ran against.
+const tree = treeState(path.dirname(dir));
+if (!json) console.log(`TREE: ${tree}`);
 
 const files = readdirSync(dir).filter(f => f.endsWith('.test.js')).sort();
 const results = files.map(f => {
@@ -53,7 +59,7 @@ const results = files.map(f => {
 });
 
 const bad = results.filter(r => r.verdict !== 'PASS');
-if (json) console.log(JSON.stringify({ dir, files: results.length, bad: bad.length, results }, null, 1));
+if (json) console.log(JSON.stringify({ dir, tree, files: results.length, bad: bad.length, results }, null, 1));
 else {
   for (const r of results) console.log(`${r.verdict.padEnd(7)} ${r.file}${r.verdict === 'PASS' ? ` (${r.passes})` : `  -- ${r.detail}`}`);
   const counts = results.reduce((c, r) => (c[r.verdict] = (c[r.verdict] || 0) + 1, c), {});
