@@ -114,6 +114,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
+import { warnIfAtPageLimit } from './lib/read-all.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
 import { scheduledScanGate } from './lib/scan-gate.mjs';
@@ -415,7 +416,7 @@ async function main() {
     // settles which, and the re-read must find exactly what was inserted.
     await assertReadable(SUPABASE_URL, headers, 'signal_log');
     const verifyRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?scan_session=eq.${scanRunId}&select=symbol,tier`, { headers });
-    const verifyBody = await verifyRes.json();
+    const verifyBody = warnIfAtPageLimit('log-signals-edge: re-select', await verifyRes.json());
     assertReReadComplete('log-signals-edge signal_log', insertedCount, verifyBody.length);
     console.log(`log-signals-edge: re-selected ${verifyBody.length} row(s) actually present for scan_session=${scanRunId} (expected ${signalRows.length} minus any real same-day/same-tier duplicates).`);
   }

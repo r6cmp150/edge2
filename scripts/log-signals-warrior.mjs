@@ -56,6 +56,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { assertColumnsExist } from './lib/schema-check.mjs';
 import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
+import { warnIfAtPageLimit } from './lib/read-all.mjs';
 import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
 import { scheduledScanGate } from './lib/scan-gate.mjs';
@@ -536,7 +537,7 @@ async function main() {
     // settles which, and the re-read must find exactly what was inserted.
     await assertReadable(SUPABASE_URL, headers, 'signal_log');
     const verifyRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?scan_session=eq.${scanRunId}&select=symbol,tier`, { headers });
-    const verifyBody = await verifyRes.json();
+    const verifyBody = warnIfAtPageLimit('log-signals-warrior: re-select', await verifyRes.json());
     assertReReadComplete('log-signals-warrior signal_log', insertedCount, verifyBody.length);
     console.log(`log-signals-warrior: re-selected ${verifyBody.length} row(s) actually present for scan_session=${scanRunId} (expected ${signalRows.length} minus any real same-day/same-tier duplicates).`);
   }
@@ -561,7 +562,7 @@ async function main() {
     // this run has inserted. tests/empty-read-controls.test.js holds the position.
     await assertReadable(SUPABASE_URL, headers, 'setup_triggers');
     const triggerVerifyRes = await fetch(`${SUPABASE_URL}/rest/v1/setup_triggers?scan_session=eq.${scanRunId}&select=symbol,setup_id,triggered_at`, { headers });
-    const triggerVerifyBody = await triggerVerifyRes.json();
+    const triggerVerifyBody = warnIfAtPageLimit('log-signals-warrior: setup_triggers re-select', await triggerVerifyRes.json());
     assertReReadComplete('log-signals-warrior setup_triggers', triggerInsertedCount, triggerVerifyBody.length);
     console.log(`log-signals-warrior: re-selected ${triggerVerifyBody.length} setup_triggers row(s) actually present for scan_session=${scanRunId} (expected ${setupTriggerRows.length} minus any real same-day/same-setup/same-timestamp duplicates).`);
   }

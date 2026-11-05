@@ -30,6 +30,7 @@
 // "Time-of-day bucketing" before pooling any results across a session.
 
 import { assertReadable } from './readable.mjs';
+import { warnIfAtPageLimit } from './read-all.mjs';
 
 export const SPACING_MIN = 30;
 
@@ -83,7 +84,7 @@ export async function scheduledScanGate({ engineSource, getPT, ptDateStr, classi
       headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
     });
     if (res.status >= 300) throw new Error(`scan gate: could not read today's ${engineSource} scan_runs: ${res.status} ${await res.text()}`);
-    recentStartedAts = (await res.json()).map(r => r.started_at);
+    recentStartedAts = warnIfAtPageLimit("scan gate: today's scan_runs", await res.json()).map(r => r.started_at);
   }
   const spacingMin = spacingMinFor(engineSource);
   const decision = decideScheduledScan({ dateStr, hhmm, sessionClass, nowMs: Date.now(), recentStartedAts, spacingMin });

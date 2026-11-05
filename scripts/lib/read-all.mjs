@@ -17,7 +17,15 @@ export async function fetchAllRows(url, headers, label, fetchImpl = fetch) {
     rows.push(...page);
     if (rows.length >= Number(total[1]) || !page.length) {
       if (rows.length !== Number(total[1])) throw new Error(`${label}: read ${rows.length} rows of ${total[1]}`);
+      console.log(`${label}: read ${rows.length} row(s), matching Postgres's count of ${total[1]}.`);
       return rows;
     }
   }
+}
+
+// For a read left unpaged because it can't reach the limit: says so if it did. Exactly
+// a page full is what a silently cut read looks like, so it must show in the job's log.
+export function warnIfAtPageLimit(label, rows) {
+  if (rows.length >= PAGE_SIZE) console.warn(`${label}: READ AT PAGE LIMIT -- ${rows.length} row(s), which is what a cut read looks like.`);
+  return rows;
 }

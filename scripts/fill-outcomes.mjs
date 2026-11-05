@@ -64,7 +64,8 @@ import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { signalPrecedesTrade, isMostRecentPriorSignal } from './lib/taken-precedence.mjs';
 import { selectByIds } from './lib/select-by-ids.mjs';
 import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
-import { fetchAllRows } from './lib/read-all.mjs';
+import { fetchAllRows, warnIfAtPageLimit } from './lib/read-all.mjs';
+import { describeStale } from './lib/stale-unresolved.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -302,7 +303,7 @@ async function main() {
   // Paged (2026-11-04): this read hit 1,000 on two runs, and Pass 2 below resolves a
   // symbol-day group from the rows it has, so a cut read can split a group.
   const rows = await fetchAllRows(`${SUPABASE_URL}/rest/v1/signal_log?select=${selectCols}&signal_date=gte.${cutoff}&${orFilter}&order=id`, anonHeaders, 'signal_log pending-rows query');
-  console.log(`fill-outcomes: ${rows.length} candidate row(s) since ${cutoff} (any ret_* null or taken_resolution='unresolved').`);
+  console.log(`fill-outcomes: ${rows.length} candidate row(s) since ${cutoff} (any ret_* null or taken_resolution='unresolved'): ${rows.filter(r => r.engine_source === 'EDGE').length} EDGE, ${rows.filter(r => r.engine_source === 'WARRIOR').length} WARRIOR.`);
 
   const patches = new Map(); // id -> partial update object
   function patchFor(id) {
@@ -345,6 +346,8 @@ async function main() {
     (r.ret_3d == null && !r.ret_3d_split_in_window) ||
     (r.ret_5d == null && !r.ret_5d_split_in_window)
   );
+
+  console.log(`fill-outcomes: Pass 1 -- ${needIntraday.length} row(s) need intraday bars, ${needDaily.length} need daily bars.`);
 
   const intradayBySymbolDate = new Map(); // `${symbol}|${date}` -> bars[]
   for (const r of needIntraday) {
@@ -542,6 +545,7 @@ async function main() {
   }
 
   let takenResolvedCount = 0;
+  let closedWindowGroups = 0;
   for (const [key, groupRows] of groups) {
     const [signalDate, symbol, engineSource] = key.split('|');
     // 9 calendar days, not "5 trading days" -- generous slack over 5 real
@@ -564,7 +568,7 @@ async function main() {
     // qualifies, the group resolves to not-taken-confirmed once the window
     // elapses, same as a group with no trade.
     const precedes = (row, trade) => signalPrecedesTrade(row, trade, global.ptWallClockToInstant);
-    const precededCandidates = (await candRes.json()).filter(c => groupRows.some(row => precedes(row, c)));
+    const precededCandidates = warnIfAtPageLimit(`fill-outcomes: trades_v2 candidates for ${key}`, await candRes.json()).filter(c => groupRows.some(row => precedes(row, c)));
     // Most recent prior signal only (taken-precedence.mjs): drop any trade
     // that a LATER signal day of this symbol/engine also preceded -- that
     // later day is the one it gets credited to, and this day was declined.
@@ -575,10 +579,11 @@ async function main() {
         { headers: anonHeaders }
       );
       if (laterRes.status >= 300) { console.warn(`fill-outcomes: later-signal query failed for ${key}: ${laterRes.status} ${await laterRes.text()} -- leaving unresolved`); continue; }
-      const laterRows = await laterRes.json();
+      const laterRows = warnIfAtPageLimit(`fill-outcomes: later signals for ${key}`, await laterRes.json());
       candidates = precededCandidates.filter(c => isMostRecentPriorSignal(c, laterRows, global.ptWallClockToInstant));
     }
     const windowElapsed = tradingDayHasClosed(windowEnd);
+    if (windowElapsed) closedWindowGroups++;
 
     if (candidates.length) {
       const match = candidates[0];
@@ -619,6 +624,7 @@ async function main() {
     }
     // else: no candidate yet and window still open -- leave unresolved, no write.
   }
+  console.log(`fill-outcomes: Pass 2 -- ${unresolvedRows.length} unresolved row(s) read, in ${groups.size} group(s), ${closedWindowGroups} with a closed window, ${takenResolvedCount} transition(s).`);
 
   // ── Pass 3: trades_v2 sell-timing (phase-9-entry-exit-spec.md §1.1/§1.2) ──
   // Candidates: every closed trade (sell_date <= today), NOT gated on the
@@ -780,13 +786,13 @@ async function main() {
   // stuck for good and must surface too), and fail the job naming every
   // stuck row. Clears itself once they resolve. --write runs only: a dry
   // run writes nothing, so it would fail on rows it was about to resolve.
-  const unresolved = await fetchAllRows(`${SUPABASE_URL}/rest/v1/signal_log?select=symbol,signal_date,engine_source,tier&taken_resolution=eq.unresolved&order=id`, anonHeaders, 'stale-unresolved assertion: signal_log read');
+  const unresolved = await fetchAllRows(`${SUPABASE_URL}/rest/v1/signal_log?select=id,symbol,signal_date,engine_source,tier&taken_resolution=eq.unresolved&order=id`, anonHeaders, 'stale-unresolved assertion: signal_log read');
   const stuck = unresolved.filter(r => tradingDayHasClosed(addCalendarDays(r.signal_date, TAKEN_WINDOW_CALENDAR_DAYS)));
   if (stuck.length) {
     const list = stuck.map(r => `${r.engine_source} ${r.symbol} ${r.signal_date} ${r.tier}`).join(', ');
-    throw new Error(`${stuck.length} signal_log row(s) still 'unresolved' after their ${TAKEN_WINDOW_CALENDAR_DAYS}-day window closed -- Pass 2 should have resolved them, and once older than the 12-day lookback they never will: ${list}`);
+    throw new Error(`${stuck.length} signal_log row(s) still 'unresolved' after their ${TAKEN_WINDOW_CALENDAR_DAYS}-day window closed -- Pass 2 should have resolved them, and once older than the 12-day lookback they never will. ${describeStale(stuck, rows)}: ${list}`);
   }
-  console.log(`fill-outcomes: stale-unresolved assertion passed -- no 'unresolved' row has a closed ${TAKEN_WINDOW_CALENDAR_DAYS}-day window.`);
+  console.log(`fill-outcomes: stale-unresolved assertion passed -- none of the ${unresolved.length} 'unresolved' row(s) has a closed ${TAKEN_WINDOW_CALENDAR_DAYS}-day window.`);
 }
 
 main().catch(e => { console.error('fill-outcomes: FAILED', e.message, e.stack); process.exit(1); });

@@ -35,9 +35,9 @@ run('each script runs its control before the reads it guards', () => {
   before(sg, "'scan_runs');", '/rest/v1/scan_runs?engine_source=eq.', 'scan gate');
   const sp = readSource('scripts/audit-signal-log-splits.mjs');
   before(sp, "await assertReadable(SUPABASE_URL, anonHeaders, 'signal_log');", '/rest/v1/signal_log?select=${selectCols}&or=', 'splits audit');
-  for (const [f, t, verify] of [['scripts/log-signals-edge.mjs', 'signal_log', 'const verifyBody = await verifyRes.json();'],
-    ['scripts/log-signals-warrior.mjs', 'signal_log', 'const verifyBody = await verifyRes.json();'],
-    ['scripts/log-signals-warrior.mjs', 'setup_triggers', 'const triggerVerifyBody = await triggerVerifyRes.json();']]) {
+  for (const [f, t, verify] of [['scripts/log-signals-edge.mjs', 'signal_log', 'const verifyBody = warnIfAtPageLimit('],
+    ['scripts/log-signals-warrior.mjs', 'signal_log', 'const verifyBody = warnIfAtPageLimit('],
+    ['scripts/log-signals-warrior.mjs', 'setup_triggers', 'const triggerVerifyBody = warnIfAtPageLimit(']]) {
     const src = readSource(f);
     before(src, `await assertReadable(SUPABASE_URL, headers, '${t}');`, verify, `${f} ${t}`);
   }

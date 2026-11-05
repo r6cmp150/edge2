@@ -154,7 +154,7 @@ run('fetchAllRows: all rows across pages; a short read, no count, or a failure t
 run('the pending-rows read cannot resolve part of a group again: it pages, and on a stable order', () => {
   const src = readSource('scripts/fill-outcomes.mjs');
   assert.ok(/fetchAllRows\(`\$\{SUPABASE_URL\}\/rest\/v1\/signal_log\?select=\$\{selectCols\}&signal_date=gte\.\$\{cutoff\}&\$\{orFilter\}&order=id`/.test(src), 'pending rows');
-  assert.ok(/fetchAllRows\(`\$\{SUPABASE_URL\}\/rest\/v1\/signal_log\?select=symbol,signal_date,engine_source,tier&taken_resolution=eq\.unresolved&order=id`/.test(src), 'stale-unresolved check: 945 rows live on 2026-11-05');
+  assert.ok(/fetchAllRows\(`\$\{SUPABASE_URL\}\/rest\/v1\/signal_log\?select=id,symbol,signal_date,engine_source,tier&taken_resolution=eq\.unresolved&order=id`/.test(src), 'stale-unresolved check: 945 rows live on 2026-11-05');
 });
 
 run('a symbol-day group resolved in parts is detected, both ways', async () => {

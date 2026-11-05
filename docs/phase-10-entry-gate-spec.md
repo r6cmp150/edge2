@@ -2389,6 +2389,15 @@ after it's applied, a probe over HTTP that a constraint must refuse
 (expect the constraint's code, e.g. 23514, never 42501). db/034 is the
 first migration written this way.
 
+**A MECHANISM THAT FAILS MUST LEAVE BEHIND THE EVIDENCE NEEDED TO EXPLAIN IT (2026-11-04).**
+The next failure should be diagnosable from its own log, without a re-run. Three instances, all
+found the hard way: the harness kept only test names; the runner kept no assertion messages, so
+the 11-03 queue-pacing failure is still unexplained; and `fill-outcomes` failed on 11-03 and 11-05
+without logging whether Pass 2 had seen the rows it named, so that diagnosis is an inference.
+**ANY SCHEDULED JOB LOGS THE COUNTS ITS ASSERTIONS DEPEND ON:** the candidate count, how many rows
+each pass saw, how many transitions it made, and whether any read came back at a page limit.
+`tests/job-counts.test.js` holds this for what the scheduled jobs read today.
+
 **A failure that reports only to a channel nobody reads is a reminder with
 extra steps.** (Added 2026-11-01.) Fill outcomes failed the first of its
 three evening runs on five days running (10-26 to 10-30 PT; GitHub run
@@ -3270,3 +3279,13 @@ truncation, two days before anyone looked for it.
 
 **Paging can't make the check fire more,** because it now reads the same complete set Pass 2 does.
 It would still catch a real failure to resolve.
+
+**Why 13 of the 14 stuck rows are Warrior: it is an artefact of those two dates, not of Warrior.**
+Not because Warrior is never traded, though it never has been (0 of 492 `trades_v2` rows at
+f66fe02): an untraded EDGE row waits for its window just the same, and at the backups before each
+run Warrior was only 33 of 124 and 28 of 128 of that date's unresolved rows. **The stuck rows are
+the last created that day:** positions 119 to 123 of 124 on 10-23, and 120 to 127 of 128 on 10-26.
+On those two dates the Warrior logger ran after EDGE, so the tail was all Warrior. From 10-27 on,
+Warrior logs first and the tail is EDGE. So the cut followed row order, and this adds to the case
+for truncation. Why the read returned rows in that order isn't known (it had no ORDER BY), and one
+row doesn't fit: EDGE COTY, position 77 of 128.
