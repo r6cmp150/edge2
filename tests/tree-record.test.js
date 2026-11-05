@@ -65,12 +65,18 @@ await run('the runner states the tree before any result, in both output forms', 
   assert.strictEqual(json.tree, `${headNow} clean`);
 });
 
-await run('a mutation report opens with the tree, then the baseline', () => {
+await run('a mutation report opens with the tree, then the baseline', async () => {
   const { d, head } = repo();
   fs.writeFileSync(path.join(d, 'ok.test.js'), 'process.exit(0);\n');
   const lines = [];
-  runMutants('ok.test.js', [], { cwd: d, print: l => lines.push(l) });
+  await runMutants('ok.test.js', [], { cwd: d, print: l => lines.push(l) });
   assert.match(lines[0], new RegExp(`^TREE: ${head} dirty `));
+  assert.match(lines[1], /^REFUSED: the tree is not clean/, 'a dirty tree is refused, after the tree line');
+  const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: d, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  git('add', '.'); git('commit', '-qm', 'y');
+  lines.length = 0;
+  await runMutants('ok.test.js', [], { cwd: d, print: l => lines.push(l) });
+  assert.strictEqual(lines[0], `TREE: ${git('rev-parse', '--short=12', 'HEAD').trim()} clean`);
   assert.match(lines[1], /^BASELINE: passed/);
 });
 

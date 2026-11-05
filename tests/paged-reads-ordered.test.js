@@ -112,20 +112,23 @@ await run('fetchAllRows refuses no order, and drops a row a write repeated witho
   } finally { console.log = log; }
 });
 
-await run('a mutation run refuses a failing baseline, and its report states the baseline', () => {
+await run('a mutation run refuses a failing baseline, and its report states the baseline', async () => {
   const { runMutants } = require('../scripts/lib/mutants.cjs');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edge2-mut-'));
   fs.writeFileSync(path.join(dir, 'x.js'), 'module.exports = 1;\n');
   fs.writeFileSync(path.join(dir, 'good.test.js'), "process.exit(require('./x.js') === 1 ? 0 : 1);\n");
   fs.writeFileSync(path.join(dir, 'bad.test.js'), 'process.exit(1);\n');
+  // committed: the harness refuses a dirty tree (2026-11-05)
+  const git = (...a) => require('child_process').execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: dir, stdio: 'ignore' });
+  git('init', '-q'); git('add', '.'); git('commit', '-qm', 'x');
   const M = [['x.js', 'module.exports = 1;', 'module.exports = 2;', 'changes it']];
   const lines = [];
-  const failed = runMutants('bad.test.js', M, { cwd: dir, print: l => lines.push(l) });
+  const failed = await runMutants('bad.test.js', M, { cwd: dir, print: l => lines.push(l) });
   assert.strictEqual(failed.baseline, false);
   assert.strictEqual(failed.killed, 0, 'a failing baseline kills nothing');
   assert.match(lines[1], /^BASELINE: FAILED/);
   lines.length = 0;
-  const ok = runMutants('good.test.js', M, { cwd: dir, print: l => lines.push(l) });
+  const ok = await runMutants('good.test.js', M, { cwd: dir, print: l => lines.push(l) });
   assert.strictEqual(ok.killed, 1);
   assert.match(lines[1], /^BASELINE: passed/, 'right after the tree, always');
   assert.strictEqual(fs.readFileSync(path.join(dir, 'x.js'), 'utf8'), 'module.exports = 1;\n', 'the file is restored');
