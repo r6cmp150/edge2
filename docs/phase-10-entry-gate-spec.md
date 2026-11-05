@@ -2209,6 +2209,36 @@ days, not quiet ones.
    works at all. It still has to happen: a view writing values a decision
    reads is a live defect, and removing those writes closes the surface
    the resurrection race used. But it is not urgent.
+
+   **Does he give back his biggest gains? Measured 2026-11-05; the +20%
+   threshold is NOT decided.** Momentum protection is only worth having
+   if he does. Its trigger sits outside the distribution it is meant to
+   act on: regular-session peak gain per trade, from SIP bars, has median
+   +1.53%, p90 +4.20%, p99 +8.90%, maximum +15.67%, and 0 of 501 at +20%
+   (upper bound, through the recorded sale; the lower bound, multi-day
+   holds before the sale day, tops out at +5.17%). For scale, the average
+   win: $9.75 on a $492 position over the 283 winners in this population,
+   and $10.98 on $563 in the v2 era, which is seven days; both about 2%.
+   Median realized winner +1.48%.
+
+   | Peak at or above | n | Median peak | Median realized | Median captured | Captured under half | Ended at a loss | Peak on the sale day |
+   |---|---|---|---|---|---|---|---|
+   | +3% | 101 | 4.20% | 2.81% | 71% | 28 | 6 | 97 |
+   | +5% | 32 | 6.23% | 4.66% | 75% | 8 | 1 | 30 |
+   | +10% | 5 | 12.50% | 11.39% | 84% | 0 | 0 | 5 |
+
+   Per trade at the top, because at n=5 one trade is the whole figure:
+   CPNG captured 99% (peak +15.7%, sold +15.5%), NCLH 84%, XXI 84%, AIXI
+   67%, NNBR 97% (its peak is in the minute of the recording, so the bound
+   may include a price after he sold). On his biggest gains he keeps most
+   of the peak, and they peak on the day he sells: the pop comes and he
+   sells into it. That points at removing the mechanism rather than
+   retuning it, and it is the reviewer's and Roman's decision, not made
+   here. The give-back that does exist is in the middle band (28 of 101
+   peaks of +3% or more kept under half), an exit question far below +20%.
+   Upper bounds throughout: the sale's fill time isn't stored, so a peak
+   can include minutes after he sold. (`scripts/audit-peak-gain.mjs`,
+   trades_v2 at `164099a`, bars fetched 2026-11-05.)
 3. **Report-gap fix** (Appendix): ENTRY TIMING prints all four session
    values, every weekday present in the data, and a not-recorded bucket,
    with counts that sum to the total — both copies in `app.js`.
@@ -2498,6 +2528,16 @@ median it reported happened to agree to the decimal. `tests/audit-render-sampled
 function. Same audit, same day, the other catch: rate-limited (429) requests had become nulls and dropped 305 of 464
 rows quietly. Rate limits are now waited out and any other failure stops the run; a row is never dropped without
 being named.
+
+**THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
+mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which
+is luck next to "cannot happen". `scripts/lib/mutants.cjs` now refuses a dirty tree (a leftover mutant shows as a
+change, and the report names a commit), journals each mutant so a run killed outright restores on the next start
+and stops, restores on SIGINT and SIGTERM (the tests run asynchronously, so the handler runs at once), and times
+each mutant out. A timed-out mutant is reported apart from the kills, because a mutant that never finishes means
+the mutated code has no termination guard of its own: a finding about the code. The instance: `barsWithRetry`'s
+only termination is its attempt cap, and the mutant that removed it would retry forever; the test now pins exactly
+eight tries. `tests/mutants-harness.test.js` has one test per guard.
 
 **A failure that reports only to a channel nobody reads is a reminder with
 extra steps.** (Added 2026-11-01.) Fill outcomes failed the first of its
