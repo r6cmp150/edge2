@@ -76,7 +76,7 @@ await run('a mutation report opens with the tree, then the baseline', () => {
 
 await run('the verdict definitions are in the spec, with the choice and the reservation', () => {
   const spec = fs.readFileSync(path.join(REPO_ROOT, 'docs/phase-10-entry-gate-spec.md'), 'utf8').replace(/\s+/g, ' ');
-  for (const s of ["Roman's choice, 2026-11-05: A.", 'CAPTURED_BEFORE_FILL', 'CAPTURED_AFTER_FILL', 'CAPTURED_FILL_UNKNOWN', 'NOT_DISPLAYED', 'every captured card is `CAPTURED_FILL_UNKNOWN`', "It isn't published before db/038", 'NOT COMMISSIONED', "reserved for a verdict whose every input comes from the fill moment", 'The normal case, not a defect', 'recording minus fill'])
+  for (const s of ["Roman's choice, 2026-11-05: A.", 'CAPTURED_BEFORE_FILL', 'CAPTURED_AFTER_FILL', 'CAPTURED_FILL_UNKNOWN', 'NOT_DISPLAYED', 'every captured card is `CAPTURED_FILL_UNKNOWN`', "It isn't published before db/038", 'NOT COMMISSIONED', "reserved for a verdict whose every input comes from the fill moment", 'The normal case, not a defect', 'recording minus fill', "A doesn't depend on step 2.5.", 'Nothing goes to Roman until the reviewer has ruled.'])
     assert.ok(spec.includes(s), s);
 });
 

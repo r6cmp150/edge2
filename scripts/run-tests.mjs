@@ -15,8 +15,14 @@
 // Its own failure modes are tested: tests/run-tests-checker.test.js runs it
 // on a directory of deliberately broken files and expects each class.
 //
-//   node scripts/run-tests.mjs [dir=tests] [--timeout-ms N] [--json]
-import { readdirSync } from 'node:fs';
+//   node scripts/run-tests.mjs [dir=tests] [--timeout-ms N] [--json] [--local-env]
+//
+// THE ENVIRONMENT IS CI'S BY DEFAULT (2026-11-05). Six pushes went red on CI and green here, because a test
+// deleted a GITHUB_ENV that only CI sets. So the two can only diverge for reasons chosen: this sets what Actions
+// sets, unless it is already set or --local-env says not to. What still differs is printed as ENV, and it is the
+// operating system and the Node version: this can't change those.
+import { readdirSync, writeFileSync, mkdtempSync } from 'node:fs';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -26,6 +32,18 @@ const flag = n => { const i = args.indexOf(n); return i < 0 ? null : args[i + 1]
 const dir = path.resolve(args.find(a => !a.startsWith('--') && a !== flag('--timeout-ms')) || 'tests');
 const timeoutMs = Number(flag('--timeout-ms') || 600000);
 const json = args.includes('--json');
+const localEnv = args.includes('--local-env');
+
+// What Actions sets that a test could read. Real values win, so on CI this changes nothing.
+export function ciEnvironment(base, tmpdir) {
+  const defaults = {
+    CI: 'true', GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_REF_NAME: 'main',
+    GITHUB_RUN_ID: '1', GITHUB_RUN_ATTEMPT: '1', GITHUB_WORKFLOW: 'Tests', GITHUB_REPOSITORY: 'r6cmp150/edge2',
+    GITHUB_ENV: path.join(tmpdir, 'github-env'), GITHUB_OUTPUT: path.join(tmpdir, 'github-output'),
+    GITHUB_STEP_SUMMARY: path.join(tmpdir, 'github-step-summary'), TZ: 'UTC',
+  };
+  return { ...defaults, ...base };
+}
 
 const { treeState } = createRequire(import.meta.url)('./lib/tree-state.cjs');
 // Before any test runs: a test can't change what this says it ran against.
@@ -33,8 +51,17 @@ const tree = treeState(path.dirname(dir));
 if (!json) console.log(`TREE: ${tree}`);
 
 const files = readdirSync(dir).filter(f => f.endsWith('.test.js')).sort();
+let childEnv = process.env;
+if (!localEnv) {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'edge2-ci-env-'));
+  childEnv = ciEnvironment(process.env, tmp);
+  // A real CI's files already exist; these are only for a local run.
+  for (const k of ['GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY']) if (!process.env[k]) writeFileSync(childEnv[k], '');
+}
+if (!json) console.log(`ENV: ${localEnv ? 'LOCAL (--local-env), so a pass here says nothing about CI' : "CI's variables and TZ=UTC"}; node ${process.version}, ${process.platform}. CI is node 20 on linux.`);
+
 const results = files.map(f => {
-  const r = spawnSync(process.execPath, [path.join(dir, f)], { cwd: path.dirname(dir), encoding: 'utf8', timeout: timeoutMs, maxBuffer: 1e8 });
+  const r = spawnSync(process.execPath, [path.join(dir, f)], { cwd: path.dirname(dir), env: childEnv, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 1e8 });
   const out = `${r.stdout || ''}${r.stderr || ''}`;
   const passes = (out.match(/^PASS: /gm) || []).length;
   // The line after FAIL is the assertion's message: its numbers. Keep it. A failure
@@ -59,7 +86,7 @@ const results = files.map(f => {
 });
 
 const bad = results.filter(r => r.verdict !== 'PASS');
-if (json) console.log(JSON.stringify({ dir, tree, files: results.length, bad: bad.length, results }, null, 1));
+if (json) console.log(JSON.stringify({ dir, tree, env: localEnv ? 'local' : 'ci', files: results.length, bad: bad.length, results }, null, 1));
 else {
   for (const r of results) console.log(`${r.verdict.padEnd(7)} ${r.file}${r.verdict === 'PASS' ? ` (${r.passes})` : `  -- ${r.detail}`}`);
   const counts = results.reduce((c, r) => (c[r.verdict] = (c[r.verdict] || 0) + 1, c), {});

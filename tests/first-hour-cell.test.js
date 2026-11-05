@@ -103,7 +103,7 @@ await run('the spec records it, with its limits', () => {
   assert.ok(spec.includes('Nothing about time of day is established.'), 'the wording for Roman');
   assert.ok(spec.indexOf("ANY FIGURE FOR ROMAN GOES THROUGH ITS SOURCE DOCUMENT'S OWN METHOD") > spec.indexOf('### 7.7'), 'the rule, in §7.7');
   assert.ok(spec.includes('This binds the reviewer as well as the implementer.'));
-  assert.ok(spec.includes("A PUSH ISN'T DONE UNTIL ITS CI RUN HAS BEEN READ"));
+  assert.ok(spec.includes("A PUSH IS DECLARED DONE BY A SCRIPT'S OUTPUT"));
   assert.ok(spec.includes("Roman's timing analysis calls unjudged at n=5"), 'the word is the timing analysis\'s, not this spec\'s');
 });
 })();

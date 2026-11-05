@@ -2433,10 +2433,14 @@ factor in five errors in two days was reaching the conclusion first and looking 
 coverage unchecked, "the second time" conflating two measurements, a fifth percentile read as a proportion, and a cell quoted without the method its own
 document prescribes. `scripts/audit-first-hour-cell.mjs` prints all of these for the time cells.
 
-**A PUSH ISN'T DONE UNTIL ITS CI RUN HAS BEEN READ (2026-11-05).** Tests on main went red at cae6644 and stayed red for five pushes, each reported from a
-local runner on the exact tree, with no one reading the Actions result. The harness's new leak detector was right: `workflow-instrumentation` deleted a
-GITHUB_ENV that only CI sets, so it passed locally. Roman gets an email for each. `tests/global-state-leaks.test.js` now runs the files that touch these
-variables with them set.
+**A PUSH IS DECLARED DONE BY A SCRIPT'S OUTPUT, NOT BY A PERSON REMEMBERING (2026-11-05).** Tests on main went red at cae6644 and stayed red for six pushes, each
+reported from a local runner on the exact tree. Roman got a failure email for each, in the same week he was told not to get used to ignoring them. This script had
+been specified that morning and never built, and nobody checked the checker existed. **`node scripts/check-push.mjs <sha>`** fails if the Tests run for that exact
+commit is missing, failed or still going.
+- **The deeper fix is the environment.** `workflow-instrumentation` deleted a GITHUB_ENV that only CI sets, so "green locally" never meant "green in CI", for any test.
+  `scripts/run-tests.mjs` now sets CI's variables and TZ=UTC unless told otherwise (`--local-env`), so the two diverge only for reasons chosen. What still differs is the
+  operating system and the Node version, and it prints them. Those aren't reproduced, so `check-push` is still what declares a push done.
+- **The leak detector did its job.** It failed in the environment where the leak mattered, and the test was wrong. Do not weaken it for being noisy.
 
 **A failure that reports only to a channel nobody reads is a reminder with
 extra steps.** (Added 2026-11-01.) Fill outcomes failed the first of its
@@ -3438,8 +3442,18 @@ fill moment, which is currently unreachable, because of four blockers:
    News isn't stored, and partial-day volume at a past minute isn't known. The last scan before the sale is
    a different moment.
 
-**Step 2.5 still has to be sized.** Roman's complaint was that a stored label could never match the card, so
-the card and the stored copy have to share inputs. No estimate goes to Roman before it is sized.
+**A doesn't depend on step 2.5.** Roman's complaint was that a stored label could never match the card. A stores what the card showed, verbatim, so the two match by
+construction, whatever the inputs were. What A inherits is their quality: the captured verdict can carry a render-dependent factor, "RSI declining from peak (92 → 92)" among them, and
+it says what was on screen, not what was true. Step 2.5 is what fixes the inputs, for the card and everything downstream, and it is a separate decision.
+
+**Sizes, estimated from reading the code on 2026-11-05, not measured, for the reviewer. Nothing goes to Roman until the reviewer has ruled.**
+- **A: about half a session, plus one migration.** As scoped on 11-03. Every captured card is `CAPTURED_FILL_UNKNOWN` until db/038 stores a fill, and its column could join db/038 while that is unrun.
+- **Step 2.5: about 2 to 3 sessions, and no SQL expected.** The derivation mostly exists for the display panel (`computeIntradayPanel`, `fetchIntradaySipBars`).
+  - Hold high, with its split check, IEX fallback label and NULL on a partial fetch: about half a session.
+  - The exit engine's inputs, "computed from 7 of 9 factors", and the renamed day-over-day RSI factor: about 1 session. It is where the risk is: the inputs have 77 references, and the exit advice changes.
+  - The render stops writing, and the sale's recorder fields derive from bars: about half a session. The three `backgroundSavePosition` calls go, which closes the surface the resurrection race used.
+  - Tests, mutants and 390px renders: included above, and about half a session on top if the render finds what it usually finds.
+  - Requests are not the constraint: 11 positions at the latest backup, about 2 calls each, against 170 a minute, with daily bars cacheable for the day.
 
 **The fill is back on the 11-03 scope,** in its own column (see "`sell_time` means "recorded at""). One declared
 departure from it: the source column is `sell_filled_at_source` with `entered` / `default` / `not_known`, because
