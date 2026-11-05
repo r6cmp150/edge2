@@ -239,6 +239,26 @@ function mapPositionToSupabaseRow(position) {
   };
 }
 
+// Every row a query matches (2026-11-04). PostgREST answers any read with at most
+// 1,000 rows and no error, so an unpaged read of a bigger table quietly returns
+// part of it. `query` builds the select with { count: 'exact' } and an order with
+// a unique tie-break; completeness comes from that count. Same { data, error }
+// shape as the read it replaces, and never partial rows.
+const READ_PAGE_SIZE = 1000;
+async function readAllRows(query) {
+  const rows = [];
+  for (;;) {
+    const { data, error, count } = await query().range(rows.length, rows.length + READ_PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    if (count == null) return { data: null, error: new Error('no row count back, so completeness is unknown') };
+    rows.push(...(data || []));
+    if (rows.length >= count || !data || !data.length) {
+      if (rows.length !== count) return { data: null, error: new Error(`read ${rows.length} rows of ${count}`) };
+      return { data: rows, error: null };
+    }
+  }
+}
+
 async function loadPortfolioFromSupabase() {
   const { data, error } = await supabaseClient.from('portfolio').select('*').order('buy_date', { ascending: true });
   if (error) throw error;

@@ -122,7 +122,7 @@ function scriptReads() {
   const out = [];
   for (const f of workflowScripts()) {
     const src = strip(readSource(f));
-    for (const m of src.matchAll(/fetch(?:Impl)?\(\s*`[^`]*\/rest\/v1\/(\$\{[a-zA-Z]+\}|[a-z_0-9]+)/g)) {
+    for (const m of src.matchAll(/fetch(?:Impl|AllRows)?\(\s*`[^`]*\/rest\/v1\/(\$\{[a-zA-Z]+\}|[a-z_0-9]+)/g)) {
       const call = src.slice(m.index, m.index + 600);
       const end = call.indexOf(');');
       if (/method:\s*'(POST|PATCH|DELETE)'/.test(end > 0 ? call.slice(0, end) : call)) continue;

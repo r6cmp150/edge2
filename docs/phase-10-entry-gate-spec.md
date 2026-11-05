@@ -3191,3 +3191,33 @@ rests on. An earlier estimate of 41 days used compact row sizes; the committed f
   with nothing written and the run red: a month file missing or different from the last manifest;
   rows held (prior + read, by id) not exactly the live count, which sees a delete hidden by an
   insert; the floor or never-shrink rule on the total; any file over 90 MiB.
+
+### EVERY READ PAST 1,000 ROWS (2026-11-04)
+
+PostgREST answers any read with at most 1,000 rows, status 200 and no error. Live on
+2026-11-05 01:43Z: signal_log 2,311, rating_snapshots 3,665, trades_v2 541, workflow_runs 377,
+signal_snapshot_at_buy 188, scan_runs 124, trades 37, portfolio 11. Every read in the app and in
+every script is now enumerated by `tests/unpaged-reads.test.js`: it pages, limits, or says why
+it can't reach 1,000, and a new unpaged read fails it.
+
+**What was actually cut:**
+- **The score history report and the archive report (`rating_snapshots`).** The table passed
+  1,000 rows on 2026-09-02 at 23:21 UTC. From then, the report said "Total snapshots recorded:
+  1000" with a range ending 2026-09-02, and its "score trend" lines judged only those rows. The
+  archive said "Rating snapshot total rows: 1000". **Nothing in this repo's specs cites either.**
+- **`fill-outcomes` pending rows (`signal_log`), unordered: exactly 1,000 on 2 of the last 45
+  runs, 2026-11-03T02:33Z and 2026-11-05T00:59Z** (Actions logs; the count rose from 308 on
+  10-15). Returns only came late: the rows stayed pending, and the next run on 11-03 read 867. The
+  risk was Pass 2, which resolves a symbol-day group permanently from the rows it read. **No
+  group shows it:** `takenGroupProblems` finds 0 of 2,115 groups (194 with more than one row)
+  in a state a whole-group resolve can't produce, on a full read at 2026-11-05 01:36Z. That read
+  came after the first run and before any later run of 11-05 finished.
+- **Reads that weren't cut yet:** the stale-unresolved check (945 live), the splits audit (would
+  read the oldest 1,000 of 2,250 filled rows, but its last logged run on 09-15 read 95), and
+  every `trades_v2` read.
+
+**Figures from reports:** the report's trade sections read `trades_v2`, which has never held
+1,000 rows, so §1, §2, §3, §3.5 and the forward test (292 and 451 trades) are not affected, and
+signal_log figures came from scripts that page or from backups that page. The one way a report
+figure is affected is if it came from a pasted score history or archive section: look for
+"Total snapshots recorded: 1000" or "Rating snapshot total rows: 1000".

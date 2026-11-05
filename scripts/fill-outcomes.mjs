@@ -64,6 +64,7 @@ import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { signalPrecedesTrade, isMostRecentPriorSignal } from './lib/taken-precedence.mjs';
 import { selectByIds } from './lib/select-by-ids.mjs';
 import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
+import { fetchAllRows } from './lib/read-all.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -298,9 +299,9 @@ async function main() {
   // empty signal_log read would credit the wrong signal day.
   await assertReadable(SUPABASE_URL, anonHeaders, 'signal_log');
   await assertReadable(SUPABASE_URL, anonHeaders, 'trades_v2');
-  const rowsRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?select=${selectCols}&signal_date=gte.${cutoff}&${orFilter}`, { headers: anonHeaders });
-  if (rowsRes.status >= 300) throw new Error(`signal_log pending-rows query failed: ${rowsRes.status} ${await rowsRes.text()}`);
-  const rows = await rowsRes.json();
+  // Paged (2026-11-04): this read hit 1,000 on two runs, and Pass 2 below resolves a
+  // symbol-day group from the rows it has, so a cut read can split a group.
+  const rows = await fetchAllRows(`${SUPABASE_URL}/rest/v1/signal_log?select=${selectCols}&signal_date=gte.${cutoff}&${orFilter}&order=id`, anonHeaders, 'signal_log pending-rows query');
   console.log(`fill-outcomes: ${rows.length} candidate row(s) since ${cutoff} (any ret_* null or taken_resolution='unresolved').`);
 
   const patches = new Map(); // id -> partial update object
@@ -624,12 +625,7 @@ async function main() {
   // current sell_timing_resolved value -- see this file's header for why
   // (MSTU's corruption class needs recomputation, not just first-fill).
   const tradesSelectCols = 'id,ticker,buy_date,sell_date,buy_price,sell_timing_resolved,best_exit_price,best_exit_timing,price_at_plus1_day,price_at_plus2_days,price_at_plus5_days,unified_recommendation_at_sale';
-  const tradesRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/trades_v2?select=${tradesSelectCols}&sell_date=lte.${todayPT}&order=sell_date.asc`,
-    { headers: anonHeaders }
-  );
-  if (tradesRes.status >= 300) throw new Error(`trades_v2 sell-timing candidate query failed: ${tradesRes.status} ${await tradesRes.text()}`);
-  const tradesRows = await tradesRes.json();
+  const tradesRows = await fetchAllRows(`${SUPABASE_URL}/rest/v1/trades_v2?select=${tradesSelectCols}&sell_date=lte.${todayPT}&order=sell_date.asc,id.asc`, anonHeaders, 'trades_v2 sell-timing candidate query');
   console.log(`\nfill-outcomes: ${tradesRows.length} trades_v2 row(s) with sell_date <= ${todayPT}, considered for sell-timing (recomputed every run).`);
 
   // Two daily-bar fetches per trade -- adjustment=all and adjustment=raw --
@@ -784,9 +780,8 @@ async function main() {
   // stuck for good and must surface too), and fail the job naming every
   // stuck row. Clears itself once they resolve. --write runs only: a dry
   // run writes nothing, so it would fail on rows it was about to resolve.
-  const unresolvedRes = await fetch(`${SUPABASE_URL}/rest/v1/signal_log?select=symbol,signal_date,engine_source,tier&taken_resolution=eq.unresolved`, { headers: anonHeaders });
-  if (unresolvedRes.status >= 300) throw new Error(`stale-unresolved assertion: could not read signal_log: ${unresolvedRes.status} ${await unresolvedRes.text()}`);
-  const stuck = (await unresolvedRes.json()).filter(r => tradingDayHasClosed(addCalendarDays(r.signal_date, TAKEN_WINDOW_CALENDAR_DAYS)));
+  const unresolved = await fetchAllRows(`${SUPABASE_URL}/rest/v1/signal_log?select=symbol,signal_date,engine_source,tier&taken_resolution=eq.unresolved&order=id`, anonHeaders, 'stale-unresolved assertion: signal_log read');
+  const stuck = unresolved.filter(r => tradingDayHasClosed(addCalendarDays(r.signal_date, TAKEN_WINDOW_CALENDAR_DAYS)));
   if (stuck.length) {
     const list = stuck.map(r => `${r.engine_source} ${r.symbol} ${r.signal_date} ${r.tier}`).join(', ');
     throw new Error(`${stuck.length} signal_log row(s) still 'unresolved' after their ${TAKEN_WINDOW_CALENDAR_DAYS}-day window closed -- Pass 2 should have resolved them, and once older than the 12-day lookback they never will: ${list}`);

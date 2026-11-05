@@ -45,6 +45,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
 import { selectByIds } from './lib/select-by-ids.mjs';
 import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
+import { fetchAllRows } from './lib/read-all.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
@@ -125,12 +126,7 @@ async function main() {
   const anonHeaders = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' };
   const selectCols = 'id,symbol,signal_date,reference_price,ret_close,ret_1d,ret_3d,ret_5d';
   await assertReadable(SUPABASE_URL, anonHeaders, 'signal_log'); // an audit that read nothing has not passed
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/signal_log?select=${selectCols}&or=(ret_close.not.is.null,ret_1d.not.is.null,ret_3d.not.is.null,ret_5d.not.is.null)&order=signal_date.asc`,
-    { headers: anonHeaders }
-  );
-  if (res.status >= 300) throw new Error(`signal_log query failed: ${res.status} ${await res.text()}`);
-  const rows = await res.json();
+  const rows = await fetchAllRows(`${SUPABASE_URL}/rest/v1/signal_log?select=${selectCols}&or=(ret_close.not.is.null,ret_1d.not.is.null,ret_3d.not.is.null,ret_5d.not.is.null)&order=signal_date.asc,id.asc`, anonHeaders, 'signal_log query');
   console.log(`audit-signal-log-splits: ${rows.length} row(s) with at least one filled daily return, checking each against a fresh raw-vs-adjusted comparison.`);
 
   const barsCache = new Map(); // `${symbol}|${signal_date}` -> { allBars, rawBars }

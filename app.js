@@ -7128,9 +7128,9 @@ No snapshot history yet — snapshots are recorded after each screener run for s
   let data;
   try {
     const res = await withTimeout(
-      supabaseClient.from('rating_snapshots').select('ticker, captured_at, score').order('captured_at', { ascending: true }),
-      10000,
-      'Supabase rating_snapshots query timed out after 10s'
+      readAllRows(() => supabaseClient.from('rating_snapshots').select('ticker, captured_at, score', { count: 'exact' }).order('captured_at', { ascending: true }).order('id', { ascending: true })),
+      30000,
+      'Supabase rating_snapshots query timed out after 30s'
     );
     if (res.error) throw res.error;
     data = res.data;
@@ -7383,7 +7383,7 @@ function mapTradesV2ToSoldShape(row) {
 // every time this succeeds.
 async function loadSoldFromSupabase() {
   // trades_v2, not trades (cutover, 2026-09-05) — see writeTradeToSupabase.
-  const { data, error } = await supabaseClient.from('trades_v2').select('*').order('sell_date', { ascending: false });
+  const { data, error } = await readAllRows(() => supabaseClient.from('trades_v2').select('*', { count: 'exact' }).order('sell_date', { ascending: false }).order('id', { ascending: true }));
   if (error) throw error;
   // trades_v2 is never empty (451+ sales, nothing deletes them), so an empty
   // read is a denied or broken one (RLS returns [] for a read it won't
@@ -8024,7 +8024,7 @@ async function generateClaudeReport() {
       // the same trades wastes time later. Shipped as its own change, before
       // the trades_v2 cutover, so the cutover commit stays isolated.
       // trades_v2, not trades (cutover, 2026-09-05) — see writeTradeToSupabase.
-      supabaseClient.from('trades_v2').select('*').order('buy_date', { ascending: true }).order('ticker', { ascending: true }),
+      readAllRows(() => supabaseClient.from('trades_v2').select('*', { count: 'exact' }).order('buy_date', { ascending: true }).order('ticker', { ascending: true }).order('id', { ascending: true })),
       10000,
       'Supabase trades query timed out after 10s'
     );
@@ -9470,14 +9470,14 @@ async function exportAndArchiveDatabase() {
     // trades_v2, not trades (cutover, 2026-09-05) -- see writeTradeToSupabase.
     // buildSupabaseArchiveReport reads raw snake_case columns directly; every
     // column it uses keeps the same name in trades_v2, so no other change needed.
-    const { data: trades, error: tradesErr } = await supabaseClient
-      .from('trades_v2').select('*').order('buy_date', { ascending: true });
+    const { data: trades, error: tradesErr } = await readAllRows(() => supabaseClient
+      .from('trades_v2').select('*', { count: 'exact' }).order('buy_date', { ascending: true }).order('id', { ascending: true }));
     if (tradesErr) throw tradesErr;
     if (!trades || !trades.length) { showAlert('No trades in Supabase to archive yet.'); return; }
 
     let snapshotRows = [];
     try {
-      const { data, error } = await supabaseClient.from('rating_snapshots').select('ticker, captured_at');
+      const { data, error } = await readAllRows(() => supabaseClient.from('rating_snapshots').select('ticker, captured_at', { count: 'exact' }).order('id', { ascending: true }));
       if (!error && data) snapshotRows = data;
     } catch(e) {}
 
@@ -9842,7 +9842,7 @@ async function exportAllData(btn) {
       loadPortfolioFromSupabase(),
       loadSettingsFromSupabase(),
       // trades_v2, not trades (cutover, 2026-09-05) -- see writeTradeToSupabase.
-      supabaseClient.from('trades_v2').select('*').order('buy_date', { ascending: true }),
+      readAllRows(() => supabaseClient.from('trades_v2').select('*', { count: 'exact' }).order('buy_date', { ascending: true }).order('id', { ascending: true })),
     ]);
     if (tradesRes.error) throw tradesRes.error;
 

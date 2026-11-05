@@ -27,9 +27,9 @@ const before = (src, a, b, label) => {
 };
 run('each script runs its control before the reads it guards', () => {
   const fo = readSource('scripts/fill-outcomes.mjs');
-  for (const t of ['signal_log', 'trades_v2']) before(fo, `await assertReadable(SUPABASE_URL, anonHeaders, '${t}');`, 'const rowsRes = await fetch(', `fill-outcomes ${t}`);
+  for (const t of ['signal_log', 'trades_v2']) before(fo, `await assertReadable(SUPABASE_URL, anonHeaders, '${t}');`, 'const rows = await fetchAllRows(', `fill-outcomes ${t}`);
   // ...and nothing in fill-outcomes reads before those controls
-  const firstRead = fo.search(/fetch\(\s*`\$\{SUPABASE_URL\}\/rest\/v1\/[a-z_]+\?select=/);
+  const firstRead = fo.search(/fetch(?:AllRows)?\(\s*`\$\{SUPABASE_URL\}\/rest\/v1\/[a-z_]+\?select=/);
   assert.ok(fo.indexOf("assertReadable(SUPABASE_URL, anonHeaders, 'trades_v2')") < firstRead, 'fill-outcomes: a read precedes the controls');
   const sg = readSource('scripts/lib/scan-gate.mjs');
   before(sg, "'scan_runs');", '/rest/v1/scan_runs?engine_source=eq.', 'scan gate');
@@ -110,7 +110,9 @@ run('the Sold list and analysis periods keep this phone\'s copy on an empty read
     c.persist = k => c.persisted.push(k);
     c.updateMarketBanner = () => { c.banner++; };
     c.mapTradesV2ToSoldShape = r => ({ ticker: r.ticker });
-    c.supabaseClient = { from: () => ({ select: () => ({ order: async () => ({ data: rows, error: null }) }) }) };
+    const chain = { order: () => chain, then: done => done({ data: rows, error: null }) };
+    c.supabaseClient = { from: () => ({ select: () => chain }) };
+    c.readAllRows = q => q();
     vm.createContext(c);
     vm.runInContext(['noteDataReadProblem', 'clearDataReadProblem', 'loadSoldFromSupabase', 'loadAnalysisPeriodsFromSupabase'].map(grab).join('\n')
       + ';Object.assign(globalThis, { loadSoldFromSupabase, loadAnalysisPeriodsFromSupabase });', c);

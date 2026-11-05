@@ -46,6 +46,7 @@ import { readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fetchAllRows } from './lib/read-all.mjs';
 import { alpacaHeaders, fetchBars } from './lib/alpaca-bars.mjs';
 import { scorerFromSource, snapshotScoreInputs } from './lib/rescore-snapshot.mjs';
 import { scoringHash } from './lib/scoring-hash.mjs';
@@ -58,7 +59,7 @@ const rev = argv.includes('--rev') ? argv[argv.indexOf('--rev') + 1] : null;
 if (!rev === !argv.includes('--live')) { console.error('usage: --rev <commit> | --live'); process.exit(2); }
 const raw = rev
   ? JSON.parse(execSync(`git show ${rev}:data/backups/signal_snapshot_at_buy.json`, { cwd: ROOT, maxBuffer: 1e9 }).toString())
-  : await (await fetch(`${SB}/rest/v1/signal_snapshot_at_buy?select=*`, { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } })).json();
+  : await fetchAllRows(`${SB}/rest/v1/signal_snapshot_at_buy?select=*&order=id`, { apikey: KEY, Authorization: `Bearer ${KEY}` }, 'signal_snapshot_at_buy read');
 if (!Array.isArray(raw)) throw new Error(JSON.stringify(raw));
 const rows = raw.filter(r => r.snapshot).sort((a, b) => Number(a.position_id) - Number(b.position_id));
 console.log(`Source: ${rev ? `data/backups/signal_snapshot_at_buy.json at ${rev}` : `LIVE signal_snapshot_at_buy at ${new Date().toISOString()} -- NOT QUOTABLE`}`);
