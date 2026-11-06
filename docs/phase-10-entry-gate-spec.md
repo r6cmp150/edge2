@@ -2574,6 +2574,15 @@ schema harness shows each db/038 guard fires on its own broken precondition and 
 condition goes straight through the old form and aborts the new one. `tests/three-state-guards.test.js` holds every
 unapplied migration to it.
 
+**AN ERROR IS NEVER TRUNCATED, ANYWHERE: NOT IN A TEST RUNNER, A LOG LINE OR A REPORT. TRUNCATION BELONGS IN DISPLAY, NEVER
+IN CAPTURE (2026-11-06).** The sibling of the complete-baseline rule. Four times in one week truncation destroyed the
+evidence needed to diagnose something real: an enumeration window that missed the sale insert's `.select('id')` 4,161
+characters out (twice); a grants query filtered for readability; "..." runs in db/037's abort text as it was relayed; and
+the test runner cutting the path off the one test that died in a parallel run. `scripts/run-tests.mjs` now prints, under
+its one-line summaries, the complete output of every file that did not pass, as captured, and `--json` carries it;
+`tests/run-tests-checker.test.js` holds it (5 mutants killed, among them a mistyped trim that ate trailing letters and
+was itself written while fixing this).
+
 **THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
 mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which
 is luck next to "cannot happen". `scripts/lib/mutants.cjs` now refuses a dirty tree (a leftover mutant shows as a
