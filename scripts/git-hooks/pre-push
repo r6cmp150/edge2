@@ -1,0 +1,14 @@
+#!/bin/sh
+# scripts/git-hooks/pre-push (2026-11-06). Main is deployable at every commit, and pushing main deploys it (GitHub Pages
+# serves main). This runs `node scripts/check-push.mjs <sha> --before` on every commit pushed to main and refuses the
+# push if it declares a pending migration (db/pending-migrations.json) or a stale one.
+# A SEATBELT, NOT A BARRIER: it is local to the clone that set core.hooksPath to scripts/git-hooks, `git push
+# --no-verify` skips it, and it is not a CI gate. See the spec, "MAIN IS DEPLOYABLE AT EVERY COMMIT".
+zero=0000000000000000000000000000000000000000
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/main" ] || continue
+  [ "$local_sha" = "$zero" ] && continue
+  node "$(git rev-parse --show-toplevel)/scripts/check-push.mjs" "$local_sha" --before || status=1
+done
+exit $status

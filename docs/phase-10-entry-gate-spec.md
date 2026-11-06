@@ -2607,6 +2607,16 @@ have broken every buy and sale; it was refused on what the tree showed, and db/0
 - **A migration carved ahead of its app code is checked against the app as deployed:** every added column nullable or
   defaulted; every new CHECK TRUE on the NULLs the deployed app leaves (and says which); every new trigger's effect on
   the paths the deployed app takes; then the deployed app's real write shapes run after it in the schema harness.
+- **Names, not only writes:** PostgREST refuses a request naming an unknown column anywhere (a select, a filter, an
+  order, an on_conflict), so the guard enumerates every column the code names. The write-only version could not see
+  backup-tables' shard filter on db/039's `outcomes_filled_at`, which would have broken the nightly backup on deploy.
+- **Pending migrations are data:** a branch that depends on migrations not yet live lists them in
+  `db/pending-migrations.json`; the guard reports their columns as PENDING, and fails on anything else ahead of the
+  capture. `node scripts/check-push.mjs <sha> --before` refuses a commit that declares any, or a stale one.
+- **The pre-push hook** (`scripts/git-hooks/pre-push`, enabled with `git config core.hooksPath scripts/git-hooks`) runs
+  `--before` on every commit pushed to main. A SEATBELT, NOT A BARRIER: it is local to the clone that set
+  core.hooksPath, `git push --no-verify` skips it, and it is not a CI gate. After a push, check-push can only raise an
+  alarm: the deploy has happened. The barrier would be main no longer being the deploy branch (scoped separately).
 
 **READING WHAT LANDED IS NOT REDUNDANT WITH THE HARNESS (2026-11-06).** A heredoc turned a trim into `/s+$/`, which ate
 trailing letters, in the code that fixed truncation. Mutation testing did not find it: mutants are drawn from the code as

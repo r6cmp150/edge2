@@ -41,6 +41,17 @@ await run('pending migrations: a commit declaring any is refused, and so is a st
   assert.ok(/if \(!pend\.ok\) \{[^\n]*process\.exit\(1\)/.test(src), 'and the after-push check fails on it first');
 });
 
+await run('the pre-push hook runs --before on every commit pushed to main, refuses on its verdict, and says what it is not', () => {
+  const hook = readSource('scripts/git-hooks/pre-push');
+  assert.ok(hook.startsWith('#!/bin/sh'));
+  assert.ok(/\[ "\$remote_ref" = "refs\/heads\/main" \] \|\| continue/.test(hook), 'pushes to main');
+  assert.ok(/node "[^"]*scripts\/check-push\.mjs" "\$local_sha" --before \|\| status=1/.test(hook), 'each pushed commit, --before, and a refusal fails the push');
+  assert.ok(/exit \$status\s*$/.test(hook));
+  assert.ok(hook.includes('A SEATBELT, NOT A BARRIER') && hook.includes('--no-verify') && hook.includes('not a CI gate'));
+  const spec = readSource('docs/phase-10-entry-gate-spec.md').replace(/\s+/g, ' ');
+  assert.ok(spec.includes('A SEATBELT, NOT A BARRIER: it is local to the clone that set core.hooksPath, `git push --no-verify` skips it, and it is not a CI gate.'), 'its limits, where it is defined');
+});
+
 await run('a green run that a newer failed one replaced is not green', () => {
   assert.strictEqual(judgePush('abc', [run1('completed', 'failure'), run1('completed', 'success')]).ok, false, 'runs are newest first');
 });
