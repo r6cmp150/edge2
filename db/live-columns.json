@@ -9,7 +9,8 @@
     "capture_sha256": "c25bfc33a60c632c8c6216fe52604e4786678122ae1a106307fb82788c46b221",
     "tables": 18,
     "columns": 392,
-    "tables_sha256": "b17a1446d7d79e5d1d426225cc729bfb3f1ab67539bf17f47a963c3b65627fa0"
+    "tables_sha256": "b17a1446d7d79e5d1d426225cc729bfb3f1ab67539bf17f47a963c3b65627fa0",
+    "functions_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
   },
   "_migrations": {
     "highest_applied": 40,
@@ -57,6 +58,7 @@
       41
     ]
   },
+  "functions": null,
   "tables": {
     "analysis_periods": [
       "change_description",

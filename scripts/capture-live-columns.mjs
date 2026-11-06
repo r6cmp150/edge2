@@ -19,7 +19,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const QUERY = 'db/inspect-public-schema-read-only.sql';
+// v1 returns an array of tables; v2 an object { query: 'inspect-public-schema-v2', tables, functions, default_acls }.
+const QUERIES = { v1: 'db/inspect-public-schema-read-only.sql', v2: 'db/inspect-public-schema-v2-read-only.sql' };
 const sha = s => createHash('sha256').update(s).digest('hex');
 
 const arg = n => { const i = process.argv.indexOf(n); return i < 0 ? null : process.argv[i + 1]; };
@@ -33,13 +34,19 @@ if (!file || !captured || !by || !applied.length) {
 }
 
 const raw = readFileSync(file);
-const capture = JSON.parse(raw.toString('utf8'));
-if (!Array.isArray(capture) || !capture.every(t => typeof t.table === 'string' && Array.isArray(t.columns))) {
-  console.error(`${file}: not the inspect query's output (an array of { table, columns: [...] })`);
+const parsed = JSON.parse(raw.toString('utf8'));
+const version = Array.isArray(parsed) ? 'v1' : parsed && parsed.query === 'inspect-public-schema-v2' ? 'v2' : null;
+const capture = version === 'v1' ? parsed : version === 'v2' ? parsed.tables : null;
+if (!capture || !Array.isArray(capture) || !capture.every(t => typeof t.table === 'string' && Array.isArray(t.columns))
+    || (version === 'v2' && !Array.isArray(parsed.functions))) {
+  console.error(`${file}: not the output of either inspect query (v1: an array of { table, columns }; v2: { query, tables, functions, default_acls })`);
   process.exit(1);
 }
+const QUERY = QUERIES[version];
 const tables = {};
 for (const t of [...capture].sort((a, b) => a.table.localeCompare(b.table))) tables[t.table] = t.columns.map(c => c.name).sort();
+// functions by name; null when the capture didn't read them (v1), which is "unknown", never "none"
+const functions = version === 'v2' ? [...new Set(parsed.functions.map(f => f.name))].sort() : null;
 const columns = Object.values(tables).reduce((n, c) => n + c.length, 0);
 
 const out = {
@@ -54,12 +61,14 @@ const out = {
     tables: Object.keys(tables).length,
     columns,
     tables_sha256: sha(JSON.stringify(tables)),
+    functions_sha256: sha(JSON.stringify(functions)),
   },
   _migrations: {
     highest_applied: Math.max(...applied),
     applied: [...applied].sort((a, b) => a - b),
     not_applied: [...notApplied].sort((a, b) => a - b),
   },
+  functions,
   tables,
 };
 writeFileSync(path.join(REPO, 'db/live-columns.json'), JSON.stringify(out, null, 2) + '\n');
