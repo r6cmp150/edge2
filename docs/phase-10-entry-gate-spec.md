@@ -2239,6 +2239,22 @@ days, not quiet ones.
    Upper bounds throughout: the sale's fill time isn't stored, so a peak
    can include minutes after he sold. (`scripts/audit-peak-gain.mjs`,
    trades_v2 at `164099a`, bars fetched 2026-11-05.)
+   **Exit rules, replayed (2026-11-06): none clears the +$2.25-a-trade bar.** A replay, not a recommendation
+   (`scripts/audit-exit-rules.mjs`, trades_v2 at `164099a`, the 501-trade population sold on 37 trading days,
+   SIP minute bars, regular session). Against what he actually got:
+
+   | Rule | Changes | Better / worse | Total | Per trade | Without its best contributor | Days better / worse |
+   |---|---|---|---|---|---|---|
+   | Trailing stop, arms at +3%, gives back 1 pt | 85 | 37 / 46 | -$106.98 | -$0.21 | -$0.31 (KDK +$46.94 out) | 12 / 11 |
+   | Trailing stop, arms at +5%, gives back 1 pt | 29 | 18 / 11 | +$44.51 | +$0.09 | +$0.04 (BBAI +$23.08 out) | 10 / 3 |
+   | Fixed exit at +3% | 101 | 58 / 42 | +$7.24 | +$0.01 | -$0.12 (FFAI +$68.00 out) | 15 / 8 |
+
+   The tight rules win on small trades that went +3% and then lost (KDK, FRGT, EMAT, FFAI) and give it back on the
+   runners: AIXI (bought 10-06, sold 10-07 for +$130, the book's largest gain) is closed near +3% on 10-06 by both
+   +3% rules, -$105 and -$101, nearly all of each rule's day; CPNG -$42 to -$58. The leakage at +3% is real, but a
+   rule tight enough to catch it cuts the runners that make his money. LIMITS, in the same breath: the peak runs to
+   the recorded sale time, which is at or after the fill, so a rule can exit after he had sold; and the sample is
+   days, not trades (37 days, and 10 to 23 of them changed by a rule). So no exit change has evidence behind it yet.
 3. **Report-gap fix** (Appendix): ENTRY TIMING prints all four session
    values, every weekday present in the data, and a not-recorded bucket,
    with counts that sum to the total — both copies in `app.js`.
