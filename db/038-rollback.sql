@@ -1,10 +1,12 @@
--- db/038 ROLLBACK: the undo for db/038 (revision 2026-11-06-d). Puts the schema back exactly as it was before db/038.
+-- db/038 ROLLBACK: the undo for db/038 (revision 2026-11-06-e). Puts the schema back exactly as it was before db/038.
 -- IDEMPOTENT: every step is "if exists", so it can be run whether or not db/038 ever applied, or twice; on a database
 -- db/038 never touched it changes nothing.
 -- GUARDED (three-state: it proceeds only on a definite "nothing would be lost"): it aborts, changing nothing, if any of
 -- db/038's new columns already holds real data -- Roman's settings values once the app saves them, a recorded fill
 -- time, a captured verdict, an observed macro path. This undo is for the hours right after db/038 ran, before the app
 -- code that fills those columns is live; afterwards, dropping them would destroy what they were added to keep.
+-- AVAILABLE ONLY BETWEEN db/038 AND THE APP-CODE PUSH, BY DESIGN: once the app saves real values into these columns,
+-- this refuses to run.
 -- It restores db/027's comment on trades_v2.sell_time as it was, although that comment is wrong (it calls the column
 -- the fill time; it is the time the sale was recorded): an undo gives back exactly what was there.
 -- Checked in the schema harness: db/038, then this, gives back the same columns, constraints, triggers and tables; and
@@ -33,7 +35,7 @@ begin
     if (n > 0) is not false then held := held || format(' [rating_snapshots: %s rows with new-column data]', n); end if;
   end if;
   if (exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'portfolio' and column_name = 'macro_path_at_buy')) is not false then
-    execute $q$select count(*) from portfolio where macro_path_at_buy is not null$q$ into n;
+    execute $q$select count(*) from portfolio where macro_path_at_buy <> 'unknown'$q$ into n;
     if (n > 0) is not false then held := held || format(' [portfolio: %s positions with a macro path]', n); end if;
   end if;
   if (held <> '') is not false then

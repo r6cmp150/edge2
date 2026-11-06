@@ -1,5 +1,10 @@
--- REVISION 2026-11-06-d. Run 2 reads this back from the database and fails on any other, so pasting an old copy
+-- REVISION 2026-11-06-e. Run 2 reads this back from the database and fails on any other, so pasting an old copy
 -- is detected, not announced against. A test ties this stamp to the file's contents.
+-- REVISED 2026-11-06 (e): the macro path vocabulary separates "not measured" from "measured, indeterminate". The
+-- engine running and classifying nothing was 'pattern_groq_failed' with a NULL condition, one value shared with
+-- "the pattern classified, Groq failed", told apart only by an absence; it is now 'unclassified'. And "the writer sent
+-- nothing" is 'unknown' in all three tables: portfolio.macro_path_at_buy was NULL for it, and is now NOT NULL DEFAULT
+-- 'unknown', like rating_snapshots.macro_path and trades_v2.macro_path. One vocabulary, in every column's comment.
 -- REVISED 2026-11-06 (d): macro_observations' grants are explicit (revoke all, then anon SELECT and INSERT), not
 -- whatever the default ACL gives: after db/037 it would otherwise be the one EDGE table still open to authenticated
 -- and to TRIGGER, REFERENCES and MAINTAIN. Run 2 probes its full grid, eight privileges by three roles.
@@ -128,7 +133,7 @@ create table macro_observations (
   groq_headlines jsonb,                            -- the headlines sent: [{id, created_at, source, headline}]
   groq_headlines_empty boolean,                    -- true = the prompt said "no recent headlines available"
   groq_raw_reply text,
-  path text not null check (path in ('pattern', 'groq', 'pattern_groq_failed', 'not_fetched')),
+  path text not null check (path in ('pattern', 'groq', 'pattern_groq_failed', 'unclassified', 'not_fetched')),
   condition text,                                  -- what the banner shows (from `path`); NULL = could not be determined
   display_threshold numeric not null,              -- the cut in effect: the base line, every day (observe-only)
   would_adjust jsonb,                              -- {"TECH": -15, ...}: MACRO_ADJUSTMENTS[condition], NOT APPLIED
@@ -137,10 +142,10 @@ create table macro_observations (
   check (groq_asked = (groq_ask_reason is not null)),
   check (not groq_asked or groq_failed is not null)
 );
-comment on table macro_observations is 'db/038: one row per macro fetch. Observe-only: nothing here changes a score, the display cut, or what is stored as buyable (applied is CHECKed false). Both the pattern answer and Groq''s are kept so the pre-committed test (phase-10 spec) can measure which, if either, predicts anything. db038_revision=2026-11-06-d';
+comment on table macro_observations is 'db/038: one row per macro fetch. Observe-only: nothing here changes a score, the display cut, or what is stored as buyable (applied is CHECKed false). Both the pattern answer and Groq''s are kept so the pre-committed test (phase-10 spec) can measure which, if either, predicts anything. db038_revision=2026-11-06-e';
 comment on column macro_observations.etf_moves is 'Percent change vs previous close at fetched_at, per ETF. NULL = the quote was missing or stale (never coerced to 0, which would read as a flat sector; never yesterday''s move read as today''s). missing_etfs and unjudged_etfs say which.';
 comment on column macro_observations.unjudged_etfs is 'ETFs whose dailyBar was not from the reading''s own date (before that ETF''s first trade of the day the snapshot serves the previous session''s bar), or had no date. Their move is NULL: a stale quote gives a valid-looking move, so it is not classified from.';
-comment on column macro_observations.path is 'Which answer the banner shows: pattern (unambiguous, Groq not needed), groq (Groq answered), pattern_groq_failed (Groq asked and failed; the pattern answer is shown), not_fetched (the logger: no macro context).';
+comment on column macro_observations.path is 'Which answer the banner shows, and why. not_fetched = the app had no macro reading when it scored; pattern = the pattern classified the market; groq = Groq classified it; pattern_groq_failed = Groq was needed and failed, and the pattern''s classification is used; unclassified = the engine ran and neither the pattern nor Groq classified the market. A missing reading and an indeterminate one are different values, never one value and its absence.';
 comment on column macro_observations.groq_request is 'The Alpaca news request behind the headlines. The feed is irreproducible by construction (now moves, no end bound, articles added and updated), so the stored headlines are the only record of what Groq saw.';
 alter table macro_observations enable row level security;
 create policy "anon insert" on macro_observations for insert to anon with check (true);
@@ -151,7 +156,7 @@ grant select, insert on macro_observations to anon; -- explicit (revision d): th
 -- 2. rating_snapshots
 alter table rating_snapshots
   add column macro_path text not null default 'unknown'
-    check (macro_path in ('pattern', 'groq', 'pattern_groq_failed', 'not_fetched', 'unknown')),
+    check (macro_path in ('pattern', 'groq', 'pattern_groq_failed', 'unclassified', 'not_fetched', 'unknown')),
   add column display_threshold numeric,
   add column macro_observation_id uuid,
   add column tier text check (tier is null or tier in ('SHOWN', 'BELOW_THRESHOLD')),
@@ -160,14 +165,14 @@ alter table rating_snapshots
 comment on column rating_snapshots.scoring_version is 'db/038: the scoring version that produced this score. Every reader keys off it. NULL = not recorded (before db/038), never "the same as now".';
 comment on column rating_snapshots.scoring_hash is 'db/038: the hash of the formula that produced this score. NULL with a version set is a real state: a version with no hash.';
 comment on column rating_snapshots.tier is 'db/038: SHOWN or BELOW_THRESHOLD, the scan''s own decision, as signal_log.tier. From this column on, every scored row is written. NULL = the earlier era: only shown signals scoring 60+ were written. Never pool the two without saying so.';
-comment on column rating_snapshots.macro_path is 'db/038: how macro_condition was decided. unknown = written before db/038 (no path was recorded anywhere), never a guess.';
+comment on column rating_snapshots.macro_path is 'db/038: how macro_condition was decided. unknown = the writer sent no macro reading (every row before db/038, and any writer that does not compute one); not_fetched = the app had no macro reading when it scored; pattern = the pattern classified the market; groq = Groq classified it; pattern_groq_failed = Groq was needed and failed, and the pattern''s classification is used; unclassified = the engine ran and neither the pattern nor Groq classified the market. A missing reading and an indeterminate one are different values, never one value and its absence.';
 comment on column rating_snapshots.display_threshold is 'db/038: the display cut in force at this scan; tier says whether this row passed it. NULL = not recorded (before db/038). Before observe-only shipped, the cut rose to 65 on GEOPOLITICAL/RISK_OFF days, so older rows sit behind a cut that moved by day.';
 comment on column rating_snapshots.macro_observation_id is 'db/038: join key to macro_observations.id (no FK: written separately, so a failed observation write cannot fail the snapshot batch).';
 
 -- 3. trades_v2
 alter table trades_v2
   add column macro_path text not null default 'unknown'
-    check (macro_path in ('pattern', 'groq', 'pattern_groq_failed', 'not_fetched', 'unknown')),
+    check (macro_path in ('pattern', 'groq', 'pattern_groq_failed', 'unclassified', 'not_fetched', 'unknown')),
   add column sell_filled_at timestamptz,
   add column sell_filled_at_source text check (sell_filled_at_source is null or sell_filled_at_source in ('entered', 'default', 'not_known')),
   add constraint trades_v2_sell_filled_at_consistent check (
@@ -188,15 +193,15 @@ comment on column trades_v2.verdict_display_state is 'db/038: CAPTURED_BEFORE_FI
 comment on column trades_v2.sell_filled_at is 'db/038: when the sale filled. NULL: not known (see sell_filled_at_source), or a sale from before db/038, which has no fill recorded.';
 comment on column trades_v2.sell_filled_at_source is 'db/038: entered = typed on the sell form; default = the form''s starting value accepted, which says nothing about the fill; not_known = Roman said so. NULL = a sale from before db/038.';
 comment on column trades_v2.sell_time is 'When the sale was RECORDED, PT wall clock HH:MM, for every row ever written. Corrects db/027, which called this the sell fill: it never was. The fill is sell_filled_at.';
-comment on column trades_v2.macro_path is 'db/038: how macro_condition at buy was decided. unknown = before db/038; for these 451 rows no ETF moves were stored, so it is genuinely unknown.';
+comment on column trades_v2.macro_path is 'db/038: how macro_condition at buy was decided, copied from the position. unknown = the writer sent no macro reading (every row before db/038, and any writer that does not compute one); not_fetched = the app had no macro reading when it scored; pattern = the pattern classified the market; groq = Groq classified it; pattern_groq_failed = Groq was needed and failed, and the pattern''s classification is used; unclassified = the engine ran and neither the pattern nor Groq classified the market. A missing reading and an indeterminate one are different values, never one value and its absence.';
 
 -- 3b. portfolio: the buy's macro path rides on the open position until the
 -- sale copies it to trades_v2 (positions round-trip through this table, so
 -- without it a reload would lose it). NULL = bought before db/038.
 alter table portfolio
-  add column macro_path_at_buy text
-    check (macro_path_at_buy is null or macro_path_at_buy in ('pattern', 'groq', 'pattern_groq_failed', 'not_fetched', 'unknown'));
-comment on column portfolio.macro_path_at_buy is 'db/038: how macro_condition_at_buy was decided; copied to trades_v2.macro_path at sale. NULL = bought before db/038 (written there as unknown).';
+  add column macro_path_at_buy text not null default 'unknown'
+    check (macro_path_at_buy in ('pattern', 'groq', 'pattern_groq_failed', 'unclassified', 'not_fetched', 'unknown'));
+comment on column portfolio.macro_path_at_buy is 'db/038: how macro_condition_at_buy was decided; copied to trades_v2.macro_path at sale. unknown = the writer sent no macro reading (every row before db/038, and any writer that does not compute one); not_fetched = the app had no macro reading when it scored; pattern = the pattern classified the market; groq = Groq classified it; pattern_groq_failed = Groq was needed and failed, and the pattern''s classification is used; unclassified = the engine ran and neither the pattern nor Groq classified the market. A missing reading and an indeterminate one are different values, never one value and its absence.';
 
 -- 4. settings
 alter table settings

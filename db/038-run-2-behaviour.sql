@@ -2,14 +2,14 @@
 -- that everything it tried is rolled back. The result is the "RESULT:" line inside that error message: read it,
 -- not the red label. (Read three times as a failure: db/035, db/040, db/037.)
 -- db/038 run 2 of 2: behaviour, after run 1. Expected: an ERROR reading
--- "db/038 run 2 RESULT: PASS | revision ... | parts: ... | constraints (expected 6): ... | refused
+-- "db/038 run 2 RESULT: PASS | revision ... | parts: ... | constraints (expected 8): ... | refused
 -- (expected 3): ... | still allowed (expected 8): ...". Any WRONG entry names what failed.
 do $$
 declare
   refused text := '';
   allowed text := '';
   wrong text := '';
-  expected_revision constant text := '2026-11-06-d';
+  expected_revision constant text := '2026-11-06-e';
   applied_revision text;
   parts text := '';
   missing text;
@@ -52,7 +52,8 @@ begin
       ('sell_filled_at-needs-source', 'a fill time with no source', $p$update trades_v2 set sell_filled_at = now(), sell_filled_at_source = null where id = $1$p$),
       ('verdict-consistent', 'CAPTURED with nothing captured', $p$update trades_v2 set verdict_display_state = 'CAPTURED_AFTER_FILL', verdict_displayed_at_sale = null where id = $1$p$),
       ('verdict-needs-state', 'a capture with no state', $p$update trades_v2 set verdict_display_state = null, verdict_displayed_at_sale = '{"verdict":{}}'::jsonb where id = $1$p$),
-      ('verdict-state', 'an unknown state', $p$update trades_v2 set verdict_display_state = 'SOMETHING' where id = $1$p$)
+      ('verdict-state', 'an unknown state', $p$update trades_v2 set verdict_display_state = 'SOMETHING' where id = $1$p$),
+      ('macro-path-vocabulary', 'a macro path outside the vocabulary', $p$update trades_v2 set macro_path = 'guessed' where id = $1$p$)
     ) as v(name, what, stmt) loop
     begin
       execute probe.stmt using target;
@@ -64,6 +65,15 @@ begin
                                else format(' [%s: refused by something other than a CHECK: %s %s]', probe.name, sqlstate, sqlerrm) end;
     end;
   end loop;
+  -- revision e: 'unclassified' is in the vocabulary of every macro path column (allowed, then undone in its block)
+  begin
+    update trades_v2 set macro_path = 'unclassified' where id = target;
+    update rating_snapshots set macro_path = 'unclassified' where id = (select id from rating_snapshots limit 1);
+    raise exception 'db038-unclassified-allowed';
+  exception when others then
+    if (sqlerrm = 'db038-unclassified-allowed') is not false then constrained := constrained || ' unclassified-allowed';
+    else wrong := wrong || ' [unclassified refused: ' || sqlstate || ' ' || sqlerrm || ']'; end if;
+  end;
   -- write-once: a real write first (the final raise rolls it back), then a change the trigger alone must refuse
   update trades_v2 set verdict_display_state = 'NOT_DISPLAYED' where id = target;
   begin update trades_v2 set verdict_display_state = 'CAPTURED_FILL_UNKNOWN', verdict_displayed_at_sale = '{}'::jsonb where id = target;
@@ -155,6 +165,6 @@ begin
   end loop;
   allowed := allowed || format(' macro_observations-grid(%s/24)', g_ok);
 
-  raise exception 'db/038 run 2 RESULT: % | revision % | parts:% | constraints (expected 6):% | refused (expected 3):%. | still allowed (expected 8):%.%  Raised on purpose so everything rolls back; every probe was WHERE FALSE and touched no row.',
+  raise exception 'db/038 run 2 RESULT: % | revision % | parts:% | constraints (expected 8):% | refused (expected 3):%. | still allowed (expected 8):%.%  Raised on purpose so everything rolls back; every probe was WHERE FALSE and touched no row.',
     case when wrong = '' then 'PASS' else 'FAIL' end, applied_revision, parts, constrained, refused, allowed, case when wrong = '' then '' else ' | WRONG:' || wrong end;
 end $$;
