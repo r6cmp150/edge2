@@ -1,3 +1,6 @@
+-- SUPABASE WILL SAY "Failed to run sql query" FOR A PASS. This file ends by raising an error ON PURPOSE, so
+-- that everything it tried is rolled back. The result is the "RESULT:" line inside that error message: read it,
+-- not the red label. (Read three times as a failure: db/035, db/040, db/037.)
 do $$
 declare
   refused int := 0;

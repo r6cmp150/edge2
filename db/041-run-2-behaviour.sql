@@ -1,3 +1,6 @@
+-- SUPABASE WILL SAY "Failed to run sql query" FOR A PASS. This file ends by raising an error ON PURPOSE, so
+-- that everything it tried is rolled back. The result is the "RESULT:" line inside that error message: read it,
+-- not the red label. (Read three times as a failure: db/035, db/040, db/037.)
 -- db/041 run 2 of 2: behaviour, after run 1. Writes nothing: each probe copies an existing row with engine_source
 -- changed. NOT NULL and the CHECK are evaluated before the primary key, so a refused value stops at 23502
 -- (not_null_violation) or 23514 (check_violation), and an accepted one collides with the key it copied (23505).
