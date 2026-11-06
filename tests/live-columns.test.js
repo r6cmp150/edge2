@@ -284,6 +284,316 @@ function enumerate() {
   });
 }
 
+// ===== NAMES (2026-11-06). PostgREST refuses a request that NAMES an unknown column anywhere, not only in a payload:
+// .select('a'), .eq('a', ..), .order('a'), ?a=eq.1, ?order=a.asc, ?or=(a.is.null), ?on_conflict=a. So the invariant is
+// that main never NAMES a column the live schema lacks. The same three states as the writes.
+const HOLE = '\u0002'; // an interpolation the walker can't resolve: harmless in a value, NOT ENUMERABLE in a column or table
+const shown = s => s.replace(new RegExp(HOLE, 'g'), '${?}').slice(0, 60);
+function splitTop(s) {
+  const out = [];
+  let depth = 0, start = 0;
+  for (let j = 0; j <= s.length; j++) {
+    const ch = s[j];
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if ((ch === ',' && depth === 0) || j === s.length) { out.push(s.slice(start, j).trim()); start = j + 1; }
+  }
+  return out.filter(Boolean);
+}
+function column(c, what) {
+  if (!/^[a-z_][a-z_0-9]*$/.test(c)) throw new NotEnumerable(`${what}: a column the walker can't read: ${shown(c)}`);
+  return c;
+}
+// "a, b:c, d::text, e->>f, *". An embedded resource rel(..) names another table: the walker doesn't follow it.
+function selectList(s) {
+  return splitTop(s).filter(i => i !== '*').map(i => {
+    if (i.includes('(')) throw new NotEnumerable(`an embedded resource in a select: ${shown(i)}`);
+    return column(i.replace(/^[A-Za-z_]\w*:(?!:)/, '').replace(/::\w+$/, '').replace(/->>?.*$/, ''), 'select');
+  });
+}
+// "(a.is.null,b.eq.1,and(c.gt.2,d.is.null))": each condition's column is what precedes its operator.
+function logicTree(s) {
+  if (!/^\([\s\S]*\)$/.test(s)) throw new NotEnumerable(`a logic filter the walker can't read: ${shown(s)}`);
+  return splitTop(s.slice(1, -1)).flatMap(c => {
+    const nested = c.match(/^(?:not\.)?(?:and|or)(\([\s\S]*\))$/);
+    return nested ? logicTree(nested[1]) : [column(c.split('.')[0], 'or/and')];
+  });
+}
+// The columns a query string names. limit and offset name none; every other key is a column filter.
+function queryNames(q) {
+  const out = [];
+  for (const p of q.split('&').filter(Boolean)) {
+    const eq = p.indexOf('=');
+    if (eq < 0) throw new NotEnumerable(`a query part the walker can't read: ${shown(p)}`);
+    const k = p.slice(0, eq), v = p.slice(eq + 1);
+    if (k === 'select') out.push(...selectList(v));
+    else if (k === 'order') out.push(...splitTop(v).map(o => column(o.split('.')[0], 'order')));
+    else if (k === 'on_conflict' || k === 'columns') out.push(...v.split(',').map(c => column(c.trim(), k)));
+    else if (/^(not\.)?(or|and)$/.test(k)) out.push(...logicTree(v));
+    else if (k !== 'limit' && k !== 'offset') out.push(column(k, 'filter'));
+  }
+  return out;
+}
+
+// The end of the template literal opening at t[i] (a backtick), interpolations skipped whole.
+function templateEnd(t, i) {
+  for (let j = i + 1; j < t.length; j++) {
+    if (t[j] === '\\') { j++; continue; }
+    if (t[j] === '$' && t[j + 1] === '{') { const b = balanced(t, j + 1); if (!b) return -1; j += b.length; continue; }
+    if (t[j] === '`') return j;
+  }
+  return -1;
+}
+// a ? b : c at the top level -> [a, b, c]
+function ternary(expr) {
+  let depth = 0, q = null, qAt = -1, nest = 0;
+  for (let j = 0; j < expr.length; j++) {
+    const ch = expr[j];
+    if (q) { if (ch === '\\') j++; else if (ch === q) q = null; continue; }
+    if (ch === "'" || ch === '"') { q = ch; continue; }
+    if (ch === '`') { j = templateEnd(expr, j); if (j < 0) return null; continue; }
+    if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) depth--;
+    else if (depth === 0 && ch === '?' && !'.?'.includes(expr[j + 1]) && expr[j - 1] !== '?') { if (qAt < 0) qAt = j; else nest++; }
+    else if (depth === 0 && ch === ':' && qAt >= 0) { if (nest) nest--; else return [expr.slice(0, qAt), expr.slice(qAt + 1, j), expr.slice(j + 1)]; }
+  }
+  return null;
+}
+// The rest of the statement starting at src[i]: up to the first ; or newline-ended line at depth 0.
+function statementAt(src, i) {
+  let depth = 0, q = null;
+  for (let j = i; j < src.length; j++) {
+    const ch = src[j];
+    if (q) { if (ch === '\\') j++; else if (ch === q) q = null; continue; }
+    if (ch === "'" || ch === '"') { q = ch; continue; }
+    if (ch === '`') { j = templateEnd(src, j); if (j < 0) return src.slice(i); continue; }
+    if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) { if (depth === 0) return src.slice(i, j); depth--; }
+    else if (depth === 0 && (ch === ';' || (ch === '\n' && !/^\s*[.?:+]/.test(src.slice(j + 1, j + 40)) && !/[=,(+?:]\s*$/.test(src.slice(i, j))))) return src.slice(i, j);
+  }
+  return src.slice(i);
+}
+// The function whose body contains position i: { name, params: [{ name, dflt }], start, end }.
+function enclosingFunction(src, i) {
+  let found = null;
+  for (const m of src.slice(0, i).matchAll(/(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const params = balanced(src, m.index + m[0].length - 1);
+    const open = src.indexOf('{', m.index + m[0].length - 1 + params.length);
+    const body = balanced(src, open);
+    if (body && open + body.length > i) {
+      found = { name: m[1], start: open, end: open + body.length, params: entries(`{${params.slice(1, -1)}}`).map(p => { const d = p.match(/^([A-Za-z_$][\w$]*)\s*(?:=\s*([\s\S]+))?$/); return d ? { name: d[1], dflt: d[2] } : { name: null }; }) };
+    }
+  }
+  return found;
+}
+// Calls of a function, in its own file and in files that import it by name: [{ file, src, at, args }].
+function callsOf(fn, file, ctx) {
+  const base = path.basename(file);
+  const out = [];
+  for (const [f, s] of ctx.sources) {
+    if (f !== file && !new RegExp(`import\\s*\\{[^}]*\\b${fn}\\b[^}]*\\}\\s*from\\s*'[^']*/${base.replace('.', '\\.')}'`).test(s)) continue;
+    for (const c of s.matchAll(new RegExp(`(?<![\\w$.])${fn}\\(`, 'g'))) {
+      if (/function\s+$/.test(s.slice(Math.max(0, c.index - 9), c.index))) continue;
+      out.push({ file: f, src: s, at: c.index, args: entries(`{${balanced(s, c.index + c[0].length - 1).slice(1, -1)}}`) });
+    }
+  }
+  return out;
+}
+// An identifier's value, by `how` (strings or array): a parameter bound to one caller's argument, a declaration before
+// it, a loop over a literal list, or an unbound parameter (every caller's argument).
+function named(name, src, at, ctx, depth, how) {
+  const b = ctx.bind;
+  if (b && b.file === ctx.file && at >= b.start && at < b.end && name in b.args) {
+    const a = b.args[name];
+    if (!a) throw new NotEnumerable(`parameter ${name}: the caller passes nothing`);
+    return how(a.expr, a.src, a.at, { ...ctx, file: a.file, bind: null }, depth + 1);
+  }
+  const before = src.slice(0, at);
+  const decl = [...before.matchAll(new RegExp(`(?:const|let|var)\\s+${name}\\s*=(?![=>])\\s*`, 'g'))].pop();
+  const loop = [...before.matchAll(new RegExp(`for\\s*\\(\\s*const\\s+${name}\\s+of\\s+(\\[[^\\]]*\\])\\s*\\)`, 'g'))].pop();
+  if (loop && (!decl || loop.index > decl.index)) return array(loop[1], src, loop.index, ctx, depth + 1);
+  if (decl) return how(statementAt(src, decl.index + decl[0].length), src, decl.index, ctx, depth + 1);
+  const fn = enclosingFunction(src, at);
+  const p = fn && fn.params.find(x => x.name === name);
+  if (p) {
+    const out = [];
+    for (const c of callsOf(fn.name, ctx.file, ctx)) out.push(...how(c.args[fn.params.indexOf(p)] ?? p.dflt ?? 'undefined', c.args[fn.params.indexOf(p)] ? c.src : src, c.at, { ...ctx, file: c.file, bind: null }, depth + 1));
+    if (!out.length) throw new NotEnumerable(`parameter ${name} of ${fn.name}: no caller found`);
+    return [...new Set(out)];
+  }
+  throw new NotEnumerable(`no value for ${name}`);
+}
+// The values a string expression can take.
+function strings(expr, src, at, ctx, depth = 0) {
+  if (depth > 10) throw new NotEnumerable(`too deep: ${expr.slice(0, 40)}`);
+  expr = expr.trim();
+  let m;
+  if ((m = expr.match(/^'([^'\\]*)'$/) || expr.match(/^"([^"\\]*)"$/))) return [m[1]];
+  if (expr.startsWith('`') && templateEnd(expr, 0) === expr.length - 1) return template(expr, src, at, ctx, depth, false);
+  const t = ternary(expr);
+  if (t) return [...new Set([...strings(t[1], src, at, ctx, depth + 1), ...strings(t[2], src, at, ctx, depth + 1)])];
+  if ((m = expr.match(/^([\s\S]+)\.join\(\s*'([^']*)'\s*\)$/))) return [array(m[1], src, at, ctx, depth + 1).join(m[2])];
+  if (/^[A-Za-z_$][\w$]*$/.test(expr)) return named(expr, src, at, ctx, depth, strings);
+  throw new NotEnumerable(`a string the walker can't read: ${expr.slice(0, 50)}`);
+}
+// The strings an array expression holds (the union, where it depends on a condition).
+function array(expr, src, at, ctx, depth = 0) {
+  if (depth > 10) throw new NotEnumerable(`too deep: ${expr.slice(0, 40)}`);
+  expr = expr.trim();
+  let m;
+  if (expr.startsWith('[') && balanced(expr, 0) === expr) {
+    return [...new Set(entries(`{${expr.slice(1, -1)}}`).flatMap(e => {
+      const s = e.match(/^\.\.\.new Set\(([\s\S]*)\)$/);
+      return s ? array(s[1], src, at, ctx, depth + 1) : e.startsWith('...') ? array(e.slice(3), src, at, ctx, depth + 1) : strings(e, src, at, ctx, depth + 1);
+    }))];
+  }
+  // X.flatMap(([, p]) => Object.keys(p)), X = [...M.entries()] (filtered or not): the keys of what was put into M
+  if ((m = expr.match(/^([A-Za-z_$][\w$]*)\.flatMap\(\(\[\s*,\s*([\w$]+)\s*\]\)\s*=>\s*Object\.keys\(\2\)\)$/))) {
+    const d = src.slice(0, at).match(new RegExp(`(?:const|let)\\s+${m[1]}\\s*=\\s*\\[\\s*\\.\\.\\.([A-Za-z_$][\\w$]*)\\.entries\\(\\)\\s*\\]`));
+    if (!d) throw new NotEnumerable(`${m[1]} is not the entries of a collection`);
+    return [...collected(d[1], src, { aliases: {}, ...ctx }, 0)];
+  }
+  if ((m = expr.match(/^Object\.keys\(([\s\S]*?)(\[0\])?\)$/))) return [...resolve(m[1], src, at, { aliases: {}, ...ctx }, 0)]; // resolve() keeps its own depth budget
+  const t = ternary(expr);
+  if (t) return [...new Set([...array(t[1], src, at, ctx, depth + 1), ...array(t[2], src, at, ctx, depth + 1)])];
+  if (/^[A-Za-z_$][\w$]*$/.test(expr)) return named(expr, src, at, ctx, depth, array);
+  throw new NotEnumerable(`an array the walker can't read: ${expr.slice(0, 50)}`);
+}
+// A template's values. With holes, an interpolation the walker can't resolve becomes HOLE (fine in a value position);
+// without, it is NotEnumerable.
+function template(t, src, at, ctx, depth, holes) {
+  let alts = [''];
+  for (let j = 1; j < t.length - 1; j++) {
+    if (t[j] === '\\') { alts = alts.map(a => a + t[j + 1]); j++; continue; }
+    if (t[j] === '$' && t[j + 1] === '{') {
+      const b = balanced(t, j + 1);
+      let vals;
+      try { vals = strings(b.slice(1, -1), src, at, ctx, depth + 1); } catch (e) { if (!(e instanceof NotEnumerable) || !holes) throw e; vals = [HOLE]; }
+      alts = alts.flatMap(a => vals.map(v => a + v));
+      if (alts.length > 512) throw new NotEnumerable(`too many values: ${t.slice(0, 50)}`);
+      j += b.length;
+      continue;
+    }
+    alts = alts.map(a => a + t[j]);
+  }
+  return [...new Set(alts)];
+}
+
+// scripts/backup-tables.mjs reads every table its rules list, each query built from data in the modules it imports. Its
+// names are computed from those same modules; the templates below are what that computation models, and if any of them
+// changes the model is stale and the site is NOT ENUMERABLE.
+const BACKUP = {
+  file: 'scripts/backup-tables.mjs',
+  urls: ['`${SUPABASE_URL}/rest/v1/${table}?${query}`', '`${SUPABASE_URL}/rest/v1/${table}?select=id`'],
+  queries: ["fetchTable(table, `select=*&order=id${filter ? `&${filter}` : ''}`)", 'fetchTable(table, `select=*&order=${key}`)', 'const key = WHOLE_FILE_KEY[table];'],
+};
+async function backupSites() {
+  const s = readSource(BACKUP.file), where = BACKUP.file;
+  const stale = [...BACKUP.urls, ...BACKUP.queries].filter(m => !s.includes(m));
+  if ((s.match(/\bfetchTable\(/g) || []).length !== 3) stale.push('fetchTable is called somewhere new');
+  if (stale.length) return [{ where, file: where, table: '(backup)', verb: 'names', state: 'NOT ENUMERABLE', why: `the model of its reads is stale: ${stale.join(' | ')}` }];
+  const load = f => import(require('url').pathToFileURL(path.join(REPO_ROOT, f)).href);
+  const rules = await load('scripts/lib/backup-rules.mjs'), shards = await load('scripts/lib/backup-shards.mjs');
+  return Object.keys(rules.TABLE_RULES).map(t => {
+    const qs = shards.SHARDED[t] ? [`select=*&order=id&${shards.dailyFilter(t, [{ id: 1 }], Date.now(), new Date().toISOString())}`, 'select=id'] : [`select=*&order=${rules.WHOLE_FILE_KEY[t]}`];
+    try { return { where: `${where} (${t})`, file: where, table: t, verb: 'names', state: 'ENUMERATED', cols: new Set(qs.flatMap(queryNames)) }; }
+    catch (e) { if (!(e instanceof NotEnumerable)) throw e; return { where: `${where} (${t})`, file: where, table: t, verb: 'names', state: 'NOT ENUMERABLE', why: e.message }; }
+  });
+}
+
+// The top-level calls of a builder chain after position `from`: [{ name, args }].
+function chainCalls(src, from) {
+  const calls = [];
+  let depth = 0, q = null;
+  for (let i = from; i < src.length; i++) {
+    const ch = src[i];
+    if (q) { if (ch === '\\') i++; else if (ch === q) q = null; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') { q = ch; continue; }
+    if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) { if (depth === 0) break; depth--; }
+    else if (depth === 0 && ch === ';') break;
+    else if (depth === 0 && ch === '.') {
+      const m = src.slice(i).match(/^\.([a-zA-Z]+)\(/);
+      if (m) { const args = balanced(src, i + m[0].length - 1); calls.push({ name: m[1], args: entries(`{${args.slice(1, -1)}}`) }); i += m[0].length - 1 + args.length - 1; }
+    }
+  }
+  return calls;
+}
+const FILTERS = /^(eq|neq|gt|gte|lt|lte|like|ilike|is|in|contains|containedBy|overlaps|textSearch|order|filter|not|likeAllOf|likeAnyOf|ilikeAllOf|ilikeAnyOf|rangeGt|rangeGte|rangeLt|rangeLte|rangeAdjacent)$/;
+const NAMES_NONE = /^(insert|update|upsert|delete|limit|range|single|maybeSingle|csv|abortSignal|returns|throwOnError|then|catch|finally)$/;
+const plain = a => { const m = a && (a.match(/^'([^'\\]*)'$/) || a.match(/^"([^"\\]*)"$/)); return m ? m[1] : null; };
+function chainNames(calls) {
+  const cols = [];
+  for (const { name, args } of calls) {
+    if (name === 'select') { if (args.length) { const s = plain(args[0]); if (s == null) throw new NotEnumerable(`.select(${args[0].slice(0, 30)})`); cols.push(...selectList(s)); } }
+    else if (FILTERS.test(name)) { const c = plain(args[0]); if (c == null) throw new NotEnumerable(`.${name}(${(args[0] || '').slice(0, 30)}, ..)`); cols.push(column(c, `.${name}()`)); }
+    else if (name === 'or') { const s = plain(args[0]); if (s == null) throw new NotEnumerable(`.or(${(args[0] || '').slice(0, 30)})`); cols.push(...logicTree(`(${s})`)); }
+    else if (name === 'match') { if (!args[0] || !args[0].startsWith('{')) throw new NotEnumerable('.match() of something not a literal'); cols.push(...literal(args[0], '', 0, { aliases: {} }, 0)); }
+    else if (!NAMES_NONE.test(name)) throw new NotEnumerable(`.${name}(): a call the walker doesn't know names no column`);
+    if (/^(insert|upsert)$/.test(name) && args[1]) {
+      const oc = args[1].match(/onConflict:\s*([^,}]+)/);
+      if (oc) { const s = plain(oc[1].trim()); if (s == null) throw new NotEnumerable('onConflict not a literal'); cols.push(...s.split(',').map(c => column(c.trim(), 'onConflict'))); }
+    }
+  }
+  return cols;
+}
+
+async function enumerateNames() {
+  const { sources } = sites();
+  const ctx = { sources, aliases: ALIASES };
+  const out = [];
+  const site = (where, file, table, fn) => {
+    try { out.push({ where, file, table, verb: 'names', state: 'ENUMERATED', cols: new Set(fn()) }); }
+    catch (e) { if (!(e instanceof NotEnumerable)) throw e; out.push({ where, file, table, verb: 'names', state: 'NOT ENUMERABLE', why: e.message }); }
+  };
+  const line = (s, i) => s.slice(0, i).split('\n').length;
+  for (const [f, s] of sources) {
+    for (const m of s.matchAll(/\.from\('([a-z_0-9]+)'\)/g)) site(`${f}:${line(s, m.index)}`, f, m[1], () => chainNames(chainCalls(s, m.index + m[0].length)));
+    for (const m of s.matchAll(/\b([A-Za-z_$][\w$]*)\.from\((?!')/g)) if (!/^(Array|\w+Array|Buffer|Set|Map|Object|Promise)$/.test(m[1])) site(`${f}:${line(s, m.index)}`, f, '(computed)', () => { throw new NotEnumerable('.from() of a table that is not a literal'); });
+    for (const m of s.matchAll(/\/rest\/v1\//g)) {
+      // the literal holding this URL: back to its opening quote on the same line
+      let start = m.index;
+      while (start > 0 && !"`'\"\n".includes(s[start - 1])) start--;
+      const where = `${f}:${line(s, m.index)}`;
+      const q = s[start - 1];
+      if (start === 0 || q === '\n') { site(where, f, '(url)', () => { throw new NotEnumerable('a URL outside a literal on its line'); }); continue; }
+      const end = q === '`' ? templateEnd(s, start - 1) : s.indexOf(q, start);
+      const lit = s.slice(start - 1, end + 1);
+      if (f === BACKUP.file && BACKUP.urls.includes(lit)) continue; // modelled in backupSites()
+      const fn = enclosingFunction(s, start);
+      const callers = fn && fn.params.length && /\$\{/.test(lit) ? callsOf(fn.name, f, ctx) : [];
+      const binds = callers.length ? callers.map(c => ({ via: ` (called from ${c.file}:${line(c.src, c.at)})`, bind: { file: f, start: fn.start, end: fn.end, args: Object.fromEntries(fn.params.map((p, k) => [p.name, c.args[k] ? { expr: c.args[k], src: c.src, at: c.at, file: c.file } : p.dflt ? { expr: p.dflt, src: s, at: fn.start, file: f } : null])) } })) : [{ via: '', bind: null }];
+      for (const { via, bind } of binds) {
+        let urls;
+        try { urls = q === '`' ? template(lit, s, start, { ...ctx, file: f, bind }, 0, true) : [lit.slice(1, -1)]; }
+        catch (e) { if (!(e instanceof NotEnumerable)) throw e; site(where + via, f, '(url)', () => { throw e; }); continue; }
+        const byTable = new Map();
+        for (const u of urls) {
+          const rest = u.slice(u.indexOf('/rest/v1/') + 9), qm = rest.indexOf('?');
+          const table = qm < 0 ? rest : rest.slice(0, qm);
+          if (!byTable.has(table)) byTable.set(table, []);
+          byTable.get(table).push(qm < 0 ? '' : rest.slice(qm + 1));
+        }
+        for (const [table, qs] of byTable) {
+          site(where + via, f, table, () => {
+            if (!/^(rpc\/)?[a-z_][a-z_0-9]*$/.test(table)) throw new NotEnumerable(`a table the walker can't read: ${shown(table)}`);
+            return qs.flatMap(queryNames);
+          });
+        }
+      }
+    }
+  }
+  // workflows: every curl URL, $VAR in it a value
+  for (const f of list('.github/workflows', /\.yml$/)) {
+    const y = readSource(f);
+    for (const m of y.matchAll(/\/rest\/v1\/([a-z_0-9/]+)(?:\?([^"'\s]*))?/g)) {
+      site(`${f}:${line(y, m.index)}`, f, m[1], () => queryNames((m[2] || '').replace(/\$\{?[A-Z_]+\}?/g, HOLE)));
+    }
+  }
+  out.push(...await backupSites());
+  return out;
+}
+
 (async () => {
 await run('the walker: literals, builders, spreads, .map, property assignment and parameters resolve; a computed key does not', () => {
   const ctx = src => ({ sources: new Map([['x.js', src]]), aliases: {}, file: 'x.js' });
@@ -314,13 +624,52 @@ await run('every write site is enumerable: a column the walker can\'t see is a h
   assert.deepStrictEqual(holes, []);
 });
 
-await run('MAIN IS DEPLOYABLE: every column anything writes exists live (db/live-columns.json)', () => {
+await run('names: select lists, logic filters, query strings and builder chains read; what can\'t be read is NOT ENUMERABLE', () => {
+  assert.deepStrictEqual(selectList('id, b:ticker, captured_at::text, snap->>bars, *'), ['id', 'ticker', 'captured_at', 'snap']);
+  assert.throws(() => selectList('id, trades_v2(id)'), NotEnumerable, 'an embedded resource');
+  assert.deepStrictEqual(logicTree('(a.is.null,b.in.(1,2),and(c.gt.2,d.not.is.null),not.or(e.eq.1))'), ['a', 'b', 'c', 'd', 'e']);
+  assert.deepStrictEqual(queryNames('select=a,b&c=eq.x&order=d.desc,e.asc&on_conflict=f,g&or=(h.is.null)&limit=1&offset=2'), ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  assert.deepStrictEqual(queryNames(`id=eq.${HOLE}&x=in.(${HOLE})`), ['id', 'x'], 'an unresolved VALUE is harmless');
+  assert.throws(() => queryNames(`select=${HOLE}`), NotEnumerable, 'an unresolved column is not');
+  assert.throws(() => queryNames(`order=${HOLE}.asc`), NotEnumerable);
+  const chain = src => chainNames(chainCalls(src, 0));
+  assert.deepStrictEqual(chain(".select('a, b').eq('c', x).gte('d', y).order('e', { ascending: false }).limit(1);"), ['a', 'b', 'c', 'd', 'e']);
+  assert.deepStrictEqual(chain(".insert([{ z: 1 }]).select('id');"), ['id'], 'a write\'s columns are the write sites\'; its returning select is a name');
+  assert.throws(() => chain('.eq(col, x);'), NotEnumerable, 'a computed filter column');
+  assert.throws(() => chain('.select(cols);'), NotEnumerable, 'a computed select');
+  assert.throws(() => chain('.frobnicate(1);'), NotEnumerable, 'an unknown call');
+  const ctx = src => ({ sources: new Map([['x.mjs', src]]), aliases: {}, file: 'x.mjs', bind: null });
+  const src = "const COLS = 'a,b';\nfunction q(t, sel = '*') { return `${U}/rest/v1/${t}?select=${sel}`; }\nq('t1', `${COLS},c`); q('t2');";
+  const lit = src.match(/`\$\{U\}[^\n]*`/)[0], at = src.indexOf(lit), fn = enclosingFunction(src, at);
+  const per = callsOf('q', 'x.mjs', ctx(src)).map(c => template(lit, src, at, { ...ctx(src), bind: { file: 'x.mjs', start: fn.start, end: fn.end, args: { t: { expr: c.args[0], src, at: c.at, file: 'x.mjs' }, sel: c.args[1] ? { expr: c.args[1], src, at: c.at, file: 'x.mjs' } : { expr: "'*'", src, at: fn.start, file: 'x.mjs' } } } }, 0, true));
+  assert.deepStrictEqual(per, [[`${HOLE}/rest/v1/t1?select=a,b,c`], [`${HOLE}/rest/v1/t2?select=*`]], 'each caller binds the table and the columns together, never crossed');
+});
+
+await run('the name enumeration finds the known reads, filters and orders, on every surface', async () => {
+  const e = await enumerateNames();
+  const has = (t, re, col) => e.some(s => s.table === t && re.test(s.where) && s.state === 'ENUMERATED' && s.cols.has(col));
+  assert.ok(has('workflow_runs', /^app\.js/, 'job_status') && has('workflow_runs', /^app\.js/, 'actual_fired_at'), 'a select and a filter (app)');
+  assert.ok(has('rating_snapshots', /^app\.js/, 'captured_at'), 'an order (app)');
+  assert.ok(has('portfolio', /^core\/store\.js/, 'position_id'), 'the save\'s .eq and its returning select');
+  assert.ok(has('signal_log', /fill-outcomes/, 'taken_resolution') && has('signal_log', /fill-outcomes/, 'ret_5d'), 'fill-outcomes: its or= filter and its select constant');
+  assert.ok(has('trades_v2', /select-by-ids.*fill-outcomes/, 'best_exit_price') && !e.some(s => s.table === 'signal_log' && /select-by-ids/.test(s.where) && s.cols && s.cols.has('best_exit_price')), 'a helper resolved per caller, never crossed');
+  assert.ok(has('scan_runs', /schema-check.*log-signals-edge/, 'started_at') || has('scan_runs', /schema-check/, 'scan_date'), 'the schema check names what the logger writes');
+  assert.ok(has('signal_log', /backup-tables/, 'outcomes_filled_at') && has('rating_snapshots', /backup-tables/, 'captured_at'), 'the backup\'s shard filters, from its own modules');
+  assert.ok(has('workflow_runs', /\.github\/workflows/, 'id'), 'a workflow PATCH\'s ?id=eq.$ID');
+});
+
+await run('every name site is enumerable: a column the walker can\'t see is a hole in the guard', async () => {
+  const holes = (await enumerateNames()).filter(s => s.state === 'NOT ENUMERABLE').map(s => `${s.where} ${s.table}: ${s.why}`);
+  assert.deepStrictEqual(holes, []);
+});
+
+await run('MAIN IS DEPLOYABLE: every column anything writes or names exists live (db/live-columns.json)', async () => {
   const ahead = [];
-  for (const s of enumerate().filter(s => s.state === 'ENUMERATED')) {
+  for (const s of [...enumerate(), ...await enumerateNames()].filter(s => s.state === 'ENUMERATED')) {
     if (!LIVE[s.table]) { ahead.push(`${s.where}: ${s.table.startsWith('rpc/') ? `function ${s.table.slice(4)}` : `table ${s.table}`} is not live`); continue; }
-    for (const c of s.cols) if (!LIVE[s.table].includes(c)) ahead.push(`${s.where}: ${s.table}.${c}`);
+    for (const c of s.cols) if (!LIVE[s.table].includes(c)) ahead.push(`${s.where}: ${s.verb === 'names' ? 'names' : 'writes'} ${s.table}.${c}`);
   }
-  assert.deepStrictEqual(ahead, [], 'code writes a column the live schema lacks: the insert would fail on a live buy or sale');
+  assert.deepStrictEqual([...new Set(ahead)], [], 'code writes or names a column the live schema lacks: PostgREST refuses the whole request, a buy, a sale or a read');
 });
 })();
 
