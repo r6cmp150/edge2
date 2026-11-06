@@ -2590,6 +2590,30 @@ schema harness shows each db/038 guard fires on its own broken precondition and 
 condition goes straight through the old form and aborts the new one. `tests/three-state-guards.test.js` holds every
 unapplied migration to it.
 
+**MAIN IS DEPLOYABLE AT EVERY COMMIT (2026-11-06).** Pushing main deploys the app against the live database, so
+main never holds code that writes a column the live schema lacks: PostgREST refuses the whole insert over one unknown
+column, and the insert that fails is a buy or a sale. The order is fixed: the migration carved to main, Roman runs it, its
+run 2 passes, and only then the app code that fills its columns, in a push of its own. Never both in one push, never the
+app first. The case: a clearance to push the gated stack, whose history held app code writing db/038's columns, would
+have broken every buy and sale; it was refused on what the tree showed, and db/037 was carved out instead.
+- **Made impossible rather than remembered:** `tests/live-columns.test.js` enumerates every (table, column) the app,
+  the scripts and the workflows write and checks it against `db/live-columns.json`, captured from the live database
+  with the highest migration confirmed applied. A write site whose columns the walker can't see is NOT ENUMERABLE and
+  fails. It fails only when code gets ahead of the live schema; a file left behind after a migration is harmless.
+  Run against the gated stack, it names every db/038 column (c) and Verdict A would have written.
+- **The push protocol:** every push request states, per commit, the (table, column) pairs its code writes and the
+  migration that created each. Every clearance names the migrations that must already be live; a clearance without
+  that list is void. A clearance is a claim, and a claim that contradicts what the tree shows loses.
+- **A migration carved ahead of its app code is checked against the app as deployed:** every added column nullable or
+  defaulted; every new CHECK TRUE on the NULLs the deployed app leaves (and says which); every new trigger's effect on
+  the paths the deployed app takes; then the deployed app's real write shapes run after it in the schema harness.
+
+**READING WHAT LANDED IS NOT REDUNDANT WITH THE HARNESS (2026-11-06).** A heredoc turned a trim into `/s+$/`, which ate
+trailing letters, in the code that fixed truncation. Mutation testing did not find it: mutants are drawn from the code as
+written, so a defect the editing mechanism itself introduces is in the baseline, not in the mutant set. Reading the
+inserted code found it; the mutant existed only afterwards, once the test was made sensitive to it. After any edit made
+by a script or a shell, read the lines that actually landed.
+
 **AN ERROR IS NEVER TRUNCATED, ANYWHERE: NOT IN A TEST RUNNER, A LOG LINE OR A REPORT. TRUNCATION BELONGS IN DISPLAY, NEVER
 IN CAPTURE (2026-11-06).** The sibling of the complete-baseline rule. Four times in one week truncation destroyed the
 evidence needed to diagnose something real: an enumeration window that missed the sale insert's `.select('id')` 4,161
