@@ -680,13 +680,35 @@ function migrations() {
       for (const c of a[2].matchAll(/add\s+column\s+(?:if\s+not\s+exists\s+)?([a-z_0-9]+)/g)) adds.push(`${a[1]}.${c[1]}`);
       for (const c of a[2].matchAll(/drop\s+column\s+(?:if\s+exists\s+)?([a-z_0-9]+)/g)) drops.push(`${a[1]}.${c[1]}`);
     }
-    for (const c of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_0-9]+)/g)) creates.push(c[1]);
+    for (const c of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_0-9]+)\s*\(/g)) {
+      creates.push(c[1]);
+      // its columns, by name: a misspelt column of a new table is not "introduced" by the migration that creates it
+      for (const e of entries(`{${balanced(sql, c.index + c[0].length - 1).slice(1, -1)}}`)) {
+        const col = e.match(/^([a-z_][a-z_0-9]*)\s/);
+        if (col && !/^(constraint|primary|unique|check|foreign|exclude|like)$/.test(col[1])) adds.push(`${c[1]}.${col[1]}`);
+      }
+    }
     for (const c of sql.matchAll(/drop\s+table\s+(?:if\s+exists\s+)?(?:public\.)?([a-z_0-9]+)/g)) drops.push(c[1]);
+    for (const c of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?([a-z_0-9]+)\s*\(/g)) creates.push(`rpc/${c[1]}`);
     out.set(Number(f.slice(0, 3)), { file: f, adds, creates, drops });
   }
   return out;
 }
 const pad = n => `db/${String(n).padStart(3, '0')}`;
+// db/pending-migrations.json: a branch whose code depends on migrations not yet live DECLARES them, and the suite stays
+// green with every column they introduce reported as PENDING, by name and by migration. A column ahead of the capture
+// that no declared-pending migration introduces still FAILS. Main never declares any: scripts/check-push.mjs refuses a
+// commit that does (--before, run ahead of the push), and refuses a declaration that is stale (a migration it lists that
+// the capture shows applied). No file: nothing pending.
+const PENDING = fs.existsSync(path.join(REPO_ROOT, 'db/pending-migrations.json')) ? JSON.parse(readSource('db/pending-migrations.json')).pending : [];
+// Which declared-pending migration introduces (table, column), or null.
+function pendingSource(table, col, mig) {
+  for (const n of PENDING) {
+    const x = mig.get(n);
+    if (x && (x.adds.includes(`${table}.${col}`) || (col == null && x.creates.includes(table)))) return n;
+  }
+  return null;
+}
 
 await run('db/live-columns.json is a capture: query, row counts and sha256 recorded, and they recompute', () => {
   const s = CAPTURE._source;
@@ -700,40 +722,58 @@ await run('db/live-columns.json is a capture: query, row counts and sha256 recor
 
 await run('every migration in db/ is declared applied or not; none newer than the capture\'s highest applied is assumed live', () => {
   const m = CAPTURE._migrations, files = [...migrations().keys()].sort((a, b) => a - b);
-  const declared = [...m.applied, ...m.not_applied];
+  // a branch's declared-pending migration is declared too: not applied, by the branch that depends on it
+  const declared = [...new Set([...m.applied, ...m.not_applied, ...PENDING])];
   assert.deepStrictEqual(m.applied.filter(n => m.not_applied.includes(n)), [], 'in both lists');
+  assert.deepStrictEqual(PENDING.filter(n => m.applied.includes(n)).map(pad), [], 'STALE: declared pending, but the capture shows it applied; take it out of db/pending-migrations.json');
   assert.deepStrictEqual(files.filter(n => !declared.includes(n)).map(pad), [], 'a migration in db/ the capture\'s declaration doesn\'t know: re-capture, or declare it not applied');
   assert.deepStrictEqual(declared.filter(n => !files.includes(n)).map(pad), [], 'declared, but no such migration file');
   assert.strictEqual(m.highest_applied, Math.max(...m.applied));
-  assert.deepStrictEqual(files.filter(n => n > m.highest_applied && !m.not_applied.includes(n)).map(pad), [], 'newer than the highest migration the capture reflects');
+  assert.deepStrictEqual(files.filter(n => n > m.highest_applied && !m.not_applied.includes(n) && !PENDING.includes(n)).map(pad), [], 'newer than the highest migration the capture reflects');
 });
 
 await run('the declaration agrees with the capture: a not-applied migration\'s columns are absent, an applied one\'s present', () => {
   const m = CAPTURE._migrations, mig = migrations(), T = CAPTURE.tables;
   const present = tc => { const [t, c] = tc.split('.'); return !!T[t] && T[t].includes(c); };
   const wrong = [];
-  for (const n of m.not_applied) {
+  for (const n of [...new Set([...m.not_applied, ...PENDING])]) {
     const x = mig.get(n);
     for (const tc of x.adds) if (present(tc)) wrong.push(`${pad(n)} declared NOT applied, but ${tc} is live: is it applied?`);
-    for (const t of x.creates) if (T[t]) wrong.push(`${pad(n)} declared NOT applied, but table ${t} is live`);
+    // functions (rpc/..) aren't in the capture: the inspect query reads tables only, so it can't confirm one either way
+    for (const t of x.creates.filter(t => !t.startsWith('rpc/'))) if (T[t]) wrong.push(`${pad(n)} declared NOT applied, but table ${t} is live`);
   }
   // what an applied migration adds is live unless a LATER applied migration drops it (db/010's armed_setup_id, db/013)
   const droppedAfter = (n, what) => m.applied.some(k => k > n && mig.get(k).drops.includes(what));
   for (const n of m.applied) {
     const x = mig.get(n);
     for (const tc of x.adds) if (!present(tc) && !droppedAfter(n, tc)) wrong.push(`${pad(n)} declared applied, but ${tc} is not in the capture`);
-    for (const t of x.creates) if (!T[t] && !droppedAfter(n, t)) wrong.push(`${pad(n)} declared applied, but table ${t} is not in the capture`);
+    for (const t of x.creates.filter(t => !t.startsWith('rpc/'))) if (!T[t] && !droppedAfter(n, t)) wrong.push(`${pad(n)} declared applied, but table ${t} is not in the capture`);
   }
   assert.deepStrictEqual(wrong, []);
 });
 
 await run('MAIN IS DEPLOYABLE: every column anything writes or names exists live (db/live-columns.json)', async () => {
-  const ahead = [];
+  // three outcomes per (table, column): LIVE (in the capture), PENDING (a declared-pending migration introduces it, and
+  // which), or FAIL (neither)
+  const ahead = [], pending = new Map(), mig = migrations();
+  const judge = (s, table, col, what) => {
+    const n = pendingSource(table, col, mig);
+    if (n == null) ahead.push(`${s.where}: ${what}`);
+    else { if (!pending.has(n)) pending.set(n, new Set()); pending.get(n).add(table.startsWith('rpc/') ? `function ${table.slice(4)}` : `${table}.${col}`); }
+  };
   for (const s of [...enumerate(), ...await enumerateNames()].filter(s => s.state === 'ENUMERATED')) {
-    if (!LIVE[s.table]) { ahead.push(`${s.where}: ${s.table.startsWith('rpc/') ? `function ${s.table.slice(4)}` : `table ${s.table}`} is not live`); continue; }
-    for (const c of s.cols) if (!LIVE[s.table].includes(c)) ahead.push(`${s.where}: ${s.verb === 'names' ? 'names' : 'writes'} ${s.table}.${c}`);
+    if (!LIVE[s.table]) {
+      if (s.table.startsWith('rpc/')) judge(s, s.table, null, `function ${s.table.slice(4)} is not live`);
+      else for (const c of s.cols.size ? s.cols : [null]) judge(s, s.table, c, c ? `${s.verb === 'names' ? 'names' : 'writes'} ${s.table}.${c} (table ${s.table} is not live)` : `table ${s.table} is not live`);
+      continue;
+    }
+    for (const c of s.cols) if (!LIVE[s.table].includes(c)) judge(s, s.table, c, `${s.verb === 'names' ? 'names' : 'writes'} ${s.table}.${c}`);
   }
-  assert.deepStrictEqual([...new Set(ahead)], [], 'code writes or names a column the live schema lacks: PostgREST refuses the whole request, a buy, a sale or a read');
+  for (const [n, cols] of [...pending].sort((a, b) => a[0] - b[0])) console.log(`PENDING on ${pad(n)} (declared in db/pending-migrations.json): ${[...cols].sort().join(', ')}`);
+  for (const n of PENDING) if (!pending.has(n)) console.log(`PENDING on ${pad(n)}: declared, but nothing in the code needs it yet`);
+  // whether this tree may go to main is check-push's decision (--before), not this test's: the runner gives every branch
+  // CI's main-push environment, so a branch check here would make every gated branch red again
+  assert.deepStrictEqual([...new Set(ahead)], [], 'code writes or names a column the live schema lacks and no declared-pending migration introduces: PostgREST refuses the whole request, a buy, a sale or a read');
 });
 })();
 

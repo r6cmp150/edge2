@@ -24,6 +24,23 @@ await run('a push is done only when the Tests run for that commit finished green
   }
 });
 
+await run('pending migrations: a commit declaring any is refused, and so is a stale declaration; none declared may proceed', async () => {
+  const { judgePending } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/check-push.mjs')).href);
+  const cap = JSON.stringify({ _migrations: { applied: [37, 40], not_applied: [38, 41] } });
+  assert.strictEqual(judgePending('abc', null, cap).ok, true, 'no file: nothing pending');
+  assert.strictEqual(judgePending('abc', '{"pending": []}', cap).ok, true);
+  const p = judgePending('abc', '{"pending": [38]}', cap);
+  assert.strictEqual(p.ok, false);
+  assert.ok(p.line.startsWith('PUSH REFUSED') && p.line.includes('db/038') && p.line.includes('not yet confirmed applied live'), p.line);
+  const s = judgePending('abc', '{"pending": [38, 40]}', cap);
+  assert.ok(!s.ok && s.line.includes('stale') && s.line.includes('db/040'), s.line);
+  assert.strictEqual(judgePending('abc', 'not json', cap).ok, false, 'an unreadable declaration is not "nothing pending"');
+  assert.strictEqual(judgePending('abc', '{"pending": [38]}', null).ok, false, 'nor is a declaration with no capture to judge it by');
+  const src = readSource('scripts/check-push.mjs');
+  assert.ok(/if \(process\.argv\.includes\('--before'\)\)[^\n]*process\.exit\(pend\.ok \? 0 : 1\)/.test(src), '--before exits on the pending verdict alone');
+  assert.ok(/if \(!pend\.ok\) \{[^\n]*process\.exit\(1\)/.test(src), 'and the after-push check fails on it first');
+});
+
 await run('a green run that a newer failed one replaced is not green', () => {
   assert.strictEqual(judgePush('abc', [run1('completed', 'failure'), run1('completed', 'success')]).ok, false, 'runs are newest first');
 });
