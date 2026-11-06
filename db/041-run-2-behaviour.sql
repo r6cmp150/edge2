@@ -23,7 +23,7 @@ begin
   select (select count(*) from trades_v2 where engine_source is null) + (select count(*) from portfolio where engine_source is null) into left_over;
   for p in select * from jsonb_array_elements(probes) loop
     execute format('select to_jsonb(r) from %I r limit 1', p ->> 0) into src;
-    if src is null then wrong := wrong || format(' [%s: no row to copy, NOT TESTED]', p ->> 3); continue; end if;
+    if (src is null) is not false then wrong := wrong || format(' [%s: no row to copy, NOT TESTED]', p ->> 3); continue; end if;
     src := case when jsonb_typeof(p -> 1) = 'null' then src - 'engine_source' else jsonb_set(src, '{engine_source}', p -> 1) end;
     begin
       execute format('insert into %I select (jsonb_populate_record(null::%I, $1)).*', p ->> 0, p ->> 0) using src;

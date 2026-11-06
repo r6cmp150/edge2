@@ -22,20 +22,20 @@ declare
   def text;
 begin
   select string_agg(ticker || ' ' || buy_date::text, ', ' order by ticker) into nulls from trades_v2 where engine_source is null;
-  if nulls is distinct from 'CMPX 2026-09-02, EGHT 2026-09-04' then
+  if (nulls is distinct from 'CMPX 2026-09-02, EGHT 2026-09-04') is not false then
     raise exception 'db/041 ABORTED, nothing changed: trades_v2 rows with no engine are [%], not exactly CMPX 2026-09-02 and EGHT 2026-09-04', coalesce(nulls, 'none');
   end if;
   select count(*) into n from portfolio where engine_source is null;
-  if n > 0 then raise exception 'db/041 ABORTED, nothing changed: % portfolio rows have no engine; this plan assumed none', n; end if;
+  if (n > 0) is not false then raise exception 'db/041 ABORTED, nothing changed: % portfolio rows have no engine; this plan assumed none', n; end if;
   select count(*) into n from trades_v2 where engine_source = 'WARRIOR';
-  if n > 0 then raise exception 'db/041 ABORTED, nothing changed: % trades_v2 rows are WARRIOR, so "EDGE by elimination" no longer holds', n; end if;
+  if (n > 0) is not false then raise exception 'db/041 ABORTED, nothing changed: % trades_v2 rows are WARRIOR, so "EDGE by elimination" no longer holds', n; end if;
   for def in select pg_get_constraintdef(oid) from pg_constraint
               where conname in ('trades_v2_engine_source_check', 'portfolio_engine_source_check') loop
-    if def is distinct from $c$CHECK ((engine_source = ANY (ARRAY['EDGE'::text, 'WARRIOR'::text])))$c$ then
+    if (def is distinct from $c$CHECK ((engine_source = ANY (ARRAY['EDGE'::text, 'WARRIOR'::text])))$c$) is not false then
       raise exception 'db/041 ABORTED, nothing changed: an engine_source CHECK is not db/012''s: %', def;
     end if;
   end loop;
-  if (select count(*) from pg_constraint where conname in ('trades_v2_engine_source_check', 'portfolio_engine_source_check')) <> 2 then
+  if ((select count(*) from pg_constraint where conname in ('trades_v2_engine_source_check', 'portfolio_engine_source_check')) <> 2) is not false then
     raise exception 'db/041 ABORTED, nothing changed: expected both engine_source CHECKs';
   end if;
 end $$;

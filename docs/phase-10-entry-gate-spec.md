@@ -2564,6 +2564,16 @@ verdict with nothing captured; a fill time with no source). Write every branch d
   is ever written, and when the probe is wrong the error points toward a false FAIL rather than a silent write.
   db/040 run 2 and db/041 run 2 use it; every future constraint verification does.
 
+**A MIGRATION GUARD IS THREE-STATE: IT PROCEEDS ONLY ON A DEFINITE FALSE. (2026-11-05)** The CHECK rule above,
+applied to the code meant to stop a bad run. PL/pgSQL treats a NULL IF condition as false, so `if <cond> then raise`
+proceeds when its condition couldn't be evaluated. Every guard in a migration not yet applied is written
+`if (<cond>) is not false then`: true aborts, NULL aborts, only false proceeds. The same holds for a check in a
+behaviour run that records into `wrong`. Retrofitted to db/037, db/038 (revision c), db/039 and db/041, 50 guards in
+all; none can be NULL today, so no guard's meaning changed, and the form keeps a later edit from opening the hole. The
+schema harness shows each db/038 guard fires on its own broken precondition and changes nothing, and that a NULL
+condition goes straight through the old form and aborts the new one. `tests/three-state-guards.test.js` holds every
+unapplied migration to it.
+
 **THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
 mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which
 is luck next to "cannot happen". `scripts/lib/mutants.cjs` now refuses a dirty tree (a leftover mutant shows as a

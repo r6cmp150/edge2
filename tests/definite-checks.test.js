@@ -66,9 +66,9 @@ await run('db/040 run 2 probes what it repaired, and its expected counts match i
 
 await run('db/041: guarded on exactly the two rows, both tables NOT NULL, and run 2 copies real rows', () => {
   const sql = readSource('db/041_engine_source_not_null.sql'), r2 = readSource('db/041-run-2-behaviour.sql');
-  assert.ok(sql.includes("if nulls is distinct from 'CMPX 2026-09-02, EGHT 2026-09-04' then"), 'exactly those two');
-  assert.ok(/from trades_v2 where engine_source = 'WARRIOR';\s*if n > 0 then raise exception/.test(sql), 'the elimination premise is checked, not assumed');
-  assert.ok(/from portfolio where engine_source is null;\s*if n > 0 then raise exception/.test(sql), 'no NULL position');
+  assert.ok(sql.includes("if (nulls is distinct from 'CMPX 2026-09-02, EGHT 2026-09-04') is not false then"), 'exactly those two');
+  assert.ok(/from trades_v2 where engine_source = 'WARRIOR';\s*if \(n > 0\) is not false then raise exception/.test(sql), 'the elimination premise is checked, not assumed');
+  assert.ok(/from portfolio where engine_source is null;\s*if \(n > 0\) is not false then raise exception/.test(sql), 'no NULL position');
   assert.ok(sql.includes('alter table trades_v2 alter column engine_source set not null;') && sql.includes('alter table portfolio alter column engine_source set not null;'));
   assert.ok(sql.indexOf("update trades_v2 set engine_source = 'EDGE'") > sql.indexOf('end $$;'), 'the backfill runs after the guard');
   assert.strictEqual((r2.match(/, 'not_null', '|, 'check', '/g) || []).length, 4); assert.strictEqual((r2.match(/, 'key', '/g) || []).length, 2);
