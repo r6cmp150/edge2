@@ -12,6 +12,9 @@
 //   TIMEOUT  killed after the time limit
 //   LOST     it said it ran N tests and N result lines didn't arrive
 // Exit 0 only if every file is PASS and there is at least one file; else 1.
+// AN ERROR IS NEVER TRUNCATED (2026-11-06). The one-line summary per file is DISPLAY and may be short; under it, every
+// file that did not pass has its COMPLETE output printed, as captured, and --json carries it as `output`. The old
+// first-three-lines summary cut the path off the one test that died in a parallel run on 2026-11-05.
 // Its own failure modes are tested: tests/run-tests-checker.test.js runs it
 // on a directory of deliberately broken files and expects each class.
 //
@@ -82,13 +85,19 @@ const results = files.map(f => {
     : verdict === 'LOST' ? `ran ${declared} test(s), ${passes} result line(s)`
     : verdict === 'FAIL' ? (fails.join(' | ') || (bareFails && `${bareFails} FAIL line(s)`) || `exit ${r.status} after ${passes} PASS line(s)`)
     : (out.trim().split('\n').filter(Boolean).slice(0, 3).join(' / ') || '(no output at all)');
-  return { file: f, verdict, passes, exit: r.status, detail };
+  return { file: f, verdict, passes, exit: r.status, detail, output: verdict === 'PASS' ? null : out };
 });
 
 const bad = results.filter(r => r.verdict !== 'PASS');
 if (json) console.log(JSON.stringify({ dir, tree, env: localEnv ? 'local' : 'ci', files: results.length, bad: bad.length, results }, null, 1));
 else {
   for (const r of results) console.log(`${r.verdict.padEnd(7)} ${r.file}${r.verdict === 'PASS' ? ` (${r.passes})` : `  -- ${r.detail}`}`);
+  // the capture: every non-passing file's whole output, printed as captured (nothing trimmed, not even whitespace)
+  for (const r of bad) {
+    console.log(`\n===== FULL OUTPUT: ${r.verdict} ${r.file} (exit ${r.exit}) =====`);
+    console.log(r.output === '' ? '(no output at all)' : r.output);
+    console.log(`===== END ${r.file} =====`);
+  }
   const counts = results.reduce((c, r) => (c[r.verdict] = (c[r.verdict] || 0) + 1, c), {});
   console.log(`\n${results.length} files: ${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}`);
 }

@@ -61,6 +61,27 @@ run('the runner FAILS on each kind of broken test file, and says which kind', ()
   assert.ok(/two :: .*rate 12\/min against 170/.test(reason), reason);
 });
 
+run('an error is never truncated: a crash\'s whole output, path included, and a long FAIL message in full', () => {
+  // a crash whose path comes after the third line (as the 2026-11-05 DEAD's did), and a 3,000-character message
+  // it ends in an "s" on purpose: a mistyped trim (/s+$/ for /\s+$/) once ate trailing letters here, 2026-11-06
+  const longMsg = 'x'.repeat(3000) + ' END-OF-MESSAGE ends in tests';
+  const d = dirWith({
+    'a-dies.test.js': "console.error('one');\nconsole.error('two');\nconsole.error('three');\nrequire('fs').readFileSync('/no/such/dir/the-missing-path.json');\n",
+    // process.stderr.write, no trailing newline: the output's very last character is the message's last "s"
+    'b-long-fail.test.js': "console.log('\\nPASS: one');\nconsole.error('\\nFAIL: long');\nprocess.stderr.write('" + longMsg + "');\nprocess.exitCode = 1;\n",
+  });
+  const text = spawnSync(process.execPath, [RUNNER, d], { encoding: 'utf8' }).stdout;
+  assert.ok(/===== FULL OUTPUT: DEAD a-dies\.test\.js/.test(text), 'a full-output section for the dead file');
+  assert.ok(text.includes('the-missing-path.json'), 'the path the crash failed on is in the runner\'s output');
+  assert.ok(text.includes(longMsg), 'the long FAIL message, whole');
+  const { report } = runner(d);
+  const dead = report.results.find(r => r.file === 'a-dies.test.js');
+  assert.ok(dead.output.includes('the-missing-path.json') && dead.output.includes('ENOENT'), '--json carries the whole output too');
+  assert.ok(report.results.find(r => r.file === 'b-long-fail.test.js').output.includes('END-OF-MESSAGE'));
+  const good = spawnSync(process.execPath, [RUNNER, dirWith({ 'g.test.js': GOOD })], { encoding: 'utf8' }).stdout;
+  assert.ok(!/FULL OUTPUT/.test(good), 'a passing file prints no output section');
+});
+
 run('the runner kills a hung file and reports TIMEOUT', () => {
   const { exit, report } = runner(dirWith({ 'a-good.test.js': GOOD, 'hang.test.js': 'setInterval(() => {}, 1000);\n' }), ['--timeout-ms', '1500']);
   assert.strictEqual(exit, 1);
