@@ -32,9 +32,9 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   route: inside EDGE the only routes are the sale, Remove again (after a sale) and cancelPendingOrder, which
   removes only unfilled orders, which the sale path refuses, so a lost sale's row can't leave that way. Outside
   EDGE the anon key can delete, and has: ZZVERIFY, a hand-inserted test row deleted by hand (last in the backup of 2026-09-10T10:08Z). For
-  backed-up positions that gap is measured by scripts/audit-departed-positions.mjs (below): no real position
-  left without a sale row. Positions bought and sold between backups are not covered. Kept apart from the
-  ghost check: they answer opposite questions.
+  backed-up positions, scripts/audit-departed-positions.mjs (below) finds no real position MISSING a sale row,
+  but only 61 are confirmed exactly and 15 can't be told; positions bought and sold between backups are not
+  covered. Kept apart from the ghost check: they answer opposite questions. See loss modes A and B below.
 - Step 4 after db/037: a real buy and a real sale, both landing.
 - RUN-ME-8, the extended capture (read-only), saved as `live-schema-2026-11-06.json`; then `db/live-columns.json` is
   regenerated from it with 037, 038 and 040 declared applied, and checked against it.
@@ -81,14 +81,24 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   e57769c), so a row with that position_id existed when the copy was refused. They are exactly the 11 sales recorded
   after 07:15 PT on 2026-11-06 (live read, 2026-11-08T16:33Z). Not yet matched row-for-row: the queue's keys are on
   the phone.
-- Two claims, kept apart. "No sale is lost right now": the 13 lines, plus the live read. "No sale was ever lost":
-  `node scripts/audit-departed-positions.mjs` only (33 backups, 2026-09-05 to 2026-11-07; live read
-  2026-11-08T17:40Z): 244 positions seen, 7 open, 237 departed; 61 matched to a sale row by position_id, 175 by
-  ticker + buy date (sales before db/033 have no position_id; weaker, 15 ambiguous), 1 with none: ZZVERIFY, the
-  test row. Not covered: 255 sales with a position_id and 117 without whose positions were bought and sold
-  between backups. Quote the script's output, never this line's numbers on their own: they go stale with every
-  backup. Before ca68340 the banner clipped and hid every failure behind the first, so the 13 lines say nothing
-  about earlier weeks.
+- Two claims, kept apart. "No sale is lost right now": the 13 lines, plus the live read. "No sale was ever lost"
+  is NOT established. Its evidence is `node scripts/audit-departed-positions.mjs`, in four tiers that are never
+  added up (33 backups, 2026-09-05 to 2026-11-07; live read 2026-11-08T18:05Z): of 237 departed positions, 61
+  CONFIRMED by position_id; 160 WEAK, by ticker + buy date (sales before db/033 carry no position_id); 15 CANNOT
+  TELL, named by the script (another row shares the key); 1 MISSING, ZZVERIFY, the test row. Outside the check:
+  372 sales whose positions were bought and sold between backups. "236 of 236" was 61 confirmations and must not
+  be quoted again. Quote the script's output, never these numbers on their own: they go stale with every backup.
+  Before ca68340 the banner clipped and hid every failure behind the first, so the 13 lines say nothing about
+  earlier weeks.
+- **Loss mode A: the delete failed, the sale was never recorded** (possible until ca79c61). The portfolio row
+  survives, so the residue persists to today. Roman's broker check (all 7 match) covers it for the whole history,
+  not only the backed-up part, because the evidence is still in the portfolio; with "inside EDGE a held position
+  leaves only through a sale" and the single external delete being ZZVERIFY: **closed.**
+- **Loss mode B: the delete succeeded, the insert failed, and the queue entry was later lost or dismissed.** No
+  residue at all: position gone, sale gone. The backup check is the only instrument, and it is weak exactly where
+  it matters: a position bought and sold between two daily backups is in no backup, so we cannot know it ever
+  existed. **Open, and undetectable by any check we have.** A more frequent portfolio backup in market hours
+  would make the next instance detectable; it recovers nothing already lost (scoped, not built).
 - "HUN sale NOT recorded" (spec, 2026-11-04 rendering rule) is fixture state rendered at 390px (ca68340's own
   message), not a real failure.
 - Ghost positions (an open portfolio row whose position already has a sale): 0 of 7, live read 2026-11-08T16:44Z,

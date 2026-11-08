@@ -35,11 +35,12 @@ run('exact by position_id, weaker by ticker + buy date only for sales with no po
   assert.strictEqual(r.tradesNoId, 2); assert.strictEqual(r.legacyUnused, 0);
 });
 
-run('a legacy row is used once: two departures, one row = one matched, one missing', async () => {
+run('two departures on one key, one row: CANNOT TELL for the first (named), MISSING for the second', async () => {
   const { classify } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/audit-departed-positions.mjs')).href);
   const r = classify([v('2026-09-07T00:00:00Z', [pos('x1', 'DUP', '2026-09-05'), pos('x2', 'DUP', '2026-09-05')])], [], [{ position_id: null, ticker: 'DUP', buy_date: '2026-09-05' }]);
-  assert.strictEqual(r.byTickerDate, 1); assert.strictEqual(r.missing.length, 1);
-  assert.strictEqual(r.ambiguous, 1, 'which of the two it was cannot be told');
+  assert.strictEqual(r.byTickerDate, 0, 'an ambiguous match is never a confirmation');
+  assert.deepStrictEqual(r.cannotTell.map(c => [c.position_id, c.candidates, c.rivals]), [['x1', 1, 2]], 'named, with why');
+  assert.strictEqual(r.missing.length, 1, 'the row is consumed: the second departure has none left');
 });
 
 run('nothing departed matches a sale on the wrong date, or a sale with a position_id by ticker', async () => {
@@ -55,4 +56,17 @@ run('a backup row with no position_id is counted, not guessed', async () => {
   const { classify } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/audit-departed-positions.mjs')).href);
   const r = classify([v('2026-09-07T00:00:00Z', [pos(null, 'NOID', '2026-09-05'), pos('', 'EMPTY', '2026-09-05')])], [], []);
   assert.strictEqual(r.noId, 2); assert.strictEqual(r.seen, 0);
+});
+
+run('two candidate rows for one departure: CANNOT TELL, not WEAK', async () => {
+  const { classify } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/audit-departed-positions.mjs')).href);
+  const r = classify([v('2026-09-07T00:00:00Z', [pos('p', 'TWO', '2026-09-05')])], [], [
+    { position_id: null, ticker: 'TWO', buy_date: '2026-09-05' }, { position_id: null, ticker: 'TWO', buy_date: '2026-09-05' }]);
+  assert.strictEqual(r.byTickerDate, 0); assert.strictEqual(r.cannotTell.length, 1); assert.strictEqual(r.cannotTell[0].candidates, 2);
+});
+
+run('the printed report never adds the tiers into one confirmed total', () => {
+  const src = require('fs').readFileSync(path.join(REPO_ROOT, 'scripts/audit-departed-positions.mjs'), 'utf8');
+  assert.ok(!/byId\s*\+|byTickerDate\s*\+|cannotTell\.length\s*\+|\+\s*r\.(byId|byTickerDate|cannotTell)/.test(src), 'no sum of tiers anywhere in the script');
+  for (const t of ['CONFIRMED, exact', 'WEAK:', 'CANNOT TELL:', 'MISSING:']) assert.ok(src.includes(t), t + ' printed, with its method');
 });

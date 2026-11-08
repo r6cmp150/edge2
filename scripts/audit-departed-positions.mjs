@@ -41,8 +41,10 @@ export function classify(versions, livePortfolio, liveTrades) {
   const sold = new Map(liveTrades.filter(t => t.position_id != null).map(t => [String(t.position_id), t]));
   // Sales recorded before db/033 have no position_id. For those only, a WEAKER match:
   // ticker + buy date, each sale row used at most once. Reported as its own tier, never
-  // pooled with the exact one. A key with more candidates than departures to fill it is
-  // still matched one-to-one, but counted as ambiguous: which row is which can't be told.
+  // pooled with the exact one. Where the key has more than one candidate row, or more
+  // than one departed position, the match could belong to a different position: that is
+  // CANNOT TELL, its own tier, never counted as a confirmation (2026-11-08). A row is
+  // still consumed, so a further departure on the same key with no row left is missing.
   const key = (ticker, d) => `${ticker}|${String(d || '').slice(0, 10)}`;
   const legacy = new Map();
   for (const t of liveTrades.filter(t => t.position_id == null)) {
@@ -52,17 +54,17 @@ export function classify(versions, livePortfolio, liveTrades) {
   const all = [...seen.values()];
   const stillOpen = all.filter(s => open.has(s.position_id));
   const departed = all.filter(s => !open.has(s.position_id));
-  const byId = [], byTickerDate = [], missing = [];
+  const byId = [], byTickerDate = [], cannotTell = [], missing = [];
   const wantPerKey = new Map();
   for (const s of departed) if (!sold.has(s.position_id)) wantPerKey.set(key(s.ticker, s.buy_date), (wantPerKey.get(key(s.ticker, s.buy_date)) || 0) + 1);
-  let ambiguous = 0;
   for (const s of departed.sort((a, b) => a.first.localeCompare(b.first) || a.position_id.localeCompare(b.position_id))) {
     if (sold.has(s.position_id)) { byId.push(s); continue; }
     const k = key(s.ticker, s.buy_date), pool = legacy.get(k) || [];
     if (pool.length) {
-      if (pool.length > 1 || wantPerKey.get(k) > 1) ambiguous++;
+      const candidates = pool.length, rivals = wantPerKey.get(k);
       pool.shift();
-      byTickerDate.push(s);
+      if (candidates > 1 || rivals > 1) cannotTell.push({ ...s, candidates, rivals });
+      else byTickerDate.push(s);
     } else missing.push(s);
   }
   const neverBackedUp = liveTrades.filter(t => t.position_id != null && !seen.has(String(t.position_id))).length;
@@ -70,7 +72,7 @@ export function classify(versions, livePortfolio, liveTrades) {
   const legacyUnused = [...legacy.values()].reduce((n, p) => n + p.length, 0);
   const range = versions.length ? [versions.map(v => v.at).sort()[0], versions.map(v => v.at).sort().at(-1)] : [null, null];
   return { backups: versions.length, range, seen: all.length, open: stillOpen.length, departed: departed.length,
-    byId: byId.length, byTickerDate: byTickerDate.length, ambiguous, missing, noId, neverBackedUp, tradesNoId, legacyUnused };
+    byId: byId.length, byTickerDate: byTickerDate.length, cannotTell, missing, noId, neverBackedUp, tradesNoId, legacyUnused };
 }
 
 function backupVersions() {
@@ -98,11 +100,15 @@ async function main() {
   console.log(`  backups: ${r.backups} versions of ${BACKUP}, ${r.range[0]} to ${r.range[1]}`);
   console.log(`  positions seen in any backup: ${r.seen}`);
   console.log(`    open now (live portfolio):     ${r.open}`);
-  console.log(`    departed:                      ${r.departed}`);
-  console.log(`      sale row matched by position_id (exact):                       ${r.byId}`);
-  console.log(`      sale row matched by ticker + buy date (no position_id; weaker): ${r.byTickerDate}${r.ambiguous ? `, of which ${r.ambiguous} ambiguous (more than one candidate)` : ''}`);
-  console.log(`      NO sale row by either:                                          ${r.missing.length}`);
-  for (const m of r.missing) console.log(`      ${m.ticker} position ${m.position_id}, bought ${m.buy_date}, in backups ${m.first} to ${m.last}`);
+  console.log(`    departed: ${r.departed}, in four tiers. They are not added up: each is a different strength of evidence.`);
+  console.log(`      CONFIRMED, exact: the sale row carries this position's position_id ........ ${r.byId}`);
+  console.log(`      WEAK: no position_id on the sale (before db/033); the only sale row with this`);
+  console.log(`        ticker and buy date, and the only departed position with them ............ ${r.byTickerDate}`);
+  console.log(`      CANNOT TELL: a ticker + buy-date row exists, but another position or another`);
+  console.log(`        row shares the key, so it may belong to a different position .............. ${r.cannotTell.length}`);
+  for (const c of r.cannotTell) console.log(`        ${c.ticker} position ${c.position_id}, bought ${c.buy_date}: ${c.candidates} candidate row(s), ${c.rivals} departed position(s) on the key`);
+  console.log(`      MISSING: no sale row by position_id, and none by ticker + buy date ........... ${r.missing.length}`);
+  for (const m of r.missing) console.log(`        ${m.ticker} position ${m.position_id}, bought ${m.buy_date}, in backups ${m.first} to ${m.last}`);
   console.log('  coverage, not findings:');
   console.log(`    backup rows with no position_id (not matchable): ${r.noId}`);
   console.log(`    trades_v2 sales whose position is in no backup (bought and sold between backups; not checked): ${r.neverBackedUp}`);
