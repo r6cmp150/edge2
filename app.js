@@ -936,6 +936,19 @@ function loadState() {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
+  // The `sold` cache (core/store.js boundSoldCache, 2026-11-08) is stored bounded, as
+  // { format: 'bounded-v1', storedAt, total, rows }. Older phones hold a bare array with
+  // no date. Either way, until loadSoldFromSupabase replaces it, state.soldCacheInfo says
+  // what is on screen: which N of how many, saved when. Nothing about it is guessed.
+  state.soldCacheInfo = null;
+  if (state.sold && !Array.isArray(state.sold) && state.sold.format === 'bounded-v1' && Array.isArray(state.sold.rows)) {
+    state.soldCacheInfo = { storedAt: state.sold.storedAt || null, total: Number.isFinite(state.sold.total) ? state.sold.total : state.sold.rows.length, kept: state.sold.rows.length };
+    state.sold = state.sold.rows;
+  } else if (Array.isArray(state.sold)) {
+    if (state.sold.length) state.soldCacheInfo = { storedAt: null, total: state.sold.length, kept: state.sold.length, legacy: true };
+  } else {
+    state.sold = [];
+  }
   // Signals stored before scannedAt was stamped (2026-11-01): state.signals
   // is only ever replaced whole, in the same statement that sets
   // lastScanTime, so lastScanTime IS their scan time -- a value computed for
@@ -7212,6 +7225,18 @@ function buildSellTimingHtml(s) {
   return `<div class="sell-timing pending">Sell timing resolves in ${remaining} trading day${remaining===1?'':'s'}</div>`;
 }
 
+// While the Sold list on screen is this phone's saved copy, not the database's (offline,
+// or before loadSoldFromSupabase lands), say which part of it and from when (2026-11-08).
+// Every figure computed from state.sold in that state is over those N, so the Sold and
+// Analytics tabs both carry this line above their figures.
+function soldCacheNotice() {
+  const c = state.soldCacheInfo;
+  if (!c) return '';
+  const when = c.storedAt ? `saved on this phone at ${new Date(c.storedAt).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} PT` : 'saved on this phone at a time it didn\'t record (before 2026-11-08)';
+  const which = c.legacy ? `${c.kept} sale${c.kept === 1 ? '' : 's'}` : `the most recent ${c.kept} of ${c.total} sale${c.total === 1 ? '' : 's'}`;
+  return `<div class="sold-cache-notice">Showing ${which}, ${when}. The full list loads from the database; it hasn't yet, so figures below cover only these.</div>`;
+}
+
 async function renderSoldTab() {
   const container = document.getElementById('tab-content');
 
@@ -7242,6 +7267,7 @@ async function renderSoldTab() {
   const metrics = computeTradeMetrics(filteredSold);
 
   container.innerHTML = `
+    ${soldCacheNotice()}
     <button id="report-btn" class="report-btn" onclick="generateClaudeReport()">📋 Generate Claude Report</button>
 
     ${buildEngineFilterControl('soldEngineFilter', state.sold)}
@@ -7569,6 +7595,7 @@ async function loadSoldFromSupabase() {
   }
   clearDataReadProblem('trades_v2');
   state.sold = data.map(mapTradesV2ToSoldShape);
+  state.soldCacheInfo = null; // the full list from the database now, not the phone's copy
   persist('sold');
   // This runs after first paint (see runDataLoadAndInit), so if the user
   // is already sitting on the Sold tab (or switches to it before this
@@ -10286,6 +10313,7 @@ function renderAnalyticsTab() {
 
   container.innerHTML = `
     <div class="tab-header"><h1 class="tab-title">ANALYTICS</h1></div>
+    ${soldCacheNotice()}
 
     <button class="analytics-start-period-btn" onclick="analyticsOpenStartPeriodModal()">+ Start New Period</button>
 

@@ -159,8 +159,14 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - The 11 refusals already on the phone predate the comparison: their banner says whether they match "was not
   checked". Their submitted numbers aren't in the entries (a duplicate kept no args); the phone's own Sold record
   has them. Comparing against that is possible, not built.
-- The storage fix itself (bounded cache, dated "most recent N of M"; three-state measured state at sale) is still
-  to build.
+- Change 4b, scope to the reviewer before any edit: the banner severity split (a lost fact gets its own red
+  line and count; a cache failure is muted, uncounted, and never the headline over real entries, and the
+  headline does not name the key: on 2026-11-08 Roman's read "Save failed — news", a rebuildable cache, in red
+  above eleven real entries, and the key named is an accident of write order), and the tier-2 "not measured"
+  value on the trade record (peak RSI absent at sale is said, never 0, omitted or a survivor). Then propose,
+  not build: per-position measured state written to the database when measured.
+- Change 4a's eviction only runs when a tier 1–3 write fails. Two caches core/edgar.js still writes
+  (warriorFloatCache, warriorEdgarCikMapCache, retired 2026-09-04 and never read back) sit in storage until then.
 - One unexplained DEAD in `tests/anon-write-paths.test.js` under four parallel worktree runs: 100/100 alone, not
   reproduced in 15 reruns under concurrent load. The runner now prints a failure's whole output, so the next one names
   its path.
@@ -169,6 +175,14 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - The default-ACL fix itself (scoped in the spec, not built).
 
 ## Closed recently, so they don't come back
+- Change 4a (2026-11-08): the quota no longer lets a cache beat the only copy of a write. persist() has tiers
+  (queues, measured state, preferences, caches); a tier 1–3 write that hits the quota evicts caches largest first
+  and retries; a cache evicts nothing. The `sold` cache is stored bounded (SOLD_CACHE_MAX_CHARS 300,000: the most
+  recent 87 of 608 sales, measured on live trades_v2, down from 1,734,554 chars), with its own storedAt and the
+  total; the Sold and Analytics tabs say "the most recent N of M, saved <its date>" until the database read
+  replaces it. A failure is cleared only by its own key and never overwritten by a lower tier (it used to be
+  cleared by any key's success). The first database load after deploy shrinks the stored copy, which is the
+  relief on its own.
 - Change 2 (2026-11-08). A later attempt never overwrites the record of an earlier one: each outcome is appended
   to the entry's `attempts` (first always kept, bounded at 6, the count dropped between said). A refused copy is
   read back and compared on sell price, shares and sale date (sell_time is the recording time: not comparable,

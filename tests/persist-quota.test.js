@@ -18,9 +18,11 @@ const { readSource, run } = require('./_lib');
 
 function extractPersistFn() {
   const src = readSource('core/store.js');
-  const re = /function persist\(key\) \{[\s\S]*?\n\}/;
+  // CHANGED 2026-11-08, declared: persist() now uses the tier table and helpers above it
+  // (change 4a), so the extract runs from PERSIST_TIER to the end of persist().
+  const re = /const PERSIST_TIER = \{[\s\S]*?\nfunction persist\(key\) \{[\s\S]*?\n\}/;
   const m = src.match(re);
-  if (!m) throw new Error('could not extract persist() from core/store.js');
+  if (!m) throw new Error('could not extract persist() and its tier helpers from core/store.js');
   return m[0];
 }
 
@@ -33,17 +35,23 @@ function loadPersist({ localStorageImpl, updateMarketBannerCalls } = {}) {
   return global.__persist;
 }
 
+// CHANGED 2026-11-08, declared (change 4a): a success clears the failure only for the SAME
+// key. It used to be any key, so a cache saving fine erased a queue failure that hadn't.
 async function testPersistSucceedsAndClearsAPriorFailure() {
   const calls = [];
   const persist = loadPersist({
-    localStorageImpl: { setItem: () => {} },
+    localStorageImpl: { setItem: () => {}, getItem: () => null, removeItem: () => {} },
     updateMarketBannerCalls: calls,
   });
   global.state.foo = { a: 1 };
+  global.state.bar = { b: 2 };
   global.state.persistFailure = { key: 'bar', message: 'stale failure from earlier', at: 'x' };
   persist('foo');
-  console.log('persistFailure after a successful write:', global.state.persistFailure, '| banner calls:', calls.length);
-  assert.strictEqual(global.state.persistFailure, null, 'a successful write must clear a stale failure flag');
+  assert.strictEqual(global.state.persistFailure.key, 'bar', 'another key saving fine says nothing about bar: kept');
+  assert.strictEqual(calls.length, 0);
+  persist('bar');
+  console.log('persistFailure after bar itself saved:', global.state.persistFailure, '| banner calls:', calls.length);
+  assert.strictEqual(global.state.persistFailure, null, 'the failed key saving clears its failure');
   assert.strictEqual(calls.length, 1, 'banner must be told to refresh when the failure clears');
 }
 

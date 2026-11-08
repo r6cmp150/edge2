@@ -82,14 +82,99 @@ function loadLocalOnlySettings() {
 // have the identical silent-swallow shape — out of scope for this pass
 // (this fix was scoped to the field that motivated it), flagged so a
 // future pass doesn't have to rediscover it.
+//
+// TIERS (2026-11-08, change 4a). The quota is shared, and a rebuildable cache was
+// winning it: the `sold` cache alone was 1,734,554 characters (608 sales, measured
+// 2026-11-08 at the app's own shape from live trades_v2), while the only
+// copy of an unrecorded sale queued behind it. Standing rule: the only copy of an
+// unrecorded write never shares a budget with anything rebuildable, and it goes first.
+//   1  queues: the only copy of a write that hasn't reached the database
+//   2  measured state: the only copy of something measured on this phone
+//   3  preferences and small session state
+//   4  caches: copies of what the database or a re-scan already holds
+// A tier 1-3 write that hits the quota evicts tier-4 caches from storage, largest
+// first, retrying after each; a cache write never evicts anything. Evicted caches stay
+// in memory and are rebuilt by their next load. Every key persist() writes has a tier
+// (tests/persist-tiers.test.js fails on one that doesn't).
+//
+// Failure record, CHANGED 2026-11-08: a success clears the failure only for the SAME
+// key (it used to be any key, so a cache saving fine erased a queue that hadn't), and a
+// lower-tier failure never overwrites a higher-tier one.
+const PERSIST_TIER = {
+  saleWriteFailures: 1, snapshotWriteFailures: 1, ratingWriteFailures: 1,
+  ownedPeakRSI: 2, ownedPrevRSI: 2, warriorPreMarketRvolObservations: 2,
+  signalToggles: 3, selectedUniverse: 3, notifications: 3, lastScanTime: 3, lastPassedCount: 3, lastScanDroppedCount: 3,
+  sold: 4, analysisPeriods: 4, signals: 4, news: 4, ownedScores: 4, universeAssetCache: 4, universePriorCloseCache: 4,
+  warrior30DayVolumeCache: 4, warriorPreMarketVolumeCache: 4, warriorFloatCache: 4, warriorEdgarCikMapCache: 4,
+};
+const persistTier = key => PERSIST_TIER[key] ?? 3;
+
+// The `sold` cache is stored BOUNDED: the most recent sales (state.sold is newest
+// first) up to SOLD_CACHE_MAX_CHARS of JSON, with the total and the copy's OWN time.
+// The Sold and Analytics tabs label it "most recent N of M, saved <storedAt>" until
+// the database read replaces it. storedAt is when this copy was written, never the
+// render time: a write that fails leaves the previous copy, and its date says so.
+// Measured 2026-11-08 on live trades_v2 at the app's shape: a sale averages 2,853 chars,
+// and this cap keeps the most recent 87 of 608 (sold 11-04 to 11-06), 298,708 chars, down
+// from 1,734,554 for the whole list.
+const SOLD_CACHE_MAX_CHARS = 300000;
+function boundSoldCache(sold, info) {
+  const all = Array.isArray(sold) ? sold : [];
+  const rows = [];
+  let size = 0;
+  for (const r of all) {
+    const n = JSON.stringify(r).length + 1;
+    if (size + n > SOLD_CACHE_MAX_CHARS) break;
+    rows.push(r);
+    size += n;
+  }
+  // Offline on a bounded copy, state.sold is that copy plus any sales added since, so
+  // the total is the copy's total plus what was added: a computed number, not a guess.
+  const total = info && !info.legacy ? info.total + Math.max(0, all.length - info.kept) : all.length;
+  return { format: 'bounded-v1', storedAt: new Date().toISOString(), total, rows };
+}
+function storedForm(key) {
+  return key === 'sold' ? boundSoldCache(state.sold, state.soldCacheInfo) : state[key];
+}
+function largestStoredCache(exceptKey) {
+  let best = null;
+  for (const k of Object.keys(PERSIST_TIER)) {
+    if (PERSIST_TIER[k] !== 4 || k === exceptKey) continue;
+    const v = localStorage.getItem('edge_' + k);
+    if (v && (!best || v.length > best.size)) best = { key: k, size: v.length };
+  }
+  return best;
+}
+
 function persist(key) {
-  try {
-    localStorage.setItem('edge_' + key, JSON.stringify(state[key]));
-    if (state.persistFailure) { state.persistFailure = null; updateMarketBanner(); }
-  } catch(e) {
-    console.error(`persist('${key}') failed — localStorage write threw: ${e.message}. State for '${key}' (and every other key, until this clears) may not survive a reload.`);
-    state.persistFailure = { key, message: e.message, at: new Date().toISOString() };
-    updateMarketBanner();
+  const tier = persistTier(key);
+  const value = JSON.stringify(storedForm(key));
+  const evicted = [];
+  for (;;) {
+    try {
+      localStorage.setItem('edge_' + key, value);
+      if (evicted.length) {
+        console.warn(`persist('${key}', tier ${tier}): evicted cache(s) ${evicted.map(e => `${e.key} (${e.size} chars)`).join(', ')} to make room.`);
+        (state.persistEvictions = state.persistEvictions || []).push({ for: key, evicted, at: new Date().toISOString() });
+      }
+      if (state.persistFailure && state.persistFailure.key === key) { state.persistFailure = null; updateMarketBanner(); }
+      return true;
+    } catch (e) {
+      // persist() never throws to its caller: a storage that can't even be read for a
+      // victim just means nothing can be evicted.
+      let victim = null;
+      if (tier < 4) { try { victim = largestStoredCache(key); } catch (_) { victim = null; } }
+      if (victim) {
+        try { localStorage.removeItem('edge_' + victim.key); } catch (_) { /* nothing more to free */ }
+        evicted.push(victim);
+        continue;
+      }
+      console.error(`persist('${key}', tier ${tier}) failed — localStorage write threw: ${e.message}${evicted.length ? ` after evicting ${evicted.map(v => v.key).join(', ')}` : ''}. State for '${key}' may not survive a reload.`);
+      const prev = state.persistFailure;
+      if (!prev || persistTier(prev.key) >= tier) state.persistFailure = { key, tier, message: e.message, at: new Date().toISOString(), evicted };
+      updateMarketBanner();
+      return false;
+    }
   }
 }
 
