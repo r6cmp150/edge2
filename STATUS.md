@@ -80,8 +80,10 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
-- `deletePositionFromSupabase` treats no error as deleted; a delete that matches no row is a silent success.
-- A Retry refused as a duplicate overwrites the first failure's message and time.
+- A Retry refused as a duplicate overwrites the first failure's message and time. Roman taps no Retry until it is
+  fixed (with the storage change): a later attempt never overwrites the record of an earlier one.
+- The banner now shows each sale entry's position_id, `at` and database message, so the 11 can be matched
+  row-for-row from a screenshot (390px fixture render looked at; not yet seen on the phone).
 - A sale whose insert comes back with no error and no row is recorded as WRITTEN.
 - One unexplained DEAD in `tests/anon-write-paths.test.js` under four parallel worktree runs: 100/100 alone, not
   reproduced in 15 reruns under concurrent load. The runner now prints a failure's whole output, so the next one names
@@ -91,6 +93,8 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 - The default-ACL fix itself (scoped in the spec, not built).
 
 ## Closed recently, so they don't come back
+- `deletePositionFromSupabase` treated no error as deleted. It now returns REMOVED or ALREADY_GONE, and throws
+  POSITION_NOT_REMOVED (row still there) or POSITION_UNKNOWN (check failed); a throw stops the sale.
 - db/038's macro path: "not measured" and "measured, no verdict" were one value; revision e separates them (30e0626).
 - The live-columns guard covered writes only; it now covers every column the code names (a959680).
 - `scripts/lib/mutants.cjs`: timeout, SIGINT/SIGTERM restore, clean-tree precondition. On main since 99c2836.

@@ -50,7 +50,9 @@ const REGISTRY = {
   'core/store.js|portfolio': [
     { verdict: S, empty: 'loadPortfolioFromSupabase: no positions', denied: 'portfolio shown empty; the add form and sale flow carry on as if he holds nothing' },
     { verdict: OK, empty: 'savePositionToSupabase: update().select() matched no row -> existence check', denied: 'goes to the existence check (next entry)' },
-    { verdict: S, empty: 'existence check: no row = POSITION_MISSING, "closed in another session"', denied: 'refuses safely, but names the wrong cause' }],
+    { verdict: S, empty: 'existence check: no row = POSITION_MISSING, "closed in another session"', denied: 'refuses safely, but names the wrong cause' },
+    { verdict: OK, empty: 'deletePositionFromSupabase: delete().select() removed no row -> existence check (2026-11-08; was "no error = deleted")', denied: 'goes to the existence check (next entry)' },
+    { verdict: S, empty: 'delete existence check: no row = ALREADY_GONE; the sale goes on to the insert, where trades_v2_position_id_once refuses a second copy', denied: 'reads as ALREADY_GONE: no sale is lost or doubled (the index decides), but a row still there would go unreported' }],
   'core/store.js|settings': [
     { verdict: S, empty: 'loadSettingsFromSupabase: no row = "nothing migrated yet", runs on defaults', denied: 'budget 500, sub-$2 hidden, overlay ON, nothing on screen' },
     { verdict: OK, empty: 'saveSettingsToSupabase: update of the loaded row id, .select(\'id\') must return it; none = refuse', denied: 'refuses: "Setting NOT saved ... Reload the app", nothing written; the insert branch is gone (67308c3, 2026-11-02; was WRITES_FROM_EMPTY)' }],

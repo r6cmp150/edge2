@@ -1098,12 +1098,18 @@ function updateMarketBanner() {
   // (writeTradeToSupabase -> noteSaleWrite).
   const saleFails = Object.entries(state.saleWriteFailures || {}).map(([id, f]) => ({ id, ...f }))
     .sort((a, b) => (a.code === 'SALE_FAILED' ? 0 : 1) - (b.code === 'SALE_FAILED' ? 0 : 1));
+  // What the entry itself holds, shown as stored (2026-11-08): its position_id (the
+  // key), its `at`, and the database's message. Read-only: nothing is computed,
+  // written or added to what's persisted. A field the entry lacks says so. Escaped,
+  // because the message is the database's text.
+  const escFact = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const facts = f => `<div class="banner-facts">position ${escFact(f.id)} · at ${f.at ? escFact(f.at) : 'not recorded'} · ${f.message ? escFact(f.message) : 'no message recorded'}</div>`;
   for (const f of saleFails) {
     if (f.code === 'SALE_FAILED') {
-      add('var(--red)', `${f.ticker} sale NOT recorded`, "The sale isn't in the database. Don't re-submit it by hand: tap Retry (safe — a second copy is refused), then check the Sold tab after a refresh.",
+      add('var(--red)', `${f.ticker} sale NOT recorded`, "The sale isn't in the database. Don't re-submit it by hand: tap Retry (safe — a second copy is refused), then check the Sold tab after a refresh." + facts(f),
         `<button class="btn btn-sm btn-danger" onclick="retrySaleWrite('${f.id}')">Retry</button>`);
     } else {
-      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of the same sale was refused, as designed. Nothing is lost — refresh the Sold tab to see it.',
+      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of the same sale was refused, as designed. Nothing is lost — refresh the Sold tab to see it.' + facts(f),
         `<button class="btn btn-sm btn-ghost" onclick="dismissSaleNotice('${f.id}')">Dismiss</button>`);
     }
   }
@@ -6755,9 +6761,16 @@ async function confirmMarkSold(posId, btn) {
   // position while it's also sitting in Sold history.
   if (btn) btn.disabled = true;
   state.deletedPositionIds.add(pos.id);
+  // core/store.js: 'REMOVED', or 'ALREADY_GONE' (closed in another session). Both
+  // go on to the insert, where trades_v2_position_id_once decides: a sale already
+  // recorded elsewhere comes back SALE_DUPLICATE, one that wasn't is recorded now.
+  // A row that is still there, or a check that failed, throws: no sale is recorded
+  // while the position may still be open.
   try {
-    await deletePositionFromSupabase(pos.id);
+    const removed = await deletePositionFromSupabase(pos.id);
+    if (removed === 'ALREADY_GONE') console.warn(`Sale of ${pos.ticker} (${pos.id}): the position was already gone from portfolio (closed in another session); recording the sale, the database refuses a second copy.`);
   } catch(e) {
+    state.deletedPositionIds.delete(pos.id); // still open (or unknown): its saves must not be suppressed
     showAlert('Could not remove position from Supabase: ' + e.message);
     if (btn) btn.disabled = false;
     return;

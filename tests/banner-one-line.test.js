@@ -84,3 +84,28 @@ run('the layout it rests on: one fixed line that cannot wrap, a panel over the c
   assert.ok(/position: absolute/.test(rule('.banner-panel')) && /top: 100%/.test(rule('.banner-panel')), 'over the cards, not pushing them down');
   assert.ok(/max-height: 60vh/.test(rule('.banner-panel')) && /overflow-y: auto/.test(rule('.banner-panel')), 'a long list scrolls inside it');
 });
+
+// 2026-11-08: each sale entry shows what it already holds -- its position_id (the key),
+// its `at`, and the database's message -- so the queue can be read without a tap.
+run('a sale entry shows its position_id, at and database message, escaped; a missing field says so', () => {
+  const msg = 'duplicate key value violates unique constraint "trades_v2_position_id_once" <x>';
+  const el = load({ saleWriteFailures: {
+    '1793977255030': { ticker: 'UEC', code: 'SALE_DUPLICATE', message: msg, at: '2026-11-06T15:40:00.000Z' },
+    '1793977708842': { ticker: 'FUN', code: 'SALE_FAILED', message: 'Failed to fetch', at: '2026-11-06T15:14:41.000Z', args: [] },
+    '17': { ticker: 'OLD', code: 'SALE_DUPLICATE' },
+  } });
+  global.__t();
+  const h = el.innerHTML;
+  assert.ok(h.includes('position 1793977255030 · at 2026-11-06T15:40:00.000Z · duplicate key value violates unique constraint &quot;trades_v2_position_id_once&quot; &lt;x&gt;'), h);
+  assert.ok(h.includes('position 1793977708842 · at 2026-11-06T15:14:41.000Z · Failed to fetch'), 'a NOT recorded entry shows its facts too');
+  assert.ok(h.includes('position 17 · at not recorded · no message recorded'), 'an entry without at/message says so, never blank');
+  assert.ok(!h.includes('<x>') && !h.includes('"trades_v2'), 'the database message is escaped');
+  assert.strictEqual((h.match(/class="banner-facts"/g) || []).length, 3, 'one facts line per sale entry, none elsewhere');
+});
+
+run('the facts line renders only what the entry holds: no write, no new state', () => {
+  const src = grab('updateMarketBanner');
+  const i = src.indexOf('const facts = f =>'); assert.ok(i >= 0);
+  const line = src.slice(i, src.indexOf('\n', i));
+  assert.ok(!/persist\(|state\.|localStorage|new Date|toLocale/.test(line), line);
+});

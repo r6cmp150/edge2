@@ -338,9 +338,24 @@ async function savePositionToSupabase(position) {
   throw fail('POSITION_UNWRITABLE', `${position.ticker}: position ${position.id} exists but the update changed no row -- not saved`);
 }
 
+// A delete is confirmed by the rows it returns, never by the absence of an
+// error (2026-11-08): with RLS off on portfolio, a delete that matches no row
+// is a silent success. Zero rows is followed up, as savePositionToSupabase does:
+//   'REMOVED'               -- the delete returned the row
+//   'ALREADY_GONE'          -- nothing deleted, and a select confirms no row:
+//                              closed in another session (resolves, not throws;
+//                              the caller decides what that means for it)
+//   throws POSITION_NOT_REMOVED -- nothing deleted and the row is still there
+//   throws POSITION_UNKNOWN     -- nothing deleted and the check failed
 async function deletePositionFromSupabase(positionId) {
-  const { error } = await supabaseClient.from('portfolio').delete().eq('position_id', positionId);
+  const { data, error } = await supabaseClient.from('portfolio').delete().eq('position_id', positionId).select('position_id');
   if (error) throw error;
+  if (data && data.length > 0) return 'REMOVED';
+  const fail = (code, message) => { const e = new Error(message); e.code = code; e.positionId = positionId; return e; };
+  const check = await supabaseClient.from('portfolio').select('position_id').eq('position_id', positionId).limit(1);
+  if (check.error) throw fail('POSITION_UNKNOWN', `position ${positionId}: the delete removed no row and the existence check failed (${check.error.message}) -- can't tell whether it is still open`);
+  if (check.data && check.data.length > 0) throw fail('POSITION_NOT_REMOVED', `position ${positionId}: the delete removed no row and the row is still there`);
+  return 'ALREADY_GONE';
 }
 
 // settings is a single-row table (Roman's row, id 3, since 2026-08-17). The

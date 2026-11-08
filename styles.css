@@ -178,6 +178,8 @@ a { color: var(--blue); }
 .banner-row:first-child { border-top: 0; }
 .banner-row .btn { margin-top: 8px; }
 .banner-detail { margin-top: 4px; color: var(--text-dim); font-size: 12px; font-weight: 400; line-height: 1.4; }
+/* A sale entry's stored facts: wraps anywhere, so a long id, timestamp or database message can't clip. */
+.banner-facts { margin-top: 4px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; overflow-wrap: anywhere; white-space: normal; }
 
 .update-banner {
   display: flex;
