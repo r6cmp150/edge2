@@ -150,6 +150,10 @@ async function main() {
   console.log(`  losses quartiles (25/50/75, by size): ${a0.lossQuartiles?.map($).join(' / ')}`);
   console.log(`  largest 5 losses: ${a0.top5Losses.map($).join(', ')} = ${pc(a0.top5LossShare)} of all loss dollars`);
   console.log(`  largest 5 wins:   ${a0.top5Wins.map($).join(', ')} = ${pc(a0.top5WinShare)} of all win dollars`);
+  // ADDED 2026-11-08 after the first run, declared (CC-prereg-result-and-next.md): the target the
+  // asymmetry implies. At win share p among decided trades, break-even needs avgWin/|avgLoss| =
+  // (1 - p) / p = losses / wins. A printed derivation, not a new analysis.
+  if (a0.wins) console.log(`  break-even ratio at this book's win share (${a0.wins} wins of ${a0.wins + a0.losses} decided, ${pc(a0.wins / (a0.wins + a0.losses))}): losses / wins = ${(a0.losses / a0.wins).toFixed(3)}; the book's ratio is ${a0.ratio?.toFixed(3)}`);
 
   // 3. PRIMARY
   console.log('\n3. PRIMARY OUTCOME: mean realized P&L per buy day, whole verified book');
@@ -193,6 +197,10 @@ async function main() {
 
   // 5. DOLLARS AND PERCENT: in every describe() line above (pct mean / median per trade).
   console.log('\n5. DOLLARS AND PERCENT: each line above carries per-trade mean and median pnl_pct beside the dollars.');
+  // ADDED 2026-11-08 after the first run, declared: the first run printed no line for the whole
+  // verified book itself, only for the book with the unverified rows included. An omission in
+  // reporting; nothing computed differently.
+  describe('whole verified book', book);
 
   // 6. HOLD LENGTH (the app's holdSpan, closes as shown: 0 = same day)
   console.log('\n6. HOLD LENGTH: core/clock.js holdSpan, closes held (0 = same day), whole verified book');

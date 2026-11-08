@@ -21,6 +21,31 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   the expanded banner (2026-11-08): all 11 entries show the new wording and facts; the 390px item is closed for
   changes 1 and 2 on the real device.
 
+## Is Roman's trading profitable? Pre-registered, answered 2026-11-08
+**These splits are changes to the app's ADVICE; nothing records whether Roman followed it.** Source:
+`node scripts/prereg-pnl.mjs` (committed in cc6ea99 before its first run; two printed lines added after it,
+declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 to 2026-11-06).
+- **Control:** it reproduces the Sold tab exactly: 586 verified, 326 W / 256 L / 4 BE, -$300.43.
+- **Verdict, in the pre-registration's words:** whole book, 35 buy days, mean -$8.58 per buy day, 95% moving-block
+  bootstrap -$45.09 to +$34.22. "We cannot distinguish the current method from break-even or worse, and -$300
+  stands as the best available estimate of what it produces." The whole book mixes methods: this is Roman's
+  trading as practised, not any version of the advice. No sub-period reaches 20 buy days, so no method has a
+  verdict.
+- **The target:** at the book's win share (326 of 582 decided, 56.0%) break-even needs a win/loss ratio of
+  **0.785**; the book is at **0.720**. The asymmetry is broad, not a tail: losses exceed wins at every quartile
+  (wins $4.50 / $7.50 / $12.15, losses -$6 / -$10 / -$16) and the 5 largest losses are 10.6% of loss dollars.
+- **Descriptive only:** periods A 0.24, B 0.60, D 0.91, E 1.00 (ratio); recorded scoring v2 +$383.90 on 9 buy
+  days ("this split was chosen after its figures had been seen; it is not a test"). Not evidence: the forward
+  test (below) settles it.
+- **Unverified 22:** every recorded P&L is exactly $0 (sell recorded at the buy price), so their outcome is
+  unknown; the 190 verified trades on the same 7 days made -$377.40.
+- **Hold length on the full book:** same day 60.5% of 362 (+$507.22), 1 close 51.4% of 144 (-$222.05), 2+ closes
+  41.3% of 80 (-$585.60). The earlier 71.0% of 107 / 32.2% of 59 is reproduced exactly, in the legacy order-date
+  rows only. Not a holding-period finding: it is what the disposition effect (closing winners, holding losers)
+  would produce on its own. A pre-registered same-day replay tests it.
+- **Not answerable from the record:** whether a buy came from the app's suggestion. "App Signal" is the sale
+  form's defaulted "Why did you sell?" and reads App Signal on 608 of 608; no buy is linked to a signal.
+
 ## Decision points (a date by which something is decided, not a reminder)
 - **Scoring v2 forward test: when v2 reaches 20 buy days, projected around 2026-11-24/25** (9 buy days by 11-06,
   9 in the 10 trading days since 10-27; a projection, not a deadline). The test, its bar and its null clause
