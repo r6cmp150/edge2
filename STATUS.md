@@ -97,8 +97,12 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 - **Loss mode B: the delete succeeded, the insert failed, and the queue entry was later lost or dismissed.** No
   residue at all: position gone, sale gone. The backup check is the only instrument, and it is weak exactly where
   it matters: a position bought and sold between two daily backups is in no backup, so we cannot know it ever
-  existed. **Open, and undetectable by any check we have.** A more frequent portfolio backup in market hours
-  would make the next instance detectable; it recovers nothing already lost (scoped, not built).
+  existed. **Before 2026-10-29 14:18Z: open, and undetectable by any check we have.** From then on, check 2 of
+  the same script (buy snapshots, written at every buy on no schedule) sees it: of 251 buys, 7 open, 244 with a
+  sale row, **0 neither** (live read 2026-11-08T18:2xZ). Four sales since then have no snapshot; read, not
+  assumed: all four (TTI, EFC, WEN, PMT) were bought 2026-10-28, before snapshots existed. A buy whose snapshot
+  failed leaves a snapshotWriteFailures entry on the phone, so it is invisible only if that entry was lost too:
+  mode B one level down. (The hourly portfolio backup was scoped and withdrawn: crons land 4–8 h late.)
 - "HUN sale NOT recorded" (spec, 2026-11-04 rendering rule) is fixture state rendered at 390px (ca68340's own
   message), not a real failure.
 - Ghost positions (an open portfolio row whose position already has a sale): 0 of 7, live read 2026-11-08T16:44Z,
@@ -113,6 +117,12 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- Movers snapshot (reported 2026-11-08, not fixed): declared for the opening-momentum window (06:45–08:00 PT), it
+  captured 11:51–15:01 PT since 10-27 (data/movers-snapshots/log.jsonl). Rows carry their real `capturedAt` and
+  Alpaca's own open/closed, so no row is mislabelled. But 10 of 36 landed after the close as `marketOpen: false`,
+  the shape the workflow documents as the weekend/holiday marker: all four of Monday 11-02's read "closed". And
+  51 of 51 Warrior scans since 10-27 used their self-fetched fallback (scan_runs.universe_source): the snapshot
+  has not served as the shared universe in that period.
 - The next capture query (v3) adds `polpermissive` per policy. The 2026-11-06 capture doesn't record permissive vs
   restrictive; it changes nothing found so far (a restrictive policy still refuses with 42501). Not edited into
   v2, whose query text is hashed with the capture it produced.

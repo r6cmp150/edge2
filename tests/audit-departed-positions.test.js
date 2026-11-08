@@ -70,3 +70,34 @@ run('the printed report never adds the tiers into one confirmed total', () => {
   assert.ok(!/byId\s*\+|byTickerDate\s*\+|cannotTell\.length\s*\+|\+\s*r\.(byId|byTickerDate|cannotTell)/.test(src), 'no sum of tiers anywhere in the script');
   for (const t of ['CONFIRMED, exact', 'WEAK:', 'CANNOT TELL:', 'MISSING:']) assert.ok(src.includes(t), t + ' printed, with its method');
 });
+
+// CHECK 2: buy snapshots.
+const snap = (position_id, captured_at) => ({ position_id, captured_at, engine_source: 'EDGE' });
+run('check 2: open, sold, and NEITHER (named); the first snapshot dates the blind period', async () => {
+  const { classifySnapshots } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/audit-departed-positions.mjs')).href);
+  const s = classifySnapshots(
+    [snap('o', '2026-10-30T15:00:00Z'), snap('s', '2026-10-29T14:18:36Z'), snap('gone', '2026-11-03T15:00:00Z')],
+    [{ position_id: 'o' }],
+    [{ position_id: 's', ticker: 'S', created_at: '2026-10-29T20:00:00Z', filled_at: '2026-10-29T14:18:00Z' }]);
+  assert.strictEqual(s.first, '2026-10-29T14:18:36Z');
+  assert.strictEqual(s.open, 1); assert.strictEqual(s.sold, 1);
+  assert.deepStrictEqual(s.neither.map(n => n.position_id), ['gone'], 'a snapshot neither open nor sold is named, never absorbed');
+});
+
+run('check 2: a sale with no snapshot is split by when it was bought, read from the trade, not assumed', async () => {
+  const { classifySnapshots } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/audit-departed-positions.mjs')).href);
+  const s = classifySnapshots([snap('x', '2026-10-29T14:18:36Z')], [], [
+    { position_id: 'early', ticker: 'E', created_at: '2026-10-29T15:00:00Z', filled_at: '2026-10-28T14:35:26Z' },
+    { position_id: 'late', ticker: 'L', created_at: '2026-11-02T18:00:00Z', filled_at: '2026-11-02T15:00:00Z' },
+    { position_id: 'nofill', ticker: 'N', created_at: '2026-11-02T18:00:00Z', buy_date: '2026-11-02' },
+    { position_id: 'olderSale', ticker: 'O', created_at: '2026-10-20T18:00:00Z', filled_at: '2026-10-20T15:00:00Z' },
+    { position_id: null, ticker: 'P', created_at: '2026-11-02T18:00:00Z' },
+  ]);
+  assert.deepStrictEqual(s.noSnapBefore.map(t => t.position_id), ['early']);
+  assert.deepStrictEqual(s.noSnapAfter.map(t => t.position_id), ['late', 'nofill'], 'bought after the first snapshot: the blind spot, observed');
+});
+
+run('check 2 is printed with its blind period and the failed-snapshot coverage line, every run', () => {
+  const src = require('fs').readFileSync(path.join(REPO_ROOT, 'scripts/audit-departed-positions.mjs'), 'utf8');
+  for (const t of ['BLIND: every position bought before the first snapshot', 'UNDETECTABLE', 'NEITHER open nor sold', 'snapshotWriteFailures', 'mode B one level down']) assert.ok(src.includes(t), t);
+});

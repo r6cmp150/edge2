@@ -681,7 +681,10 @@ EDGE signals), RSI 45–58 minus the rest:
     later horizons are as of 80f52fb and have moved as outcomes filled in: +3d is
     +1.23, 11 of 15 dates, there and +1.59, 14 of 18, at d6e277d.
   - **UNMEASURED, and stated as unmeasured:** the 07:00–09:00 PT window,
-    where Roman actually buys. Not "no effect". Unmeasured.
+    where Roman actually buys. Not "no effect". Unmeasured. **Since the
+    10-26 re-aim, UNMEASURABLE from signal_log, not merely unmeasured
+    (2026-11-08):** no scheduled scan has landed before 08:58 PT, so
+    waiting adds no rows there. See "Limit on the instrument" below.
   - **The horizons are not independent.** From a noon scan, "+30 min"
     lands at about 12:30–13:00 PT and the same-day close at 13:00, so the
     −0.04 / −0.04 above is nearly one measurement reported twice, not two
@@ -1445,6 +1448,19 @@ days, not quiet ones.
        | Backup tables (06:00Z) | 17 | 17 | 0 | 229 / 283 / 461 min | 02:54–04:41 |
        | Build float table (Sun 08:00Z) | 3 | 3 | 0 | 257 / 291 / 389 min | 05:16–07:29 |
        | Log Warrior signals (every 15 min, 13–20Z) | 384 | 25 | 359 | 2 / 12 / 160 min | scattered |
+
+       **Verified against an independent source (2026-11-08).** For the backup
+       workflow (one cron, `0 6 * * *`, so each run matches its schedule without
+       ambiguity), GitHub's own run `created_at` (`gh api .../backup-tables.yml/runs
+       ?event=schedule`) agrees with `workflow_runs.actual_fired_at` within 3–8 s
+       on all 15 runs where both exist (10-25 to 11-08). The lag is noisy, not
+       constant: 235–479 min on that one job, and medians differ by workflow
+       (fill-outcomes 220, Warrior logger 431, 10-25 to 11-08). A timezone error
+       would be a flat 420 or 480. It is the scheduler, not our record.
+       **Option space, so it is not rediscovered:** delivery lands within a noisy
+       4–8 h band of the declared time, so more crons scatter runs across the day
+       rather than move them earlier, and an external dispatcher would have to be
+       free. Not acted on.
 
        - **EDGE's scheduled scans cover roughly 06:30–07:37 PT:** the
          first hour, which §3.4 rules out for entries. They miss the
@@ -3466,6 +3482,22 @@ only the test's name, so the numbers are gone; it now keeps the assertion's mess
   busy processes (live, 2026-11-04): 171–172/min, timers p95 58 ms late. Load slowed the
   timers and not the rate, which counts against "load" as the explanation.
 
+### Limit on the instrument: signal_log cannot measure the window Roman trades in (2026-11-08)
+
+Since the 10-26 re-aim (3729de6), the EDGE logger's 72 scheduled runs (10-27 to 11-06, all
+delivered, `workflow_runs`, read 2026-11-08T18:0xZ) landed between 08:58 and 14:54 PT; the
+earliest on any day was 08:58, most days started 09:38–10:12, and on Monday 11-02 the first was
+12:28 PT. Roman's 11-06 sales were recorded 07:14–07:37 PT. So for every question about
+06:30–08:58 PT, signal_log is **not unmeasured but unmeasurable** under the current schedule:
+no amount of waiting adds rows there while delivery is the scheduler's choice. Rows in that
+window exist only from before the re-aim, when earlier-declared crons happened to land
+05:40–07:37 PT; since it, "before 10:00 PT" means 08:58–09:59 at best. Wherever a morning claim
+is made or withdrawn from signal_log, it says this.
+
+`rating_snapshots` is captured by the phone when Roman opens the app, on no schedule at all, and
+is now the **only** morning instrument in the project. That is the argument for db/039 in one
+sentence.
+
 ### THE SLOPE IS THE REASON DB/039 IS THE HIGHEST-VALUE ITEM IN THE QUEUE (2026-11-04)
 
 Within a day, across 1,354 EDGE rows shown and below the cut, the point estimate of return
@@ -3484,7 +3516,8 @@ properly, and it is not a macro footnote.
 **db/039 exists to answer it:** does the score rank same-day return in the morning window
 where Roman actually trades, exit-free? 44% of rating_snapshots rows at 8535a85 were captured
 06:00 to 09:59 PT (1,412 of 3,184, over 30 days), where the logger's morning rows cover 14
-days. Everything else built this week makes the records trustworthy; db/039 is what the
+days; since the re-aim, signal_log can't measure 06:30–08:58 PT at all (see "Limit on the
+instrument" above). Everything else built this week makes the records trustworthy; db/039 is what the
 trustworthy records are FOR.
 
 **db/039 is the BEST INSTRUMENT AVAILABLE, not a clean answer.** On the rows captured so far,

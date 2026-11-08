@@ -13,6 +13,10 @@
 // A row in a backup with no position_id can't be matched and is counted, not guessed.
 // "Departed" means: in at least one backup, and not in the live portfolio now.
 //
+// CHECK 2 (classifySnapshots) covers what check 1 can't: every buy since the first
+// signal_snapshot_at_buy row (2026-10-29), intraday round trips included, because the
+// snapshot is written at the buy, not on a schedule. It prints its own blind period.
+//
 //   node scripts/audit-departed-positions.mjs
 import { execSync } from 'node:child_process';
 import path from 'node:path';
@@ -75,6 +79,29 @@ export function classify(versions, livePortfolio, liveTrades) {
     byId: byId.length, byTickerDate: byTickerDate.length, cannotTell, missing, noId, neverBackedUp, tradesNoId, legacyUnused };
 }
 
+// CHECK 2 (2026-11-08): the buy snapshots. signal_snapshot_at_buy is written at the buy and
+// carries position_id (db/033), on no schedule, so it sees positions bought and sold between
+// backups -- the class check 1 is blind to. A snapshot whose position is neither open nor
+// sold is a candidate for loss mode B (delete landed, insert failed, queue entry lost).
+// Pure: no I/O.
+export function classifySnapshots(snaps, livePortfolio, liveTrades) {
+  const first = snaps.length ? snaps.map(s => s.captured_at).sort()[0] : null;
+  const open = new Set(livePortfolio.map(r => String(r.position_id)));
+  const sold = new Map(liveTrades.filter(t => t.position_id != null).map(t => [String(t.position_id), t]));
+  const snapIds = new Set(snaps.map(s => String(s.position_id)));
+  const stillOpen = snaps.filter(s => open.has(String(s.position_id)));
+  const withSale = snaps.filter(s => !open.has(String(s.position_id)) && sold.has(String(s.position_id)));
+  const neither = snaps.filter(s => !open.has(String(s.position_id)) && !sold.has(String(s.position_id)));
+  // Sales recorded since the first snapshot whose position has none: read the buy, don't guess.
+  // Bought before the first snapshot existed = expected; bought after = a buy whose snapshot
+  // did not land (the failed-snapshot blind spot, observed).
+  const boughtAt = t => t.filled_at || (t.buy_date ? `${String(t.buy_date).slice(0, 10)}T23:59:59Z` : null);
+  const noSnap = first ? liveTrades.filter(t => t.position_id != null && t.created_at >= first && !snapIds.has(String(t.position_id))) : [];
+  const noSnapBefore = noSnap.filter(t => boughtAt(t) && boughtAt(t) < first);
+  const noSnapAfter = noSnap.filter(t => !(boughtAt(t) && boughtAt(t) < first));
+  return { snapshots: snaps.length, first, open: stillOpen.length, sold: withSale.length, neither, noSnapBefore, noSnapAfter };
+}
+
 function backupVersions() {
   const log = execSync(`git log --format=%H%x20%cI -- ${BACKUP}`, { cwd: ROOT, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
   return log.map(line => {
@@ -92,7 +119,8 @@ async function main() {
   const versions = backupVersions();
   const headers = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` };
   const live = await fetchAllRows(`${SUPABASE_URL}/rest/v1/portfolio?select=id,position_id,ticker&order=id`, headers, 'portfolio (live)');
-  const trades = await fetchAllRows(`${SUPABASE_URL}/rest/v1/trades_v2?select=id,position_id,ticker,buy_date,sell_date&order=id`, headers, 'trades_v2 (live)');
+  const trades = await fetchAllRows(`${SUPABASE_URL}/rest/v1/trades_v2?select=id,position_id,ticker,buy_date,buy_time,filled_at,sell_date,created_at&order=id`, headers, 'trades_v2 (live)');
+  const snaps = await fetchAllRows(`${SUPABASE_URL}/rest/v1/signal_snapshot_at_buy?select=position_id,captured_at,engine_source&order=position_id`, headers, 'signal_snapshot_at_buy (live)', fetch, 'position_id');
   // A positive control: trades_v2 is never empty, and nothing here can tell an empty read from a denied one.
   if (!trades.length) throw new Error('trades_v2 read back empty: a denied read looks the same; refusing to report');
   const r = classify(versions, live, trades);
@@ -113,6 +141,24 @@ async function main() {
   console.log(`    backup rows with no position_id (not matchable): ${r.noId}`);
   console.log(`    trades_v2 sales whose position is in no backup (bought and sold between backups; not checked): ${r.neverBackedUp}`);
   console.log(`    trades_v2 rows with no position_id (before db/033): ${r.tradesNoId}, of which ${r.legacyUnused} matched no backed-up position (bought and sold between backups)`);
+
+  if (!snaps.length) throw new Error('signal_snapshot_at_buy read back empty: a denied read looks the same; refusing to report check 2');
+  const s = classifySnapshots(snaps, live, trades);
+  console.log(`\nCHECK 2: buy snapshots (signal_snapshot_at_buy) vs live portfolio and trades_v2 -- the check that sees intraday round trips`);
+  console.log(`  BLIND: every position bought before the first snapshot, ${s.first}. Loss mode B is UNDETECTABLE there:`);
+  console.log(`    no snapshot exists, and check 1 can't see a position bought and sold between backups.`);
+  console.log(`  ${s.snapshots} buy snapshots since then:`);
+  console.log(`    open now ................................................................ ${s.open}`);
+  console.log(`    sold: a trades_v2 row carries its position_id ............................ ${s.sold}`);
+  console.log(`    NEITHER open nor sold (a loss mode B candidate) .......................... ${s.neither.length}`);
+  for (const n of s.neither) console.log(`      position ${n.position_id}, snapshot ${n.captured_at}, ${n.engine_source || 'engine not recorded'}`);
+  console.log(`  sales recorded since the first snapshot whose position has NO snapshot:`);
+  console.log(`    bought before the first snapshot existed (expected) ...................... ${s.noSnapBefore.length}`);
+  for (const t of s.noSnapBefore) console.log(`      ${t.ticker} position ${t.position_id}, bought ${t.filled_at || t.buy_date}`);
+  console.log(`    bought AFTER it: a buy whose snapshot did not land ....................... ${s.noSnapAfter.length}`);
+  for (const t of s.noSnapAfter) console.log(`      ${t.ticker} position ${t.position_id}, bought ${t.filled_at || t.buy_date}`);
+  console.log('  coverage: a buy whose snapshot failed to write leaves an entry in the phone\'s snapshotWriteFailures');
+  console.log('    queue (Retry lands it). It is invisible here only if that entry was also lost: mode B one level down.');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(e => { console.error(e.message); process.exit(1); });
