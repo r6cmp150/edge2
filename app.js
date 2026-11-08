@@ -1096,21 +1096,49 @@ function updateMarketBanner() {
   }
   // SALE_FAILED first: a real trade record that would otherwise be lost
   // (writeTradeToSupabase -> noteSaleWrite).
+  // Then (2026-11-08) a refused copy whose recorded sale DIFFERS from what was entered, then
+  // one that couldn't be read back, then the rest: the collapsed line shows the first, and a
+  // difference in the trade record must not sit behind a routine refusal.
+  const saleRank = f => {
+    if (f.code === 'SALE_FAILED') return 0;
+    const v = Array.isArray(f.attempts) ? f.attempts[f.attempts.length - 1]?.comparison?.verdict : null;
+    return v === 'DIFFER' ? 1 : v === 'COULD_NOT_READ' ? 2 : 3;
+  };
   const saleFails = Object.entries(state.saleWriteFailures || {}).map(([id, f]) => ({ id, ...f }))
-    .sort((a, b) => (a.code === 'SALE_FAILED' ? 0 : 1) - (b.code === 'SALE_FAILED' ? 0 : 1));
+    .sort((a, b) => saleRank(a) - saleRank(b));
   // What the entry itself holds, shown as stored (2026-11-08): its position_id (the
   // key), its `at`, and the database's message. Read-only: nothing is computed,
   // written or added to what's persisted. A field the entry lacks says so. Escaped,
   // because the message is the database's text.
   const escFact = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  const facts = f => `<div class="banner-facts">position ${escFact(f.id)} · at ${f.at ? escFact(f.at) : 'not recorded'} · ${f.message ? escFact(f.message) : 'no message recorded'}</div>`;
+  // An entry with an `attempts` list (2026-11-08 on) shows every attempt, first first; one
+  // from before shows the single attempt it holds.
+  const facts = f => {
+    if (!Array.isArray(f.attempts) || !f.attempts.length) return `<div class="banner-facts">position ${escFact(f.id)} · at ${f.at ? escFact(f.at) : 'not recorded'} · ${f.message ? escFact(f.message) : 'no message recorded'}</div>`;
+    const lines = f.attempts.map((a, i) => `#${i === 0 ? 1 : i + 1 + (f.attemptsDropped || 0)} at ${a.at ? escFact(a.at) : 'not recorded'} · ${escFact(a.code || 'unknown')} · ${a.message ? escFact(a.message) : 'no message recorded'}`);
+    if (f.attemptsDropped) lines.splice(1, 0, `(${f.attemptsDropped} attempt(s) between not kept)`);
+    return `<div class="banner-facts">position ${escFact(f.id)} · ${f.attempts.length + (f.attemptsDropped || 0)} attempt(s)<br>${lines.join('<br>')}</div>`;
+  };
+  const money = v => (v == null ? 'not recorded' : `$${escFact(Number(v))}`);
+  const saleVals = v => (v ? `${money(v.sell_price)} × ${v.shares == null ? 'not recorded' : escFact(v.shares)} on ${v.sell_date ? escFact(v.sell_date) : 'not recorded'}` : 'not read');
   for (const f of saleFails) {
     if (f.code === 'SALE_FAILED') {
       add('var(--red)', `${f.ticker} sale NOT recorded`, "The sale isn't in the database. Don't re-submit it by hand: tap Retry (safe — a second copy is refused), then check the Sold tab after a refresh." + facts(f),
         `<button class="btn btn-sm btn-danger" onclick="retrySaleWrite('${f.id}')">Retry</button>`);
+      continue;
+    }
+    // A refused copy: what it says depends on what the comparison found (compareRecordedSale).
+    // A message states what is known; a difference is never reported as an equivalence.
+    const cmp = Array.isArray(f.attempts) ? f.attempts[f.attempts.length - 1]?.comparison : null;
+    const dismiss = `<button class="btn btn-sm btn-ghost" onclick="dismissSaleNotice('${f.id}')">Dismiss</button>`;
+    if (cmp?.verdict === 'MATCH') {
+      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of the same sale was refused, as designed. Nothing is lost: the recorded sale matches what you entered on sell price, shares and sale date. The recording time is not comparable and was not compared. Refresh the Sold tab to see it.' + facts(f), dismiss);
+    } else if (cmp?.verdict === 'DIFFER') {
+      add('var(--red)', `${f.ticker} sale recorded with different numbers`, `A sale for this position was already recorded, so yours was refused, and they differ on ${escFact((cmp.differ || []).join(', ').replace(/_/g, ' '))}. Recorded: ${saleVals(cmp.stored)}. You entered: ${saleVals(cmp.submitted)}. Yours were not saved. Check the Sold tab against your broker.` + facts(f), dismiss);
+    } else if (cmp?.verdict === 'COULD_NOT_READ') {
+      add('var(--yellow)', `${f.ticker} sale was already recorded`, `A second copy was refused: a sale for this position is already recorded, but it couldn't be read back to compare with what you entered (${escFact(cmp.reason || 'no reason given')}). Check the Sold tab shows your numbers.` + facts(f), dismiss);
     } else {
-      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of the same sale was refused, as designed. Nothing is lost — refresh the Sold tab to see it.' + facts(f),
-        `<button class="btn btn-sm btn-ghost" onclick="dismissSaleNotice('${f.id}')">Dismiss</button>`);
+      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of a sale for this position was refused: one is already recorded. Whether it matches what you entered was not checked (refused before 2026-11-08). Check the Sold tab shows your numbers.' + facts(f), dismiss);
     }
   }
   // A sold position whose portfolio row is still there (recordSaleThenRemovePosition,
@@ -6625,17 +6653,28 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       // already in trades_v2 (db/033). That's the intended refusal of a
       // second copy, not a lost trade.
       const duplicate = error.code === '23505' && /position_id/.test(`${error.message} ${error.details || ''}`);
-      return noteSaleWrite(pos, duplicate ? 'SALE_DUPLICATE' : 'SALE_FAILED', error.message, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
+      if (duplicate) {
+        // A refused copy says a sale row exists, not that it holds what Roman just
+        // entered (2026-11-08). Read it back and compare.
+        const comparison = await compareRecordedSale(pos.id, { sell_price: salePrice, shares: pos.shares, sell_date: saleDate });
+        return noteSaleWrite(pos, 'SALE_DUPLICATE', error.message, null, comparison);
+      }
+      return noteSaleWrite(pos, 'SALE_FAILED', error.message, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
+    }
+    // No error and no row back is NOT a sale recorded (2026-11-08). The insert asks
+    // for its row back (RETURNING): a hidden row is a 42501 error, not an empty body
+    // (harness, Postgres 18.6), so an empty body means zero rows were inserted (a
+    // BEFORE INSERT trigger returning NULL is the one way). It used to be WRITTEN.
+    if (!data || !data[0]) {
+      return noteSaleWrite(pos, 'SALE_FAILED', 'the insert returned no error and no row: nothing was recorded', [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
     }
     // record is the same object reference already sitting in state.sold —
     // capturing the Supabase row id here lets Sell Timing Analysis (Lazy
     // Resolution project) later UPDATE this exact row instead of matching
     // on ticker+dates. persist('sold') re-runs here since confirmMarkSold's
     // own persist('sold') already fired before this async write completed.
-    if (data && data[0]) {
-      record.supabaseId = data[0].id;
-      persist('sold');
-    }
+    record.supabaseId = data[0].id;
+    persist('sold');
     return noteSaleWrite(pos, 'WRITTEN', null, null);
   } catch(e) {
     return noteSaleWrite(pos, 'SALE_FAILED', e.message, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
@@ -6651,16 +6690,62 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
 // in persisted state: the only copy until Retry lands it. Retry is safe
 // because trades_v2.position_id is unique: if the first write did land,
 // the retry comes back SALE_DUPLICATE.
-function noteSaleWrite(pos, status, message, args) {
+// A LATER ATTEMPT NEVER OVERWRITES THE RECORD OF AN EARLIER ONE (2026-11-08). Each
+// non-WRITTEN outcome is appended to the entry's `attempts`; the entry's top-level
+// code/message/at are the latest, for the banner. A Retry refused as a duplicate used to
+// replace the first failure's message and time, destroying the evidence of what
+// happened first. Bounded: the first attempt is always kept, plus the latest
+// MAX_SALE_ATTEMPTS - 1, and the count of any dropped between them. WRITTEN resolves the
+// entry (removes it): the sale is recorded.
+const MAX_SALE_ATTEMPTS = 6;
+function noteSaleWrite(pos, status, message, args, comparison = null) {
   if (!state.saleWriteFailures) state.saleWriteFailures = {};
   if (status === 'WRITTEN') delete state.saleWriteFailures[pos.id];
   else {
     console.error(`Supabase trade write ${status} for ${pos.ticker} (${pos.id}): ${message}`);
-    state.saleWriteFailures[pos.id] = { ticker: pos.ticker, code: status, message, at: new Date().toISOString(), args: status === 'SALE_FAILED' ? args : null };
+    const prev = state.saleWriteFailures[pos.id];
+    // An entry from before this build holds one attempt at top level, and no list.
+    const attempts = prev ? (Array.isArray(prev.attempts) ? prev.attempts.slice() : [{ code: prev.code, message: prev.message ?? null, at: prev.at ?? null, legacy: true }]) : [];
+    const at = new Date().toISOString();
+    attempts.push(comparison ? { code: status, message, at, comparison } : { code: status, message, at });
+    let dropped = prev?.attemptsDropped || 0;
+    while (attempts.length > MAX_SALE_ATTEMPTS) { attempts.splice(1, 1); dropped++; }
+    state.saleWriteFailures[pos.id] = {
+      ticker: pos.ticker, code: status, message, at, attempts, attemptsDropped: dropped,
+      // A failed sale keeps its args (the only copy until Retry lands it). A duplicate
+      // needs none: its sale is in trades_v2.
+      args: status === 'SALE_FAILED' ? args : null,
+    };
   }
   persist('saleWriteFailures');
   updateMarketBanner();
   return status;
+}
+
+// What a refused second copy is compared on: sell price, shares and sale date. Not
+// sell_time: since 5cf9863 it is the RECORDING time, so two attempts always differ by
+// minutes and comparing it would report a difference every time. Returns a small fixed
+// verdict plus the compared values, never the row: { verdict: 'MATCH' | 'DIFFER' |
+// 'COULD_NOT_READ', compared, submitted, stored, note }.
+const SALE_COMPARED_FIELDS = ['sell_price', 'shares', 'sell_date'];
+async function compareRecordedSale(positionId, submitted) {
+  const base = { compared: SALE_COMPARED_FIELDS, submitted, stored: null, note: 'sell_time is the recording time, not comparable; not compared' };
+  try {
+    const { data, error } = await supabaseClient.from('trades_v2').select('sell_price, shares, sell_date').eq('position_id', String(positionId)).limit(1);
+    if (error) return { ...base, verdict: 'COULD_NOT_READ', reason: error.message };
+    // A 23505 says the row exists, so an empty read here is a read problem, never "no sale".
+    if (!data || !data[0]) return { ...base, verdict: 'COULD_NOT_READ', reason: 'the recorded sale read back empty' };
+    const stored = { sell_price: data[0].sell_price, shares: data[0].shares, sell_date: data[0].sell_date == null ? null : String(data[0].sell_date).slice(0, 10) };
+    const same = {
+      sell_price: stored.sell_price != null && submitted.sell_price != null && Math.abs(Number(stored.sell_price) - Number(submitted.sell_price)) < 0.00005,
+      shares: stored.shares != null && submitted.shares != null && Number(stored.shares) === Number(submitted.shares),
+      sell_date: stored.sell_date != null && stored.sell_date === String(submitted.sell_date).slice(0, 10),
+    };
+    const differ = SALE_COMPARED_FIELDS.filter(k => !same[k]);
+    return { ...base, stored, verdict: differ.length ? 'DIFFER' : 'MATCH', differ };
+  } catch (e) {
+    return { ...base, verdict: 'COULD_NOT_READ', reason: e?.message || String(e) };
+  }
 }
 
 async function retrySaleWrite(posId) {

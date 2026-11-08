@@ -76,7 +76,7 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 
 ## Sale queue on Roman's phone (2026-11-08)
 - The expanded banner: 13 lines, 0 `sale NOT recorded`, 11 `sale was already recorded`, 1 storage-full, 1 scan
-  snapshot batch of 14 rows unsaved. Roman taps nothing (no Dismiss, no Retry) until the overwrite defect is fixed.
+  snapshot batch of 14 rows unsaved. Roman taps nothing (no Dismiss, no Retry) until change 2 is live and he has reloaded (see Closed).
 - The 11: each one is a 23505 on `trades_v2_position_id_once` (app.js `writeTradeToSupabase`, unchanged since
   e57769c), so a row with that position_id existed when the copy was refused. They are exactly the 11 sales recorded
   after 07:15 PT on 2026-11-06 (live read, 2026-11-08T16:33Z). Not yet matched row-for-row: the queue's keys are on
@@ -126,11 +126,13 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 - The next capture query (v3) adds `polpermissive` per policy. The 2026-11-06 capture doesn't record permissive vs
   restrictive; it changes nothing found so far (a restrictive policy still refuses with 42501). Not edited into
   v2, whose query text is hashed with the capture it produced.
-- A Retry refused as a duplicate overwrites the first failure's message and time. Roman taps no Retry until it is
-  fixed (with the storage change): a later attempt never overwrites the record of an earlier one.
 - The banner now shows each sale entry's position_id, `at` and database message, so the 11 can be matched
   row-for-row from a screenshot (390px fixture render looked at; not yet seen on the phone).
-- A sale whose insert comes back with no error and no row is recorded as WRITTEN.
+- The 11 refusals already on the phone predate the comparison: their banner says whether they match "was not
+  checked". Their submitted numbers aren't in the entries (a duplicate kept no args); the phone's own Sold record
+  has them. Comparing against that is possible, not built.
+- The storage fix itself (bounded cache, dated "most recent N of M"; three-state measured state at sale) is still
+  to build.
 - One unexplained DEAD in `tests/anon-write-paths.test.js` under four parallel worktree runs: 100/100 alone, not
   reproduced in 15 reruns under concurrent load. The runner now prints a failure's whole output, so the next one names
   its path.
@@ -139,6 +141,15 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 - The default-ACL fix itself (scoped in the spec, not built).
 
 ## Closed recently, so they don't come back
+- Change 2 (2026-11-08). A later attempt never overwrites the record of an earlier one: each outcome is appended
+  to the entry's `attempts` (first always kept, bounded at 6, the count dropped between said). A refused copy is
+  read back and compared on sell price, shares and sale date (sell_time is the recording time: not comparable,
+  not compared, and the message says so): MATCH keeps "Nothing is lost", DIFFER is its own red line with both
+  sets of numbers, COULD_NOT_READ says so; a refusal from before this build says it was not checked. No error
+  and no row back is SALE_FAILED, kept for Retry (it was WRITTEN). A DIFFER outranks routine refusals on the
+  collapsed line (found by the 390px render, not a test). With this live, Retry destroys nothing. Dismiss still
+  deletes the entry and its attempts; for a DIFFER that is the banner's record of his numbers (the phone's Sold
+  record keeps them), so a DIFFER is read against his broker before it is dismissed.
 - `deletePositionFromSupabase` treated no error as deleted. It now returns REMOVED or ALREADY_GONE, and throws
   POSITION_NOT_REMOVED (row still there) or POSITION_UNKNOWN (check failed).
 - A sale was lost outright if the portfolio delete errored: confirmMarkSold returned before the record existed, with

@@ -124,3 +124,16 @@ run('"still shows as open": its own red line, the sale state named, Remove again
   assert.ok(h.includes('position 7 · position 7: the delete removed no row') && h.includes('&lt;b&gt;') && !h.includes('<b>'));
   assert.ok(!h.includes('UEC sale NOT recorded') && !h.includes('XE sale NOT recorded'), 'never presented as a sale failure');
 });
+
+// 2026-11-08: found by rendering change 2 at 390px, not by a test. The collapsed line showed a
+// routine refusal while a sale recorded with DIFFERENT numbers sat behind "+3".
+run('the collapsed line shows NOT recorded, then DIFFERENT numbers, then could-not-read, before routine refusals', () => {
+  const cmpd = v => [{ code: 'SALE_DUPLICATE', message: 'm', at: 'a', comparison: { verdict: v, differ: ['sell_price'], stored: {}, submitted: {} } }];
+  const legacy = { ticker: 'OLD', code: 'SALE_DUPLICATE', message: 'm', at: 'a' };
+  let el = load({ saleWriteFailures: { a: legacy, b: { ticker: 'MAT', code: 'SALE_DUPLICATE', attempts: cmpd('MATCH') }, c: { ticker: 'CNR', code: 'SALE_DUPLICATE', attempts: cmpd('COULD_NOT_READ') }, d: { ticker: 'DIF', code: 'SALE_DUPLICATE', attempts: cmpd('DIFFER') } } });
+  assert.ok(el.innerHTML.includes('DIF sale recorded with different numbers'), 'DIFFER leads: ' + el.innerHTML);
+  el = load({ saleWriteFailures: { a: legacy, c: { ticker: 'CNR', code: 'SALE_DUPLICATE', attempts: cmpd('COULD_NOT_READ') } } });
+  assert.ok(el.innerHTML.includes('CNR sale was already recorded'), 'could-not-read before an unchecked refusal');
+  el = load({ saleWriteFailures: { d: { ticker: 'DIF', code: 'SALE_DUPLICATE', attempts: cmpd('DIFFER') }, f: { ticker: 'NRC', code: 'SALE_FAILED' } } });
+  assert.ok(el.innerHTML.includes('NRC sale NOT recorded'), 'a sale not recorded still leads');
+});
