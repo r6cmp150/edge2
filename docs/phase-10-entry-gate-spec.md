@@ -3428,6 +3428,26 @@ market banner's fixed 36px clipped its text, so "HUN sale NOT recorded" lost its
 main while every other failure sat hidden behind it; the tests read its HTML and passed.
 Then "NOT RECORDED" clipped to "NOT RECO…" on the macro line, after a test had already
 asserted that the line can't wrap. The test held. Not wrapping is what caused the clip.
+(Correction, 2026-11-08: "HUN sale NOT recorded" was FIXTURE state, rendered headless at 390px
+in ca68340, not a real failure on Roman's phone. Read as an incident, this sentence cost a
+morning.)
+
+**Rule: a figure that arrives through a second party has lost its method (2026-11-08).** It is
+not quotable until it is re-derivable from something in the repo. "236 of 236 departed
+positions present" came from a read on 2026-11-07, came back through the reviewer's note with
+no method, and on recomputation turned out to rest mostly (175 of 236) on a weaker ticker +
+buy-date match the bare figure never mentioned. It is now `scripts/audit-departed-positions.mjs`,
+and STATUS.md cites the script, not the number.
+
+**Rule: derived state is recomputed from the facts, not persisted beside them (2026-11-08).** A
+stored copy can disagree with what it describes, and nothing says which is wrong. The "still
+shows as open" line is rebuilt on every load from trades_v2 and the phone's queue; it is never
+written to storage.
+
+**Rule: a deploy is confirmed by reading what is served and finding the change in it
+(2026-11-08).** CI passing is evidence the code is correct, not that it reached anyone. ca79c61
+was confirmed by fetching the served index.html, sw.js and app.js and finding the new stamps and
+the new sale code.
 
 **The queue tests, and a failure that is UNEXPLAINED (2026-11-03).**
 `tests/queue-pacing.test.js` failed once, at 23:26Z on 11-03, in a full strict run:

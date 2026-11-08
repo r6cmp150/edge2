@@ -17,11 +17,24 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   and the schema's default ACLs. Until a v2 capture exists, no `rpc/` call can be shown live.
 
 ## Waiting on Roman
-- Whether all 7 open positions are stocks he still holds, and none is one he believes he sold (asked 2026-11-08).
-  A sale lost the old way (delete error before the record existed) leaves an open row and no trades_v2 row, which
-  the database can't tell from a real holding. His answer is the only evidence either way; the ghost check
-  (below) checks the opposite case and does not stand in for it.
-- Whether he tapped Retry on 2026-11-06, and whether EDGE was open in two places that morning.
+- Whether he tapped Retry on 2026-11-06, and whether EDGE was open in two places that morning. If they don't
+  come, the duplicates are worked from the data: each entry's `at` (banner screenshot) against its row's
+  created_at.
+- A reload before Monday's open, and a screenshot of the expanded banner on the phone.
+
+## Answered by Roman
+- **Broker holdings vs EDGE's Portfolio tab: all 7 match** (2026-11-08; source: his brokerage account, not EDGE;
+  an earlier reply about what the app recommends was not an answer and is not recorded as one). Scope: a sale
+  lost the old way (the delete errored before the record existed, until ca79c61) left its portfolio row in place,
+  so one still outstanding would be a position open in EDGE that he doesn't hold. None is: this rules out every
+  outstanding instance. It does NOT rule out a lost sale whose position was later sold again successfully (that
+  sale is recorded, with the later attempt's price, date and numbers). A position leaving portfolio by another
+  route: inside EDGE the only routes are the sale, Remove again (after a sale) and cancelPendingOrder, which
+  removes only unfilled orders, which the sale path refuses, so a lost sale's row can't leave that way. Outside
+  EDGE the anon key can delete, and has: ZZVERIFY, a hand-inserted test row deleted by hand (last in the backup of 2026-09-10T10:08Z). For
+  backed-up positions that gap is measured by scripts/audit-departed-positions.mjs (below): no real position
+  left without a sale row. Positions bought and sold between backups are not covered. Kept apart from the
+  ghost check: they answer opposite questions.
 - Step 4 after db/037: a real buy and a real sale, both landing.
 - RUN-ME-8, the extended capture (read-only), saved as `live-schema-2026-11-06.json`; then `db/live-columns.json` is
   regenerated from it with 037, 038 and 040 declared applied, and checked against it.
@@ -69,14 +82,18 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   after 07:15 PT on 2026-11-06 (live read, 2026-11-08T16:33Z). Not yet matched row-for-row: the queue's keys are on
   the phone.
 - Two claims, kept apart. "No sale is lost right now": the 13 lines, plus the live read. "No sale was ever lost":
-  a check of every departed position against trades_v2 from the backups, only. Its figure is held: no script
-  or record for it is in the repo yet, so it is re-derived before it is quoted. Before ca68340 the banner clipped and hid every
-  failure behind the first, so the 13 lines say nothing about earlier weeks.
+  `node scripts/audit-departed-positions.mjs` only (33 backups, 2026-09-05 to 2026-11-07; live read
+  2026-11-08T17:40Z): 244 positions seen, 7 open, 237 departed; 61 matched to a sale row by position_id, 175 by
+  ticker + buy date (sales before db/033 have no position_id; weaker, 15 ambiguous), 1 with none: ZZVERIFY, the
+  test row. Not covered: 255 sales with a position_id and 117 without whose positions were bought and sold
+  between backups. Quote the script's output, never this line's numbers on their own: they go stale with every
+  backup. Before ca68340 the banner clipped and hid every failure behind the first, so the 13 lines say nothing
+  about earlier weeks.
 - "HUN sale NOT recorded" (spec, 2026-11-04 rendering rule) is fixture state rendered at 390px (ca68340's own
   message), not a real failure.
 - Ghost positions (an open portfolio row whose position already has a sale): 0 of 7, live read 2026-11-08T16:44Z,
   with a positive control on the same filter. This finds a sold position still open; it cannot find a sale that was
-  never recorded (see Waiting on Roman).
+  never recorded (see Answered by Roman).
 - trades_v2 INSERT can't be dropped silently by RLS. Live capture 2026-11-06: RLS on; anon INSERT `with check (true)`,
   anon SELECT `using (true)`; no INSERT trigger. In Postgres 18.6 (harness) every RLS refusal of an insert is 42501,
   which the app records as SALE_FAILED. The only "no error, zero rows" insert is a BEFORE INSERT trigger returning
@@ -86,6 +103,9 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- The next capture query (v3) adds `polpermissive` per policy. The 2026-11-06 capture doesn't record permissive vs
+  restrictive; it changes nothing found so far (a restrictive policy still refuses with 42501). Not edited into
+  v2, whose query text is hashed with the capture it produced.
 - A Retry refused as a duplicate overwrites the first failure's message and time. Roman taps no Retry until it is
   fixed (with the storage change): a later attempt never overwrites the record of an earlier one.
 - The banner now shows each sale entry's position_id, `at` and database message, so the 11 can be matched
