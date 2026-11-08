@@ -3447,6 +3447,11 @@ asserted that the line can't wrap. The test held. Not wrapping is what caused th
 (Correction, 2026-11-08: "HUN sale NOT recorded" was FIXTURE state, rendered headless at 390px
 in ca68340, not a real failure on Roman's phone. Read as an incident, this sentence cost a
 morning.)
+**Paid for again, 2026-11-08 (ca6019f):** rendering change 2's banner at 390px showed the
+collapsed line leading with a grey routine refusal while a red "sale recorded with different
+numbers" sat behind "+3". Every test passed: they checked each line's wording, not which line
+leads. Found by looking; then a test and a mutant were added. Same surface each time: the one
+whose whole job is to show the important line first.
 
 **Rule: a figure that arrives through a second party has lost its method (2026-11-08).** It is
 not quotable until it is re-derivable from something in the repo. "236 of 236 departed

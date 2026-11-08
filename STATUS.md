@@ -76,7 +76,7 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 
 ## Sale queue on Roman's phone (2026-11-08)
 - The expanded banner: 13 lines, 0 `sale NOT recorded`, 11 `sale was already recorded`, 1 storage-full, 1 scan
-  snapshot batch of 14 rows unsaved. Roman taps nothing (no Dismiss, no Retry) until change 2 is live and he has reloaded (see Closed).
+  snapshot batch of 14 rows unsaved. Retry is safe once he has reloaded change 2; Dismiss stays off-limits until change 3 (see Open).
 - The 11: each one is a 23505 on `trades_v2_position_id_once` (app.js `writeTradeToSupabase`, unchanged since
   e57769c), so a row with that position_id existed when the copy was refused. They are exactly the 11 sales recorded
   after 07:15 PT on 2026-11-06 (live read, 2026-11-08T16:33Z). Not yet matched row-for-row: the queue's keys are on
@@ -122,7 +122,17 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   Alpaca's own open/closed, so no row is mislabelled. But 10 of 36 landed after the close as `marketOpen: false`,
   the shape the workflow documents as the weekend/holiday marker: all four of Monday 11-02's read "closed". And
   51 of 51 Warrior scans since 10-27 used their self-fetched fallback (scan_runs.universe_source): the snapshot
-  has not served as the shared universe in that period.
+  has not served as the shared universe in that period, nor ever (0 of 68 Warrior scans, all time).
+  **Decided 2026-11-08: keep and relabel (option b)**, because Alpaca's movers endpoint has no history: a capture
+  not taken is gone for good, against four small commits a weekday. Conditions, not built yet: the workflow's
+  comments stop claiming the opening window and describe mid-session and post-close captures; `marketOpen: false`
+  splits into "weekend or holiday" and "fired after the close", derived from `capturedAt`; the workflow records
+  that it has fed the Warrior universe 0 times in 68 scans. **Kept for a planned use, so it has a date:** the
+  float-coverage re-measurement on a live-captured population (warrior-engine-spec-v2.md) runs by **2026-12-31**,
+  or option (a), retire, executes without further discussion.
+- Change 3: Dismiss on a "different numbers" or "couldn't read back" entry asks first and says what is being
+  discarded (the record of what Roman entered); a routine match dismisses as now. Until it lands, Dismiss stays
+  off-limits. Retry is safe once change 2 is loaded (live since ca6019f, confirmed served 2026-11-08T19:57Z).
 - The next capture query (v3) adds `polpermissive` per policy. The 2026-11-06 capture doesn't record permissive vs
   restrictive; it changes nothing found so far (a restrictive policy still refuses with 42501). Not edited into
   v2, whose query text is hashed with the capture it produced.
