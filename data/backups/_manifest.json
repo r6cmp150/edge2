@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-11-07T11:59:24.240Z",
+  "run_at": "2026-11-08T12:19:18.156Z",
   "floors": {
     "trades": 37,
     "trades_v2": 451,
@@ -19,7 +19,7 @@
     },
     "trades_v2": {
       "fetched": 608,
-      "prior": 572,
+      "prior": 608,
       "floor": 451,
       "written": true,
       "reason": null
@@ -29,7 +29,7 @@
       "mode": "daily",
       "read": 1828,
       "live": 2569,
-      "prior": 2434,
+      "prior": 2569,
       "fetched": 2569,
       "written": true,
       "reason": null,
@@ -50,14 +50,14 @@
     },
     "portfolio": {
       "fetched": 7,
-      "prior": 12,
+      "prior": 7,
       "floor": 0,
       "written": true,
       "reason": null
     },
     "signal_snapshot_at_buy": {
       "fetched": 251,
-      "prior": 220,
+      "prior": 251,
       "floor": 88,
       "written": true,
       "reason": null
@@ -67,7 +67,7 @@
       "mode": "daily",
       "read": 1743,
       "live": 3905,
-      "prior": 3759,
+      "prior": 3905,
       "fetched": 3905,
       "written": true,
       "reason": null,
