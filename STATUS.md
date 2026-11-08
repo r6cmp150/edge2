@@ -121,6 +121,14 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   assumed: all four (TTI, EFC, WEN, PMT) were bought 2026-10-28, before snapshots existed. A buy whose snapshot
   failed leaves a snapshotWriteFailures entry on the phone, so it is invisible only if that entry was lost too:
   mode B one level down. (The hourly portfolio backup was scoped and withdrawn: crons land 4–8 h late.)
+  **Mode B's mechanism, identified 2026-11-08 and fixed in 4a (ceb7c24):** a sale fails, goes on the queue in
+  memory, and the queue's own save fails because the quota is full; then ANY other key saving successfully
+  cleared the warning (persist() cleared the failure on any success). The user saw nothing, and on reload the
+  entry was gone, with no trace anywhere. With the quota full, some other key saving was close to certain, so
+  this was live for as long as the quota was full. 4a closes it twice over: a queue write evicts caches to land,
+  and a failure is cleared only by its own key. **Both of these are true together:** the mechanism existed, and in
+  the measured period (buy snapshots, from 2026-10-29) it produced no loss: 251 buys, 0 unaccounted for. Before
+  2026-10-29 it is unmeasurable.
 - "HUN sale NOT recorded" (spec, 2026-11-04 rendering rule) is fixture state rendered at 390px (ca68340's own
   message), not a real failure.
 - Ghost positions (an open portfolio row whose position already has a sale): 0 of 7, live read 2026-11-08T16:44Z,
