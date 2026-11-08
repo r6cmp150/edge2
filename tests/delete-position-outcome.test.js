@@ -63,11 +63,5 @@ run('a delete error is thrown as it came', async () => {
   await rejects(del('1'), '42501');
 });
 
-run('the sale path: a throw stops the sale and un-suppresses the position\'s saves', () => {
-  const app = readSource('app.js');
-  const i = app.indexOf('const removed = await deletePositionFromSupabase(pos.id);');
-  assert.ok(i >= 0, 'the sale reads the outcome');
-  const after = app.slice(i, i + 900);
-  const c = after.indexOf('} catch(e) {');
-  assert.ok(c >= 0 && /state\.deletedPositionIds\.delete\(pos\.id\)/.test(after.slice(c, c + 200)) && /return;/.test(after.slice(c, c + 400)), after);
-});
+// What the sale path does with these outcomes (insert first; a throw becomes a "still
+// shows as open" line, never a stopped sale) is tests/sale-write-order.test.js.

@@ -36,7 +36,8 @@ const REGISTRY = {
     { verdict: S, empty: 'quota panel count = 0', denied: 'shows 0 rows used' },
     { verdict: S, empty: 'archive report: snapshot read swallowed (catch {})', denied: 'archive silently omits snapshots' }],
   'app.js|trades_v2': [
-    { verdict: S, empty: 'sale insert ... .select(\'id\') (4,161 chars after .from: the read a 400-char window missed): no row back = id not captured', denied: 'sale is WRITTEN (correct), but record.supabaseId stays unset, so later id-keyed updates of that sale can\'t find it, silently' },
+    { verdict: S, empty: 'sale insert ... .select(\'id\') (4,161 chars after .from: the read a 400-char window missed): no error and no row back = ZERO rows inserted (only a BEFORE INSERT trigger returning NULL does that; none live on trades_v2), yet recorded WRITTEN: the sale is not in the database and nothing says so (corrected 2026-11-08; fix carried in change 2)', denied: 'a denied RETURNING row is not an empty body: it is a 42501 error and nothing is inserted (harness, Postgres 18.6, 2026-11-08), so the sale is SALE_FAILED and queued for Retry. This entry used to say "WRITTEN (correct)", which was false' },
+    { verdict: S, empty: 'checkPositionsStillOpen: per open position, .eq + .limit(1); no row = its sale is not in trades_v2, no "still open" line (2026-11-08)', denied: 'every position reads back empty: no line, and a ghost goes unreported; an ERROR is reported as a read problem, never as "none found"' },
     { verdict: OK, empty: 'loadSoldFromSupabase: trades_v2 is never empty, so empty = cannot tell', denied: 'keeps the phone\'s copy, banner says the Sold list read back empty' + ' (fixed 2026-11-02; was WRITES_FROM_EMPTY: overwrote the cache)' },
     { verdict: S, empty: 'report: falls back to state.sold', denied: 'report runs on whatever local copy is left' },
     { verdict: S, empty: 'quota panel count = 0', denied: 'shows 0 trades' },

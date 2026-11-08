@@ -1113,6 +1113,14 @@ function updateMarketBanner() {
         `<button class="btn btn-sm btn-ghost" onclick="dismissSaleNotice('${f.id}')">Dismiss</button>`);
     }
   }
+  // A sold position whose portfolio row is still there (recordSaleThenRemovePosition,
+  // checkPositionsStillOpen). Its own line, never a sale failure: the sale is recorded
+  // or queued; the portfolio is what's wrong.
+  const SALE_STATE = { WRITTEN: 'Its sale is recorded.', SALE_DUPLICATE: 'Its sale was already recorded.', SALE_FAILED: 'Its sale is queued on this phone, not yet recorded (see its "sale NOT recorded" line).' };
+  for (const [id, g] of Object.entries(state.positionsStillOpen || {})) {
+    add('var(--red)', `${g.ticker} still shows as open`, `${SALE_STATE[g.sale] || 'Whether its sale is recorded is not known.'} The portfolio row wasn't removed, so it can come back after a reload and portfolio figures count it. Tap Remove again.<div class="banner-facts">position ${escFact(id)} · ${g.message ? escFact(g.message) : 'no message recorded'}</div>`,
+      `<button class="btn btn-sm btn-danger" onclick="removePositionAgain('${id}')">Remove again</button>`);
+  }
   // Position saves (core/store.js savePositionToSupabase): this tab is showing something
   // it couldn't save, or a position that no longer exists. Newest first.
   for (const f of Object.values(state.positionSaveFailures || {}).reverse()) {
@@ -6662,6 +6670,76 @@ async function retrySaleWrite(posId) {
   if (typeof renderSoldTab === 'function' && state.activeTab === 'sold') renderSoldTab();
 }
 
+// The sale's write order (2026-11-08): the insert first, whatever its outcome
+// (WRITTEN, SALE_DUPLICATE, or SALE_FAILED with its args kept for Retry), and only
+// then the portfolio row. A delete that removes nothing while the row is still
+// there, can't tell, or errors is a separate line: the position still shows as
+// open, and the sale is recorded or queued. Never reported as a sale failure.
+async function recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
+  let sale = 'SALE_FAILED';
+  try { sale = await writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct); }
+  catch (e) { console.error(`Sale write for ${pos.ticker} (${pos.id}) threw outside its own handling: ${e.message}`); }
+  try {
+    const removed = await deletePositionFromSupabase(pos.id);
+    if (removed === 'ALREADY_GONE') console.warn(`Sale of ${pos.ticker} (${pos.id}): the portfolio row was already gone (closed in another session).`);
+  } catch (e) {
+    notePositionStillOpen(pos.id, pos.ticker, sale, e.message);
+  }
+}
+
+// Positions still open whose sale is recorded or queued. DERIVED, NEVER PERSISTED:
+// a stored copy could disagree with the rows it describes, with nothing to say
+// which is wrong. Set by the sale flow above for this session, and rebuilt on every
+// load by checkPositionsStillOpen() from the facts themselves.
+function notePositionStillOpen(posId, ticker, sale, message) {
+  (state.positionsStillOpen = state.positionsStillOpen || {})[posId] = { ticker, sale, message };
+  updateMarketBanner();
+}
+
+// On load: an open portfolio row whose position_id already has a trades_v2 row, or
+// has a sale queued on this phone, is a position that should be gone.
+async function checkPositionsStillOpen() {
+  const open = (state.portfolio || []).filter(p => p.id);
+  const found = {};
+  for (const p of open) {
+    const q = state.saleWriteFailures?.[p.id];
+    if (q) found[p.id] = { ticker: p.ticker, sale: q.code, message: 'found on load: open in portfolio, with its sale queued on this phone' };
+  }
+  if (open.length) {
+    // One read per open position, each .eq + .limit(1): no in-list (tests/
+    // no-unchunked-in-list.test.js), and each returns at most one row.
+    const reads = await Promise.all(open.map(p => supabaseClient.from('trades_v2').select('position_id').eq('position_id', String(p.id)).limit(1)
+      .then(r => ({ p, ...r }), e => ({ p, data: null, error: e }))));
+    const failed = reads.filter(r => r.error);
+    if (failed.length) {
+      noteDataReadProblem('trades_v2 (open positions)', `couldn't check whether ${failed.length} open position${failed.length === 1 ? '' : 's'}' sale is already recorded (${failed[0].error.message})`);
+    } else {
+      clearDataReadProblem('trades_v2 (open positions)');
+    }
+    for (const r of reads) {
+      if (!r.error && r.data && r.data.length) found[r.p.id] = { ticker: r.p.ticker, sale: 'WRITTEN', message: 'found on load: open in portfolio, and its sale is in trades_v2' };
+    }
+  }
+  state.positionsStillOpen = { ...(state.positionsStillOpen || {}), ...found };
+  updateMarketBanner();
+}
+
+async function removePositionAgain(posId) {
+  const g = state.positionsStillOpen?.[posId];
+  if (!g) return;
+  try {
+    await deletePositionFromSupabase(posId);
+    delete state.positionsStillOpen[posId];
+    state.deletedPositionIds.add(posId);
+    state.portfolio = state.portfolio.filter(p => p.id !== posId);
+    if (typeof renderPortfolioTab === 'function') renderPortfolioTab();
+    if (typeof updateNavBadges === 'function') updateNavBadges();
+  } catch (e) {
+    g.message = e.message;
+  }
+  updateMarketBanner();
+}
+
 function dismissSaleNotice(posId) {
   if (state.saleWriteFailures?.[posId]?.code !== 'SALE_DUPLICATE') return; // only the harmless one is dismissable
   delete state.saleWriteFailures[posId];
@@ -6754,27 +6832,17 @@ async function confirmMarkSold(posId, btn) {
   const hold = holdSpan(pos, saleDate);
   if (saleDate < hold.startDate) { showAlert(`The sale date (${saleDate}) can't be before the buy ${hold.basis === 'fill' ? 'filled' : 'order date'} (${hold.startDate}).`); return; }
 
-  // Supabase is now the source of truth for portfolio — await the delete
-  // and only remove the position locally (move it to Sold) on success. A
-  // silent failure here would leave the position "sold" locally but still
-  // open in Supabase, which the next reload would resurrect as an open
-  // position while it's also sitting in Sold history.
+  // THE SALE FIRST, THEN THE PORTFOLIO ROW (2026-11-08). This used to await the
+  // delete and return on any error before the sale record existed: a network blip
+  // at that second lost the sale entirely, with one alert and no record anywhere.
+  // The sale is the only record of something that already happened in the broker
+  // account; the portfolio row is derived state we can repair. So nothing here can
+  // stop the record being built and saved: recordSaleThenRemovePosition (below)
+  // inserts it first, then deletes the row, and a delete that fails gets its own
+  // line ("still shows as open"), never a sale failure. The insert doesn't depend
+  // on the delete: trades_v2 has no foreign key to portfolio.
   if (btn) btn.disabled = true;
-  state.deletedPositionIds.add(pos.id);
-  // core/store.js: 'REMOVED', or 'ALREADY_GONE' (closed in another session). Both
-  // go on to the insert, where trades_v2_position_id_once decides: a sale already
-  // recorded elsewhere comes back SALE_DUPLICATE, one that wasn't is recorded now.
-  // A row that is still there, or a check that failed, throws: no sale is recorded
-  // while the position may still be open.
-  try {
-    const removed = await deletePositionFromSupabase(pos.id);
-    if (removed === 'ALREADY_GONE') console.warn(`Sale of ${pos.ticker} (${pos.id}): the position was already gone from portfolio (closed in another session); recording the sale, the database refuses a second copy.`);
-  } catch(e) {
-    state.deletedPositionIds.delete(pos.id); // still open (or unknown): its saves must not be suppressed
-    showAlert('Could not remove position from Supabase: ' + e.message);
-    if (btn) btn.disabled = false;
-    return;
-  }
+  state.deletedPositionIds.add(pos.id); // removed from this screen now: its saves must not bring it back
 
   // Market closes held through, from the FILL when known (core/clock.js
   // holdSpan) -- Friday -> Monday is 1, not 3.
@@ -6861,7 +6929,7 @@ async function confirmMarkSold(posId, btn) {
     persist('ownedPrevRSI');
     persist('ownedPeakRSI');
   }
-  writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct);
+  recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pnlDollar, pnlPct);
   closeModal();
   updateNavBadges();
   renderPortfolioTab();
@@ -10762,6 +10830,9 @@ async function runDataLoadAndInit() {
   startNotificationChecks();
   renderSignalsTab();
   updateNavBadges();
+  // After the shell exists, so its banner line has somewhere to go. Not awaited:
+  // the app opens without waiting on it, and it reports its own read failure.
+  checkPositionsStillOpen().catch(e => noteDataReadProblem('trades_v2 (open positions)', `couldn't check whether an open position's sale is already recorded (${e.message})`));
   // Build status (current / stale / unknown): at startup, and whenever the app
   // comes back to the foreground. An installed app resumed from the
   // background doesn't reload, so it's exactly where a stale build hides.

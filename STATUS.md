@@ -17,6 +17,11 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   and the schema's default ACLs. Until a v2 capture exists, no `rpc/` call can be shown live.
 
 ## Waiting on Roman
+- Whether all 7 open positions are stocks he still holds, and none is one he believes he sold (asked 2026-11-08).
+  A sale lost the old way (delete error before the record existed) leaves an open row and no trades_v2 row, which
+  the database can't tell from a real holding. His answer is the only evidence either way; the ghost check
+  (below) checks the opposite case and does not stand in for it.
+- Whether he tapped Retry on 2026-11-06, and whether EDGE was open in two places that morning.
 - Step 4 after db/037: a real buy and a real sale, both landing.
 - RUN-ME-8, the extended capture (read-only), saved as `live-schema-2026-11-06.json`; then `db/live-columns.json` is
   regenerated from it with 037, 038 and 040 declared applied, and checked against it.
@@ -70,7 +75,8 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 - "HUN sale NOT recorded" (spec, 2026-11-04 rendering rule) is fixture state rendered at 390px (ca68340's own
   message), not a real failure.
 - Ghost positions (an open portfolio row whose position already has a sale): 0 of 7, live read 2026-11-08T16:44Z,
-  with a positive control on the same filter.
+  with a positive control on the same filter. This finds a sold position still open; it cannot find a sale that was
+  never recorded (see Waiting on Roman).
 - trades_v2 INSERT can't be dropped silently by RLS. Live capture 2026-11-06: RLS on; anon INSERT `with check (true)`,
   anon SELECT `using (true)`; no INSERT trigger. In Postgres 18.6 (harness) every RLS refusal of an insert is 42501,
   which the app records as SALE_FAILED. The only "no error, zero rows" insert is a BEFORE INSERT trigger returning
@@ -94,7 +100,11 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 
 ## Closed recently, so they don't come back
 - `deletePositionFromSupabase` treated no error as deleted. It now returns REMOVED or ALREADY_GONE, and throws
-  POSITION_NOT_REMOVED (row still there) or POSITION_UNKNOWN (check failed); a throw stops the sale.
+  POSITION_NOT_REMOVED (row still there) or POSITION_UNKNOWN (check failed).
+- A sale was lost outright if the portfolio delete errored: confirmMarkSold returned before the record existed, with
+  one alert, nothing saved and nothing queued. Now the sale is saved on the phone and inserted first; the delete
+  runs after, and its failure is a "still shows as open" line with Remove again, rebuilt on each load from
+  trades_v2 and the phone's queue, never persisted.
 - db/038's macro path: "not measured" and "measured, no verdict" were one value; revision e separates them (30e0626).
 - The live-columns guard covered writes only; it now covers every column the code names (a959680).
 - `scripts/lib/mutants.cjs`: timeout, SIGINT/SIGTERM restore, clean-tree precondition. On main since 99c2836.

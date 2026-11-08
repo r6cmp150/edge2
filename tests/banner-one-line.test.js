@@ -109,3 +109,18 @@ run('the facts line renders only what the entry holds: no write, no new state', 
   const line = src.slice(i, src.indexOf('\n', i));
   assert.ok(!/persist\(|state\.|localStorage|new Date|toLocale/.test(line), line);
 });
+
+// 2026-11-08: a sold position whose portfolio row is still there has its own line,
+// never worded as a sale failure.
+run('"still shows as open": its own red line, the sale state named, Remove again, never "sale NOT recorded"', () => {
+  const el = load({ positionsStillOpen: {
+    7: { ticker: 'UEC', sale: 'WRITTEN', message: 'position 7: the delete removed no row and the row is still there' },
+    8: { ticker: 'XE', sale: 'SALE_FAILED', message: '<b>' },
+  } });
+  global.__t();
+  const h = el.innerHTML;
+  assert.ok(h.includes('UEC still shows as open') && h.includes('Its sale is recorded.') && h.includes("removePositionAgain('7')"), h);
+  assert.ok(h.includes('XE still shows as open') && h.includes('Its sale is queued on this phone, not yet recorded'));
+  assert.ok(h.includes('position 7 · position 7: the delete removed no row') && h.includes('&lt;b&gt;') && !h.includes('<b>'));
+  assert.ok(!h.includes('UEC sale NOT recorded') && !h.includes('XE sale NOT recorded'), 'never presented as a sale failure');
+});
