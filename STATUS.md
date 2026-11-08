@@ -21,6 +21,19 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   the expanded banner (2026-11-08): all 11 entries show the new wording and facts; the 390px item is closed for
   changes 1 and 2 on the real device.
 
+## Decision points (a date by which something is decided, not a reminder)
+- **Scoring v2 forward test: when v2 reaches 20 buy days, projected around 2026-11-24/25** (9 buy days by 11-06,
+  9 in the 10 trading days since 10-27; a projection, not a deadline). The test, its bar and its null clause
+  are fixed in the spec ("PRE-REGISTERED FORWARD TEST"); `scripts/prereg-pnl.mjs` runs it. The result stands
+  whichever way it falls.
+- **Movers snapshot: 2026-12-31.** The float-coverage re-measurement it is kept for runs by then, or it retires.
+- **Warrior, before 2026-12-31:** it has never yet run at the time it was designed for, and under GitHub's
+  scheduler it cannot (logger median 431 min late; 102 of 763 candidates qualified, 0 setups ever formed in a
+  logged scan, setup_triggers empty). The live app computes Warrior setups on the phone (engines/warrior/
+  index.js: primarySetup, armedLevels) and records none of it: rating_snapshots holds EDGE scores only. So
+  recording what the phone computes pre-market is the only route to ever knowing whether Warrior works; if
+  that isn't built, Warrior has no path to evaluation and that is said before 12-31.
+
 ## Answered by measurement: the 11-06 duplicates came from a second session (2026-11-08)
 Roman did not answer the Retry and two-places questions directly; the data answers them.
 - **Every re-submission was a tap.** In build 48182c9 (app 20261105053000, live 11-03 to 11-08, which recorded

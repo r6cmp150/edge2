@@ -3487,6 +3487,28 @@ only the test's name, so the numbers are gone; it now keeps the assertion's mess
   busy processes (live, 2026-11-04): 171–172/min, timers p95 58 ms late. Load slowed the
   timers and not the rate, which counts against "load" as the explanation.
 
+### PRE-REGISTERED FORWARD TEST: does scoring v2, as traded, make money? (2026-11-08)
+
+Written before the data exists, so it cannot be renegotiated when it arrives. The v2 split of
+the book was quoted (249 trades, 59.6%, +$2.24 a trade) before the profitability question was
+pre-registered, so v2 cannot be tested on the trades already seen. This test runs on v2 when it
+has enough of its own buy days, and the result stands whichever way it falls.
+- **Population:** trades whose buy recorded `code_version.scoring = 2`, `sell_price_unverified`
+  false, by buy date.
+- **When:** the first day the population reaches **20 buy days** (the spec's floor for the macro
+  test, adopted unchanged). At 9 buy days by 11-06, 9 in the 10 trading days since 10-27, that is
+  projected around 2026-11-24/25. A projection, not a deadline.
+- **Primary outcome:** mean realized P&L per buy day. **Direction:** greater than zero.
+- **Bar:** the 2.5th percentile of a moving-block bootstrap over buy days in date order, blocks of
+  3, 10,000 resamples, seed 20261108, is above zero. The code is `scripts/prereg-pnl.mjs`
+  (blockBootstrapMean, DESIGN), pinned by tests/prereg-pnl.test.js.
+- **Null clause, unchanged:** if the interval includes zero, "we cannot distinguish the current
+  method from break-even or worse", and the book's figure stands as the best available estimate
+  of what it produces. Not "promising but needs more data".
+- **If it clears:** the largest-contributor test applies: if removing the best buy day, or the best
+  trade, flips the sign, the result is one day, not a method.
+- Same caveat as the book: scoring v2 is the app's advice; nothing records whether Roman followed it.
+
 ### Limit on the instrument: signal_log cannot measure the window Roman trades in (2026-11-08)
 
 Since the 10-26 re-aim (3729de6), the EDGE logger's 72 scheduled runs (10-27 to 11-06, all
