@@ -17,10 +17,28 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
   and the schema's default ACLs. Until a v2 capture exists, no `rpc/` call can be shown live.
 
 ## Waiting on Roman
-- Whether he tapped Retry on 2026-11-06, and whether EDGE was open in two places that morning. If they don't
-  come, the duplicates are worked from the data: each entry's `at` (banner screenshot) against its row's
-  created_at.
-- A reload before Monday's open, and a screenshot of the expanded banner on the phone.
+- Nothing outstanding on the 11-06 duplicates (answered by measurement, below). He reloaded change 2 and sent
+  the expanded banner (2026-11-08): all 11 entries show the new wording and facts; the 390px item is closed for
+  changes 1 and 2 on the real device.
+
+## Answered by measurement: the 11-06 duplicates came from a second session (2026-11-08)
+Roman did not answer the Retry and two-places questions directly; the data answers them.
+- **Every re-submission was a tap.** In build 48182c9 (app 20261105053000, live 11-03 to 11-08, which recorded
+  all 11 original sales), writeTradeToSupabase has exactly two callers, retrySaleWrite and confirmMarkSold, and
+  each has exactly one caller: the Retry and Confirm Sale buttons. No timer, resume handler or service-worker
+  path submits a sale.
+- **The refusals came 95–139 min after their sale rows** (entry `at` from the screenshot vs trades_v2.created_at):
+  LODE..AADX at 09:11–09:13 PT, 8–37 s apart; UEC at 09:56 PT.
+- **The set of refused positions fixes the session.** A session can only re-sell what it lists as open. To list all
+  11, its portfolio had to load after 07:21:03 PT (the latest of their buys, LODE; a position_id is its buy time)
+  and before 07:22:01 PT (the earliest of their sales, HNST): a 58-second window. The only two 11-06 sales not
+  refused again, FUN 07:14:40 and LUNR 07:15:13, were sold before it opened. The sell form pre-filled price and
+  date, so 8–37 s per re-sale is open-and-confirm.
+- **Retry is not strictly excluded**, but needs all 11 sales after 07:22, and neither before, to have failed
+  client-side while committing server-side. Whether the phone's `sold` cache held a second record for them can't
+  be read now: the cache was failing to save ("Save failed — sold") and is replaced from trades_v2 on load.
+- What fixes it now: since ca79c61 a stale session's sale goes to the insert and comes back SALE_DUPLICATE; since
+  ca6019f it is compared, and a re-sale at a later price shows as "sale recorded with different numbers".
 
 ## Answered by Roman
 - **Broker holdings vs EDGE's Portfolio tab: all 7 match** (2026-11-08; source: his brokerage account, not EDGE;
