@@ -3484,8 +3484,9 @@ is probably harmless, but it is an assumption, and nothing here tests it.
 
 These limits print with db/039's coverage line, as its first condition requires.
 
-**Order: the sell form's fill time first (half a session, and it unblocks exit-hour analysis
-too), then db/039, then the verdicts.**
+**Order: db/039, then the verdicts.** (Corrected 2026-11-08. This line used to put the sell form's
+fill time first; that field was taken back off main in 5cf9863 and rides with db/038's app code, so
+it no longer comes ahead of db/039.)
 
 ### Backups of signal_log and rating_snapshots are monthly files (2026-11-04)
 

@@ -56,7 +56,33 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 - The +$2.25-a-trade bar for an exit rule, and the v2 figures (249 trades, 59.6%, ratio 1.04): all-trades, includes 2
   UNRECORDED; never quote as an EDGE figure.
 
+## Sale queue on Roman's phone (2026-11-08)
+- The expanded banner: 13 lines, 0 `sale NOT recorded`, 11 `sale was already recorded`, 1 storage-full, 1 scan
+  snapshot batch of 14 rows unsaved. Roman taps nothing (no Dismiss, no Retry) until the overwrite defect is fixed.
+- The 11: each one is a 23505 on `trades_v2_position_id_once` (app.js `writeTradeToSupabase`, unchanged since
+  e57769c), so a row with that position_id existed when the copy was refused. They are exactly the 11 sales recorded
+  after 07:15 PT on 2026-11-06 (live read, 2026-11-08T16:33Z). Not yet matched row-for-row: the queue's keys are on
+  the phone.
+- Two claims, kept apart. "No sale is lost right now": the 13 lines, plus the live read. "No sale was ever lost":
+  a check of every departed position against trades_v2 from the backups, only. Its figure is held: no script
+  or record for it is in the repo yet, so it is re-derived before it is quoted. Before ca68340 the banner clipped and hid every
+  failure behind the first, so the 13 lines say nothing about earlier weeks.
+- "HUN sale NOT recorded" (spec, 2026-11-04 rendering rule) is fixture state rendered at 390px (ca68340's own
+  message), not a real failure.
+- Ghost positions (an open portfolio row whose position already has a sale): 0 of 7, live read 2026-11-08T16:44Z,
+  with a positive control on the same filter.
+- trades_v2 INSERT can't be dropped silently by RLS. Live capture 2026-11-06: RLS on; anon INSERT `with check (true)`,
+  anon SELECT `using (true)`; no INSERT trigger. In Postgres 18.6 (harness) every RLS refusal of an insert is 42501,
+  which the app records as SALE_FAILED. The only "no error, zero rows" insert is a BEFORE INSERT trigger returning
+  NULL; anon lost TRIGGER on 2026-11-06. The capture doesn't record permissive vs restrictive.
+- The 2026-11-04 spec draft left uncommitted in the main checkout was an earlier copy of text already committed
+  (main 7282564, macro-gated). Discarded 2026-11-08; kept as `DRAFT-2026-11-04-spec-and-sign-test.patch` at the root
+  of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
+
 ## Open
+- `deletePositionFromSupabase` treats no error as deleted; a delete that matches no row is a silent success.
+- A Retry refused as a duplicate overwrites the first failure's message and time.
+- A sale whose insert comes back with no error and no row is recorded as WRITTEN.
 - One unexplained DEAD in `tests/anon-write-paths.test.js` under four parallel worktree runs: 100/100 alone, not
   reproduced in 15 reruns under concurrent load. The runner now prints a failure's whole output, so the next one names
   its path.
