@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-11-08T12:19:18.156Z",
+  "run_at": "2026-11-09T14:31:17.070Z",
   "floors": {
     "trades": 37,
     "trades_v2": 451,
@@ -65,17 +65,17 @@
     "rating_snapshots": {
       "floor": 2944,
       "mode": "daily",
-      "read": 1743,
-      "live": 3905,
+      "read": 1813,
+      "live": 3975,
       "prior": 3905,
-      "fetched": 3905,
+      "fetched": 3975,
       "written": true,
       "reason": null,
       "shards": {
         "2026-08": 762,
         "2026-09": 1208,
         "2026-10": 974,
-        "2026-11": 961
+        "2026-11": 1031
       },
       "last_full_month": "2026-11",
       "changed_outside_window": null
