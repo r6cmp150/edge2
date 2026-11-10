@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-11-09T14:31:17.070Z",
+  "run_at": "2026-11-10T13:52:00.763Z",
   "floors": {
     "trades": 37,
     "trades_v2": 451,
@@ -18,7 +18,7 @@
       "reason": null
     },
     "trades_v2": {
-      "fetched": 608,
+      "fetched": 653,
       "prior": 608,
       "floor": 451,
       "written": true,
@@ -27,16 +27,16 @@
     "signal_log": {
       "floor": 1938,
       "mode": "daily",
-      "read": 1828,
-      "live": 2569,
+      "read": 1899,
+      "live": 2690,
       "prior": 2569,
-      "fetched": 2569,
+      "fetched": 2690,
       "written": true,
       "reason": null,
       "shards": {
         "2026-09": 373,
         "2026-10": 1565,
-        "2026-11": 631
+        "2026-11": 752
       },
       "last_full_month": "2026-11",
       "changed_outside_window": null
@@ -49,14 +49,14 @@
       "reason": null
     },
     "portfolio": {
-      "fetched": 7,
+      "fetched": 13,
       "prior": 7,
       "floor": 0,
       "written": true,
       "reason": null
     },
     "signal_snapshot_at_buy": {
-      "fetched": 251,
+      "fetched": 302,
       "prior": 251,
       "floor": 88,
       "written": true,
@@ -65,17 +65,17 @@
     "rating_snapshots": {
       "floor": 2944,
       "mode": "daily",
-      "read": 1813,
-      "live": 3975,
-      "prior": 3905,
-      "fetched": 3975,
+      "read": 2176,
+      "live": 4338,
+      "prior": 3975,
+      "fetched": 4338,
       "written": true,
       "reason": null,
       "shards": {
         "2026-08": 762,
         "2026-09": 1208,
         "2026-10": 974,
-        "2026-11": 1031
+        "2026-11": 1394
       },
       "last_full_month": "2026-11",
       "changed_outside_window": null
