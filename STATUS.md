@@ -20,6 +20,21 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 - Nothing outstanding on the 11-06 duplicates (answered by measurement, below). He reloaded change 2 and sent
   the expanded banner (2026-11-08): all 11 entries show the new wording and facts; the 390px item is closed for
   changes 1 and 2 on the real device.
+- A reload onto 4e71a4a (advice at buy, live 2026-11-11T01:26Z); until then his buys record nothing about
+  what the app showed.
+- Permission for a script to read the Alpaca keys from .env.local (in memory, never printed or written); the
+  same-day replay is committed unrun until then.
+- For 11-09 and 11-10, what only the phone holds: a screenshot of the expanded banner (any queue entries and
+  their states; whether "Save failed" came back). Whether `sold` stayed under the cap is not visible anywhere:
+  the "Storage on this phone" readout (proposed 2026-11-08, not cleared) is what would show it.
+
+## First trading under 4a: 2026-11-09 and 11-10, database side (read 2026-11-11T01:27Z)
+- Both days recorded by build 20261108202000 (ceb7c24, change 4a): 105 buys, all with a snapshot (0 no_signal,
+  0 failed), and 99 sales (45 on 11-09, 54 on 11-10). 13 positions open (6 from 11-02, 1 from 11-09, 6 from 11-10).
+- Check 2 (scripts/audit-departed-positions.mjs): 356 buys since 10-29, 13 open, 343 sold, **0 neither**; no buy
+  since 10-29 is missing its snapshot. Ghost check: 0 open positions with a sale row (control finds a known sale).
+- Not visible from here: queue entries, the storage banner, the cache size. Absence of a complaint is not
+  evidence; see Waiting on Roman.
 
 ## Is Roman's trading profitable? Pre-registered, answered 2026-11-08
 **These splits are changes to the app's ADVICE; nothing records whether Roman followed it.** Source:
@@ -185,6 +200,11 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **Owed, with a condition that enforces itself:** tests/stock-modal-render.test.js, rendering openStockModal with
+  fixture data and asserting the Add button is present and the appShowedAtBuy capture executes. It lands **before
+  the next edit to openStockModal**: tests/stock-modal-edit-guard.test.js pins the function's hash at 4e71a4a and
+  fails on any edit until the render test exists. Until then the capture's only evidence is a one-off scope check,
+  and a scope error there would replace the Add button with "Failed to load data".
 - Movers snapshot (reported 2026-11-08, not fixed): declared for the opening-momentum window (06:45–08:00 PT), it
   captured 11:51–15:01 PT since 10-27 (data/movers-snapshots/log.jsonl). Rows carry their real `capturedAt` and
   Alpaca's own open/closed, so no row is mislabelled. But 10 of 36 landed after the close as `marketOpen: false`,
