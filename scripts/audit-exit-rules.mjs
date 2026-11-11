@@ -17,14 +17,14 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { population } from './audit-first-hour-cell.mjs';
-import { barsWithRetry, ptInstant, ptOf } from './audit-render-sampled-inputs.mjs';
+import { barsWithRetry, ptInstant, ptOf, noSaleTime, recordedSaleAt } from './audit-render-sampled-inputs.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 // The hold's regular-session bars, in time order.
 export function holdBars(t, minute) {
   const start = t.filled_at ? Date.parse(t.filled_at) : ptInstant(String(t.buy_date).slice(0, 10), t.buy_time);
-  const end = ptInstant(String(t.sell_date).slice(0, 10), t.sell_time || '13:00');
+  const end = recordedSaleAt(t); // refuses a row with no sale time: the caller excludes those first
   return minute.filter(b => { const ms = Date.parse(b.t), m = ptOf(ms).minutes; return ms >= start && ms <= end && m >= 390 && m < 780; })
     .sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
 }
@@ -70,7 +70,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const env = Object.fromEntries(readFileSync('C:/Users/cmp15/edge2/.env.local', 'utf8').split(/\r?\n/).filter(l => l.includes('=')).map(l => { const i = l.indexOf('='); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^['"]|['"]$/g, '')]; }));
   const H = { 'APCA-API-KEY-ID': env.APCA_API_KEY_ID || env.ALPACA_KEY_ID, 'APCA-API-SECRET-KEY': env.APCA_API_SECRET_KEY || env.ALPACA_SECRET_KEY };
   const cacheDir = process.env.BARS_CACHE || path.join(ROOT, '.bars-cache');
-  const trades = population(JSON.parse(execSync(`git show ${rev}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 2e9, encoding: 'utf8' })));
+  const all = population(JSON.parse(execSync(`git show ${rev}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 2e9, encoding: 'utf8' })));
+  const trades = all.filter(t => !noSaleTime(t));
+  console.log(`no sale time (its own state, excluded): ${all.length - trades.length}`);
   const RULES = { trail3: (b, buy) => trailingExit(b, buy, 3, 1), trail5: (b, buy) => trailingExit(b, buy, 5, 1), fixed3: (b, buy) => fixedExit(b, buy, 3) };
   const out = Object.fromEntries(Object.keys(RULES).map(k => [k, []]));
   for (const t of trades) {

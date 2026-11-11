@@ -31,6 +31,16 @@ const ptFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles'
 export const ptOf = ms => { const p = Object.fromEntries(ptFmt.formatToParts(new Date(ms)).map(x => [x.type, x.value])); return { date: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute) }; };
 // PT wall clock to an instant: PDT before 2026-11-01, PST from it, which covers this book.
 export const ptInstant = (date, hhmm) => { const [h, m] = String(hhmm).slice(0, 5).split(':').map(Number); return Date.parse(`${date}T00:00:00Z`) + ((h + (date >= '2026-11-01' ? 8 : 7)) * 60 + m) * 60000; };
+// The instant a sale was RECORDED. A row without sell_time is its own state, "no sale time": every caller counts it
+// and excludes it before calling, and this refuses rather than give it a time. (2026-11-11: this replaces
+// `t.sell_time || '13:00'` at three sites. It never fired on the 164099a population, where 519 of 519 verified sales
+// carry a sell_time; it was still a defect, a time nobody recorded standing in for a missing one. "It never fired"
+// is a fact about that population, not about the code.)
+export const noSaleTime = t => !t.sell_time;
+export function recordedSaleAt(t) {
+  if (noSaleTime(t)) throw new Error(`${t.ticker} ${String(t.sell_date).slice(0, 10)}: no sale time -- its own state; exclude it before calling`);
+  return ptInstant(String(t.sell_date).slice(0, 10), t.sell_time);
+}
 
 // The regular-session high between two instants, from minute bars. NULL when no bar falls in range:
 // a missing high is never the high of whatever arrived.
@@ -55,7 +65,7 @@ export const rsi14 = closes => closes.length < 15 ? null : indicators.calcRSI(cl
 export function compare(t, minute, daily) {
   const start = t.filled_at ? Date.parse(t.filled_at) : ptInstant(String(t.buy_date).slice(0, 10), t.buy_time);
   const sellDate = String(t.sell_date).slice(0, 10);
-  const end = ptInstant(sellDate, t.sell_time || '13:00');
+  const end = recordedSaleAt(t);
   const upper = sessionHigh(minute, start, end);
   let allHigh = null; // every session, for explaining a lower regular-session high only; never a decision input
   for (const b of minute) { const t = Date.parse(b.t); if (t >= start && t <= end && (allHigh == null || b.h > allHigh)) allHigh = b.h; }
@@ -77,7 +87,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const rev = process.argv[2] || '164099a';
   const env = Object.fromEntries(readFileSync('C:/Users/cmp15/edge2/.env.local', 'utf8').split(/\r?\n/).filter(l => l.includes('=')).map(l => { const i = l.indexOf('='); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^['"]|['"]$/g, '')]; }));
   const H = { 'APCA-API-KEY-ID': env.APCA_API_KEY_ID || env.ALPACA_KEY_ID, 'APCA-API-SECRET-KEY': env.APCA_API_SECRET_KEY || env.ALPACA_SECRET_KEY };
-  const rows = population(JSON.parse(execSync(`git show ${rev}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 2e9, encoding: 'utf8' }))).filter(t => t.peak_price != null);
+  const withPeak = population(JSON.parse(execSync(`git show ${rev}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 2e9, encoding: 'utf8' }))).filter(t => t.peak_price != null);
+  const rows = withPeak.filter(t => !noSaleTime(t));
+  console.log(`no sale time (its own state, excluded): ${withPeak.length - rows.length}`);
   const cacheDir = process.env.BARS_CACHE || path.join(ROOT, '.bars-cache');
   mkdirSync(cacheDir, { recursive: true });
   const out = [];

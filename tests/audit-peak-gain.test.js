@@ -53,6 +53,18 @@ await run('a band counts captured-under-half, losses and sale-day peaks, and is 
   assert.deepStrictEqual(m.band(rows, 50), { n: 0 }, 'an empty band says n 0, not a median of nothing');
 });
 
+await run('a row with no sell_time is its own state: giveBack refuses it rather than give it a time (no 13:00 default)', () => {
+  for (const missing of [null, undefined, '']) {
+    assert.throws(() => m.giveBack(trade({ sell_time: missing }), [bar('2026-10-08T15:00:00Z', 12)]), /no sale time/, String(missing));
+  }
+  // and the three scripts that once defaulted it carry no time-of-day fallback for sell_time
+  const fs = require('fs');
+  for (const f of ['audit-peak-gain.mjs', 'audit-exit-rules.mjs', 'audit-render-sampled-inputs.mjs', 'prereg-peak-before-after.mjs']) {
+    const s = fs.readFileSync(path.join(REPO_ROOT, 'scripts', f), 'utf8').replace(/\/\/[^\n]*/g, '');
+    assert.ok(!/sell_time\s*(\|\||\?\?)/.test(s), `${f}: sell_time with a fallback`);
+  }
+});
+
 await run('the spec records the measurement, per trade at the top, with both average-win figures, and decides nothing', () => {
   const spec = require('fs').readFileSync(path.join(REPO_ROOT, 'docs/phase-10-entry-gate-spec.md'), 'utf8').replace(/\s+/g, ' ');
   for (const s of ['the +20% threshold is NOT decided.', '$9.75 on a $492 position over the 283 winners', '$10.98 on $563 in the v2 era, which is seven days',

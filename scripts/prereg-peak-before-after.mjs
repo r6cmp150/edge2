@@ -38,7 +38,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { population } from './audit-first-hour-cell.mjs';
-import { barsWithRetry, ptInstant, ptOf } from './audit-render-sampled-inputs.mjs';
+import { barsWithRetry, ptInstant, ptOf, noSaleTime } from './audit-render-sampled-inputs.mjs';
 import { giveBack, band, highWithTime } from './audit-peak-gain.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -57,7 +57,11 @@ const closeOf = (bars, date) => { let last = null; for (const b of bars) if (reg
 const f = (x, d = 2) => (x == null ? 'n/a' : x.toFixed(d));
 const money = x => `${x < 0 ? '-' : '+'}$${Math.abs(x).toFixed(2)}`;
 
-const trades = population(JSON.parse(execSync(`git show ${rev}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 2e9, encoding: 'utf8' })));
+// A row with no sell_time is its own state, counted and excluded (added after the first run, 2026-11-11, declared:
+// 0 such rows at 164099a, so the first run's figures are unchanged).
+const all = population(JSON.parse(execSync(`git show ${rev}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 2e9, encoding: 'utf8' })));
+const trades = all.filter(t => !noSaleTime(t));
+console.log(`no sale time (its own state, excluded): ${all.length - trades.length}`);
 const rows = [];
 for (const t of trades) {
   const buyDate = day(t.buy_date), sellDate = day(t.sell_date);

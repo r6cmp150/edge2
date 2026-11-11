@@ -51,4 +51,10 @@ await run('the spec records the replay, with its limits in the same breath', () 
   const spec = readSource('docs/phase-10-entry-gate-spec.md').replace(/\s+/g, ' ');
   for (const s of ['**Exit rules, replayed (2026-11-06): none clears the +$2.25-a-trade bar.**', 'the peak runs to the recorded sale time', 'the sample is days, not trades', 'AIXI']) assert.ok(spec.includes(s), s);
 });
+
+await run('a row with no sell_time is its own state: holdBars refuses it rather than run the hold to 13:00', () => {
+  const t = { buy_date: '2026-10-08', sell_date: '2026-10-08', buy_time: '06:31', filled_at: '2026-10-08T14:00:00Z', ticker: 'X' };
+  assert.throws(() => m.holdBars({ ...t, sell_time: null }, []), /no sale time/);
+  assert.throws(() => m.holdBars(t, []), /no sale time/);
+});
 })();

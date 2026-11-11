@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { population } from './audit-first-hour-cell.mjs';
-import { barsWithRetry, ptInstant, ptOf } from './audit-render-sampled-inputs.mjs';
+import { barsWithRetry, ptInstant, ptOf, noSaleTime, recordedSaleAt } from './audit-render-sampled-inputs.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -36,7 +36,7 @@ export function giveBack(t, minute) {
   const buyDate = String(t.buy_date).slice(0, 10), sellDate = String(t.sell_date).slice(0, 10);
   const buy = Number(t.buy_price), sell = Number(t.sell_price);
   const start = t.filled_at ? Date.parse(t.filled_at) : ptInstant(buyDate, t.buy_time);
-  const soldAt = ptInstant(sellDate, t.sell_time || '13:00');
+  const soldAt = recordedSaleAt(t); // refuses a row with no sale time: the caller excludes those first
   const up = highWithTime(minute, start, soldAt);
   const lo = sellDate > buyDate ? highWithTime(minute, start, ptInstant(sellDate, '00:00')) : null;
   const pct = x => (x / buy - 1) * 100;
@@ -67,7 +67,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const env = Object.fromEntries(readFileSync('C:/Users/cmp15/edge2/.env.local', 'utf8').split(/\r?\n/).filter(l => l.includes('=')).map(l => { const i = l.indexOf('='); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^['"]|['"]$/g, '')]; }));
   const H = { 'APCA-API-KEY-ID': env.APCA_API_KEY_ID || env.ALPACA_KEY_ID, 'APCA-API-SECRET-KEY': env.APCA_API_SECRET_KEY || env.ALPACA_SECRET_KEY };
   const cacheDir = process.env.BARS_CACHE || path.join(ROOT, '.bars-cache');
-  const trades = population(JSON.parse(execSync(`git show ${rev}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 2e9, encoding: 'utf8' })));
+  const all = population(JSON.parse(execSync(`git show ${rev}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 2e9, encoding: 'utf8' })));
+  const trades = all.filter(t => !noSaleTime(t));
+  console.log(`no sale time (its own state, excluded): ${all.length - trades.length}`);
   const rows = [];
   for (const t of trades) {
     const buyDate = String(t.buy_date).slice(0, 10), sellDate = String(t.sell_date).slice(0, 10);
