@@ -33,6 +33,17 @@ const sources = text => [
 const ADD = 'alter table trades_v2 add constraint trades_v2_execution_mode_chk check (';
 
 (async () => {
+await run('PINS names each db/043 file exactly once, read from this file\'s own text', () => {
+  // Object.keys cannot see a duplicate key: the literal collapses it (the last wins) before any code runs. So the
+  // check reads the source: a stale pin shadowed by a later line would otherwise pass while reading as current.
+  const self = readSource('tests/db043-sql.test.js').replace(/\r\n/g, '\n');
+  const body = self.slice(self.indexOf('const PINS = {'), self.indexOf('};', self.indexOf('const PINS = {')));
+  const keys = [...body.matchAll(/^\s*'([^']+)':/gm)].map(m => m[1]);
+  const files = ['db/043_execution_mode_copied_source.sql', 'db/043-run-2-behaviour.sql', 'db/043-rollback.sql'];
+  assert.deepStrictEqual(keys, files, 'exactly these three, once each, in this order');
+  assert.deepStrictEqual(Object.keys(PINS), files);
+});
+
 await run('the three files are the ones the harness proved (sha256 pins)', () => {
   for (const [f, pin] of Object.entries(PINS)) {
     const got = crypto.createHash('sha256').update(norm(f)).digest('hex');
