@@ -3503,6 +3503,41 @@ only the test's name, so the numbers are gone; it now keeps the assertion's mess
   busy processes (live, 2026-11-04): 171–172/min, timers p95 58 ms late. Load slowed the
   timers and not the rate, which counts against "load" as the explanation.
 
+### PRE-REGISTERED FORWARD TEST: the tightest-spread names (S1), after costs and before them (2026-11-11)
+
+Written before its data exists, so it cannot be renegotiated when it arrives. On the book @ 314f6e0
+(scripts/prereg-spread-buckets.mjs), S1 was the only spread bucket positive after costs (+$6.52 per buy
+day over 21 buy days), but its pre-registered interval included zero (-$17.39 to +$35.81): not shown. S1
+was named as the primary outcome before that run, not chosen from four buckets afterwards. Its win rate
+(64.6% against 51.8 / 52.4 / 48.1%) was SEEN before the question below was asked, so on that book it is
+descriptive only; the win-rate test below runs on new data and nowhere else.
+- **Population:** trades bought on or after **2026-11-12** (the first trading day after this was
+  written), sell_price_unverified false, charged on both sides by scripts/prereg-costs.mjs's method (the
+  last valid SIP NBBO in the 60 s up to each recorded moment). A trade not charged on both sides is its own
+  state, counted and reported. When the trade's execution mode is recorded (db/042's app side), results are
+  reported by mode as well.
+- **S1:** a trade whose spread (the mean of its buy-side and sale-side quoted spread as a share of mid) is
+  at or below **0.11%**, the cut already published. Defined by spread, not price: spread is what is charged.
+  S2-S4 are the same cuts as before (0.20%, 0.36%).
+- **Outcome 1, P&L:** the after-cost (base case, half the spread each side) mean per buy day over the buy
+  days with an S1 trade. Direction: greater than zero. Bar: scripts/prereg-pnl.mjs's DESIGN, unchanged (the
+  95% moving-block bootstrap, blocks of 3, 10,000, seed 20261108) excluding zero, at **20 S1 buy days**.
+- **Outcome 2, win rate, frictionless, reported beside outcome 1 and never merged with it:** on each buy
+  day with at least one S1 trade and at least one S2-S4 trade, S1's share of winning trades minus S2-S4's,
+  frictionless; the mean of those daily differences. Direction: greater than zero. Same bootstrap, the
+  interval excluding zero, at **20 such days**. **A null means:** the win-rate gap is not established and
+  nothing follows from it; the after-cost difference between buckets is then attributable to costs alone.
+- **When:** the first day outcome 1 reaches 20 S1 buy days (outcome 2 when it reaches its own 20). At about
+  one in five trades in S1 and an S1 trade on most buy days, about a month. A projection, not a deadline.
+- **ROMAN CHANGES NOTHING ABOUT WHAT HE TRADES.** S1 accumulates naturally. Narrowing the universe to chase
+  it would act on an unestablished result and destroy the test's own comparison group (S2-S4). The
+  temptation to act early is exactly what this test exists to resist.
+- **Entanglement:** on the book, S1 was 80 of 113 trades in the top price quartile and S4 103 of 135 in the
+  bottom one. Spread and price cannot be separated in that data, so which of them the pattern tracks is
+  **unknown**, not "both". The forward test is defined on spread; it does not settle price.
+- The book is a frictionless paper simulation over rows of not_known execution mode; the same caveat holds.
+- The script that runs it is committed before its first run.
+
 ### PRE-REGISTERED FORWARD TEST: does scoring v2, as traded, make money? (2026-11-08)
 
 **AMENDED 2026-11-11, before its data exists: the bar is above realistic costs, not above

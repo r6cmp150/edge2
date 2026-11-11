@@ -134,7 +134,28 @@ not_known. For a row that was live with a typed fill, this cost model measures s
   book. The verdict is drawn from the rows that can be trusted, and it is that part which loses $808 after costs.
   (19 had no quote at the sale, +$2.00; 4 at neither, +$5.00.)
 
+## By quoted spread: pre-registered, answered 2026-11-11
+Source: `node scripts/prereg-spread-buckets.mjs` (committed in 4dbe99d before its first run), the 513 trades
+prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper simulation over not_known rows.
+- **S1 was named as the primary outcome before the run, not chosen afterwards from four buckets.** The price and
+  size cuts were secondary and descriptive. So this is a pre-specified test that returned null, not a search that
+  found one positive cell. (It was expected to have fewer than 20 buy days; it had 21, and that expectation was
+  wrong.)
+- **Verdict:** S1 (spread <= 0.11% of mid), 113 trades, 21 buy days, after costs +$6.52 per buy day, 95% bootstrap
+  -$17.39 to +$35.81. The strategy is **not shown** to be positive after costs in tight-spread names.
+- **Descriptive, by spread bucket (after costs, per buy day):** S1 +$6.52, S2 -$12.73, S3 -$7.40, S4 -$17.27; drag
+  $46.55 / $113.95 / $168.45 / $415.79. By price quartile: P1 -$17.11 ... P4 +$2.77. By position size: no pattern.
+- **The half that costs do not explain:** S1 was already +$183.37 frictionless (S2 -$191.60, S3 +$13.15, S4
+  -$67.85), with a win rate of 64.6% against 51.8 / 52.4 / 48.1%. That is a difference in whether the signal
+  works, not in what it costs. It was SEEN before it was asked about, so here it is descriptive only; its test
+  runs on new data (spec: "PRE-REGISTERED FORWARD TEST: the tightest-spread names").
+- **Entanglement:** S1 is 80 of 113 trades in the top price quartile, S4 103 of 135 in the bottom one. Spread
+  and price cannot be separated in this data: which of them the pattern tracks is **unknown**, not "both".
+
 ## Decision points (a date by which something is decided, not a reminder)
+- **S1 forward test, about a month out:** trades bought from 2026-11-12, at 20 S1 buy days (P&L after costs) and
+  20 days with both S1 and S2-S4 trades (win rate, frictionless, reported separately). Roman changes nothing about
+  what he trades: narrowing to S1 would act on an unestablished result and destroy the comparison group.
 - **Scoring v2 forward test: when v2 reaches 20 buy days, projected around 2026-11-24/25** (9 buy days by 11-06,
   9 in the 10 trading days since 10-27; a projection, not a deadline). AMENDED 2026-11-11, before its data: its
   bar is above realistic costs, not above zero (a frictionless bar would pass a strategy that loses money); see
