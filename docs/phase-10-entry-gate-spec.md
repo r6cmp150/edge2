@@ -2284,6 +2284,19 @@ days, not quiet ones.
    rule tight enough to catch it cuts the runners that make his money. LIMITS, in the same breath: the peak runs to
    the recorded sale time, which is at or after the fill, so a rule can exit after he had sold; and the sample is
    days, not trades (37 days, and 10 to 23 of them changed by a rule). So no exit change has evidence behind it yet.
+   **Costs do not change this comparison (2026-11-11).** An exit rule changes where a round trip ends, not how many
+   round trips there are, so the per-trade cost drag (scripts/prereg-costs.mjs) is the same under every rule
+   tested: "no rule clears the bar" is unaffected by the cost finding. Stated here and beside the cost result so
+   nobody re-opens it twice.
+   **Answered 2026-11-11 (`scripts/prereg-peak-before-after.mjs` at `f79d8be`, trades_v2 at `164099a`, SIP bars
+   fetched 2026-11-11; 101 / 28 / 6 reproduced first).** Question 1: the give-back reading stands, bounded: of the
+   28 that kept under half, 2 peaked within 5 minutes of the recorded sale, 4 within 15, 22 within 60 (an arbitrary
+   sweep). Question 2, never merged with 1: held to the sale-day close instead, -$166.06 over 485 trades; to the next
+   close, -$2,482.08 over 501; neither rests on one trade. So "holding longer loses money" has a counterfactual on the
+   same trades, which the 11-08 hold-length table (consistent with the disposition effect) could not give; limits:
+   one sale point per trade, a frictionless paper book of not_known provenance, no interval. 350 of 501 went above
+   their pre-sale peak by the next close: a reading, labelled as one, is that this measures volatility collectable
+   only at an untimeable high.
 3. **Report-gap fix** (Appendix): ENTRY TIMING prints all four session
    values, every weekday present in the data, and a not-recorded bucket,
    with counts that sum to the total — both copies in `app.js`.

@@ -114,6 +114,23 @@ declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 
   41.3% of 80 (-$585.60). The earlier 71.0% of 107 / 32.2% of 59 is reproduced exactly, in the legacy order-date
   rows only. Not a holding-period finding: it is what the disposition effect (closing winners, holding losers)
   would produce on its own. A pre-registered same-day replay tests it.
+- **"Holding longer loses money" now has support this table could not give it (2026-11-11).** The table above
+  compares different trades, so the disposition effect explains it. The pre-registered question 2 of
+  scripts/prereg-peak-before-after.mjs (`f79d8be`, trades_v2 at `164099a`, the 501-trade population, SIP minute
+  bars fetched 2026-11-11) asks what would have happened to THE SAME TRADES held past his actual exit: held to the
+  sale-day close, -$166.06 over 485 trades (-$0.34 a trade; -$87.06 without its largest contributor, CLRO 10-27);
+  held to the next trading day's close, -$2,482.08 over 501 (-$4.95 a trade; -$2,230.08 without GCTK 10-28). A
+  counterfactual, not an outcome, so the disposition effect does not explain it. LIMITS: one sale point per trade,
+  a frictionless paper simulation over rows of not_known provenance, and no interval: a measured difference, not a
+  verdict.
+- **The +3% give-back finding stands as published, bounded (question 1, same run).** The published table (101
+  reaching +3%, 28 kept under half, 6 at a loss) was reproduced first. Of the 28, only 2 peaked within 5 minutes of
+  the recorded sale and 4 within 15 (the 5 / 15 / 60 windows are an arbitrary sweep), so a recording delay would
+  have to exceed 15 minutes on 24 of 28 to move those peaks past the real sale; a paper row has no delay. The
+  post-sale high exceeded the trade's own pre-sale peak on 350 of 501 by the next close; READ AS (a reading, not a
+  pre-registered outcome): how far a volatile stock wanders in a day and a half, collectable only at a high nobody
+  can time, while every realistic later exit (either close) loses money. Re-runnable once the Robinhood match says
+  which rows were live.
 - **Not answerable from the record:** whether a buy came from the app's suggestion. "App Signal" is the sale
   form's defaulted "Why did you sell?" and reads App Signal on 608 of 608; no buy is linked to a signal.
   From the deploy of the advice-at-buy change on, each buy's snapshot records `appShowedAtBuy` (GATE_OPEN /
@@ -122,6 +139,9 @@ declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 
   test (spec: first 5 buy days of overlap; any disagreement voids it).
 
 ## After realistic costs: pre-registered, answered 2026-11-11
+**Costs do not change the exit-rule comparison:** a rule changes where a round trip ends, not how many there are,
+so the per-trade drag below is the same under every rule the 2026-11-06 replay tested, and "no rule clears the bar"
+stands (also stated in the spec beside the replay).
 Source: `node scripts/prereg-costs.mjs` (committed in 2839360 before its first run; the uncharged-trade breakdown
 added after it, declared, every earlier line unchanged), on data/backups/trades_v2.json @ 314f6e0, the 586
 verified trades, with SIP NBBO quotes from Alpaca (the last valid quote in the 60 s up to each recorded moment).
