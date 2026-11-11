@@ -36,6 +36,35 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 - Not visible from here: queue entries, the storage banner, the cache size. Absence of a complaint is not
   evidence; see Waiting on Roman.
 
+## EXISTENCE IS NOT ACCURACY: the stored prices are the form's prefills, not fills (2026-11-11)
+Every check built this week asks whether a record EXISTS. None asked whether its values are RIGHT. Both are now
+true together, and the first does not soften the second: all 356 buys since 10-29 are accounted for, and the
+prices those records carry are not Roman's fills.
+- **Buy side, measured (live read 2026-11-11T01:4xZ):** 356 of 356 buys since 10-29 store a `buy_price` equal to
+  the cent to the scan price the Add form prefilled (signal_snapshot_at_buy.snapshot.price), and all 356 are
+  market orders. A market order filling at exactly the displayed scan quote 356 times out of 356 is not
+  plausible: the stored buy price is the prefill, left as it was.
+- **Sale side, from the code:** the sell form prefills `sold-price` with `getLivePrice(snap)`
+  (dailyBar close-so-far, else latestTrade) from the Portfolio tab's last render: a quote at recording time, not
+  the fill; Confirm Sale submits whatever is in the box. Nothing records whether it was typed over. `sell_time`
+  is also the recording time. So a single sale, submitted once, can be stored with a price Roman did not enter,
+  and no check we have can see it.
+- **11-10, the three red lines:** the stored copies were recorded 07:29:25 (SLDB $7.02), 07:31:14 (BKKT $4.56)
+  and 07:57:23 PT (TROX $2.85, position 1794323324944; a second TROX sale, 1794332833288, $2.86, is separate).
+  The refused copies came about an hour later (08:23:55 BKKT $4.44, 08:24:05 SLDB $6.96; TROX $2.95, time not
+  transcribed), from a second session that listed all three as open: its portfolio loaded between 07:08:44 (the
+  latest of their buys) and 07:29:25 (the earliest of their sales), the 11-06 pattern again. Both copies look like
+  prefills at two moments; **neither is known to be the fill.** Roman's broker fills decide it.
+- **The banner's "You entered" overclaims:** the refused copy is what the form submitted, prefilled or typed, and
+  the record cannot say which. To be reworded.
+- **The 11-06 eleven:** nothing of what was submitted survives (the old build kept no values for a duplicate; the
+  phone's Sold copy is rebuilt from the database). Unknown, not inferred.
+- **How many duplicates on 11-09/10:** only the phone holds them; the banner list is asked for in full.
+- **What this does to the verdict below:** the -$300, the ratio 0.720, the break-even target and the period table
+  are computed from quote-to-quote prices the app displayed, not from fills. They describe the app's quotes at
+  Roman's recording moments. How far they are from his money is unknown until fills are compared; the broker
+  is the only source.
+
 ## Is Roman's trading profitable? Pre-registered, answered 2026-11-08
 **These splits are changes to the app's ADVICE; nothing records whether Roman followed it.** Source:
 `node scripts/prereg-pnl.mjs` (committed in cc6ea99 before its first run; two printed lines added after it,
@@ -200,6 +229,8 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- Portfolio sorting (a5a325e, 2026-11-02): Roman reports bugs (2026-11-11). Logged, not yet reproduced; cosmetic next to
+  the price question.
 - **Owed, with a condition that enforces itself:** tests/stock-modal-render.test.js, rendering openStockModal with
   fixture data and asserting the Add button is present and the appShowedAtBuy capture executes. It lands **before
   the next edit to openStockModal**: tests/stock-modal-edit-guard.test.js pins the function's hash at 4e71a4a and

@@ -3465,6 +3465,19 @@ stored copy can disagree with what it describes, and nothing says which is wrong
 shows as open" line is rebuilt on every load from trades_v2 and the phone's queue; it is never
 written to storage.
 
+**Rule: an owed piece of work is enforced by a test that fails when the thing it protects
+changes, not by an item on a list (2026-11-11).** The render test owed for openStockModal's
+capture (4e71a4a) is enforced by tests/stock-modal-edit-guard.test.js, which pins the
+function's hash and fails on any edit until the render test exists.
+
+**Rule: existence is not accuracy (2026-11-11).** A check that a record exists says nothing
+about whether its values are right, and must not be read as if it did. Every check of the week
+of 11-02 asked the first question; the stored prices turned out to be the form's prefills
+(356 of 356 buys since 10-29 equal the prefilled scan price to the cent, all market orders),
+not fills. A value a form prefills and a value a person typed are two different facts; a
+record that cannot tell them apart has the at-sale-verdict defect, here on the field every
+P&L figure is computed from.
+
 **Rule: a deploy is confirmed by reading what is served and finding the change in it
 (2026-11-08).** CI passing is evidence the code is correct, not that it reached anyone. ca79c61
 was confirmed by fetching the served index.html, sw.js and app.js and finding the new stamps and
