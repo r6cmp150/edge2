@@ -3474,6 +3474,8 @@ let _chartCurrentPrice = 0;
 let _modalStock = null;
 
 async function openStockModal(ticker) {
+  // Whatever an earlier screen showed is not what this one shows (appShowedAtBuy, below).
+  state.appShowedOnScreen = null;
   const ownedPos = getOwnedPosition(ticker);
   // A held ticker's signal is the one the card and the recommendation read
   // (currentSignalForHolding, 2026-10-28), so the modal's score, breakdown
@@ -3864,6 +3866,18 @@ async function openStockModal(ticker) {
     // silently censored add-on buys). The reason is shown inside the add
     // form, not as a confirm: holding a position is a fact, but it doesn't
     // contradict buying more.
+    // WHAT THE APP WAS SHOWING (2026-11-08): the verdict this screen has just rendered, kept
+    // as rendered, for the buy to record (appShowedAtBuy). Taken here, where the Add button
+    // is written, because this is the screen Add is tapped on and its banners are already
+    // on it. CAPTURED FROM THE RENDER, NEVER RECOMPUTED AT THE CLICK: what Roman saw is the
+    // fact, and a recomputation would be a different number quietly replacing it.
+    state.appShowedOnScreen = {
+      ticker, renderedAt: new Date().toISOString(), held: !!ownedPos,
+      gate: modalGate ? { gated: !!modalGate.gated, rule: modalGate.rule ?? null, label: modalGate.label ?? null } : null,
+      daySuppressed: !!daySuppressed,
+      score: modalScoreTotal ?? null, label: modalScoreSignal ?? null,
+      scoreSource: s ? 'scan' : (ownedScoreEntry && ownedScoreEntry.score != null) ? 'held ticker\'s last scan' : 'computed on this screen (no scan)',
+    };
     const lotReason = ownedPos
       ? `You already hold ${ownedPos.shares} shares of ${ticker} (bought ${ownedPos.buyDate}).`
       : pendingOrder ? `An order for ${ticker} is already pending (placed ${pendingOrder.buyDate}).` : '';
@@ -4368,6 +4382,30 @@ function captureSignalSnapshot(sig) {
   return sig ? JSON.parse(JSON.stringify(sig)) : null;
 }
 
+// WHAT THE APP WAS SHOWING AT THE BUY (2026-11-08), recorded inside the buy's snapshot as
+// `appShowedAtBuy`. It is what the stock screen displayed when Add was tapped: its entry
+// gate verdict, its day-trade suppression, and its score and label. It is NEVER "why Roman
+// bought": intent is not recordable, and nothing here may be read as it.
+// Captured from the render (state.appShowedOnScreen, set where the Add button is written),
+// never recomputed at the click. Three states, never absent and never defaulted:
+//   GATE_OPEN    the screen showed this ticker with no gate banner and no DAY suppression
+//   GATE_CLOSED  the screen showed a gate banner or DAY suppression (advice against buying)
+//   NOT_SHOWN    no verdict was shown for this buy, with the reason
+// Lives in signal_snapshot_at_buy.snapshot (jsonb; its CHECK only requires an object), so
+// no column. A buy with no signal has no snapshot at all (absent_reason 'no_signal').
+function appShowedAtBuy(ticker) {
+  const a = state.appShowedOnScreen;
+  if (!a) return { state: 'NOT_SHOWN', reason: 'no stock screen had rendered a verdict in this session' };
+  if (a.ticker !== ticker) return { state: 'NOT_SHOWN', reason: `the last verdict rendered was for ${a.ticker}, not ${ticker}`, renderedAt: a.renderedAt };
+  if (a.held) return { state: 'NOT_SHOWN', reason: 'a held ticker: the stock screen shows no entry verdict for a position already held', renderedAt: a.renderedAt, score: a.score, label: a.label, scoreSource: a.scoreSource };
+  if (!a.gate) return { state: 'NOT_SHOWN', reason: 'the entry gate was not evaluated on this screen', renderedAt: a.renderedAt, score: a.score, label: a.label, scoreSource: a.scoreSource };
+  return {
+    state: a.gate.gated || a.daySuppressed ? 'GATE_CLOSED' : 'GATE_OPEN',
+    renderedAt: a.renderedAt, gate: a.gate, daySuppressed: a.daySuppressed,
+    score: a.score, label: a.label, scoreSource: a.scoreSource,
+  };
+}
+
 // Written after the position insert succeeds, and NOT awaited by the add:
 // a failed snapshot write is logged and never fails, delays or blocks it.
 // It leaves no row, which is honestly "not captured". Three states: a
@@ -4455,6 +4493,7 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
   const sig = state.signals.find(s => s.ticker === ticker);
   // Copied before any await: what was on screen at the click, not after.
   const signalSnapshotAtBuy = captureSignalSnapshot(sig);
+  if (signalSnapshotAtBuy) signalSnapshotAtBuy.appShowedAtBuy = appShowedAtBuy(ticker);
   // Every *Pts field below comes from the one formula the score was summed
   // from (core/edge-scoring.js scoreComponents), never a local copy.
   const sigComps = sig ? scoreComponents({

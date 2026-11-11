@@ -3509,6 +3509,26 @@ has enough of its own buy days, and the result stands whichever way it falls.
   trade, flips the sign, the result is one day, not a method.
 - Same caveat as the book: scoring v2 is the app's advice; nothing records whether Roman followed it.
 
+### What the app was showing at the buy: recorded forward, re-derived backward, and the test between them (2026-11-08)
+
+Nothing recorded whether a buy came from something the app was advising ("App Signal" is the
+sale form's defaulted answer: App Signal on 608 of 608; no buy links to a signal). From this
+change on, each buy's snapshot records `appShowedAtBuy`: GATE_OPEN, GATE_CLOSED or NOT_SHOWN
+(with the reason), captured from the stock screen's render, never recomputed at the click. It is
+what the app was showing, never why Roman bought.
+
+For the buys before it (snapshots exist from 2026-10-29), the same verdict can only be
+**re-derived**: the gate's inputs are in the snapshot, and the click time is `captured_at`. A
+re-derivation with no recorded verdict to check it against is a hypothesis, and is reported as
+one, never written to the database, and never shown beside recorded fields without its label.
+
+**PRE-REGISTERED FALSIFICATION TEST, fixed now:** once the recording is live, the re-derivation
+runs on the same buys that carry a recorded `appShowedAtBuy`, for the **first 5 buy days of
+overlap**, and the two are compared buy by buy (GATE_OPEN vs GATE_CLOSED; NOT_SHOWN rows are
+reported and not compared). **A disagreement rate above zero voids the re-derivation**: every
+historical figure built on it is withdrawn, whatever it said. Zero disagreements is a pass on
+those buys only, not a proof.
+
 ### Limit on the instrument: signal_log cannot measure the window Roman trades in (2026-11-08)
 
 Since the 10-26 re-aim (3729de6), the EDGE logger's 72 scheduled runs (10-27 to 11-06, all

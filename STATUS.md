@@ -45,6 +45,10 @@ declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 
   would produce on its own. A pre-registered same-day replay tests it.
 - **Not answerable from the record:** whether a buy came from the app's suggestion. "App Signal" is the sale
   form's defaulted "Why did you sell?" and reads App Signal on 608 of 608; no buy is linked to a signal.
+  From the deploy of the advice-at-buy change on, each buy's snapshot records `appShowedAtBuy` (GATE_OPEN /
+  GATE_CLOSED / NOT_SHOWN with its reason), what the stock screen showed when Add was tapped, never why he
+  bought. Before it: re-derivable since 10-29 only, as a labelled hypothesis, with a pre-registered falsification
+  test (spec: first 5 buy days of overlap; any disagreement voids it).
 
 ## Decision points (a date by which something is decided, not a reminder)
 - **Scoring v2 forward test: when v2 reaches 20 buy days, projected around 2026-11-24/25** (9 buy days by 11-06,
