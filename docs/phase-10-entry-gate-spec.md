@@ -2647,6 +2647,22 @@ asked for could not detect the thing it was asked for. tests/db043-sql.test.js r
 instead, mutation-checked: a shadowed stale pin fails only that test, and the sha256 test still passes with it. The same
 holds for anything the parser or loader settles first: duplicate keys, overridden definitions, a later assignment.
 
+**ANY FILE THAT CHANGES THE SCHEMA GETS A MIGRATION NUMBER (2026-11-11).** db/CORRECTION_2026-10-09_forced_test_scan.sql
+changed scan_runs' session CHECK outside the numbered sequence, so a reader of db/NNN_*.sql alone saw a different
+constraint from the one live (the enumerated-value guard's first run). The CORRECTION_ files that exist are
+grandfathered, each listed in tests/enumerated-values.test.js with its place in the sequence and its reason (a closed
+list: an unlisted one that touches a constraint fails). They are not a pattern: a new schema change, however small or
+corrective, is db/NNN.
+
+**A CHECK'S VALUE LIST IS A CONTRACT THE CODE MUST SATISFY, AND A TEST HOLDS THEM TOGETHER (2026-11-11).** db/042
+enumerated three execution_mode_source values and the sale needed a fourth (db/043); nothing tied the two.
+tests/enumerated-values.test.js reads every CHECK from the committed SQL and from the capture (they must agree for
+applied migrations), every value the code writes to a governed column (through the same walker as the deploy guard),
+and fails on a value either list refuses, on a value it cannot read, and on a permitted value nobody accounts for:
+written by the code, written externally (named), by the column DEFAULT (verified against the capture), pending (the
+change named) or reserved (the decision named, with a review date). Building it found a hole in the deploy guard
+itself: a property assigned on a call's result (`patchFor(id).taken_resolution = ...`) was never enumerated.
+
 **AN ERROR IS NEVER TRUNCATED, ANYWHERE: NOT IN A TEST RUNNER, A LOG LINE OR A REPORT. TRUNCATION BELONGS IN DISPLAY, NEVER
 IN CAPTURE (2026-11-06).** The sibling of the complete-baseline rule. Four times in one week truncation destroyed the
 evidence needed to diagnose something real: an enumeration window that missed the sale insert's `.select('id')` 4,161

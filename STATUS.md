@@ -180,6 +180,17 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   index.js: primarySetup, armedLevels) and records none of it: rating_snapshots holds EDGE scores only. So
   recording what the phone computes pre-market is the only route to ever knowing whether Warrior works; if
   that isn't built, Warrior has no path to evaluation and that is said before 12-31.
+- **Reserved CHECK values, reviewed 2026-12-31** (the same moment as the movers decision, so everything parked is
+  looked at once). tests/enumerated-values.test.js prints them on every run:
+  - `trades_v2.verdict_provenance = 'sale_moment'`: waits on verdict B (a verdict computed at the sale moment), not
+    commissioned. If it is still not commissioned then, the value comes out of the CHECK.
+  - `setup_triggers.engine_source = 'EDGE'`: db/013 made the table engine-agnostic, but EDGE records no setup
+    triggers. For the reviewer's ruling: keep it for an EDGE trigger, or narrow the CHECK.
+- **Pending CHECK values** (permitted, not yet written, each naming the change that will write it): printed by the
+  same test on every run, 50 as of 2026-11-11, all from three changes: the app side of db/042 (execution modes and
+  their sources, the toggle and its log), the macro-gated branch (macro paths, rating tier, sale fill-time source,
+  verdict display state), and db/039 with its app commit (outcome_selection). A pending entry that never gets consumed
+  is visible there rather than permanent.
 
 ## Answered by measurement: the 11-06 duplicates came from a second session (2026-11-08)
 Roman did not answer the Retry and two-places questions directly; the data answers them.
@@ -356,6 +367,16 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - The default-ACL fix itself (scoped in the spec, not built).
 
 ## Closed recently, so they don't come back
+- **`signal_log.taken_resolution` IS written; "nothing writes it" was WRONG (mine, 2026-11-11, retracted the same
+  day).** scripts/fill-outcomes.mjs (pass 2, lines ~534-621) writes all four resolved values through
+  `patchFor(id).taken_resolution = ...`. The enumerated-value guard's first run said nothing wrote them because the
+  shared walker could not see a property assigned on a call's result; the reviewer ruled it a defect on that report,
+  and it was never recorded as one. **The same hole was in the deploy guard:** tests/live-columns.test.js never checked
+  `taken_resolution` or `matched_trade_id` at that PATCH. Fixed in the walker, with a fixture, mutation-checked.
+  What still stands from the ruling, and is an open question, not a defect: the resolver resolves against
+  signal_log, which the logger never fills between 06:30 and 08:58 PT, when Roman trades (spec, "Limit on the
+  instrument"). So its answers cover a sample that excludes most of what they are about. Whether the column should
+  exist goes on the same review as the movers job.
 - Change 4a (2026-11-08): the quota no longer lets a cache beat the only copy of a write. persist() has tiers
   (queues, measured state, preferences, caches); a tier 1–3 write that hits the quota evicts caches largest first
   and retries; a cache evicts nothing. The `sold` cache is stored bounded (SOLD_CACHE_MAX_CHARS 300,000: the most

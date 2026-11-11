@@ -10,7 +10,11 @@
     "tables": 20,
     "columns": 449,
     "tables_sha256": "d6442a3f21dbd2a2e053255adf8c2cc064e93a8aa12b0fa447eed26d6fd4dec2",
-    "functions_sha256": "d07c94affb8bfd6e6b74a0a35588706e6c6b1125cc1d0a16cc2b1114f64e766c"
+    "functions_sha256": "d07c94affb8bfd6e6b74a0a35588706e6c6b1125cc1d0a16cc2b1114f64e766c",
+    "checks": 66,
+    "checks_sha256": "ae69cfb32ad0f514c1fbfc58148ea5f174a3bf6a20ceac4241f88a1a6233b4e0",
+    "defaults": 73,
+    "defaults_sha256": "22831976250bc9762dba5e87a04517800fd8c4be12c44b4eaf0f799298e87e11"
   },
   "_migrations": {
     "highest_applied": 42,
@@ -557,5 +561,218 @@
       "trigger_type",
       "workflow_name"
     ]
+  },
+  "checks": {
+    "analysis_periods": {
+      "analysis_periods_change_description_check": "CHECK ((length(TRIM(BOTH FROM change_description)) > 0))",
+      "analysis_periods_name_check": "CHECK ((length(TRIM(BOTH FROM name)) > 0))"
+    },
+    "execution_mode_changes": {
+      "execution_mode_changes_from_mode_check": "CHECK ((from_mode = ANY (ARRAY['live'::text, 'paper'::text])))",
+      "execution_mode_changes_to_mode_check": "CHECK ((to_mode = ANY (ARRAY['live'::text, 'paper'::text])))"
+    },
+    "incidents": {
+      "incidents_confidence_score_check": "CHECK (((confidence_score >= 0.0) AND (confidence_score <= 1.0)))",
+      "incidents_motivation_check": "CHECK (((motivation)::text = ANY ((ARRAY['predatory'::character varying, 'investigatory'::character varying, 'territorial'::character varying, 'warning'::character varying, 'retaliatory'::character varying])::text[])))",
+      "incidents_motivation_confidence_check": "CHECK (((motivation_confidence >= 0.0) AND (motivation_confidence <= 1.0)))",
+      "incidents_outcome_check": "CHECK (((outcome)::text = ANY ((ARRAY['fatal'::character varying, 'injured'::character varying, 'unharmed'::character varying, 'unknown'::character varying])::text[])))",
+      "incidents_tidal_state_check": "CHECK (((tidal_state)::text = ANY ((ARRAY['incoming'::character varying, 'outgoing'::character varying, 'high'::character varying, 'low'::character varying, 'unknown'::character varying])::text[])))",
+      "incidents_time_of_day_check": "CHECK (((time_of_day)::text = ANY ((ARRAY['dawn'::character varying, 'morning'::character varying, 'afternoon'::character varying, 'dusk'::character varying, 'night'::character varying, 'unknown'::character varying])::text[])))",
+      "incidents_victim_activity_check": "CHECK (((victim_activity)::text = ANY ((ARRAY['surfing'::character varying, 'swimming'::character varying, 'diving'::character varying, 'fishing'::character varying, 'boating'::character varying, 'snorkeling'::character varying, 'wading'::character varying, 'other'::character varying])::text[])))",
+      "incidents_water_visibility_check": "CHECK (((water_visibility)::text = ANY ((ARRAY['clear'::character varying, 'murky'::character varying, 'unknown'::character varying])::text[])))"
+    },
+    "macro_observations": {
+      "macro_observations_applied_check": "CHECK ((applied = false))",
+      "macro_observations_check": "CHECK ((groq_asked = (groq_ask_reason IS NOT NULL)))",
+      "macro_observations_check1": "CHECK (((NOT groq_asked) OR (groq_failed IS NOT NULL)))",
+      "macro_observations_feed_check": "CHECK ((feed = ANY (ARRAY['iex'::text, 'sip'::text])))",
+      "macro_observations_groq_ask_reason_check": "CHECK (((groq_ask_reason IS NULL) OR (groq_ask_reason = ANY (ARRAY['daily'::text, 'pattern_changed'::text]))))",
+      "macro_observations_path_check": "CHECK ((path = ANY (ARRAY['pattern'::text, 'groq'::text, 'pattern_groq_failed'::text, 'unclassified'::text, 'not_fetched'::text])))",
+      "macro_observations_source_check": "CHECK ((source = ANY (ARRAY['browser'::text, 'logger'::text])))"
+    },
+    "portfolio": {
+      "portfolio_code_version_shape_chk": "CHECK (((code_version IS NULL) OR ((COALESCE(jsonb_typeof((code_version -> 'app'::text)), ''::text) = 'string'::text) AND (COALESCE(jsonb_typeof((code_version -> 'scoring'::text)), ''::text) = 'number'::text) AND ((NOT (code_version ? 'scoring_hash'::text)) OR (COALESCE(jsonb_typeof((code_version -> 'scoring_hash'::text)), ''::text) = 'string'::text)))))",
+      "portfolio_engine_source_check": "CHECK ((engine_source = ANY (ARRAY['EDGE'::text, 'WARRIOR'::text])))",
+      "portfolio_execution_mode_chk": "CHECK (((execution_mode = ANY (ARRAY['live'::text, 'paper'::text, 'not_known'::text])) AND ((execution_mode = 'not_known'::text) OR (execution_mode_source IS NOT NULL)) AND ((execution_mode_source IS NULL) OR (execution_mode_source = 'recorded_at_trade'::text) OR (execution_mode_source ~ '^derived_from_robinhood_export_[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text) OR (execution_mode_source ~ '^declared_by_roman_[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))))",
+      "portfolio_exit_rule_id_check": "CHECK (((exit_rule_id IS NULL) OR (exit_rule_id = ANY (ARRAY['edge.atr.multiday'::text, 'warrior.sameday.tightstop'::text]))))",
+      "portfolio_macro_path_at_buy_check": "CHECK ((macro_path_at_buy = ANY (ARRAY['pattern'::text, 'groq'::text, 'pattern_groq_failed'::text, 'unclassified'::text, 'not_fetched'::text, 'unknown'::text])))",
+      "portfolio_order_type_chk": "CHECK (((order_type IS NULL) OR (order_type = ANY (ARRAY['market'::text, 'limit'::text, 'stop'::text, 'stop_limit'::text, 'trailing_stop'::text]))))"
+    },
+    "rating_snapshots": {
+      "rating_snapshots_macro_path_check": "CHECK ((macro_path = ANY (ARRAY['pattern'::text, 'groq'::text, 'pattern_groq_failed'::text, 'unclassified'::text, 'not_fetched'::text, 'unknown'::text])))",
+      "rating_snapshots_tier_check": "CHECK (((tier IS NULL) OR (tier = ANY (ARRAY['SHOWN'::text, 'BELOW_THRESHOLD'::text]))))"
+    },
+    "regions": {
+      "regions_reporting_quality_check": "CHECK (((reporting_quality)::text = ANY ((ARRAY['high'::character varying, 'medium'::character varying, 'low'::character varying, 'unknown'::character varying])::text[])))"
+    },
+    "risk_estimates": {
+      "risk_estimates_estimation_confidence_check": "CHECK (((estimation_confidence >= 0.0) AND (estimation_confidence <= 1.0)))",
+      "risk_estimates_risk_tier_check": "CHECK (((risk_tier)::text = ANY ((ARRAY['high'::character varying, 'elevated'::character varying, 'moderate'::character varying, 'low'::character varying, 'unknown'::character varying])::text[])))"
+    },
+    "scan_runs": {
+      "scan_runs_code_version_shape_chk": "CHECK (((code_version IS NULL) OR ((COALESCE(jsonb_typeof((code_version -> 'app'::text)), ''::text) = 'string'::text) AND (COALESCE(jsonb_typeof((code_version -> 'scoring'::text)), ''::text) = 'number'::text) AND ((NOT (code_version ? 'scoring_hash'::text)) OR (COALESCE(jsonb_typeof((code_version -> 'scoring_hash'::text)), ''::text) = 'string'::text)))))",
+      "scan_runs_engine_source_check": "CHECK ((engine_source = ANY (ARRAY['EDGE'::text, 'WARRIOR'::text])))",
+      "scan_runs_prefilter_rejections_shape_chk": "CHECK (((prefilter_rejections IS NULL) OR (jsonb_typeof(prefilter_rejections) = 'array'::text)))",
+      "scan_runs_prefilter_rule_shape_chk": "CHECK (((prefilter_rule IS NULL) OR ((jsonb_typeof(prefilter_rule) = 'object'::text) AND (COALESCE(jsonb_typeof((prefilter_rule -> 'rule'::text)), ''::text) = 'string'::text))))",
+      "scan_runs_session_check": "CHECK ((session = ANY (ARRAY['OPEN'::text, 'PRE'::text, 'AH'::text, 'CLOSED'::text, 'FORCED_TEST'::text])))",
+      "scan_runs_universe_source_check": "CHECK ((universe_source = ANY (ARRAY['committed-movers-snapshot'::text, 'self-fetched-fallback'::text, 'static-universe-list'::text])))"
+    },
+    "settings": {
+      "settings_execution_mode_chk": "CHECK ((((execution_mode IS NULL) AND (execution_mode_set_at IS NULL)) OR ((execution_mode = ANY (ARRAY['live'::text, 'paper'::text])) AND (execution_mode_set_at IS NOT NULL))))",
+      "settings_float_threshold_shares_check": "CHECK (((float_threshold_shares IS NULL) OR (float_threshold_shares > (0)::numeric)))",
+      "settings_max_loss_pct_check": "CHECK (((max_loss_pct IS NULL) OR ((max_loss_pct > (0)::numeric) AND (max_loss_pct < (100)::numeric))))",
+      "settings_risk_per_trade_pct_check": "CHECK (((risk_per_trade_pct IS NULL) OR ((risk_per_trade_pct > (0)::numeric) AND (risk_per_trade_pct <= (100)::numeric))))"
+    },
+    "setup_triggers": {
+      "setup_triggers_engine_source_check": "CHECK ((engine_source = ANY (ARRAY['EDGE'::text, 'WARRIOR'::text])))"
+    },
+    "shark_migrations": {
+      "shark_migrations_feeding_activity_check": "CHECK (((feeding_activity)::text = ANY ((ARRAY['high'::character varying, 'medium'::character varying, 'low'::character varying])::text[])))",
+      "shark_migrations_month_check": "CHECK (((month >= 1) AND (month <= 12)))",
+      "shark_migrations_presence_likelihood_check": "CHECK (((presence_likelihood)::text = ANY ((ARRAY['high'::character varying, 'medium'::character varying, 'low'::character varying])::text[])))"
+    },
+    "signal_log": {
+      "ret_1d_split_exclusive": "CHECK ((NOT ((ret_1d IS NOT NULL) AND ret_1d_split_in_window)))",
+      "ret_3d_split_exclusive": "CHECK ((NOT ((ret_3d IS NOT NULL) AND ret_3d_split_in_window)))",
+      "ret_5d_split_exclusive": "CHECK ((NOT ((ret_5d IS NOT NULL) AND ret_5d_split_in_window)))",
+      "ret_close_split_exclusive": "CHECK ((NOT ((ret_close IS NOT NULL) AND ret_close_split_in_window)))",
+      "signal_log_code_version_shape_chk": "CHECK (((code_version IS NULL) OR ((COALESCE(jsonb_typeof((code_version -> 'app'::text)), ''::text) = 'string'::text) AND (COALESCE(jsonb_typeof((code_version -> 'scoring'::text)), ''::text) = 'number'::text) AND ((NOT (code_version ? 'scoring_hash'::text)) OR (COALESCE(jsonb_typeof((code_version -> 'scoring_hash'::text)), ''::text) = 'string'::text)))))",
+      "signal_log_engine_source_check": "CHECK ((engine_source = ANY (ARRAY['EDGE'::text, 'WARRIOR'::text])))",
+      "signal_log_taken_resolution_check": "CHECK ((taken_resolution = ANY (ARRAY['unresolved'::text, 'taken-exact'::text, 'taken-by-fallback'::text, 'traded-against-engine'::text, 'not-taken-confirmed'::text])))"
+    },
+    "signal_snapshot_at_buy": {
+      "signal_snapshot_at_buy_one_state_chk": "CHECK ((((snapshot IS NOT NULL) AND (absent_reason IS NULL) AND (jsonb_typeof(snapshot) = 'object'::text)) OR ((snapshot IS NULL) AND (absent_reason IS NOT NULL))))"
+    },
+    "trades_v2": {
+      "trades_v2_code_version_shape_chk": "CHECK (((code_version IS NULL) OR ((COALESCE(jsonb_typeof((code_version -> 'app'::text)), ''::text) = 'string'::text) AND (COALESCE(jsonb_typeof((code_version -> 'scoring'::text)), ''::text) = 'number'::text) AND ((NOT (code_version ? 'scoring_hash'::text)) OR (COALESCE(jsonb_typeof((code_version -> 'scoring_hash'::text)), ''::text) = 'string'::text)))))",
+      "trades_v2_engine_source_check": "CHECK ((engine_source = ANY (ARRAY['EDGE'::text, 'WARRIOR'::text])))",
+      "trades_v2_execution_mode_chk": "CHECK (((execution_mode = ANY (ARRAY['live'::text, 'paper'::text, 'not_known'::text])) AND ((execution_mode = 'not_known'::text) OR (execution_mode_source IS NOT NULL)) AND ((execution_mode_source IS NULL) OR (execution_mode_source = 'recorded_at_trade'::text) OR (execution_mode_source ~ '^derived_from_robinhood_export_[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text) OR (execution_mode_source ~ '^declared_by_roman_[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))))",
+      "trades_v2_exit_rule_id_check": "CHECK (((exit_rule_id IS NULL) OR (exit_rule_id = ANY (ARRAY['edge.atr.multiday'::text, 'warrior.sameday.tightstop'::text]))))",
+      "trades_v2_macro_path_check": "CHECK ((macro_path = ANY (ARRAY['pattern'::text, 'groq'::text, 'pattern_groq_failed'::text, 'unclassified'::text, 'not_fetched'::text, 'unknown'::text])))",
+      "trades_v2_order_type_chk": "CHECK (((order_type IS NULL) OR (order_type = ANY (ARRAY['market'::text, 'limit'::text, 'stop'::text, 'stop_limit'::text, 'trailing_stop'::text]))))",
+      "trades_v2_sale_code_version_shape_chk": "CHECK (((sale_code_version IS NULL) OR ((COALESCE(jsonb_typeof((sale_code_version -> 'app'::text)), ''::text) = 'string'::text) AND (COALESCE(jsonb_typeof((sale_code_version -> 'scoring'::text)), ''::text) = 'number'::text) AND ((NOT (sale_code_version ? 'scoring_hash'::text)) OR (COALESCE(jsonb_typeof((sale_code_version -> 'scoring_hash'::text)), ''::text) = 'string'::text)))))",
+      "trades_v2_sell_filled_at_consistent": "CHECK ((((sell_filled_at_source IS NULL) AND (sell_filled_at IS NULL)) OR ((COALESCE(sell_filled_at_source, ''::text) = 'not_known'::text) AND (sell_filled_at IS NULL)) OR ((COALESCE(sell_filled_at_source, ''::text) = ANY (ARRAY['entered'::text, 'default'::text])) AND (sell_filled_at IS NOT NULL))))",
+      "trades_v2_sell_filled_at_source_check": "CHECK (((sell_filled_at_source IS NULL) OR (sell_filled_at_source = ANY (ARRAY['entered'::text, 'default'::text, 'not_known'::text]))))",
+      "trades_v2_sell_order_type_chk": "CHECK (((sell_order_type IS NULL) OR (sell_order_type = ANY (ARRAY['market'::text, 'limit'::text, 'stop'::text, 'stop_limit'::text, 'trailing_stop'::text]))))",
+      "trades_v2_signal_before_sale_shape_chk": "CHECK (((signal_before_sale IS NULL) OR ((COALESCE((signal_before_sale ->> 'state'::text), ''::text) = 'PREDATES_SALE'::text) AND (COALESCE(jsonb_typeof((signal_before_sale -> 'scanned_at'::text)), ''::text) = 'string'::text)) OR ((COALESCE((signal_before_sale ->> 'state'::text), ''::text) = ANY (ARRAY['NOT_ESTABLISHED'::text, 'NOT_RECORDED'::text])) AND (COALESCE(jsonb_typeof((signal_before_sale -> 'reason'::text)), ''::text) = 'string'::text))))",
+      "trades_v2_verdict_display_consistent": "CHECK ((((verdict_display_state IS NULL) AND (verdict_displayed_at_sale IS NULL)) OR ((COALESCE(verdict_display_state, ''::text) = 'NOT_DISPLAYED'::text) AND (verdict_displayed_at_sale IS NULL)) OR ((COALESCE(verdict_display_state, ''::text) ~~ 'CAPTURED_%'::text) AND (COALESCE(jsonb_typeof(verdict_displayed_at_sale), ''::text) = 'object'::text))))",
+      "trades_v2_verdict_display_state_check": "CHECK (((verdict_display_state IS NULL) OR (verdict_display_state = ANY (ARRAY['CAPTURED_BEFORE_FILL'::text, 'CAPTURED_AFTER_FILL'::text, 'CAPTURED_FILL_UNKNOWN'::text, 'NOT_DISPLAYED'::text]))))",
+      "trades_v2_verdict_provenance_chk": "CHECK (((verdict_provenance IS NULL) OR ((verdict_provenance = ANY (ARRAY['sale_moment'::text, 'mixed_moment'::text, 'not_recorded'::text])) AND ((verdict_provenance = 'not_recorded'::text) = (unified_recommendation_at_sale IS NULL)) AND ((verdict_provenance <> 'not_recorded'::text) OR (lock_in_profits_fired IS NULL)))))"
+    }
+  },
+  "defaults": {
+    "analysis_periods": {
+      "created_at": "now()",
+      "id": "gen_random_uuid()"
+    },
+    "db_meta": {
+      "updated_at": "now()"
+    },
+    "execution_mode_changes": {
+      "recorded_at": "now()"
+    },
+    "incidents": {
+      "created_at": "now()",
+      "id": "gen_random_uuid()",
+      "is_confirmed": "false",
+      "is_estimated": "false",
+      "updated_at": "now()"
+    },
+    "macro_observations": {
+      "applied": "false",
+      "created_at": "now()",
+      "id": "gen_random_uuid()",
+      "missing_etfs": "'{}'::text[]",
+      "pattern_matched": "'{}'::text[]",
+      "unjudged_etfs": "'{}'::text[]"
+    },
+    "named_zones": {
+      "fatal_attacks": "0",
+      "id": "gen_random_uuid()",
+      "total_attacks": "0"
+    },
+    "pipeline_state": {
+      "updated_at": "now()"
+    },
+    "portfolio": {
+      "catalyst_setup": "false",
+      "created_at": "now()",
+      "execution_mode": "'not_known'::text",
+      "id": "nextval('portfolio_id_seq'::regclass)",
+      "macro_path_at_buy": "'unknown'::text",
+      "momentum_protection_activated": "false",
+      "updated_at": "now()"
+    },
+    "rating_snapshots": {
+      "captured_at": "now()",
+      "id": "nextval('rating_snapshots_id_seq'::regclass)",
+      "macro_path": "'unknown'::text"
+    },
+    "regions": {
+      "id": "gen_random_uuid()",
+      "is_named_zone": "false",
+      "reporting_quality": "'unknown'::character varying"
+    },
+    "risk_estimates": {
+      "confirmed_attacks": "0",
+      "estimated_unreported_attacks": "0",
+      "id": "gen_random_uuid()",
+      "last_calculated_at": "now()",
+      "risk_tier": "'unknown'::character varying"
+    },
+    "scan_runs": {
+      "aborted": "false",
+      "created_at": "now()",
+      "fetch_failed_count": "0",
+      "prefiltered_count": "0"
+    },
+    "settings": {
+      "created_at": "now()",
+      "disable_macro_overlay": "false",
+      "force_pre_market_mode": "false",
+      "id": "nextval('settings_id_seq'::regclass)",
+      "include_under2": "false",
+      "show_watch": "true",
+      "updated_at": "now()"
+    },
+    "setup_triggers": {
+      "created_at": "now()",
+      "id": "gen_random_uuid()"
+    },
+    "shark_migrations": {
+      "id": "gen_random_uuid()"
+    },
+    "signal_log": {
+      "created_at": "now()",
+      "id": "gen_random_uuid()",
+      "ret_1d_split_in_window": "false",
+      "ret_3d_split_in_window": "false",
+      "ret_5d_split_in_window": "false",
+      "ret_close_split_in_window": "false",
+      "taken_resolution": "'unresolved'::text"
+    },
+    "signal_snapshot_at_buy": {
+      "captured_at": "now()"
+    },
+    "trades": {
+      "created_at": "now()",
+      "id": "nextval('trades_id_seq'::regclass)",
+      "sell_timing_resolved": "false"
+    },
+    "trades_v2": {
+      "catalyst_setup": "false",
+      "created_at": "now()",
+      "execution_mode": "'not_known'::text",
+      "id": "gen_random_uuid()",
+      "macro_path": "'unknown'::text",
+      "momentum_protection": "false",
+      "sell_price_unverified": "false",
+      "sell_timing_resolved": "false",
+      "sub10_adjustment": "0"
+    },
+    "workflow_runs": {
+      "created_at": "now()",
+      "id": "gen_random_uuid()"
+    }
   }
 }
