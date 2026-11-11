@@ -114,20 +114,33 @@ async function main() {
   mkdirSync(cacheDir, { recursive: true });
 
   const states = {}, charged = [];
-  const note = (k, t) => { (states[k] = states[k] || []).push(t); };
+  const note = (k, t, missAt = null, rawEmpty = null) => { (states[k] = states[k] || []).push({ t, missAt, rawEmpty }); };
   for (const t of book) {
     const m = tradeMoments(t);
     if (m.buy == null) { note('no recorded buy moment', t); continue; }
     if (m.sell == null) { note('no recorded sale moment', t); continue; }
-    const bq = pickQuote(await quotesAt(headers, t.ticker, m.buy, cacheDir), m.buy);
-    const sq = pickQuote(await quotesAt(headers, t.ticker, m.sell, cacheDir), m.sell);
-    if (!bq && !sq) { note('no valid quote at either moment', t); continue; }
-    if (!bq) { note('no valid quote at the buy', t); continue; }
-    if (!sq) { note('no valid quote at the sale', t); continue; }
+    const bRaw = await quotesAt(headers, t.ticker, m.buy, cacheDir), sRaw = await quotesAt(headers, t.ticker, m.sell, cacheDir);
+    const bq = pickQuote(bRaw, m.buy);
+    const sq = pickQuote(sRaw, m.sell);
+    if (!bq && !sq) { note('no valid quote at either moment', t, m.buy, bRaw.length === 0); continue; }
+    if (!bq) { note('no valid quote at the buy', t, m.buy, bRaw.length === 0); continue; }
+    if (!sq) { note('no valid quote at the sale', t, m.sell, sRaw.length === 0); continue; }
     charged.push({ t, c: costFor(t, bq, sq) });
   }
   console.log(`\nCOVERAGE: ${charged.length} of ${book.length} trades charged on both sides`);
   for (const [k, v] of Object.entries(states)) console.log(`  not charged, ${k}: ${v.length}`);
+  // ADDED 2026-11-11 after the first run, declared (CC-cost-verdict-and-spread-question.md): what the uncharged
+  // trades are. A description of coverage, not a new analysis: nothing above is computed differently.
+  const period = d => (d < '2026-09-15' ? 'A' : d < '2026-10-21' ? 'B' : d < '2026-11-01' ? 'D' : 'E');
+  const ptHour = ms => new Date(ms).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour12: false, hour: '2-digit' });
+  const count = (arr, f) => arr.reduce((o, x) => { const k = f(x); o[k] = (o[k] || 0) + 1; return o; }, {});
+  console.log('  UNCHARGED, DESCRIBED (added after the first run, declared):');
+  console.log(`    charged: frictionless total ${$(charged.reduce((a, x) => a + num(x.t.pnl_dollars), 0))}, periods ${JSON.stringify(count(charged, x => period(day(x.t.buy_date))))}`);
+  for (const [k, v] of Object.entries(states)) {
+    const withMoment = v.filter(x => x.missAt != null);
+    console.log(`    ${k}: ${v.length}, frictionless total ${$(v.reduce((a, x) => a + num(x.t.pnl_dollars), 0))}, periods ${JSON.stringify(count(v, x => period(day(x.t.buy_date))))}` +
+      (withMoment.length ? `; no quote at all in the 60 s window: ${withMoment.filter(x => x.rawEmpty).length} of ${withMoment.length}; PT hour of the missing moment: ${JSON.stringify(count(withMoment, x => ptHour(x.missAt)))}` : ''));
+  }
 
   const frictionless = charged.map(x => x.t), sum = a => a.reduce((s, x) => s + x, 0);
   const adj = (which) => charged.map(x => ({ buy_date: x.t.buy_date, pnl_dollars: num(x.t.pnl_dollars) - x.c[which] }));

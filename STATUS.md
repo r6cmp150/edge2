@@ -107,6 +107,31 @@ declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 
   bought. Before it: re-derivable since 10-29 only, as a labelled hypothesis, with a pre-registered falsification
   test (spec: first 5 buy days of overlap; any disagreement voids it).
 
+## After realistic costs: pre-registered, answered 2026-11-11
+Source: `node scripts/prereg-costs.mjs` (committed in 2839360 before its first run; the uncharged-trade breakdown
+added after it, declared, every earlier line unchanged), on data/backups/trades_v2.json @ 314f6e0, the 586
+verified trades, with SIP NBBO quotes from Alpaca (the last valid quote in the 60 s up to each recorded moment).
+**What the book is:** a frictionless paper simulation for the paper rows, over rows whose execution mode is
+not_known. For a row that was live with a typed fill, this cost model measures something different.
+- **Verdict, as pre-registered:** base case (half the quoted spread on each side), 513 trades charged, 34 buy
+  days, cost-adjusted mean -$23.76 per buy day, 95% moving-block bootstrap -$55.59 to +$13.33. "The interval
+  includes zero. After costs it cannot be distinguished from break-even."
+- **And what it means: costs are not a correction to this strategy's result. They are larger than the result.**
+  On the same 513 trades they turn -$62.93 frictionless into -$807.67: a drag of $744.75 ($1.45 a trade), about
+  twelve times the frictionless loss. The win/loss ratio falls to 0.636 while break-even rises to 0.833: a gap of
+  0.197, against 0.065 before costs. Harsh case (full spread each side): -$1,552.42, needing 0.969 against 0.574.
+- **Quoted spread at the recorded moments** (share of mid, 1,026 quotes): median 0.20%, p25 0.11%, p75 0.36%,
+  p90 0.58%.
+- **The coverage gap is a finding:** the 50 trades with no quote at the buy hold -$244.50 of the book's -$300.43,
+  are almost all from periods A and B (11 and 38; 1 in E), and none had any quote in the 60 s window. Their
+  recorded buy moments: 32 of 50 at 13:00-16:59 PT, after the close; 15 at 07:xx PT, inside the session (no quote
+  in a whole minute: a very thin name, or a time that is not the trade's). So in the early book, trades were often
+  recorded hours after the fact, at a moment unrelated to any trade; those rows' prices are quotes from that moment.
+  Two consequences: the early periods' large losses are partly an artifact of when the price was captured, so the
+  -$300 is even less interpretable than stated; and the charged subset is the **better-recorded** part of the
+  book. The verdict is drawn from the rows that can be trusted, and it is that part which loses $808 after costs.
+  (19 had no quote at the sale, +$2.00; 4 at neither, +$5.00.)
+
 ## Decision points (a date by which something is decided, not a reminder)
 - **Scoring v2 forward test: when v2 reaches 20 buy days, projected around 2026-11-24/25** (9 buy days by 11-06,
   9 in the 10 trading days since 10-27; a projection, not a deadline). AMENDED 2026-11-11, before its data: its
