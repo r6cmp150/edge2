@@ -209,7 +209,7 @@ const DECLARED = {
   'trades_v2.verdict_provenance': { sale_moment: { reserved: 'verdict B (a verdict computed at the sale moment), not commissioned; if it is still not commissioned at the review, the value comes out of the CHECK', review: '2026-12-31' } },
   'scan_runs.session': { FORCED_TEST: { external: 'db/CORRECTION_2026-10-09_forced_test_scan.sql, one row (scan 3da6957d); no code may write it (the test-override guard refuses --session with --write)' } },
   'signal_log.taken_resolution': { unresolved: { default: 'a signal not yet resolved; fill-outcomes.mjs moves it to the other four' } },
-  'setup_triggers.engine_source': { EDGE: { reserved: 'db/013 made setup_triggers engine-agnostic, but EDGE records no setup triggers: keep the value for an EDGE trigger, or narrow the CHECK (for the reviewer\'s ruling)', review: '2026-12-31' } },
+  'setup_triggers.engine_source': { EDGE: { reserved: 'the decision whether Warrior continues at all (STATUS.md, the 2026-12-31 Warrior review): db/013 made setup_triggers engine-agnostic, and the engine that writes it has never produced a setup', review: '2026-12-31' } },
 };
 
 // ---- reading a value expression ------------------------------------------------------------------------------------

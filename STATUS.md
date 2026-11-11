@@ -173,19 +173,23 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   9 in the 10 trading days since 10-27; a projection, not a deadline). AMENDED 2026-11-11, before its data: its
   bar is above realistic costs, not above zero (a frictionless bar would pass a strategy that loses money); see
   the spec. The result stands whichever way it falls.
-- **Movers snapshot: 2026-12-31.** The float-coverage re-measurement it is kept for runs by then, or it retires.
-- **Warrior, before 2026-12-31:** it has never yet run at the time it was designed for, and under GitHub's
-  scheduler it cannot (logger median 431 min late; 102 of 763 candidates qualified, 0 setups ever formed in a
-  logged scan, setup_triggers empty). The live app computes Warrior setups on the phone (engines/warrior/
-  index.js: primarySetup, armedLevels) and records none of it: rating_snapshots holds EDGE scores only. So
-  recording what the phone computes pre-market is the only route to ever knowing whether Warrior works; if
-  that isn't built, Warrior has no path to evaluation and that is said before 12-31.
-- **Reserved CHECK values, reviewed 2026-12-31** (the same moment as the movers decision, so everything parked is
-  looked at once). tests/enumerated-values.test.js prints them on every run:
-  - `trades_v2.verdict_provenance = 'sale_moment'`: waits on verdict B (a verdict computed at the sale moment), not
-    commissioned. If it is still not commissioned then, the value comes out of the CHECK.
-  - `setup_triggers.engine_source = 'EDGE'`: db/013 made the table engine-agnostic, but EDGE records no setup
-    triggers. For the reviewer's ruling: keep it for an EDGE trigger, or narrow the CHECK.
+- **2026-12-31: WHETHER WARRIOR CONTINUES AT ALL. One decision, not four.** Everything below turns on it:
+  - **Warrior's own route to evaluation.** It has never yet run at the time it was designed for, and under GitHub's
+    scheduler it cannot (logger median 431 min late; 102 of 763 candidates qualified, 0 setups ever formed in a
+    logged scan, setup_triggers empty). The live app computes Warrior setups on the phone (engines/warrior/
+    index.js: primarySetup, armedLevels) and records none of it: rating_snapshots holds EDGE scores only. So
+    recording what the phone computes pre-market is the only route to ever knowing whether Warrior works; if
+    that isn't built, Warrior has no path to evaluation and that is said before 12-31.
+  - **The movers snapshot job.** The float-coverage re-measurement it is kept for runs by then, or it retires.
+  - **`signal_log.taken_resolution`: should the column exist?** Its resolver (fill-outcomes.mjs) resolves against a
+    log the logger never fills between 06:30 and 08:58 PT, when Roman trades, so its answers cover a sample that
+    excludes most of what they are about. Not a defect; an open question.
+  - **`setup_triggers.engine_source = 'EDGE'`, a reserved CHECK value.** db/013 made the table engine-agnostic; the
+    engine that writes it has never produced a setup.
+- **Reserved CHECK values** are printed by tests/enumerated-values.test.js on every run, each with its decision and
+  review date. Besides the one above: `trades_v2.verdict_provenance = 'sale_moment'` waits on verdict B (a verdict
+  computed at the sale moment), not commissioned; reviewed 2026-12-31 too, and if it is still not commissioned then,
+  the value comes out of the CHECK.
 - **Pending CHECK values** (permitted, not yet written, each naming the change that will write it): printed by the
   same test on every run, 50 as of 2026-11-11, all from three changes: the app side of db/042 (execution modes and
   their sources, the toggle and its log), the macro-gated branch (macro paths, rating tier, sale fill-time source,

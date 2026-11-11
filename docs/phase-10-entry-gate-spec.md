@@ -2663,6 +2663,20 @@ written by the code, written externally (named), by the column DEFAULT (verified
 change named) or reserved (the decision named, with a review date). Building it found a hole in the deploy guard
 itself: a property assigned on a call's result (`patchFor(id).taken_resolution = ...`) was never enumerated.
 
+**A TOOL REPORTING THAT SOMETHING IS ABSENT IS REPORTING THE LIMIT OF ITS OWN SEARCH, NOT A FACT ABOUT THE WORLD, UNTIL ITS
+COVERAGE HAS BEEN ESTABLISHED (2026-11-11, the reviewer's rule).** An absence claim states what was searched, by what
+means, and what that means cannot see. Four wrong absence claims in one week, each a confident negative from an
+unexamined search: the filtered grants baseline; the "HUN failure" that was a fixture; "no sub-period reaches 20 buy
+days" (S1 did); and "nothing writes taken_resolution" (fill-outcomes.mjs writes all four values, in a form the walker
+could not see). The last was ruled a defect on that report; accepting an absence claim without asking what the search
+covered is the reviewer's error as much as the reporter's.
+
+**A GUARD THAT ENUMERATES MUST BE CHECKED AGAINST A COUNT IT DID NOT PRODUCE (2026-11-11).** Self-reported completeness
+is not completeness: the baseline rule applied to the tool instead of the data. A guard's output is about the sites it
+found and says nothing about the ones it never saw; NOT ENUMERABLE fails loudly, a site never recognised as a site
+passes in silence. tests/_write-walker.js keeps its coverage written down (forms recognised, forms not, files never
+scanned), and a deliberately dumb count of database syntax, independent of the walker, is compared with its sites.
+
 **AN ERROR IS NEVER TRUNCATED, ANYWHERE: NOT IN A TEST RUNNER, A LOG LINE OR A REPORT. TRUNCATION BELONGS IN DISPLAY, NEVER
 IN CAPTURE (2026-11-06).** The sibling of the complete-baseline rule. Four times in one week truncation destroyed the
 evidence needed to diagnose something real: an enumeration window that missed the sale insert's `.select('id')` 4,161

@@ -1,6 +1,39 @@
 // tests/_write-walker.js -- 2026-11-11. The write-site and name walker, moved VERBATIM out of tests/live-columns.test.js
 // so tests/enumerated-values.test.js uses the same code rather than a copy (spec 7.7: the same logic in two places
 // drifts). Not a test file (the leading underscore). See live-columns.test.js's header for what it does and why.
+//
+// COVERAGE (2026-11-11; keep this list true when the walker changes). Three outcomes for any database access: RESOLVED
+// (its columns read), NOT ENUMERABLE (seen, could not be read: fails loudly), and NEVER SEEN (passes in silence). Only the
+// first two show in any report, so what follows is the record of the third.
+//
+// FILES SCANNED: app.js, core/*.js, shell/*.js, engines/warrior/*.js; scripts/*.mjs and scripts/lib/*.mjs EXCEPT
+// scripts/test-* and scripts/probe-*; .github/workflows/*.yml.
+// FILES NEVER SEEN: scripts/test-* and scripts/probe-* (hand-run probes; fill-outcomes.yml can run
+// scripts/test-db019-db021-grants.mjs, which PATCHes production), any *.cjs, sw.js, engines/edge (no files today),
+// index.html inline scripts, anything under tests/ and data/.
+//
+// WRITES recognised:
+//   app files: supabaseClient-style `.from('<literal table>')` then (whitespace allowed) `.insert(` / `.update(` /
+//     `.upsert(`; the payload resolved through literals, builder functions (fnReturn), spreads, `.map(x => ({..}))`,
+//     identifiers to their declaration or a loop over a literal list, parameters to their callers (W.callsOf: same file
+//     or an importing file), the ALIASES retries, and a Map/array of objects filled by `.set`/`.push`, including
+//     properties assigned on a variable holding a builder's result (p.col = ..) and on the call itself (fn(..).col = ..).
+//   scripts: fetch(`${UPPER_CASE_NAME}/rest/v1/<literal table or rpc/fn>...`, { method: 'POST' | 'PATCH' | 'PUT', ...,
+//     body: JSON.stringify(<payload>) }), the payload resolved as above.
+//   workflows: curl ... -X POST | PATCH "...rest/v1/<table>" ... -d "<one-line JSON>" or -d "$VAR" set earlier in the file.
+// WRITES NOT recognised (NEVER SEEN): `.from(<non-literal>)` writes (the names half reports these NOT ENUMERABLE);
+//   `.delete(` (a delete names filters, read by the names half, but is not a write site); `.rpc(` calls from app files;
+//   fetch with a base URL not written `${UPPER_CASE}` (baseUrl, supabaseUrl) or via a wrapper (fetchImpl) for a WRITE;
+//   method DELETE; a body that is not JSON.stringify(..); curl `--request`, DELETE, `--data @file`, or a -d spanning lines;
+//   a callers search across files that share globals without importing (app.js -> core/*.js) -- tests/enumerated-values
+//   adds that for values only.
+// NAMES recognised: `.from('<literal>')` chains (select lists, filters, order, on_conflict), `/rest/v1/` inside a string
+//   or template literal (helpers with a parameterised table read through their callers, "called from ..."),
+//   backup-tables.mjs through its BACKUP model, workflow URLs. Not recognised: a URL built outside a literal on its line
+//   (reported NOT ENUMERABLE), and the files never seen above.
+//
+// The independent check on this list is a deliberately dumb count of database syntax (.insert/.update/.upsert/.delete/
+// .rpc, /rest/v1/, curl -X) compared with these sites: see STATUS.md, "walker coverage".
 'use strict';
 const fs = require('fs');
 const path = require('path');
