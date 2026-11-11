@@ -38,7 +38,9 @@ evidence is. Last updated 2026-11-11 with the 2026-11-11 capture (db/042 applied
   what the app showed.
 - Alpaca keys: **permitted** by Roman (2026-11-11), market-data only: read in memory, never printed, never written.
 - The Robinhood export, 2026-01-01 to today, brokerage account: it decides which rows were live (a matching
-  execution) and which paper (none), and gives the real fill for the live ones.
+  execution) and which paper (none), and gives the real fill for the live ones. **What it unblocks:** the execution
+  mode of every historical row (now not_known), and a re-run of scripts/prereg-peak-before-after.mjs, whose
+  question 1 can only bound the recording gap until it says which rows were paper (no gap) and which live.
 - For 11-09 and 11-10, what only the phone holds: a screenshot of the expanded banner (any queue entries and
   their states; whether "Save failed" came back). Whether `sold` stayed under the cap is not visible anywhere:
   the "Storage on this phone" readout (proposed 2026-11-08, not cleared) is what would show it.

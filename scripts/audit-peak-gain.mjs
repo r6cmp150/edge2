@@ -20,7 +20,7 @@ import { barsWithRetry, ptInstant, ptOf } from './audit-render-sampled-inputs.mj
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 // The regular-session high between two instants, with its time. NULL with no bar in range.
-function highWithTime(bars, fromMs, toMs) {
+export function highWithTime(bars, fromMs, toMs) {
   let best = null;
   for (const b of bars) {
     const t = Date.parse(b.t);

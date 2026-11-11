@@ -2255,6 +2255,19 @@ days, not quiet ones.
    Upper bounds throughout: the sale's fill time isn't stored, so a peak
    can include minutes after he sold. (`scripts/audit-peak-gain.mjs`,
    trades_v2 at `164099a`, bars fetched 2026-11-05.)
+   **What "upper bound" covers, stated 2026-11-11.** The peak is the high between the buy fill and the RECORDED
+   sell_time, so nothing after the recording is in it: "he sold and it went on rising" is not in this table, and
+   the give-back reading holds as computed. All 519 verified sales at `164099a` carry a sell_time, so the script's
+   `|| '13:00'` default never fired. The residual is the gap between the real sale and its recording: about zero for
+   a paper trade (the recording is the decision), unmeasured for a trade placed at the broker, and unknown per row
+   while execution mode is not_known.
+   **PRE-REGISTERED 2026-11-11, before its first run: `scripts/prereg-peak-before-after.mjs`.** Same source and
+   population; it must reproduce 101 / 28 / 6 first or stop. Question 1: of the peaks at +3% or more (and of the 28,
+   and of the top five), how many fall within 5, 15 or 60 minutes before the recorded sale (an arbitrary sensitivity
+   sweep, not a threshold), where a recording delay could put them after the real sale. Question 2, separate and
+   never merged with 1: after the recorded sale, how many trades went above their own pre-sale peak by the next
+   trading day's close (primary), and the dollars left on the table at the sale-day close, the next day's close and
+   the post-sale highs, each with its largest contributor removed. Re-runnable once the Robinhood match exists.
    **Exit rules, replayed (2026-11-06): none clears the +$2.25-a-trade bar.** A replay, not a recommendation
    (`scripts/audit-exit-rules.mjs`, trades_v2 at `164099a`, the 501-trade population sold on 37 trading days,
    SIP minute bars, regular session). Against what he actually got:
