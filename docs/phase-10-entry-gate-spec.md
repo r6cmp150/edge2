@@ -3525,7 +3525,10 @@ descriptive only; the win-rate test below runs on new data and nowhere else.
 - **Outcome 2, win rate, frictionless, reported beside outcome 1 and never merged with it:** on each buy
   day with at least one S1 trade and at least one S2-S4 trade, S1's share of winning trades minus S2-S4's,
   frictionless; the mean of those daily differences. Direction: greater than zero. Same bootstrap, the
-  interval excluding zero, at **20 such days**. **A null means:** the win-rate gap is not established and
+  interval excluding zero, at **20 such days**. Reported with **the number of buy days carrying both
+  groups**: that is this test's real n, and it is smaller than the S1 buy-day count. A within-day difference,
+  so the day effect the bootstrap blocks on is controlled (the reviewer preferred it to a pooled-rate
+  comparison, 2026-11-11). **A null means:** the win-rate gap is not established and
   nothing follows from it; the after-cost difference between buckets is then attributable to costs alone.
 - **When:** the first day outcome 1 reaches 20 S1 buy days (outcome 2 when it reaches its own 20). At about
   one in five trades in S1 and an S1 trade on most buy days, about a month. A projection, not a deadline.
