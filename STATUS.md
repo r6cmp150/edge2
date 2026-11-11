@@ -11,7 +11,15 @@ evidence is. Last updated 2026-11-11 with the 2026-11-11 capture (db/042 applied
   trades_v2 and portfolio, execution_mode on settings, and the execution_mode_changes table.
 - **Not applied, each named, not assumed:** db/036 (the provenance backfill; adds no columns, so the capture cannot
   show it either way), db/039 (rating_snapshots outcomes: its columns are absent from the capture; its RUN-ME files
-  will be 13-15), db/041 (engine_source NOT NULL: still nullable in the capture; being split into 041a and 041b).
+  will be 16-18, moved behind db/043 because numbering follows run order), db/041 (engine_source NOT NULL: still
+  nullable in the capture; being split into 041a and 041b), **db/043** (drafted 2026-11-11, not yet cleared; RUN-ME
+  13-15 once it is; adds no columns, so only its run 2 or a capture's constraint text can show it applied).
+- **A design miss in db/042, recorded as one (2026-11-11):** its CHECK on trades_v2.execution_mode_source enumerated
+  three sources, and the sale, which inherits its position's mode, needed a fourth (`copied_from_position`). Neither
+  the reviewer nor I saw it; it was caught by reading the live constraint before writing the app code, not by any
+  test, because nothing tied a CHECK's value list to the values the app writes (`live-columns.json` records columns,
+  not constraints). db/043 adds exactly that one value. The class fix is the enumerated-value guard, which lands
+  before the app side of db/042.
 - **db/042's apply moment is not what the not_known count uses.** That count tells its three states apart by the
   build stamp that wrote each row (code_version.app at a buy, sale_code_version.app at a sale), never by a date. The
   earliest execution_mode_changes row is Roman's first toggle, not the migration. The recorded fact is that the
