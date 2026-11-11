@@ -2640,6 +2640,13 @@ written, so a defect the editing mechanism itself introduces is in the baseline,
 inserted code found it; the mutant existed only afterwards, once the test was made sensitive to it. After any edit made
 by a script or a shell, read the lines that actually landed.
 
+**A GUARD WRITTEN AGAINST A DATA STRUCTURE CANNOT SEE A DEFECT THE LANGUAGE RESOLVES BEFORE THE GUARD RUNS; SUCH A GUARD
+READS THE SOURCE TEXT (2026-11-11).** The instance: a duplicate key in a JS object literal collapses (the last one wins)
+before any code runs, so `Object.keys(PINS).length` would pass on a pins file carrying a stale, shadowed pin. The check
+asked for could not detect the thing it was asked for. tests/db043-sql.test.js reads the PINS block from its own text
+instead, mutation-checked: a shadowed stale pin fails only that test, and the sha256 test still passes with it. The same
+holds for anything the parser or loader settles first: duplicate keys, overridden definitions, a later assignment.
+
 **AN ERROR IS NEVER TRUNCATED, ANYWHERE: NOT IN A TEST RUNNER, A LOG LINE OR A REPORT. TRUNCATION BELONGS IN DISPLAY, NEVER
 IN CAPTURE (2026-11-06).** The sibling of the complete-baseline rule. Four times in one week truncation destroyed the
 evidence needed to diagnose something real: an enumeration window that missed the sale insert's `.select('id')` 4,161
