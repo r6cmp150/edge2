@@ -12,6 +12,8 @@
     "risk_per_trade_pct": 2,
     "float_threshold_shares": 10000000,
     "max_loss_pct": 6,
-    "developer_tools": false
+    "developer_tools": false,
+    "execution_mode": null,
+    "execution_mode_set_at": null
   }
 ]
