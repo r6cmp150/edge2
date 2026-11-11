@@ -3471,12 +3471,15 @@ capture (4e71a4a) is enforced by tests/stock-modal-edit-guard.test.js, which pin
 function's hash and fails on any edit until the render test exists.
 
 **Rule: existence is not accuracy (2026-11-11).** A check that a record exists says nothing
-about whether its values are right, and must not be read as if it did. Every check of the week
-of 11-02 asked the first question; the stored prices turned out to be the form's prefills
-(356 of 356 buys since 10-29 equal the prefilled scan price to the cent, all market orders),
-not fills. A value a form prefills and a value a person typed are two different facts; a
-record that cannot tell them apart has the at-sale-verdict defect, here on the field every
-P&L figure is computed from.
+about whether its values are right, and must not be read as if it did. A value a form prefills
+and a value a person typed are two different facts; a record that cannot tell them apart has
+the at-sale-verdict defect.
+(Corrected the same day. The example first given here, "the stored prices are the form's
+prefills, not fills", was itself an inference from a record that didn't say what it was: Roman
+was paper trading, so 356 of 356 buys at the prefilled price is the correct result, and there
+were no fills. The instance that stands is the deeper one: nothing in trades_v2 says whether a
+trade was paper or live, so a book of simulated trades reads as real executions. Whether a
+thing happened is the most consequential value a record carries.)
 
 **Rule: a deploy is confirmed by reading what is served and finding the change in it
 (2026-11-08).** CI passing is evidence the code is correct, not that it reached anyone. ca79c61
@@ -3501,6 +3504,22 @@ only the test's name, so the numbers are gone; it now keeps the assertion's mess
   timers and not the rate, which counts against "load" as the explanation.
 
 ### PRE-REGISTERED FORWARD TEST: does scoring v2, as traded, make money? (2026-11-08)
+
+**AMENDED 2026-11-11, before its data exists: the bar is above realistic costs, not above
+zero.** Roman was paper trading (his statement, 2026-11-11): the book is a frictionless paper
+simulation, every trade filled in full, instantly, at the displayed price. A bar of "above
+zero" on that would pass a strategy that loses money once it pays a spread. So, fixed now:
+- **Costs (base case, the one the bar uses):** for each trade, half the quoted bid-ask spread
+  for that symbol at the recorded trade moment, from Alpaca's historical quotes, charged on the
+  entry and again on the exit. A **harsher case** charging the full spread on each side is
+  reported beside it, with no verdict.
+- **Bar:** the 2.5th percentile of the same moving-block bootstrap, applied to the
+  **cost-adjusted** mean per buy day, is above zero.
+- **Coverage:** a trade with no quote at its moment is its own state, counted and reported,
+  never charged zero and never charged an average.
+- The population is the paper trades by their recorded execution mode once that field exists,
+  and by Roman's dated statement until then.
+Everything else below is unchanged.
 
 Written before the data exists, so it cannot be renegotiated when it arrives. The v2 split of
 the book was quoted (249 trades, 59.6%, +$2.24 a trade) before the profitability question was

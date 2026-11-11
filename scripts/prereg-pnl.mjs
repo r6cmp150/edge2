@@ -18,9 +18,13 @@
 //   - Null clause, in the pre-registration's words: if the interval includes zero, "we cannot
 //     distinguish the current method from break-even or worse, and -$300 stands as the best
 //     available estimate of what it produces."
-//   - The whole book mixes several methods: the verdict is about Roman's trading as practised,
-//     not about any version of the app's advice. And these splits are changes to the app's
+//   - The whole book mixes several methods: the verdict is about the decisions as made, not
+//     about any version of the app's advice. And these splits are changes to the app's
 //     ADVICE; nothing records whether Roman followed it.
+//   - RELABELLED 2026-11-11, declared (nothing computed differently): Roman was paper trading
+//     (his statement, 2026-11-11). Every figure here is a FRICTIONLESS PAPER SIMULATION, not
+//     P&L, and the output says so first. It was published on 11-08 as "Roman's trading as
+//     practised", which was wrong.
 //   - Sub-periods: by buy date at the dated advice changes (A to 09-14; B 09-15 loss floor;
 //     C 10-21 gate; D 10-22 scoring v2; E 11-01 gate on stale scans), and by the recorded
 //     code_version.scoring in three states: recorded v2, recorded v1, unrecorded (treated as v1
@@ -122,6 +126,7 @@ async function main() {
   const revArg = process.argv.indexOf('--rev');
   const REV = revArg > 0 ? process.argv[revArg + 1] : '314f6e0';
   const all = (j => (Array.isArray(j) ? j : j.rows))(JSON.parse(execSync(`git show ${REV}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 1e9 }).toString()));
+  console.log('WHAT THESE FIGURES ARE: a frictionless paper simulation: every entry and exit filled in full, instantly, at the price the app was displaying, with no spread, no slippage, no partial fills, no rejected orders and no fees. Not P&L: no order was placed (paper trading, stated by Roman 2026-11-11). Rows before paper trading began may have been live; their mode is not known.');
   console.log(`SOURCE: data/backups/trades_v2.json @ ${REV}: ${all.length} rows (sells ${all.map(r => day(r.sell_date)).sort()[0]} to ${all.map(r => day(r.sell_date)).sort().at(-1)})`);
   console.log('CAVEAT, first: the splits below are changes to the app\'s ADVICE; nothing records whether Roman followed it.');
 
@@ -165,7 +170,7 @@ async function main() {
   else {
     console.log(`  95% moving-block bootstrap (blocks of ${DESIGN.blockLength}, ${DESIGN.resamples} resamples, seed ${DESIGN.seed}): ${$(ci.lower)} to ${$(ci.upper)}`);
     console.log(ci.lower > 0
-      ? '  VERDICT: the lower bound is above zero. Roman\'s trading as practised has positive expected value per buy day, bounded by the largest-contributor test below.'
+      ? '  VERDICT: the lower bound is above zero. The decisions as made have positive expected value per buy day in a frictionless paper simulation, before any cost, bounded by the largest-contributor test below.'
       : '  VERDICT (null, in the pre-registration\'s words): we cannot distinguish the current method from break-even or worse, and -$300 stands as the best available estimate of what it produces. It is not "promising but needs more data", and it is not a reason to keep the method on the grounds that the sample is small.');
   }
   console.log('  sub-periods, DESCRIPTIVE ONLY (no interval, no verdict: none reaches 20 buy days):');

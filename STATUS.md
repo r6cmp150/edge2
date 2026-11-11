@@ -36,47 +36,53 @@ evidence is. Last updated 2026-11-06 with inspect query v2 (RUN-ME-8) and db/039
 - Not visible from here: queue entries, the storage banner, the cache size. Absence of a complaint is not
   evidence; see Waiting on Roman.
 
-## EXISTENCE IS NOT ACCURACY: the stored prices are the form's prefills, not fills (2026-11-11)
-Every check built this week asks whether a record EXISTS. None asked whether its values are RIGHT. Both are now
-true together, and the first does not soften the second: all 356 buys since 10-29 are accounted for, and the
-prices those records carry are not Roman's fills.
-- **Buy side, measured (live read 2026-11-11T01:4xZ):** 356 of 356 buys since 10-29 store a `buy_price` equal to
-  the cent to the scan price the Add form prefilled (signal_snapshot_at_buy.snapshot.price), and all 356 are
-  market orders. A market order filling at exactly the displayed scan quote 356 times out of 356 is not
-  plausible: the stored buy price is the prefill, left as it was.
-- **Sale side, from the code:** the sell form prefills `sold-price` with `getLivePrice(snap)`
-  (dailyBar close-so-far, else latestTrade) from the Portfolio tab's last render: a quote at recording time, not
-  the fill; Confirm Sale submits whatever is in the box. Nothing records whether it was typed over. `sell_time`
-  is also the recording time. So a single sale, submitted once, can be stored with a price Roman did not enter,
-  and no check we have can see it.
-- **11-10, the three red lines:** the stored copies were recorded 07:29:25 (SLDB $7.02), 07:31:14 (BKKT $4.56)
-  and 07:57:23 PT (TROX $2.85, position 1794323324944; a second TROX sale, 1794332833288, $2.86, is separate).
-  The refused copies came about an hour later (08:23:55 BKKT $4.44, 08:24:05 SLDB $6.96; TROX $2.95, time not
-  transcribed), from a second session that listed all three as open: its portfolio loaded between 07:08:44 (the
-  latest of their buys) and 07:29:25 (the earliest of their sales), the 11-06 pattern again. Both copies look like
-  prefills at two moments; **neither is known to be the fill.** Roman's broker fills decide it.
-- **The banner's "You entered" overclaims:** the refused copy is what the form submitted, prefilled or typed, and
-  the record cannot say which. To be reworded.
-- **The 11-06 eleven:** nothing of what was submitted survives (the old build kept no values for a duplicate; the
-  phone's Sold copy is rebuilt from the database). Unknown, not inferred.
+## CORRECTED 2026-11-11: the stored prices are paper prices, and the record does not say so
+**What was claimed earlier on 2026-11-11 and is withdrawn:** that the stored prices "are not Roman's fills" and
+that a sale "can be stored with a price Roman did not enter". Roman was **paper trading**: for roughly the past
+month he recorded trades in EDGE without placing them at his broker (stated by Roman, 2026-11-11). There are no
+fills to differ from. The defect was declared by the reviewer and by me, not by the app: my report called 356
+of 356 buys at the prefilled price "not plausible" for market orders, which is the right observation and the
+wrong conclusion. For a paper trade, recording at the displayed quote is the correct, expected result.
+- **Measured, and still true:** 356 of 356 buys since 10-29 store a `buy_price` equal to the cent to the scan
+  price the Add form prefilled, and the sell form prefills a live quote from the Portfolio tab's last render.
+  Nothing records whether a price was typed over.
+- **11-10, the three red lines:** two quotes taken about an hour apart by two sessions (BKKT $4.56 at 07:31:14 PT
+  vs $4.44 at 08:23:55; SLDB $7.02 at 07:29:25 vs $6.96 at 08:24:05; TROX $2.85 at 07:57:23 vs $2.95). Both are
+  valid paper prices; the database kept the first, the one taken when Roman decided. Not a price error. **The
+  duplicate submission from a second session is still a real defect** (its portfolio loaded 07:08:44-07:29:25
+  PT, the 11-06 pattern again); the price difference within it is not.
+- **The 11-06 eleven:** nothing of what was submitted survives. Unknown, not inferred.
 - **How many duplicates on 11-09/10:** only the phone holds them; the banner list is asked for in full.
-- **What this does to the verdict below:** the -$300, the ratio 0.720, the break-even target and the period table
-  are computed from quote-to-quote prices the app displayed, not from fills. They describe the app's quotes at
-  Roman's recording moments. How far they are from his money is unknown until fills are compared; the broker
-  is the only source.
+- **The defect that IS real, and outranks the list: nothing in the record says these are paper trades.**
+  `trades_v2` reads exactly like a book of real executions. A definite execution mode (paper / live / not
+  known), never defaulted, written by the app at the trade, with history set from Roman's statement and labelled
+  as testimony. A migration; scoped, not built.
+- **Open, and it decides the history:** "roughly the past month". The book starts 2026-08-17. Trades before paper
+  trading began may have been placed for real, and their prices may be typed fills. Until Roman gives the date,
+  rows before it are **not known**, never paper by assumption.
 
-## Is Roman's trading profitable? Pre-registered, answered 2026-11-08
+## A FRICTIONLESS PAPER SIMULATION, not P&L: pre-registered, answered 2026-11-08, relabelled 2026-11-11
+**What these figures are:** a frictionless paper simulation: every entry and exit filled in full, instantly, at
+the price the app was displaying, with no spread, no slippage, no partial fills, no rejected orders and no fees.
+They are not Roman's trading results and not P&L: no order was placed (paper trading, Roman, 2026-11-11). The
+arithmetic stands; the label it was published under on 11-08 ("Roman's trading as practised") was wrong.
+**Direction against real money:** a frictionless simulation is an optimistic bound on a real-money version of the
+same decisions at the same moments (always the displayed price, always in full, always instantly), so that
+version is expected to do worse than these figures. By how much is not measured (pre-registered cost analysis).
+**Mixed book:** rows before paper trading began (Roman: "roughly the past month"; the book starts 08-17) may
+have been live, with typed fills. Until he gives the date, the earlier part's mode is not known.
 **These splits are changes to the app's ADVICE; nothing records whether Roman followed it.** Source:
 `node scripts/prereg-pnl.mjs` (committed in cc6ea99 before its first run; two printed lines added after it,
 declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 to 2026-11-06).
-- **Control:** it reproduces the Sold tab exactly: 586 verified, 326 W / 256 L / 4 BE, -$300.43.
+- **Control:** it reproduces the Sold tab exactly: 586 verified, 326 W / 256 L / 4 BE, -$300.43 (simulated).
 - **Verdict, in the pre-registration's words:** whole book, 35 buy days, mean -$8.58 per buy day, 95% moving-block
   bootstrap -$45.09 to +$34.22. "We cannot distinguish the current method from break-even or worse, and -$300
-  stands as the best available estimate of what it produces." The whole book mixes methods: this is Roman's
-  trading as practised, not any version of the advice. No sub-period reaches 20 buy days, so no method has a
+  stands as the best available estimate of what it produces" -- of what it produces in a frictionless paper
+  simulation, which is the most a real-money version could expect. The whole book mixes methods: this is the
+  decisions as made, not any version of the advice. No sub-period reaches 20 buy days, so no method has a
   verdict.
-- **The target:** at the book's win share (326 of 582 decided, 56.0%) break-even needs a win/loss ratio of
-  **0.785**; the book is at **0.720**. The asymmetry is broad, not a tail: losses exceed wins at every quartile
+- **The target, frictionless:** at the book's win share (326 of 582 decided, 56.0%) break-even needs a win/loss
+  ratio of **0.785** before any cost; it rises once costs are charged, and that number is the one that matters; the book is at **0.720**. The asymmetry is broad, not a tail: losses exceed wins at every quartile
   (wins $4.50 / $7.50 / $12.15, losses -$6 / -$10 / -$16) and the 5 largest losses are 10.6% of loss dollars.
 - **Descriptive only:** periods A 0.24, B 0.60, D 0.91, E 1.00 (ratio); recorded scoring v2 +$383.90 on 9 buy
   days ("this split was chosen after its figures had been seen; it is not a test"). Not evidence: the forward
@@ -96,9 +102,9 @@ declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 
 
 ## Decision points (a date by which something is decided, not a reminder)
 - **Scoring v2 forward test: when v2 reaches 20 buy days, projected around 2026-11-24/25** (9 buy days by 11-06,
-  9 in the 10 trading days since 10-27; a projection, not a deadline). The test, its bar and its null clause
-  are fixed in the spec ("PRE-REGISTERED FORWARD TEST"); `scripts/prereg-pnl.mjs` runs it. The result stands
-  whichever way it falls.
+  9 in the 10 trading days since 10-27; a projection, not a deadline). AMENDED 2026-11-11, before its data: its
+  bar is above realistic costs, not above zero (a frictionless bar would pass a strategy that loses money); see
+  the spec. The result stands whichever way it falls.
 - **Movers snapshot: 2026-12-31.** The float-coverage re-measurement it is kept for runs by then, or it retires.
 - **Warrior, before 2026-12-31:** it has never yet run at the time it was designed for, and under GitHub's
   scheduler it cannot (logger median 431 min late; 102 of 763 candidates qualified, 0 setups ever formed in a
