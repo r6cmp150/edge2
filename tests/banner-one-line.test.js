@@ -137,3 +137,16 @@ run('the collapsed line shows NOT recorded, then DIFFERENT numbers, then could-n
   el = load({ saleWriteFailures: { d: { ticker: 'DIF', code: 'SALE_DUPLICATE', attempts: cmpd('DIFFER') }, f: { ticker: 'NRC', code: 'SALE_FAILED' } } });
   assert.ok(el.innerHTML.includes('NRC sale NOT recorded'), 'a sale not recorded still leads');
 });
+
+// 2026-11-11: the sell form prefills a live quote, so no sale line may say Roman entered or
+// typed a value: "submitted" is what is known.
+run('no sale line claims a value was entered: every comparison state, and the pre-build one', () => {
+  const cmpd = v => [{ code: 'SALE_DUPLICATE', message: 'm', at: 'a', comparison: { verdict: v, differ: ['sell_price'], stored: { sell_price: 1, shares: 1, sell_date: 'd' }, submitted: { sell_price: 2, shares: 1, sell_date: 'd' }, reason: 'r' } }];
+  const el = load({ saleWriteFailures: {
+    a: { ticker: 'MAT', code: 'SALE_DUPLICATE', attempts: cmpd('MATCH') }, b: { ticker: 'DIF', code: 'SALE_DUPLICATE', attempts: cmpd('DIFFER') },
+    c: { ticker: 'CNR', code: 'SALE_DUPLICATE', attempts: cmpd('COULD_NOT_READ') }, d: { ticker: 'OLD', code: 'SALE_DUPLICATE', message: 'm', at: 'a' },
+  } });
+  global.__t();
+  assert.ok(!/\b(you entered|You entered|your numbers|Yours were)\b/.test(el.innerHTML), el.innerHTML);
+  assert.ok(!/your fill/.test(el.innerHTML), 'paper trades have no fill: no line may refer to one');
+});

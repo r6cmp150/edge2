@@ -76,7 +76,9 @@ run('a duplicate is said as the intended refusal, not as a loss, and only it is 
   global.state.bannerExpanded = true; global.__banner();
   // CHANGED 2026-11-08, declared: 'Nothing is lost' now only after the read-back matched, and it
   // names what was compared and what was not.
-  assert.ok(el.innerHTML.includes('HUN sale was already recorded') && el.innerHTML.includes('refused, as designed') && el.innerHTML.includes('Nothing is lost: the recorded sale matches what you entered on sell price, shares and sale date') && el.innerHTML.includes('recording time is not comparable and was not compared'));
+  // CHANGED 2026-11-11, declared: "what you entered" -> "what was submitted this time". The sell form
+  // prefills a live quote, so a submitted value is not known to have been typed.
+  assert.ok(el.innerHTML.includes('HUN sale was already recorded') && el.innerHTML.includes('refused, as designed') && el.innerHTML.includes('Nothing is lost: the recorded sale matches what was submitted this time on sell price, shares and sale date') && el.innerHTML.includes('recording time is not comparable and was not compared'));
   assert.deepStrictEqual(global.__reads, [['sell_price, shares, sell_date', 'position_id', pos.id, 1]], 'the stored row is read back by position_id, bounded');
   assert.ok(!el.innerHTML.includes('NOT recorded'));
   assert.strictEqual(global.state.saleWriteFailures[pos.id].args, null, 'nothing to retry');
@@ -138,7 +140,10 @@ run('a duplicate whose recorded row DIFFERS: its own red line, both sets of numb
   global.state.bannerExpanded = true; global.__banner();
   const h = el.innerHTML;
   assert.ok(h.includes('HUN sale recorded with different numbers') && h.includes('differ on sell price, sell date'), h);
-  assert.ok(h.includes('Recorded: $9.8 × 10 on 2026-10-28') && h.includes('You entered: $10.1 × 10 on 2026-10-29') && h.includes('Yours were not saved'));
+  // CHANGED 2026-11-11, declared: "You entered" -> "Submitted this time", and the line says both
+  // copies are quotes the form filled in at different moments (paper trading: there is no fill).
+  assert.ok(h.includes('Recorded: $9.8 × 10 on 2026-10-28') && h.includes('Submitted this time: $10.1 × 10 on 2026-10-29') && h.includes('This copy was not saved'));
+  assert.ok(h.includes('both are quotes taken at different moments; the record kept the first') && !/your fill|broker/.test(h), h);
   assert.ok(!h.includes('Nothing is lost') && !h.includes('as designed'));
   assert.strictEqual(el.style.color, 'var(--red)');
 }));

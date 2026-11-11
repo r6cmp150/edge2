@@ -1145,13 +1145,13 @@ function updateMarketBanner() {
     const cmp = Array.isArray(f.attempts) ? f.attempts[f.attempts.length - 1]?.comparison : null;
     const dismiss = `<button class="btn btn-sm btn-ghost" onclick="dismissSaleNotice('${f.id}')">Dismiss</button>`;
     if (cmp?.verdict === 'MATCH') {
-      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of the same sale was refused, as designed. Nothing is lost: the recorded sale matches what you entered on sell price, shares and sale date. The recording time is not comparable and was not compared. Refresh the Sold tab to see it.' + facts(f), dismiss);
+      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of the same sale was refused, as designed. Nothing is lost: the recorded sale matches what was submitted this time on sell price, shares and sale date. The recording time is not comparable and was not compared. Refresh the Sold tab to see it.' + facts(f), dismiss);
     } else if (cmp?.verdict === 'DIFFER') {
-      add('var(--red)', `${f.ticker} sale recorded with different numbers`, `A sale for this position was already recorded, so yours was refused, and they differ on ${escFact((cmp.differ || []).join(', ').replace(/_/g, ' '))}. Recorded: ${saleVals(cmp.stored)}. You entered: ${saleVals(cmp.submitted)}. Yours were not saved. Check the Sold tab against your broker.` + facts(f), dismiss);
+      add('var(--red)', `${f.ticker} sale recorded with different numbers`, `A sale for this position was already recorded, so this one was refused, and they differ on ${escFact((cmp.differ || []).join(', ').replace(/_/g, ' '))}. Recorded: ${saleVals(cmp.stored)}. Submitted this time: ${saleVals(cmp.submitted)}. This copy was not saved. The sell form fills in a live quote, so both are quotes taken at different moments; the record kept the first. Check which one you meant to record.` + facts(f), dismiss);
     } else if (cmp?.verdict === 'COULD_NOT_READ') {
-      add('var(--yellow)', `${f.ticker} sale was already recorded`, `A second copy was refused: a sale for this position is already recorded, but it couldn't be read back to compare with what you entered (${escFact(cmp.reason || 'no reason given')}). Check the Sold tab shows your numbers.` + facts(f), dismiss);
+      add('var(--yellow)', `${f.ticker} sale was already recorded`, `A second copy was refused: a sale for this position is already recorded, but it couldn't be read back to compare with what was submitted (${escFact(cmp.reason || 'no reason given')}). Check the Sold tab shows the copy you meant to record.` + facts(f), dismiss);
     } else {
-      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of a sale for this position was refused: one is already recorded. Whether it matches what you entered was not checked (refused before 2026-11-08). Check the Sold tab shows your numbers.' + facts(f), dismiss);
+      add('var(--muted)', `${f.ticker} sale was already recorded`, 'A second copy of a sale for this position was refused: one is already recorded. Whether it matches what was submitted was not checked (refused before 2026-11-08). Check the Sold tab shows the copy you meant to record.' + facts(f), dismiss);
     }
   }
   // A sold position whose portfolio row is still there (recordSaleThenRemovePosition,
