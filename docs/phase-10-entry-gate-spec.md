@@ -2702,6 +2702,16 @@ is not completeness: the baseline rule applied to the tool instead of the data. 
 found and says nothing about the ones it never saw; NOT ENUMERABLE fails loudly, a site never recognised as a site
 passes in silence. tests/_write-walker.js keeps its coverage written down (forms recognised, forms not, files never
 scanned), and a deliberately dumb count of database syntax, independent of the walker, is compared with its sites.
+Each check answers its own question and is blind to others (2026-11-12): the count checks SITES and cannot see inside a
+site it already matched, so a builder read only to its first `return {` passed it; the walker's BRANCH INVARIANT (the
+returns read must equal the returns the body contains, counted independently) checks branches within a site. Write
+down which question each instrument answers, and which it cannot.
+
+**A PRE-REGISTERED SCRIPT EDITED AFTER ITS RUN IS RE-RUN, AND THE RESULT IS SHOWN UNCHANGED, OR THE RESULT IS
+WITHDRAWN (2026-11-12, the reviewer's rule). A declaration of harmlessness is not a measurement of it.**
+`prereg-peak-before-after.mjs` gained the no-sale-time exclusion after its first run; "0 such rows, so it cannot have
+changed" was an inference, and the re-run on the same tree and bars (output byte-identical but for the one new
+declared zero-count line) was the measurement.
 
 **AN ERROR IS NEVER TRUNCATED, ANYWHERE: NOT IN A TEST RUNNER, A LOG LINE OR A REPORT. TRUNCATION BELONGS IN DISPLAY, NEVER
 IN CAPTURE (2026-11-06).** The sibling of the complete-baseline rule. Four times in one week truncation destroyed the
