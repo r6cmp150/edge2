@@ -2713,7 +2713,8 @@ subject; if the answer is "none", say how that was established. The dumb count s
 walker removed comments with the walker's own strip(), the very component found defective (it mis-reads nested
 template literals), so it could not have caught that class; it agreed with an acorn-based count line for line on
 both trees only because the defect happened not to touch a write site. Both versions are kept: two implementations
-that must agree are worth more than one believed to be clean.
+that must agree are worth more than one believed to be clean. A test double is such a component: see "A test double
+must be able to represent the failure it is meant to detect" (§7.7, end).
 
 **A PRE-REGISTERED SCRIPT EDITED AFTER ITS RUN IS RE-RUN, AND THE RESULT IS SHOWN UNCHANGED, OR THE RESULT IS
 WITHDRAWN (2026-11-12, the reviewer's rule). A declaration of harmlessness is not a measurement of it.**
@@ -3184,6 +3185,35 @@ round trip:
   commit 67308c3.
 
 Same error, different tree.
+
+**A test double must be able to represent the failure it is meant to
+detect (2026-11-12, the reviewer's rule).** A fake keyed by identity
+cannot see a duplicate; a fake that stores only the last value cannot see
+an overwrite; a fake that cannot fail cannot test a failure path. Before
+trusting a double, ask what it makes impossible. This is a different
+failure from a weak assertion: the assertion was fine, the world it ran in
+was not. **It is the independence rule above, in another form: a double is
+a component the check shares with its subject** (see "An independent check
+must share no component with the thing it checks"). One mechanism, two
+entries that point at each other.
+- **Verified: the LIVE band (13ccc81, 2026-11-12):** the mutant "every tick adds
+  another band" survived the first `tests/live-band.test.js`. Its fake DOM
+  stored elements in a Map keyed by id, so a second band silently replaced
+  the first: the duplicate the test was guarding against could not exist
+  in the double. The fake now counts every insertion after the header, and
+  the mutant is killed.
+- **Near-miss, nothing hidden: `tests/app-showed-at-buy.test.js` (4e71a4a,
+  2026-11-10).** Its stand-in state cannot see a name that is out of scope
+  in the real `openStockModal`, which is exactly the failure dbee89f's
+  render test was later built to detect. No defect was hidden: the gap was
+  closed in advance. Recorded as the rule's shape without a victim, and
+  labelled so; it is not an instance.
+- **Reviewer-reported, not reproducible from the repo: the dumb count
+  (2026-11-11).** The "independent" count built to check the walker's
+  lexer removed comments with the walker's own `strip()`, so it shared the
+  component whose defect it existed to find. Described in the independence
+  entry above (a0a7dbd); the count itself was never committed. Its fix is
+  the parser-free raw-source count.
 
 ## Appendix — provenance
 
