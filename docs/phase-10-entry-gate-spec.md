@@ -2743,6 +2743,14 @@ The instance: the reviewer wrote that `check-push` "exited 0 while checking noth
 and print the exit code first. Run: it exited 2 on no SHA, on `--before` alone and on a non-SHA. The false mechanism
 did not reach this spec because the measurement came first.
 
+**A QUOTED SOURCE READS AS EVIDENCE, SO IT NAMES ITS TREE AND ITS COMMIT (2026-11-12, the reviewer's rule).** Any
+source pasted for review carries the tree it came from, the commit SHA, and whether it is the committed text or the
+working tree. A paste without that is a draft, not a subject, and the reviewer asks before ruling on it. It is the
+verdict rule above, pointed at the reviewer's inputs, and it binds both directions: the reviewer's notes name the tree
+and commit they read. The instance: db/042's `core/store.js` and `app.js` were cleared from pasted text whose tree was
+never recorded. It cannot have come from the reviewer's folder, which was then at 002f969 (2026-11-03) and contains
+none of the identifiers quoted back. It was almost certainly wt-042 and current, which is NOT ESTABLISHED.
+
 **A PRE-REGISTERED SCRIPT EDITED AFTER ITS RUN IS RE-RUN, AND THE RESULT IS SHOWN UNCHANGED, OR THE RESULT IS
 WITHDRAWN (2026-11-12, the reviewer's rule). A declaration of harmlessness is not a measurement of it.**
 `prereg-peak-before-after.mjs` gained the no-sale-time exclusion after its first run; "0 such rows, so it cannot have
@@ -2761,6 +2769,17 @@ was itself written while fixing this).
   the first `tail` replaced the gate's exit status with its own, and the second cut the pre-push hook's output, so
   whether the hook ran on 13ccc81 is NOT ESTABLISHED. A command whose output is the record of what happened is capture.
   See "A check's verdict names what it checked".
+
+**A MUTATION SCORE IS VOID UNLESS THE SAME RUN SHOWS THE UNMUTATED BASELINE PASSING (2026-11-12, the reviewer's
+rule).** A mutant run reports the difference between two runs; without the first, every number it prints is the cost
+of the harness, not the strength of the test. **And the tell: a perfect kill rate is a symptom before it is a
+result.** 10 of 10 is the shape a broken baseline makes; investigate it rather than reporting it. The instance, the
+same day: the first mutant run on 1ad78c1's new tests reported 10 of 10 killed, and every kill was a syntax error.
+A Python edit had written `\r?\n` into the test as real line breaks, and the harness ran no baseline. It was a
+throwaway script in the scratchpad, and that is where this rule is aimed: a scratch harness is exactly where the
+baseline check gets skipped. The committed harness, `scripts/lib/mutants.cjs`, already runs the baseline first and
+runs no mutant when it fails; the scratch script went around it. So: use the committed harness, or give the scratch
+one the same first step. Rerun with a baseline that must pass first: 10 of 10, now meaning something.
 
 **THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
 mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which
