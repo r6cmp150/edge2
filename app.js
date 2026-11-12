@@ -913,6 +913,7 @@ let state = {
   soldCurrentPrices: {}, // ticker → current price
   loading: false,
   _confirmCb: null,
+  _confirmCb2: null, // a choice's second answer (showChoice)
   lastPassedCount: 0,
   lastScanDroppedCount: 0, // symbols dropped from the last scan's bars fetch by a chunk-level error (Bug 3) — persisted
   lastPrefilterRule: null, // scan_runs.prefilter_rule shape, from the last runEdgePrefilter -- session only, not persisted
@@ -4094,10 +4095,40 @@ function _showNextDialog() {
   document.getElementById('confirm-msg').textContent = next.msg;
   const btn = document.getElementById('confirm-btn');
   const cancel = overlay.querySelector('.confirm-btns .btn-ghost');
+  const row = overlay.querySelector('.confirm-btns');
+  // Made here, not in index.html: a cached index.html without it would show a choice with only its first answer.
+  let btn2 = document.getElementById('confirm-btn-2');
+  if (!btn2 && btn && row) {
+    const made = document.createElement('button');
+    made.id = 'confirm-btn-2';
+    made.setAttribute('onclick', 'confirmAction2()');
+    btn.insertAdjacentElement('afterend', made);
+    btn2 = document.getElementById('confirm-btn-2'); // only a button actually on the page counts
+  }
+  // Only a choice shows the second button, stacked so each full label fits at 390px; every other kind resets both.
+  if (btn2) { if (next.kind === 'choice') btn2.classList.remove('hidden'); else btn2.classList.add('hidden'); }
+  if (row) row.style.flexDirection = next.kind === 'choice' ? 'column' : '';
+  // A choice's two answers are full buttons, each a comfortable tap (the 390px render showed bare 19px bars);
+  // every other kind is reset to exactly what it was.
+  for (const b of [btn, btn2]) if (b && b.style) { b.style.minHeight = next.kind === 'choice' ? '44px' : ''; b.style.justifyContent = next.kind === 'choice' ? 'center' : ''; }
+  state._confirmCb2 = null;
   if (next.kind === 'alert') {
     if (btn) { btn.textContent = 'OK'; btn.className = 'btn-primary'; }
     if (cancel) cancel.classList.add('hidden');
     state._confirmCb = null;
+  } else if (next.kind === 'choice' && !btn2) {
+    // Never a choice with one answer showing: say so, and run nothing.
+    document.getElementById('confirm-msg').textContent = 'This question could not be shown, so nothing was recorded. Reload the app and try again.';
+    if (btn) { btn.textContent = 'OK'; btn.className = 'btn-primary'; }
+    if (cancel) cancel.classList.add('hidden');
+    state._confirmCb = null;
+  } else if (next.kind === 'choice') {
+    const [a, b] = next.options;
+    if (btn) { btn.textContent = a.label; btn.className = 'btn btn-primary'; }
+    if (btn2) { btn2.textContent = b.label; btn2.className = 'btn btn-primary'; }
+    if (cancel) cancel.classList.remove('hidden');
+    state._confirmCb = () => { next.answered = true; next.cb(a.value); };
+    state._confirmCb2 = () => { next.answered = true; next.cb(b.value); };
   } else {
     if (btn) { btn.textContent = next.label || 'Confirm'; btn.className = 'btn-danger'; }
     if (cancel) cancel.classList.remove('hidden');
@@ -4114,13 +4145,31 @@ function _enqueueDialog(d) {
 function showAlert(msg) { _enqueueDialog({ kind: 'alert', msg }); }
 
 function showConfirm(msg, cb, confirmLabel) { _enqueueDialog({ kind: 'confirm', msg, cb, label: confirmLabel }); }
+// Two answers and Cancel (db/042's Live/Paper prompt): options are [{ label, value }, { label, value }]; the tapped
+// one's value goes to cb. Neither answer is the default and neither is styled as the dangerous one.
+// onCancel runs once if the choice closes without an answer (Cancel, the backdrop, or a choice that could not be shown).
+function showChoice(msg, options, cb, onCancel) { _enqueueDialog({ kind: 'choice', msg, options, cb, onCancel, answered: false }); }
 
 // Cancel, a tap on the backdrop, or OK on a notice: close the current one,
 // show the next.
 function closeConfirm() {
+  const closing = _dialogShowing;
   _dialogShowing = null;
   state._confirmCb = null;
+  state._confirmCb2 = null;
+  // a choice closed without an answer tells its caller, so whatever it held waiting is released
+  if (closing && closing.kind === 'choice' && !closing.answered && closing.onCancel) {
+    closing.answered = true; // once
+    try { closing.onCancel(); } catch (e) { console.error('choice onCancel failed:', e); }
+  }
   _showNextDialog();
+}
+
+// A choice's second answer (#confirm-btn-2); the first is confirmAction.
+function confirmAction2() {
+  const cb = state._confirmCb2;
+  state._confirmCb2 = null;
+  try { if (cb) cb(); } finally { closeConfirm(); }
 }
 
 // Confirm: run the action, then move on. Anything the action raises is
@@ -4195,6 +4244,9 @@ function openAddPortfolioModal(ticker, note = null) {
   // PT date, not new Date().toISOString() -- that's the UTC date, which
   // pre-filled TOMORROW for any add after 5pm PT (CLAUDE.md's getPT rule).
   const today = ptDateStr(getPT());
+  // db/042: the mode the button names is the one the toggle held when the form opened; confirm re-reads it and asks
+  // if the database no longer agrees with what this button said (modeAtConfirm).
+  const shownMode = state.settings.executionMode === 'live' || state.settings.executionMode === 'paper' ? state.settings.executionMode : null;
 
   showModal(`<div class="modal-handle"></div>
     <div class="modal-header">
@@ -4222,7 +4274,7 @@ function openAddPortfolioModal(ticker, note = null) {
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-success" style="flex:1" onclick="confirmAddPortfolio('${ticker}', this)">+ Add</button>
+      <button class="btn btn-success" style="flex:1" onclick="confirmAddPortfolio('${ticker}', this, '${shownMode || ''}')">${addButtonLabel(shownMode)}</button>
     </div>`);
   orderEntryRefresh('pf');
 }
@@ -4293,8 +4345,51 @@ function addFormSessionAdviceHtml(dateStr) {
 // confirm's "Add anyway" path.
 let _addInFlight = false;
 
-async function confirmAddPortfolio(ticker, btn) {
-  if (_addInFlight) return;
+// ── db/042: Live or Paper, recorded at the trade ──
+// The Add button names the mode it will record, because the label is all that stands between Roman and recording a
+// real trade as paper. Confirm re-reads the toggle from the database; when that read doesn't confirm exactly what
+// the button said -- it failed, the toggle is unset, or it changed since the form opened (a second tab or device:
+// 11-06, 11-10) -- Roman is asked, one tap, and the tapped answer binds the trade (recorded_at_trade) whatever
+// happens to the setting. Never the cached mode, never a guess, never a block. (Ruled by the reviewer, 2026-11-11.)
+function addButtonLabel(mode) {
+  if (mode === 'live') return '+ Add as LIVE · placed at broker';
+  if (mode === 'paper') return '+ Add as PAPER · not at broker';
+  return '+ Add';
+}
+const MODE_CHOICES = [
+  { label: 'LIVE · placed at my broker', value: 'live' },
+  { label: 'PAPER · recorded in EDGE only', value: 'paper' },
+];
+// shown: the mode the tapped button named ('live' | 'paper' | null). reread: { mode: 'live'|'paper'|null } from the
+// database, or { failed: message }. Returns { mode } to record without asking, or { ask, setToggle, from }: the
+// prompt's text, whether the answer also sets the toggle, and the mode it changes from. A failed read never sets it:
+// the change log would have to guess what it changed from.
+function modeAtConfirm(shown, reread) {
+  const asks = 'Was this trade placed at your broker?';
+  if (reread.failed != null) return { ask: `The Live/Paper setting could not be read (${reread.failed}). ${asks}\n\nYour answer records this trade only. The setting is not changed.`, setToggle: false, from: null };
+  if (reread.mode == null) return { ask: `Live/Paper is not set yet. ${asks}\n\nYour answer records this trade and sets the toggle (change it any time in Settings).`, setToggle: true, from: null };
+  if (shown !== reread.mode) {
+    const was = shown ? `This form said ${shown.toUpperCase()}` : 'This form opened before Live/Paper was set';
+    return { ask: `${was}, but the setting is now ${reread.mode.toUpperCase()} (changed in another tab or on another device). ${asks}\n\nYour answer records this trade and sets the toggle.`, setToggle: true, from: reread.mode };
+  }
+  return { mode: reread.mode };
+}
+// The prompt's answer: the trade is already bound to it; this only sets the toggle (settings first, then the log),
+// never awaited by the trade, and any failure is shown.
+function applyModeAnswer(mode, at) {
+  if (!at.setToggle || mode === at.from) return;
+  writeExecutionMode(mode, at.from).then(r => {
+    if (r.settings) { showAlert(`This trade is recorded as ${mode.toUpperCase()}. The Live/Paper setting was NOT changed: ${r.settings}`); return; }
+    state.settings.executionMode = mode;
+    state.settings.executionModeSetAt = r.at;
+    if (r.log) showAlert(`Live/Paper is now ${mode.toUpperCase()}, but the change was not logged: ${r.log}. The setting and this trade are recorded; only the history of the change is missing.`);
+    if (state.activeTab === 'settings') renderSettingsTab();
+  });
+}
+
+let _addAwaitingAnswer = false; // a Live/Paper choice for an add is queued or showing: no second add from the form
+async function confirmAddPortfolio(ticker, btn, shown) {
+  if (_addInFlight || _addAwaitingAnswer) return;
   const shares = parseFloat(document.getElementById('pf-shares').value);
   const price  = parseFloat(document.getElementById('pf-price').value);
   const date   = document.getElementById('pf-date').value;
@@ -4310,7 +4405,36 @@ async function confirmAddPortfolio(ticker, btn) {
   _addInFlight = true;
   if (btn) btn.disabled = true;
   try {
+    let reread;
+    try { const r = await readExecutionMode(); reread = { mode: r.mode, setAt: r.setAt }; } catch (e) { reread = { failed: e?.message || String(e) }; }
+    // the next form names what the database holds, with its own time (never a time from an earlier read)
+    if (reread.failed == null) { state.settings.executionMode = reread.mode; state.settings.executionModeSetAt = reread.setAt; }
+    const at = modeAtConfirm(shown === 'live' || shown === 'paper' ? shown : null, reread);
+    if (at.ask) {
+      // Waiting on Roman, not the network -- but NOT released the way the listing confirm is: a choice can be queued
+      // behind another dialog, and a live Add button then would start a second read and queue a second choice, two
+      // adds from one form. The button stays disabled and further taps do nothing until this choice is answered or
+      // cancelled (reviewer, 2026-11-12).
+      _addInFlight = false;
+      _addAwaitingAnswer = true;
+      showChoice(at.ask, MODE_CHOICES, mode => {
+        _addAwaitingAnswer = false;
+        applyModeAnswer(mode, at);
+        _addInFlight = true;
+        addWithMode(ticker, shares, price, date, btn, order, mode).finally(() => { _addInFlight = false; });
+      }, () => {
+        _addAwaitingAnswer = false; // cancelled, or the choice could not be shown: nothing recorded, the form usable
+        if (btn) btn.disabled = false;
+      });
+      return;
+    }
+    await addWithMode(ticker, shares, price, date, btn, order, at.mode);
+  } finally {
+    _addInFlight = false;
+  }
+}
 
+async function addWithMode(ticker, shares, price, date, btn, order, executionMode) {
   // Listing (phase-10 step 1f, 2026-10-22): the ONE confirm on the add path,
   // because it's a FACT that contradicts the action (spec §7.7): Alpaca says
   // the stock can't be traded, so "are you sure this filled?" checks
@@ -4325,13 +4449,10 @@ async function confirmAddPortfolio(ticker, btn) {
     // usable button. "Add anyway" goes through finalize, which disables it.
     _addInFlight = false;
     if (btn) btn.disabled = false;
-    showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');
+    showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order, executionMode), 'Add anyway');
     return;
   }
-  await finalizeAddPortfolio(ticker, shares, price, date, btn, order);
-  } finally {
-    _addInFlight = false;
-  }
+  await finalizeAddPortfolio(ticker, shares, price, date, btn, order, executionMode);
 }
 
 // Phase 9 §4.2 (2026-09-16) -- entry measurement, none of it scores
@@ -4488,7 +4609,7 @@ function snapshotWritesSummaryText() {
   return `${c.saved || 0} saved with their signal, ${c.noSignal || 0} recorded with no signal on purpose, ${c.failed || 0} failed${c.failed ? ` (last: ${c.lastError})` : ''}.`;
 }
 
-async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
+async function finalizeAddPortfolio(ticker, shares, price, date, btn, order, executionMode) {
   if (btn) btn.disabled = true; // at the very start: the spread fetch below is a network wait too
   const sig = state.signals.find(s => s.ticker === ticker);
   // Copied before any await: what was on screen at the click, not after.
@@ -4608,6 +4729,9 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order) {
     // (null = pending order, not a position -- core/orders.js).
     orderType: order.orderType,
     filledAt: order.filledAt,
+    // db/042: chosen at this trade (confirmAddPortfolio); insertPositionToSupabase refuses anything but live/paper.
+    executionMode,
+    executionModeSource: 'recorded_at_trade',
   };
 
   // Supabase is now the source of truth for portfolio (Data Migration
@@ -6571,6 +6695,19 @@ function saleVerdictProvenance(record) {
   return record.unifiedRecommendationAtSale != null ? 'mixed_moment' : 'not_recorded';
 }
 
+// db/042 + db/043: a sale is the second half of whatever its buy was, so it carries the POSITION's mode, labelled
+// copied_from_position (nobody recorded it at this trade; it was carried). The toggle's current value plays no part.
+// An open not_known position sells as not_known, copied. A position object that doesn't carry a mode at all (a sale
+// replayed from arguments an older build stored, before positions read it back) is not_known with no source: never
+// established, not copied.
+function saleModeColumns(pos) {
+  const m = pos.executionMode;
+  if (m === 'live') return { execution_mode: 'live', execution_mode_source: 'copied_from_position' };
+  if (m === 'paper') return { execution_mode: 'paper', execution_mode_source: 'copied_from_position' };
+  if (m === 'not_known') return { execution_mode: 'not_known', execution_mode_source: 'copied_from_position' };
+  return { execution_mode: 'not_known', execution_mode_source: null };
+}
+
 async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
   try {
     // The label of the BUY's score under the BUY's thresholds (spec §7.7:
@@ -6699,6 +6836,7 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       // same position is refused by the database. NULL only if the
       // position has no id, which is a defect a query will find.
       position_id: pos.id ?? null,
+      ...saleModeColumns(pos),
     }]).select('id');
     if (error) {
       // 23505 on trades_v2_position_id_once: this position's sale is
@@ -9007,6 +9145,18 @@ function renderSettingsTab() {
     <div class="tab-header"><h1 class="tab-title">SETTINGS</h1></div>
 
     <div class="settings-section">
+      <div class="settings-section-title">Recording trades</div>
+      <div class="settings-row" style="flex-direction:column;align-items:stretch;">
+        <div class="settings-label">Live or paper</div>
+        <div class="settings-hint">${executionModeHint(s)}</div>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn btn-sm ${s.executionMode === 'live' ? 'btn-primary' : 'btn-ghost'}" style="flex:1" onclick="changeExecutionMode('live', this)">LIVE · placed at broker</button>
+          <button class="btn btn-sm ${s.executionMode === 'paper' ? 'btn-primary' : 'btn-ghost'}" style="flex:1" onclick="changeExecutionMode('paper', this)">PAPER · EDGE only</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section mt12">
       <div class="settings-section-title">API Keys</div>
       <div class="settings-row" style="flex-direction:column;align-items:stretch;">
         <div class="settings-label">Alpaca API Key ID</div>
@@ -9800,6 +9950,39 @@ async function savePref(key, val) {
 }
 
 // TESTING ONLY — see getMarketStatus()/isPreMarketHours() overrides above.
+// db/042: the toggle in Settings. Each Add records the mode it names; each sale copies its own position's.
+function executionModeHint(s) {
+  if (s.executionMode !== 'live' && s.executionMode !== 'paper') return 'Not set. The next Add will ask whether the trade was placed at your broker.';
+  const when = s.executionModeSetAt ? ` (set ${new Date(s.executionModeSetAt).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} PT)` : '';
+  return `Adds are recorded as ${s.executionMode.toUpperCase()}${when}. A sale always copies its own position's mode.`;
+}
+
+// Re-read first, so the change log records what the setting really changed from; a read that fails changes nothing.
+async function changeExecutionMode(to, btn) {
+  if (btn) btn.disabled = true;
+  let from;
+  try {
+    const now = await readExecutionMode();
+    from = now.mode;
+    state.settings.executionMode = now.mode;
+    state.settings.executionModeSetAt = now.setAt;
+  } catch (e) {
+    showAlert(`Live/Paper NOT changed: the current setting could not be read (${e?.message || e}).`);
+    renderSettingsTab();
+    return;
+  }
+  if (from !== to) {
+    const r = await writeExecutionMode(to, from);
+    if (r.settings) showAlert(`Live/Paper NOT changed: ${r.settings}`);
+    else {
+      state.settings.executionMode = to;
+      state.settings.executionModeSetAt = r.at; // the instant written, not a second clock read
+      if (r.log) showAlert(`Live/Paper is now ${to.toUpperCase()}, but the change was not logged: ${r.log}. The setting is saved; only the history of the change is missing.`);
+    }
+  }
+  renderSettingsTab();
+}
+
 async function toggleForcePreMarketMode(checked) {
   state.settings.forcePreMarketMode = checked;
   try {

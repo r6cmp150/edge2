@@ -111,9 +111,15 @@ run('recording: "In Portfolio" and "Order pending" open the add form directly, w
 // is the listing fact, and it's the app's own in-page overlay.
 run('confirms: only the not-listed / not-tradable fact, in-page; after-hours advice is a note in the form', () => {
   const src = readSource('app.js');
-  const i = src.indexOf('async function confirmAddPortfolio('); const confirmFn = src.slice(i, src.indexOf('\n}\n', i));
+  // CHANGED 2026-11-12, declared (db/042's app side): the add path is confirmAddPortfolio and addWithMode. It holds
+  // one confirm (the listing fact) and one CHOICE: Live or Paper, asked only when the database doesn't confirm what
+  // the button said. That is not advice and has no default answer, so it is a question with two answers, not a
+  // confirm (tests/execution-mode.test.js holds when it is asked).
+  const fnText = name => { const i = src.indexOf(`async function ${name}(`); return src.slice(i, src.indexOf('\n}\n', i)); };
+  const confirmFn = fnText('confirmAddPortfolio') + fnText('addWithMode');
   assert.strictEqual((confirmFn.match(/showConfirm\(/g) || []).length, 1, 'one confirm on the add path');
-  assert.ok(confirmFn.includes("showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');"), 'it is the listing fact, and Add anyway proceeds');
+  assert.strictEqual((confirmFn.match(/showChoice\(/g) || []).length, 1, 'one choice on the add path: Live or Paper');
+  assert.ok(confirmFn.includes("showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order, executionMode), 'Add anyway');"), 'it is the listing fact, and Add anyway proceeds');
   assert.ok(!/buildAfterHoursWarningText|classifySession/.test(confirmFn), 'after-hours advice is not a confirm');
   assert.ok(src.includes('${addFormSessionAdviceHtml(today)}'), 'after-hours advice is shown in the add form');
   const j = src.indexOf('function addFormSessionAdviceHtml('); const adv = src.slice(j, src.indexOf('\n}\n', j));
@@ -142,14 +148,20 @@ function loadDialogs() {
   const block = src.slice(src.indexOf('const _dialogQueue = [];'), src.indexOf('function confirmAction() {'));
   const caI = src.indexOf('function confirmAction() {');
   const el = (cls = '') => { const c = new Set(cls.split(' ').filter(Boolean)); return { textContent: '', className: cls, classList: { add: x => c.add(x), remove: x => c.delete(x), has: x => c.has(x) } }; };
-  const ui = { overlay: el('modal-overlay hidden'), msg: el(), btn: el('btn-danger'), cancel: el('btn-ghost') };
-  ui.overlay.querySelector = () => ui.cancel;
-  global.document = { getElementById: id => ({ 'confirm-overlay': ui.overlay, 'confirm-msg': ui.msg, 'confirm-btn': ui.btn }[id] || null) };
+  // CHANGED 2026-11-12, declared: the fake overlay also has its button row (a choice stacks it), and lets the
+  // dialog code make the second button (#confirm-btn-2) as the real DOM would.
+  const ui = { overlay: el('modal-overlay hidden'), msg: el(), btn: el('btn-danger'), cancel: el('btn-ghost'), row: { style: {} }, btn2: null };
+  ui.overlay.querySelector = sel => (/btn-ghost/.test(sel) ? ui.cancel : ui.row);
+  ui.btn.insertAdjacentElement = (where, x) => { ui.btn2 = x; };
+  global.document = {
+    getElementById: id => ({ 'confirm-overlay': ui.overlay, 'confirm-msg': ui.msg, 'confirm-btn': ui.btn, 'confirm-btn-2': ui.btn2 }[id] || null),
+    createElement: () => Object.assign(el(), { setAttribute() {} }),
+  };
   global.state = {};
   ui.toasts = []; global.showGlobalErrorToast = m => ui.toasts.push(m);
   // eslint-disable-next-line no-eval
   eval(block + src.slice(caI, src.indexOf('\n}\n', caI) + 2) +
-    '\nglobal.__alert = showAlert; global.__confirm = showConfirm; global.__ok = confirmAction; global.__cancel = closeConfirm;');
+    '\nglobal.__alert = showAlert; global.__confirm = showConfirm; global.__choice = showChoice; global.__ok = confirmAction; global.__ok2 = confirmAction2; global.__cancel = closeConfirm;');
   ui.shown = () => (ui.overlay.classList.has('hidden') ? null : ui.msg.textContent);
   return ui;
 }
@@ -216,6 +228,57 @@ run('dialogs: before the app shell exists, every message is a toast (none droppe
   global.document = { getElementById: () => null };
   global.__ok();
   assert.deepStrictEqual(ui2.toasts, ['b', 'c'], 'the whole queue drains, not just the next one');
+});
+
+run('dialogs: a choice shows both answers stacked, each runs its own value, Cancel runs neither; the next dialog hides the second', () => {
+  const ui = loadDialogs(), got = [];
+  const opts = [{ label: 'LIVE · placed at my broker', value: 'live' }, { label: 'PAPER · recorded in EDGE only', value: 'paper' }];
+  global.__choice('Placed at your broker?', opts, v => got.push(v));
+  assert.ok(ui.btn2, 'the second button is made when index.html has none');
+  assert.strictEqual(ui.btn.textContent, 'LIVE · placed at my broker');
+  assert.strictEqual(ui.btn2.textContent, 'PAPER · recorded in EDGE only');
+  assert.ok(ui.btn.className === 'btn btn-primary' && ui.btn2.className === 'btn btn-primary', 'full buttons, and neither styled as the dangerous one');
+  assert.ok(!ui.btn2.classList.has('hidden') && !ui.cancel.classList.has('hidden') && ui.row.style.flexDirection === 'column');
+  global.__ok2();
+  assert.deepStrictEqual(got, ['paper'], 'the second answer runs the second value only');
+  global.__choice('again', opts, v => got.push(v));
+  global.__ok();
+  assert.deepStrictEqual(got, ['paper', 'live']);
+  global.__choice('and cancel', opts, v => got.push(v));
+  global.__cancel();
+  assert.deepStrictEqual(got, ['paper', 'live'], 'Cancel runs neither');
+  global.__confirm('Not tradable.', () => {}, 'Add anyway');
+  assert.ok(ui.btn2.classList.has('hidden') && ui.row.style.flexDirection === '', 'a confirm after a choice shows one action, side by side');
+  global.__alert('note');
+  global.__cancel();
+  assert.ok(ui.btn2.classList.has('hidden'), 'and so does a notice');
+});
+
+run('dialogs: a choice closed without an answer runs its onCancel once; an answered one never does', () => {
+  const ui = loadDialogs(), got = [], cancels = [];
+  const opts = [{ label: 'A', value: 'live' }, { label: 'B', value: 'paper' }];
+  global.__choice('q1', opts, v => got.push(v), () => cancels.push('q1'));
+  global.__ok();
+  global.__choice('q2', opts, v => got.push(v), () => cancels.push('q2'));
+  global.__ok2();
+  global.__choice('q3', opts, v => got.push(v), () => cancels.push('q3'));
+  global.__cancel();
+  global.__cancel(); // a second close of nothing runs nothing
+  assert.deepStrictEqual(got, ['live', 'paper']);
+  assert.deepStrictEqual(cancels, ['q3'], 'only the cancelled choice, once');
+  void ui;
+});
+
+run('dialogs: a choice that cannot show its second answer runs nothing and says so', () => {
+  const ui = loadDialogs(), got = [];
+  ui.btn.insertAdjacentElement = () => {}; // the button cannot be made
+  const released = [];
+  global.__choice('Placed at your broker?', [{ label: 'A', value: 'live' }, { label: 'B', value: 'paper' }], v => got.push(v), () => released.push(1));
+  assert.ok(/could not be shown, so nothing was recorded/.test(ui.shown()));
+  assert.strictEqual(ui.btn.textContent, 'OK');
+  global.__ok();
+  assert.deepStrictEqual(got, [], 'never a choice with one answer showing');
+  assert.deepStrictEqual(released, [1], 'and its caller is released (the Add form usable again)');
 });
 
 run('dialogs: an action that throws still closes its dialog and moves the queue on', () => {

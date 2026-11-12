@@ -57,7 +57,9 @@ const REGISTRY = {
     { verdict: S, empty: 'delete existence check: no row = ALREADY_GONE; the sale goes on to the insert, where trades_v2_position_id_once refuses a second copy', denied: 'reads as ALREADY_GONE: no sale is lost or doubled (the index decides), but a row still there would go unreported' }],
   'core/store.js|settings': [
     { verdict: S, empty: 'loadSettingsFromSupabase: no row = "nothing migrated yet", runs on defaults', denied: 'budget 500, sub-$2 hidden, overlay ON, nothing on screen' },
-    { verdict: OK, empty: 'saveSettingsToSupabase: update of the loaded row id, .select(\'id\') must return it; none = refuse', denied: 'refuses: "Setting NOT saved ... Reload the app", nothing written; the insert branch is gone (67308c3, 2026-11-02; was WRITES_FROM_EMPTY)' }],
+    { verdict: OK, empty: 'saveSettingsToSupabase: update of the loaded row id, .select(\'id\') must return it; none = refuse', denied: 'refuses: "Setting NOT saved ... Reload the app", nothing written; the insert branch is gone (67308c3, 2026-11-02; was WRITES_FROM_EMPTY)' },
+    { verdict: OK, empty: 'readExecutionMode (db/042, 2026-11-12): no row = THROWS, never null (null is "never set", a different answer)', denied: 'the add asks Live or Paper and changes no setting; Settings refuses the change: "Live/Paper NOT changed"' },
+    { verdict: OK, empty: 'writeExecutionMode: update of the loaded row id, .select(\'id\') must return it; none = SETTINGS_NOT_SAVED, and the change log is not written', denied: 'the setting is not changed and says so; a trade waiting on the answer is recorded under the answer anyway' }],
   'scripts/audit-signal-log-splits.mjs|signal_log': [
     { verdict: OK, empty: 'guarded by assertReadable(signal_log) first', denied: 'the control throws: the audit fails instead of passing on nothing (fixed 2026-11-02; was PASS_ON_EMPTY)' }],
   'scripts/backup-tables.mjs|${table}': [

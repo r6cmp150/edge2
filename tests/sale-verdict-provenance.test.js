@@ -113,7 +113,8 @@ run('the sale write sends verdict_provenance and signal_before_sale, and the ver
     supabaseClient: { from: () => ({ insert: rows => { inserted = rows[0]; return { select: async () => ({ data: [{ id: 1 }], error: null }) }; } }) },
   };
   vm.createContext(ctx);
-  vm.runInContext(grab('saleVerdictProvenance') + grab('writeTradeToSupabase') + '\n;globalThis.__w = writeTradeToSupabase;', ctx);
+  // CHANGED 2026-11-12, declared: the sale row also carries db/042's mode, through saleModeColumns.
+  vm.runInContext(grab('saleVerdictProvenance') + grab('saleModeColumns') + grab('writeTradeToSupabase') + '\n;globalThis.__w = writeTradeToSupabase;', ctx);
   const f = saleCtx({ sig: null }).__f({ ticker: 'A', engineSource: 'EDGE' }, '2026-11-02');
   const record = { ...plain(f), sellTime: '10:00', sellDayOfWeek: 'Monday', source: 'Own Decision' };
   const outcome = await ctx.__w({ ticker: 'A', buyDate: '2026-10-30', shares: 1, buyPrice: 1, id: 'p1' }, record, '2026-11-02', 1.1, 0.1, 10);

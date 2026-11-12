@@ -394,9 +394,11 @@ run('held positions and the add confirm: list-based, every holding, warn never b
   assert.ok(/const heldListing = await fetchHeldListing\(tickers\);/.test(tab), 'one listing lookup over every holding');
   assert.ok(/\$\{listingBanner\}/.test(tab), 'surfaced on the card');
   assert.ok(/if \(!priceFetchFailed && !heldListing\)/.test(tab), 'the per-ticker /v2/assets check is the fallback only');
-  const confirm = app.match(/async function confirmAddPortfolio\([^)]*\) \{[\s\S]*?\n\}/)[0];
+  // CHANGED 2026-11-12, declared: the listing check moved from confirmAddPortfolio into addWithMode (db/042's app
+  // side resolves Live/Paper first), and finalize now carries the trade's mode.
+  const confirm = app.match(/async function addWithMode\([^)]*\) \{[\s\S]*?\n\}/)[0];
   assert.ok(/await fetchHeldListing\(\[ticker\]\)/.test(confirm));
-  assert.ok(confirm.includes("showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order), 'Add anyway');"),
+  assert.ok(confirm.includes("showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order, executionMode), 'Add anyway');"),
     'a listing warning offers "Add anyway": it never blocks the add');
   const fetchHeld = app.match(/async function fetchHeldListing\([^)]*\) \{[\s\S]*?\n\}/)[0];
   assert.ok(/return null;/.test(fetchHeld) && !/'listed'/.test(fetchHeld), 'unknown is null, never "listed"');

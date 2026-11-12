@@ -14,7 +14,8 @@
 //
 // WRITES recognised:
 //   app files: supabaseClient-style `.from('<literal table>')` then (whitespace allowed) `.insert(` / `.update(` /
-//     `.upsert(`; the payload resolved through literals, builder functions (fnReturn), spreads, `.map(x => ({..}))`,
+//     `.upsert(`; the payload resolved through literals, builder functions (fnReturn: every return branch, held by the
+//     branch invariant below), spreads, `.map(x => ({..}))`,
 //     identifiers to their declaration or a loop over a literal list, parameters to their callers (W.callsOf: same file
 //     or an importing file), the ALIASES retries, and a Map/array of objects filled by `.set`/`.push`, including
 //     properties assigned on a variable holding a builder's result (p.col = ..) and on the call itself (fn(..).col = ..).
@@ -34,6 +35,13 @@
 //
 // The independent check on this list is a deliberately dumb count of database syntax (.insert/.update/.upsert/.delete/
 // .rpc, /rest/v1/, curl -X) compared with these sites: see STATUS.md, "walker coverage".
+//
+// WHICH INSTRUMENT ANSWERS WHICH QUESTION (2026-11-12). The count checks SITES: is every place that writes found? It is
+// blind inside a site it already matched. The BRANCH INVARIANT (fnReturn) checks branches WITHIN a site: a builder's
+// returns read must equal the `return`s its body contains, counted independently (returnTokens), or it fails; a builder
+// holding a nested function is NOT ENUMERABLE. Found by the enumerated-value guard asking for declarations that weren't
+// there (a builder read only to its first `return {`, 2026-11-12), not by the count, which could not have found it.
+// Neither checks a value's text against the code's intent: the enumerated-value guard checks values against the CHECKs.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -239,14 +247,52 @@ function identifier(name, src, at, ctx, depth) {
   }
   throw new NotEnumerable(`no assignment of ${name} before the write`);
 }
+// Every builder fnReturn resolved, with { read, contains }: the branch invariant's two numbers, for any report to print.
+const BRANCHES = new Map();
+// The `return` keywords in a body, and whether it holds a nested function (`function` or `=>`), counted outside string
+// and template literals, by its own scan rather than by the regex that reads the branches. (Comments are already gone:
+// sources() strips them.) A regex literal holding the word return would count: that fails loudly, never silently.
+function returnTokens(body) {
+  let returns = 0, nested = false, q = null;
+  for (let j = 0; j < body.length; j++) {
+    const ch = body[j];
+    if (q) { if (ch === '\\') j++; else if (ch === q) q = null; continue; }
+    if (ch === "'" || ch === '"') { q = ch; continue; }
+    if (ch === '`') { const e = templateEnd(body, j); if (e < 0) break; j = e; continue; }
+    if (/[A-Za-z_$]/.test(ch) && !/[\w$]/.test(body[j - 1] || '')) {
+      const w = body.slice(j).match(/^[A-Za-z_$][\w$]*/)[0];
+      if (w === 'return') returns++;
+      if (w === 'function') nested = true;
+      j += w.length - 1;
+      continue;
+    }
+    if (ch === '=' && body[j + 1] === '>') nested = true;
+  }
+  return { returns, nested };
+}
 function fnReturn(name, ctx, depth) {
   for (const [, s] of ctx.sources) {
     const m = s.match(new RegExp(`function\\s+${name}\\s*\\([^)]*\\)\\s*\\{`));
     if (!m) continue;
-    const body = balanced(s, m.index + m[0].length - 1);
-    const r = body.match(/\breturn\s*\{/);
-    if (!r) throw new NotEnumerable(`${name}() does not return an object literal`);
-    return literal(balanced(body, r.index + r[0].length - 1), s, m.index, ctx, depth + 1);
+    // EVERY return in the builder's body (2026-11-12; it read only the first `return {`, so a builder with a return per
+    // branch had every later branch's columns and values unseen). Each must be an object literal: a builder that can
+    // return anything else is NOT ENUMERABLE. A builder holding a nested function is NOT ENUMERABLE too: its returns and
+    // the nested function's can't be told apart here.
+    // THE BRANCH INVARIANT: the branches read must equal the `return`s the body contains, counted independently
+    // (returnTokens: outside strings, templates and regexes), and a difference fails. The independent count of sites
+    // cannot see this class (a missed branch is inside a site it already matched); this check can.
+    const open = m.index + m[0].length - 1, body = balanced(s, open), cols = new Set();
+    const lexed = returnTokens(body);
+    if (lexed.nested) throw new NotEnumerable(`${name}() holds a nested function: its returns can't be told from the builder's`);
+    let read = 0;
+    for (const r of body.matchAll(/\breturn\s*\{/g)) {
+      read++;
+      for (const c of literal(balanced(body, r.index + r[0].length - 1), s, m.index, ctx, depth + 1)) cols.add(c);
+    }
+    BRANCHES.set(name, { read, contains: lexed.returns });
+    if (read !== lexed.returns) throw new NotEnumerable(`${name}(): read ${read} of the ${lexed.returns} return branch(es) its body contains (a return that is not an object literal, or one the reader missed)`);
+    if (!read) throw new NotEnumerable(`${name}() does not return an object literal`);
+    return cols;
   }
   throw new NotEnumerable(`no function ${name}() found`);
 }
@@ -630,7 +676,7 @@ async function enumerateNames() {
   return out;
 }
 
-module.exports = { ALIASES, BACKUP, FILTERS, HOLE, NAMES_NONE, NotEnumerable, array, assigned, backupSites, balanced, callsOf, chainCalls, chainNames, collected, column, enclosingBlock, enclosingFunction, entries, enumerate, enumerateNames, fnReturn, identifier, list, literal, logicTree, loopValues, named, plain, queryNames, resolve, resolveSite, selectList, shown, sites, splitTop, statementAt, strings, strip, template, templateEnd, ternary };
+module.exports = { ALIASES, BACKUP, BRANCHES, FILTERS, HOLE, NAMES_NONE, NotEnumerable, array, assigned, backupSites, balanced, callsOf, chainCalls, chainNames, collected, column, enclosingBlock, enclosingFunction, entries, enumerate, enumerateNames, fnReturn, identifier, list, literal, logicTree, loopValues, named, plain, queryNames, resolve, resolveSite, returnTokens, selectList, shown, sites, splitTop, statementAt, strings, strip, template, templateEnd, ternary };
 
 // SQL with its comments removed in ONE quote-aware pass (2026-11-11): a "--" or "/*" inside a string literal is part of
 // the literal, not a comment. Removing comments with separate regexes cut a literal at its "--" (two migrations and a

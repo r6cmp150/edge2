@@ -256,6 +256,11 @@ function mapSupabasePortfolioRowToPosition(row) {
     // db/028: read back so a sale can copy the BUY's version to trades_v2.
     // Deliberately NOT written back by mapPositionToSupabaseRow below.
     codeVersion: row.code_version ?? null,
+    // db/042: read back so a sale can copy the position's mode (db/043's copied_from_position). Written once, at
+    // the insert (insertPositionToSupabase), and like code_version never by the update path: an edit of a position
+    // can't change whether it was placed at the broker.
+    executionMode: row.execution_mode ?? null,
+    executionModeSource: row.execution_mode_source ?? null,
   };
 }
 
@@ -376,9 +381,18 @@ async function insertSignalSnapshotAtBuy(row) {
   if (error) throw error;
 }
 
+// db/042: the mode a buy was recorded under, as the two columns. Only live or paper, chosen at this trade (the
+// toggle re-read at confirm, or the prompt's tap): this build never records a buy as not_known, so a not_known
+// buy from this build is a defect (the not_known count, STATUS.md). No mode is refused, not defaulted.
+function recordedModeColumns(mode) {
+  if (mode === 'live') return { execution_mode: 'live', execution_mode_source: 'recorded_at_trade' };
+  if (mode === 'paper') return { execution_mode: 'paper', execution_mode_source: 'recorded_at_trade' };
+  throw new Error(`no execution mode chosen for this trade (${mode}); nothing was recorded`);
+}
+
 async function insertPositionToSupabase(position) {
   if (!position.codeVersion) position.codeVersion = currentCodeVersion();
-  const row = { ...mapPositionToSupabaseRow(position), code_version: position.codeVersion };
+  const row = { ...mapPositionToSupabaseRow(position), code_version: position.codeVersion, ...recordedModeColumns(position.executionMode) };
   const { error } = await supabaseClient.from('portfolio').insert([row]);
   if (error) throw error;
 }
@@ -476,7 +490,60 @@ async function loadSettingsFromSupabase() {
     minVolume: data.min_volume,
     forcePreMarketMode: !!data.force_pre_market_mode,
     disableMacroOverlay: !!data.disable_macro_overlay,
+    // db/042: shown in Settings and on the Add button. Never what a trade is recorded under: confirm re-reads it
+    // (readExecutionMode), so a tab left open can't record under a toggle changed elsewhere.
+    executionMode: data.execution_mode ?? null,
+    executionModeSetAt: data.execution_mode_set_at ?? null,
   };
+}
+
+// db/042: the toggle as the database holds it NOW: { mode: 'live' | 'paper' | null (never set), setAt }. Throws when
+// it can't be read, including when no settings row was confirmed: unknown, never null. The caller decides what that
+// means. setAt comes with the mode so a screen never shows the mode from one read beside the time from another.
+async function readExecutionMode() {
+  if (settingsRowId == null) throw new Error('no settings row confirmed (reload the app)');
+  const { data, error } = await supabaseClient.from('settings').select('execution_mode, execution_mode_set_at').eq('id', settingsRowId).limit(1);
+  if (error) throw error;
+  if (!data || data.length !== 1) throw new Error('the settings row could not be read');
+  const m = data[0].execution_mode;
+  if (m !== null && m !== 'live' && m !== 'paper') throw new Error(`unexpected execution_mode ${m}`);
+  return { mode: m, setAt: data[0].execution_mode_set_at ?? null };
+}
+
+// db/042: set the toggle, then log the change -- settings first, so a log row never records a change that didn't
+// happen. Resolves { settings: null | message, log: null | message, at }, never throws (at: the instant written as
+// execution_mode_set_at, null when the setting wasn't saved): the caller shows any failure,
+// and a trade waiting on the choice proceeds either way. `from` is the mode as last READ from the database (null =
+// never set); a caller that couldn't read it doesn't call this, since the log would have to guess it.
+async function writeExecutionMode(to, from) {
+  if (to !== 'live' && to !== 'paper') return { settings: `not a mode: ${to}`, log: 'not attempted', at: null };
+  if (from !== null && from !== 'live' && from !== 'paper') return { settings: `not a mode: ${from}`, log: 'not attempted', at: null };
+  // THE PHONE'S CLOCK, not the server's: execution_mode_set_at and the log's changed_at are this one instant, so they
+  // agree with each other, but a wrong phone clock writes a wrong provenance time (the log's recorded_at is the
+  // server's DEFAULT now(), the cross-check). Noted by the reviewer 2026-11-12; the columns' COMMENTs say so with the
+  // next migration that touches settings or execution_mode_changes, since a COMMENT is schema.
+  const at = new Date().toISOString();
+  try {
+    if (settingsRowId == null) throw new Error(SETTINGS_NOT_SAVED);
+    const { data, error } = await supabaseClient.from('settings')
+      .update({ execution_mode: to === 'live' ? 'live' : 'paper', execution_mode_set_at: at, updated_at: at })
+      .eq('id', settingsRowId).select('id');
+    if (error) throw error;
+    if (!data || data.length !== 1) throw new Error(SETTINGS_NOT_SAVED);
+  } catch (e) {
+    return { settings: e.message, log: 'not attempted: the setting did not change', at: null };
+  }
+  try {
+    const { error } = await supabaseClient.from('execution_mode_changes').insert([{
+      changed_at: at,
+      from_mode: from === null ? null : from === 'live' ? 'live' : 'paper',
+      to_mode: to === 'live' ? 'live' : 'paper',
+    }]);
+    if (error) throw error;
+  } catch (e) {
+    return { settings: null, log: e.message, at };
+  }
+  return { settings: null, log: null, at };
 }
 
 async function saveSettingsToSupabase(settings) {

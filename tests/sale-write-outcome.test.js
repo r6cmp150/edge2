@@ -13,6 +13,7 @@ const queue = []; const run = (n, f) => queue.push([n, f]);
 const app = readSource('app.js');
 const grab = name => { const i = app.search(new RegExp(`(async )?function ${name}\\(`)); return app.slice(i, app.indexOf('\n}\n', i) + 2); };
 
+// CHANGED 2026-11-12, declared: the eval also carries saleModeColumns (db/042's mode on the sale row).
 // CHANGED 2026-11-08, declared: the fake client also answers compareRecordedSale's read-back
 // (`stored`: the row it returns, an Error, or null for an empty read), and the eval carries the
 // two constants noteSaleWrite and compareRecordedSale use.
@@ -32,7 +33,7 @@ function load(insertResult, stored = { sell_price: 10.1, shares: 10, sell_date: 
     select: cols => ({ eq: (c, v) => ({ limit: async n => { global.__reads.push([cols, c, v, n]); if (stored instanceof Error) return { data: null, error: { message: stored.message } }; return { data: stored ? [stored] : [], error: null }; } }) }),
   }) };
   // eslint-disable-next-line no-eval
-  eval(settingLabelsSrc() + '\n' + [constLine('MAX_SALE_ATTEMPTS'), constLine('SALE_COMPARED_FIELDS')].join('\n') + '\n' + ['saleVerdictProvenance', 'writeTradeToSupabase', 'noteSaleWrite', 'compareRecordedSale', 'retrySaleWrite', 'dismissSaleNotice', 'settingsBannerLine', 'updateMarketBanner'].map(grab).join('\n') +
+  eval(settingLabelsSrc() + '\n' + [constLine('MAX_SALE_ATTEMPTS'), constLine('SALE_COMPARED_FIELDS')].join('\n') + '\n' + ['saleVerdictProvenance', 'saleModeColumns', 'writeTradeToSupabase', 'noteSaleWrite', 'compareRecordedSale', 'retrySaleWrite', 'dismissSaleNotice', 'settingsBannerLine', 'updateMarketBanner'].map(grab).join('\n') +
     '\nglobal.__w = writeTradeToSupabase; global.__retry = retrySaleWrite; global.__dismiss = dismissSaleNotice; global.__banner = updateMarketBanner;');
   return { persisted, el };
 }

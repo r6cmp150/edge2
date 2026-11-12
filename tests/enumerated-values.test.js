@@ -180,21 +180,20 @@ const REPLAYS = {
 const each = (vals, d) => Object.fromEntries(vals.map(v => [v, d]));
 const MACRO = ['pattern', 'groq', 'pattern_groq_failed', 'unclassified', 'not_fetched'];
 const GATED = 'the macro-gated branch (worktree edge2-gated), whose commits write it; db/038 is applied, so they ship when cleared';
-const APP042 = 'the app side of db/042: one push, after db/043 is live and a capture shows it (STATUS.md)';
+// The app side of db/042 shipped 2026-11-12: every value it was pending on is now written by the app and read here as
+// such, so its pending entries are gone. What it does not write is declared below by name.
 const DB_PATTERNS = {
   '~^derived_from_robinhood_export_[0-9]{4}-[0-9]{2}-[0-9]{2}$': { external: 'hand-run SQL from a match against Roman\'s Robinhood export (STATUS.md, waiting on Roman)' },
   '~^declared_by_roman_[0-9]{4}-[0-9]{2}-[0-9]{2}$': { external: 'hand-run SQL recording Roman\'s testimony, labelled as such' },
 };
-const MODE = { ...each(['live', 'paper'], { pending: APP042 }), not_known: { default: 'a row nobody recorded a mode for (db/042)' } };
 const MACRO_PATHS = { ...each(MACRO, { pending: GATED }), unknown: { default: 'a row written before, or without, a macro classification (db/038)' } };
 const DECLARED = {
-  'execution_mode_changes.from_mode': each(['live', 'paper'], { pending: APP042 }),
-  'execution_mode_changes.to_mode': each(['live', 'paper'], { pending: APP042 }),
-  'settings.execution_mode': each(['live', 'paper'], { pending: APP042 }),
-  'trades_v2.execution_mode': MODE,
-  'portfolio.execution_mode': MODE,
-  'trades_v2.execution_mode_source': { recorded_at_trade: { pending: APP042 }, copied_from_position: { pending: `${APP042}; db/043 permits it` }, ...DB_PATTERNS },
-  'portfolio.execution_mode_source': { recorded_at_trade: { pending: APP042 }, ...DB_PATTERNS },
+  // a buy is live or paper, never not_known, from this build (core/store.js recordedModeColumns refuses it); every
+  // portfolio row from before the app side has not_known by the column DEFAULT
+  'portfolio.execution_mode': { not_known: { default: 'a position nobody recorded a mode for: added before the app side of db/042 shipped (db/042)' } },
+  // a sale copies its position's mode (copied_from_position), so nothing records a mode AT a sale
+  'trades_v2.execution_mode_source': { recorded_at_trade: { reserved: 'a trade recorded directly as closed, with no position (a manual entry, or a Warrior sale): no such path exists; if none is commissioned by the review, the value comes out of the trades_v2 CHECK', review: '2026-12-31' }, ...DB_PATTERNS },
+  'portfolio.execution_mode_source': DB_PATTERNS,
   'trades_v2.macro_path': MACRO_PATHS,
   'rating_snapshots.macro_path': MACRO_PATHS,
   'portfolio.macro_path_at_buy': MACRO_PATHS,

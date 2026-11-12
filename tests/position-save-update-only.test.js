@@ -44,7 +44,8 @@ function loadStore(client) {
   global.mapPositionToSupabaseRow = p => ({ position_id: p.id, ticker: p.ticker });
   global.currentCodeVersion = () => ({ app: 'test', scoring: 2, scoring_hash: 'h' }); // db/028 writer (tests/code-version.test.js covers it)
   // eslint-disable-next-line no-eval
-  eval([fnSrc('core/store.js', 'insertPositionToSupabase'), fnSrc('core/store.js', 'savePositionToSupabase')].join('\n')
+  // CHANGED 2026-11-12, declared: the insert also carries db/042's mode, through recordedModeColumns.
+  eval([fnSrc('core/store.js', 'recordedModeColumns'), fnSrc('core/store.js', 'insertPositionToSupabase'), fnSrc('core/store.js', 'savePositionToSupabase')].join('\n')
     + '\nglobal.__insert = insertPositionToSupabase; global.__save = savePositionToSupabase;');
 }
 (async () => {
@@ -89,12 +90,23 @@ await run('an update error is thrown as-is, without a zero-row code', async () =
 await run('the add path inserts, with code_version on the inserted row', async () => {
   const client = mockClient(() => ({ data: null, error: null }));
   loadStore(client);
-  const pos = { ...POS };
+  const pos = { ...POS, executionMode: 'paper' };
   await global.__insert(pos);
   assert.deepStrictEqual(verbs(client), ['insert']);
   const inserted = client.calls[0].ops.find(o => o[0] === 'insert')[1][0];
   assert.deepStrictEqual(inserted.code_version, { app: 'test', scoring: 2, scoring_hash: 'h' }, 'db/028: the insert carries the version');
   assert.deepStrictEqual(pos.codeVersion, inserted.code_version, 'the in-memory position keeps it, so the sale can copy it');
+  assert.strictEqual(inserted.execution_mode, 'paper', 'db/042: the mode chosen at this trade');
+  assert.strictEqual(inserted.execution_mode_source, 'recorded_at_trade');
+});
+
+await run('db/042: a buy with no live/paper mode is refused before anything is written, never recorded as not_known', async () => {
+  for (const executionMode of [undefined, null, 'not_known', '', 'LIVE']) {
+    const client = mockClient(() => ({ data: null, error: null }));
+    loadStore(client);
+    await assert.rejects(global.__insert({ ...POS, executionMode }), /no execution mode chosen for this trade/, String(executionMode));
+    assert.deepStrictEqual(client.calls, [], `${executionMode}: nothing written`);
+  }
 });
 
 // backgroundSavePosition (app.js): only a confirmed MISSING touches
