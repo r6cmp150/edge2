@@ -13,6 +13,8 @@ function load(fixture) {
   const el = { style: {}, innerHTML: '' };
   global.document = { getElementById: id => (id === 'market-banner' ? el : null) };
   global.state = { saleWriteFailures: {}, positionSaveFailures: {}, ...fixture };
+  // CHANGED 2026-11-12, declared: the banner and the mode re-read now redraw the LIVE band; stubbed here, held by tests/live-band.test.js.
+  global.renderLiveBand = () => {};
   global.getMarketStatus = () => ({ color: 'var(--green)', label: 'Market open', countdown: 'Closes in 2h 14m' });
   // eslint-disable-next-line no-eval
   eval(`${settingLabelsSrc()}\n${grab('settingsBannerLine')}\n${grab('toggleBannerDetail')}\n${grab('updateMarketBanner')}\nglobal.__b = updateMarketBanner; global.__t = toggleBannerDetail;`);

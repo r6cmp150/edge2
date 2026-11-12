@@ -26,6 +26,8 @@ function load(insertResult, stored = { sell_price: 10.1, shares: 10, sell_date: 
   global.persist = k => persisted.push(k);
   // CHANGED 2026-11-12, declared: the scan price history adds hooks these functions now call; stubbed here, held by tests/scan-history.test.js.
   global.invalidateSessionRead = () => {};
+  // CHANGED 2026-11-12, declared: the banner and the mode re-read now redraw the LIVE band; stubbed here, held by tests/live-band.test.js.
+  global.renderLiveBand = () => {};
   global.scoreLabel = () => 'WATCH';
   global.currentCodeVersion = () => ({ app: 't', scoring: 2, scoring_hash: 'h' });
   global.getMarketStatus = () => ({ color: 'x', label: 'OPEN', countdown: '' });

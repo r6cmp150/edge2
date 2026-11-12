@@ -157,6 +157,8 @@ await run('background save: only POSITION_MISSING suppresses the position', asyn
 await run('banner says the position was closed elsewhere, and how to fix it', () => {
   const el = { style: {}, innerHTML: '' };
   global.document = { getElementById: () => el };
+  // CHANGED 2026-11-12, declared: the banner and the mode re-read now redraw the LIVE band; stubbed here, held by tests/live-band.test.js.
+  global.renderLiveBand = () => {};
   global.getMarketStatus = () => ({ color: 'x', label: 'OPEN', countdown: '' });
   // eslint-disable-next-line no-eval
   eval(settingLabelsSrc() + '\n' + fnSrc('app.js', 'settingsBannerLine') + '\n' + fnSrc('app.js', 'updateMarketBanner') + '\nglobal.__banner = updateMarketBanner;');

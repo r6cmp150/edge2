@@ -85,6 +85,8 @@ await run('the add path: agrees -> recorded, no prompt; asks -> the tapped answe
     global.showChoice = (msg, opts, cb) => seen.choices.push({ msg, opts, cb });
     global.renderSettingsTab = () => {};
     global.state = { settings: { executionMode: 'paper' }, activeTab: 'portfolio' };
+    // CHANGED 2026-11-12, declared: the banner and the mode re-read now redraw the LIVE band; stubbed here, held by tests/live-band.test.js.
+    global.renderLiveBand = () => {};
     // eslint-disable-next-line no-eval
     eval(app.slice(i, k) + '\nglobal.__add = confirmAddPortfolio;');
     return seen;

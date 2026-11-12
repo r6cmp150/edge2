@@ -1100,7 +1100,31 @@ function toggleBannerDetail() {
   updateMarketBanner();
 }
 
+// ── LIVE mode, visible all the time (ruled by the reviewer, 2026-11-12) ──
+// When the toggle is LIVE, a band directly under the header says so on every screen, before any form is opened: the
+// dangerous state gets the indicator, and it is there before he acts, not during the half-second of a tap. A
+// recording light, not a warning: PAPER and unset look exactly as the app looked before (no band), and the Add
+// button keeps naming its mode. It shows the mode this phone last READ; every Add re-reads the database before it
+// records (modeAtConfirm), so a band out of date on a second device can never decide a trade. Tapping it opens
+// Settings, where the toggle is. Made in JS, so the shell's markup is unchanged.
+function renderLiveBand() {
+  const header = document.getElementById('app-header');
+  if (!header) return; // before the app shell exists (PIN, loading)
+  let band = document.getElementById('live-band');
+  if (state.settings?.executionMode !== 'live') { if (band) band.remove(); return; }
+  if (!band) {
+    band = document.createElement('div');
+    band.id = 'live-band';
+    band.setAttribute('role', 'status');
+    band.setAttribute('onclick', "switchTab('settings')");
+    header.insertAdjacentElement('afterend', band);
+  }
+  band.style.cssText = 'background:#7a1020;color:#fff;font-weight:700;font-size:13px;letter-spacing:0.5px;padding:7px 16px;text-align:center;cursor:pointer';
+  band.textContent = '● LIVE · adds recorded as placed at your broker'; // one line at 390px (measured)
+}
+
 function updateMarketBanner() {
+  renderLiveBand(); // runs at startup, on every clock tick and after every state change the banner follows
   const el = document.getElementById('market-banner');
   if (!el) return;
   const problems = [];
@@ -4390,6 +4414,7 @@ function applyModeAnswer(mode, at) {
     if (r.settings) { showAlert(`This trade is recorded as ${mode.toUpperCase()}. The Live/Paper setting was NOT changed: ${r.settings}`); return; }
     state.settings.executionMode = mode;
     state.settings.executionModeSetAt = r.at;
+    renderLiveBand();
     if (r.log) showAlert(`Live/Paper is now ${mode.toUpperCase()}, but the change was not logged: ${r.log}. The setting and this trade are recorded; only the history of the change is missing.`);
     if (state.activeTab === 'settings') renderSettingsTab();
   });
@@ -4416,7 +4441,7 @@ async function confirmAddPortfolio(ticker, btn, shown) {
     let reread;
     try { const r = await readExecutionMode(); reread = { mode: r.mode, setAt: r.setAt }; } catch (e) { reread = { failed: e?.message || String(e) }; }
     // the next form names what the database holds, with its own time (never a time from an earlier read)
-    if (reread.failed == null) { state.settings.executionMode = reread.mode; state.settings.executionModeSetAt = reread.setAt; }
+    if (reread.failed == null) { state.settings.executionMode = reread.mode; state.settings.executionModeSetAt = reread.setAt; renderLiveBand(); }
     const at = modeAtConfirm(shown === 'live' || shown === 'paper' ? shown : null, reread);
     if (at.ask) {
       // Waiting on Roman, not the network -- but NOT released the way the listing confirm is: a choice can be queued
@@ -10151,6 +10176,7 @@ async function changeExecutionMode(to, btn) {
       if (r.log) showAlert(`Live/Paper is now ${to.toUpperCase()}, but the change was not logged: ${r.log}. The setting is saved; only the history of the change is missing.`);
     }
   }
+  renderLiveBand();
   renderSettingsTab();
 }
 

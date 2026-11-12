@@ -36,6 +36,8 @@ function ctx({ insertSnapshot, ratingInsert, ratingLanded = [], ratingVisible = 
     state: { saleWriteFailures: {}, positionSaveFailures: {}, snapshotWriteFailures: {}, ratingWriteFailures: [], persistFailure: null },
     // CHANGED 2026-11-12, declared: the scan price history adds hooks these functions now call; stubbed here, held by tests/scan-history.test.js.
     scanHistoryChanged: () => {},
+    // CHANGED 2026-11-12, declared: the banner and the mode re-read now redraw the LIVE band; stubbed here, held by tests/live-band.test.js.
+    renderLiveBand: () => {},
   };
   vm.createContext(c);
   vm.runInContext([line('const SNAPSHOT_LOG_KEY = '), line('const RATING_FAILURES_KEPT = '), line('const RATING_SNAPSHOT_MIN_SCORE = '),

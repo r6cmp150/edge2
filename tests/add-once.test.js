@@ -22,6 +22,8 @@ function load({ listingResult = { X: 'listed' }, shares = '10', price = '5' } = 
   const confirms = []; global.showConfirm = (m, cb) => confirms.push({ m, cb });
   global.listingWarningText = () => 'not listed';
   global.state = { settings: {} };
+  // CHANGED 2026-11-12, declared: the banner and the mode re-read now redraw the LIVE band; stubbed here, held by tests/live-band.test.js.
+  global.renderLiveBand = () => {};
   global.readExecutionMode = async () => ({ mode: 'paper', setAt: null });
   global.showChoice = () => { throw new Error('no prompt expected: the mode read agrees with the button'); };
   let release; const gate = new Promise(r => { release = r; });
