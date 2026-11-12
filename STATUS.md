@@ -349,6 +349,20 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **The walker's lexer mis-reads nested template literals** (found 2026-11-12, BOUNDED, not fixed). strip() in
+  tests/_write-walker.js treats a template literal as a string ending at the next backtick, so a template nested
+  inside `${ }` flips what it believes is code. Bound, measured against acorn 8.12.1 (exact comment ranges) on 104
+  scanned files, on 453e0f8 and on the scan-history tree: 0 lines of non-comment text CUT in any file, so the defect
+  cannot make a database site vanish; what it does is KEEP comment text as if it were code: 89 stretches, 209 lines
+  (159 in app.js, 46 of the stretches a script's `#!` line), none containing a database token. Kept text is not
+  harmless: it is how the quota-count site passed by accident (an apostrophe in a kept comment ended its chain). Its
+  own change: fix the lexer, then show every guard's output unchanged or explained, as the branch fix was shown.
+- **rating_snapshots.scoring_version and scoring_hash are never written** (found 2026-11-12). The columns exist, the
+  writer is on the gated branch, and all 4,431 backed-up rows carry neither; v2 shipped 2026-10-22 inside that range,
+  and a phone not yet reloaded scored v1 after it, so every score captured so far is of UNKNOWN version, not inferable
+  from the date. The same shape as taken_resolution: the day the gated writer lands, rows before and after will look
+  alike and mean different things. Until then it blocks any score-over-time comparison (it is why the scan price
+  history shows no score).
 - **A browser scan leaves no record that it happened** (found 2026-11-12 while scoping the scan price history; not
   fixed). Browser scans write no `scan_runs` row, so only the `rating_snapshots` rows a scan produced survive (score
   60 or more): a scan in which a ticker scored 58 is indistinguishable from no scan at all. So the SAMPLING RATE of

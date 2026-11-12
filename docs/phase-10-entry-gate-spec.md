@@ -2707,6 +2707,14 @@ site it already matched, so a builder read only to its first `return {` passed i
 returns read must equal the returns the body contains, counted independently) checks branches within a site. Write
 down which question each instrument answers, and which it cannot.
 
+**AN INDEPENDENT CHECK MUST SHARE NO COMPONENT WITH THE THING IT CHECKS, AND THAT INDEPENDENCE IS VERIFIED RATHER
+THAN ASSUMED (2026-11-12, the reviewer's rule).** State, where the check is defined, which parts it shares with its
+subject; if the answer is "none", say how that was established. The dumb count specified as the cross-check on the
+walker removed comments with the walker's own strip(), the very component found defective (it mis-reads nested
+template literals), so it could not have caught that class; it agreed with an acorn-based count line for line on
+both trees only because the defect happened not to touch a write site. Both versions are kept: two implementations
+that must agree are worth more than one believed to be clean.
+
 **A PRE-REGISTERED SCRIPT EDITED AFTER ITS RUN IS RE-RUN, AND THE RESULT IS SHOWN UNCHANGED, OR THE RESULT IS
 WITHDRAWN (2026-11-12, the reviewer's rule). A declaration of harmlessness is not a measurement of it.**
 `prereg-peak-before-after.mjs` gained the no-sale-time exclusion after its first run; "0 such rows, so it cannot have
