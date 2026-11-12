@@ -100,6 +100,25 @@ jobs:
           echo "Failed to push after 5 attempts." >&2
           exit 1
 
+      # db/042's not_known count, logged daily for history (2026-11-12). READ-ONLY (GET, anon key), after the backup
+      # is committed so it can never cost one. Exit 1 = a trade recorded without Live/Paper by a build that records
+      # it, or a read that failed or came back incomplete; the next step turns that red, the reason printed here.
+      # The same count is in the app, in Settings: a workflow log alone is not a warning.
+      - name: Count trades recorded without Live/Paper (read-only; db/042)
+        id: not_known
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          node scripts/count-not-known.mjs
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Fail the run if a trade was recorded without Live/Paper, or the count could not be read
+        if: always() && steps.not_known.outputs.exit_code != '0'
+        run: |
+          echo "The not_known count failed -- see the 'Count trades recorded without Live/Paper' step's log above: a defect (a build that records the mode wrote a trade without it) or an unreadable count. The backup was committed first." >&2
+          exit 1
+
       - name: Fail the run if any table was rejected this run
         if: steps.backup.outputs.exit_code != '0'
         run: |

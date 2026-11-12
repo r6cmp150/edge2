@@ -4417,6 +4417,10 @@ async function confirmAddPortfolio(ticker, btn, shown) {
       // cancelled (reviewer, 2026-11-12).
       _addInFlight = false;
       _addAwaitingAnswer = true;
+      // The flag's only releases are the choice's callbacks; if showing the choice throws (a stale cached shell
+      // without the dialog's elements), they never run and Add is dead until a reload. So a throw releases it here
+      // and says so on the app's toast, which needs no dialog (reviewer, 2026-11-12).
+      try {
       showChoice(at.ask, MODE_CHOICES, mode => {
         _addAwaitingAnswer = false;
         applyModeAnswer(mode, at);
@@ -4426,6 +4430,11 @@ async function confirmAddPortfolio(ticker, btn, shown) {
         _addAwaitingAnswer = false; // cancelled, or the choice could not be shown: nothing recorded, the form usable
         if (btn) btn.disabled = false;
       });
+      } catch (e) {
+        _addAwaitingAnswer = false;
+        if (btn) btn.disabled = false;
+        showGlobalErrorToast(`The Live/Paper question could not be shown (${e?.message || e}), so nothing was recorded. Reload the app and add again.`);
+      }
       return;
     }
     await addWithMode(ticker, shares, price, date, btn, order, at.mode);
@@ -9414,6 +9423,10 @@ function renderSettingsTab() {
         <div class="settings-hint" id="workflow-health">Loading…</div>
       </div>
       <div class="settings-row" style="flex-direction:column;align-items:stretch;">
+        <span class="settings-label">Trades without Live/Paper</span>
+        <div class="settings-hint" id="not-known-count">Loading…</div>
+      </div>
+      <div class="settings-row" style="flex-direction:column;align-items:stretch;">
         <span class="settings-label">Layout check</span>
         <div class="settings-hint">${layoutCheckSummaryText()}</div>
       </div>
@@ -9444,6 +9457,7 @@ function renderSettingsTab() {
     </div>
   `;
   loadDatabaseUsage();
+  loadNotKnownCount();
   loadWorkflowHealth();
   renderBuildStatus(); // fill the Build row with the last check (current / stale / unknown)
 }
@@ -9513,6 +9527,41 @@ async function loadWorkflowHealth() {
     }
   } catch (e) {
     el.textContent = `Could not read workflow_runs (${e.message || e}) — job health unknown.`;
+    el.style.color = 'var(--red)';
+  }
+}
+
+// db/042's not_known count in Settings, beside the other "is anything being written wrong" readouts (ruled
+// 2026-11-11: a warning in a workflow log is not a warning). The classification is core/execution-mode-count.js,
+// shared with the daily log (scripts/count-not-known.mjs). Both reads page and check their counts; a failed read
+// says so in red, never an empty count.
+async function loadNotKnownCount() {
+  const el = document.getElementById('not-known-count');
+  if (!el) return;
+  try {
+    // CONTROL: trades_v2 is never empty, so a total of 0 means the reads are denied or broken (RLS answers a denied
+    // read with an empty list, not an error) -- and "none recorded without Live/Paper" would then be false comfort.
+    const all = await supabaseClient.from('trades_v2').select('id', { count: 'exact', head: true });
+    if (all.error) throw all.error;
+    if (!all.count) throw new Error('trades_v2 reads back empty, so the count cannot be trusted');
+    const [pf, tr] = await Promise.all([
+      readAllRows(() => supabaseClient.from('portfolio').select('id, ticker, execution_mode, execution_mode_source, code_version', { count: 'exact' })
+        .eq('execution_mode', 'not_known').order('id', { ascending: true })),
+      readAllRows(() => supabaseClient.from('trades_v2').select('id, ticker, execution_mode, execution_mode_source, sale_code_version', { count: 'exact' })
+        .eq('execution_mode', 'not_known').order('id', { ascending: true })),
+    ]);
+    if (pf.error) throw pf.error;
+    if (tr.error) throw tr.error;
+    el.textContent = '';
+    el.style.color = '';
+    for (const l of notKnownLines(countNotKnown({ portfolio: pf.data, trades: tr.data }))) {
+      const d = document.createElement('div');
+      d.textContent = l.text; // text, never markup: tickers come from the tables
+      if (l.bad) d.style.color = 'var(--red)';
+      el.appendChild(d);
+    }
+  } catch (e) {
+    el.textContent = `Could not read the trades (${e.message || e}) — whether any was recorded without Live/Paper is unknown.`;
     el.style.color = 'var(--red)';
   }
 }

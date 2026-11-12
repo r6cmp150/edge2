@@ -43,7 +43,11 @@ const REGISTRY = {
     { verdict: S, empty: 'report: falls back to state.sold', denied: 'report runs on whatever local copy is left' },
     { verdict: S, empty: 'quota panel count = 0', denied: 'shows 0 trades' },
     { verdict: S, empty: 'archive: "No trades in Supabase to archive yet."', denied: 'says no trades exist' },
-    { verdict: S, empty: 'export: writes a file with sold = []', denied: 'a backup file with no trades, downloaded as if complete' }],
+    { verdict: S, empty: 'export: writes a file with sold = []', denied: 'a backup file with no trades, downloaded as if complete' },
+    { verdict: OK, empty: 'loadNotKnownCount CONTROL (2026-11-12): trades_v2 is never empty, so a head count of 0 = cannot tell, never "no defects"', denied: 'red: "whether any was recorded without Live/Paper is unknown"' },
+    { verdict: OK, empty: 'loadNotKnownCount, the not_known sales: paged, count checked; empty after the control passed = genuinely none', denied: 'the control above has already refused a denied table' }],
+  'app.js|portfolio': [
+    { verdict: S, empty: 'loadNotKnownCount, the not_known positions (2026-11-12): paged, count checked; empty = none open as not_known, which is also what no open positions reads as', denied: 'shows 0 positions in each line; the app\'s own portfolio load (core/store.js) fails visibly first if portfolio is denied' }],
   'app.js|analysis_periods': [
     { verdict: OK, empty: 'load: empty with periods already on this phone = cannot tell', denied: 'keeps the phone\'s periods, banner says so (fixed 2026-11-02; was WRITES_FROM_EMPTY)' },
     { verdict: S, empty: 'start period: insert().select() then data[0]', denied: 'insert lands, select reads empty, data[0] is undefined: throws after the write succeeded' }],
@@ -62,6 +66,10 @@ const REGISTRY = {
     { verdict: OK, empty: 'writeExecutionMode: update of the loaded row id, .select(\'id\') must return it; none = SETTINGS_NOT_SAVED, and the change log is not written', denied: 'the setting is not changed and says so; a trade waiting on the answer is recorded under the answer anyway' }],
   'scripts/audit-signal-log-splits.mjs|signal_log': [
     { verdict: OK, empty: 'guarded by assertReadable(signal_log) first', denied: 'the control throws: the audit fails instead of passing on nothing (fixed 2026-11-02; was PASS_ON_EMPTY)' }],
+  'scripts/count-not-known.mjs|${table}': [
+    { verdict: OK, empty: 'the not_known rows of portfolio / trades_v2 (2026-11-12): paged, Content-Range total checked; run only after a trades_v2 control count is non-zero, so empty = genuinely none', denied: 'the control fails first: "could not read", exit 1, the daily run shows red' }],
+  'scripts/count-not-known.mjs|trades_v2': [
+    { verdict: OK, empty: 'the CONTROL: trades_v2 is never empty; a total of 0 = cannot tell', denied: 'exit 1, "could not read", red' }],
   'scripts/backup-tables.mjs|${table}': [
     { verdict: OK, empty: 'judged by backup-rules floors and the portfolio rule', denied: 'refused: below the floor' },
     { verdict: OK, empty: 'month-file tables: the count the rows we hold must equal; no count at all throws', denied: 'a count of 0 against the rows we hold: refused, nothing written' }],

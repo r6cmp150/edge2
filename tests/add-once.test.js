@@ -82,6 +82,23 @@ run('a mode prompt queued behind another dialog: taps do nothing until it is ans
   assert.strictEqual(t.finals[0][6], 'paper', 'under the tapped mode');
 });
 
+// 2026-11-12 (reviewer): the waiting flag's only releases are the choice's callbacks. If showing the choice throws
+// (a stale cached shell without the dialog's elements), they never run: Add would be dead until a reload.
+run('a choice that throws while being shown releases the form at once and says so on the toast', async () => {
+  const t = load(); const btn = { disabled: false };
+  let reads = 0; global.readExecutionMode = async () => { reads++; return { mode: null, setAt: null }; };
+  global.showChoice = () => { throw new Error("Cannot set properties of null (setting 'textContent')"); };
+  const toasts = []; global.showGlobalErrorToast = m => toasts.push(m);
+  await global.__add('X', btn);
+  assert.strictEqual(btn.disabled, false, 'the button comes back');
+  assert.strictEqual(t.finals.length, 0, 'nothing recorded');
+  assert.ok(/The Live\/Paper question could not be shown \(Cannot set properties of null.*nothing was recorded\. Reload the app/.test(toasts[0]), toasts[0]);
+  global.showChoice = (m, opts, cb) => cb('live');
+  await global.__add('X', btn); t.release(); await new Promise(r => setTimeout(r, 0));
+  assert.strictEqual(reads, 2, 'the next tap is not blocked by a stuck flag');
+  assert.strictEqual(t.finals.length, 1);
+});
+
 run('finalize disables the button at its very start (the spread fetch is a network wait too)', () => {
   const i = app.indexOf('async function finalizeAddPortfolio(');
   assert.ok(app.slice(i, i + 200).includes('  if (btn) btn.disabled = true; // at the very start'));
