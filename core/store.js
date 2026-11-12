@@ -376,6 +376,25 @@ async function loadPortfolioFromSupabase() {
 // updated (anon has INSERT and SELECT only). Throws like its siblings here;
 // the caller (app.js recordSignalSnapshotAtBuy) is what makes it never
 // block or fail the add.
+// rating_snapshots for a list of tickers (the scan price history, 2026-11-12): the ONE in-list in app code, and the
+// reason it is allowed (tests/no-unchunked-in-list.test.js names this function): it CHUNKS the list (a long in-list
+// overflowed the URL at 371 ids, 2026-11-01), PAGES each chunk through readAllRows, and readAllRows CHECKS the rows
+// read against the exact count. All three, or it is not the thing allowed. { data, error }, never partial rows.
+const TICKER_IN_CHUNK = 100;
+async function selectRatingSnapshotsByTickers(tickers) {
+  const list = [...new Set(tickers || [])].sort();
+  const out = [];
+  for (let i = 0; i < list.length; i += TICKER_IN_CHUNK) {
+    const chunk = list.slice(i, i + TICKER_IN_CHUNK);
+    const { data, error } = await readAllRows(() => supabaseClient.from('rating_snapshots')
+      .select('id, ticker, captured_at, price', { count: 'exact' })
+      .in('ticker', chunk).order('captured_at', { ascending: false }).order('id', { ascending: true }));
+    if (error) return { data: null, error };
+    out.push(...data);
+  }
+  return { data: out, error: null };
+}
+
 async function insertSignalSnapshotAtBuy(row) {
   const { error } = await supabaseClient.from('signal_snapshot_at_buy').insert([row]);
   if (error) throw error;

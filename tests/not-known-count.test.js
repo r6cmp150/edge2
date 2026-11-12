@@ -97,12 +97,16 @@ await run('the app: a Settings row beside the other readouts, loaded on render, 
   const app = readSource('app.js');
   assert.ok(app.includes('<span class="settings-label">Trades without Live/Paper</span>\n        <div class="settings-hint" id="not-known-count">Loading…</div>'));
   assert.ok(app.includes('  loadNotKnownCount();\n  loadWorkflowHealth();'), 'loaded with the Settings render');
-  const fn = app.slice(app.indexOf('async function loadNotKnownCount('), app.indexOf('const DB_ROW_LIMIT'));
+  // CHANGED 2026-11-12, declared: the read moved into readNotKnownCount and is cached for the session (sessionRead,
+  // the scan history's mechanism; tests/scan-history.test.js holds the caching); and core/scan-history.js now loads
+  // between this file and core/orders.js.
+  const fn = app.slice(app.indexOf('async function readNotKnownCount('), app.indexOf('// ── Scan price history'));
   assert.ok(fn.indexOf("select('id', { count: 'exact', head: true })") < fn.indexOf('readAllRows('), 'the control first');
   assert.ok(fn.includes("if (!all.count) throw"), 'a zero total is a failed read');
+  assert.ok(/it catches a BLANKET denial, not a policy that filters some rows/.test(fn), 'the control says which case it covers');
   assert.ok(/whether any was recorded without Live\/Paper is unknown/.test(fn) && fn.includes("el.style.color = 'var(--red)'"));
   assert.ok(fn.includes('notKnownLines(countNotKnown('), 'the shared classifier, not a copy');
-  assert.ok(/<script src="core\/execution-mode-count\.js\?v=\d{14}"><\/script>\n  <script src="core\/orders\.js/.test(readSource('index.html').replace(/<script src="core\/store\.js[^\n]*\n  /, '')), 'loaded before app.js');
+  assert.ok(/<script src="core\/execution-mode-count\.js\?v=\d{14}"><\/script>\n  <script src="core\/scan-history\.js\?v=\d{14}"><\/script>\n  <script src="core\/orders\.js/.test(readSource('index.html')), 'loaded before app.js');
 });
 
 await run('the workflow: a read-only step after the backup is committed, turned red by its own fail step, before the outcome is logged', () => {

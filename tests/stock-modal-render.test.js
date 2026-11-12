@@ -110,6 +110,8 @@ await run('not held: the modal renders with the Add button, and the capture of w
   const a = r.shown;
   assert.ok(a && a.ticker === 'XYZ' && a.held === false && typeof a.renderedAt === 'string', 'the capture ran');
   assert.ok('gate' in a && 'daySuppressed' in a && 'score' in a && 'label' in a && a.scoreSource === 'scan', JSON.stringify(a));
+  // 2026-11-12 (the scan price history): the modal carries its section, and the Add button is still there with it
+  assert.ok(r.body.includes('Your recent scans of XYZ') && r.body.includes('id="scan-hist-modal"'), 'the scan history section');
 });
 
 await run('held: "Record another buy", and the capture says held', async () => {

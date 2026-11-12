@@ -2397,6 +2397,7 @@ async function writeRatingSnapshots(signals) {
     }));
     const { error } = await supabaseClient.from('rating_snapshots').insert(rows);
     if (error) { console.error('Supabase snapshot write failed:', error.message); noteRatingFailure(rows, error); return; }
+    scanHistoryChanged();
   } catch(e) {
     // A thrown write (network, timeout) used to stop at the console: no
     // banner, nothing kept for Retry (2026-11-02). Now it's kept like any
@@ -2464,6 +2465,7 @@ async function retryRatingWrites() {
       if (landed.length > 0) { kept.push({ ...b, message: 'partly landed; not retried, to avoid duplicates' }); continue; }
       const { error } = await supabaseClient.from('rating_snapshots').insert(b.rows);
       if (error) throw error;
+      scanHistoryChanged();
     } catch (e) {
       kept.push({ ...b, message: `${e?.code ? e.code + ': ' : ''}${e?.message || e}`.slice(0, 200) });
     }
@@ -2678,6 +2680,8 @@ function renderSignalsTab() {
   }
 
   container.innerHTML = html;
+  ensureScanHistory();
+  refreshScanHistoryDom();
 }
 
 function renderPreMarketSection(movers) {
@@ -3102,6 +3106,7 @@ function renderStockCard(s, marketClosed) {
           <span class="sc-pct ${priceCls}">${chgSign}${Math.abs(s.todayChange).toFixed(1)}%</span>
         </div>
         <div class="sc-company">${s.company}</div>
+        ${scanHistoryCardHtml(s.ticker, 'signals')}
       </div>
       <div class="sc-grid">
         <div class="sc-target-card">
@@ -3485,6 +3490,7 @@ async function openStockModal(ticker) {
   const held = ownedPos ? currentSignalForHolding(ticker) : null;
   const s = (held && !held.scoreOnly && !held.notEvaluatedReason) ? held : state.signals.find(x => x.ticker === ticker);
   const pendingOrder = ownedPos ? null : getPendingOrder(ticker);
+  ensureScanHistory([ticker]); // a ticker new to the cached read widens it; one already in it reads nothing
 
   showModal(`<div class="modal-handle"></div>
     <div class="modal-header">
@@ -3762,6 +3768,8 @@ async function openStockModal(ticker) {
       <div class="chart-wrap">
         <canvas id="price-chart"></canvas>
       </div>
+
+      ${scanHistoryModalSection(ticker)}
 
       <div class="section-label">Price Levels</div>
       <div class="levels-grid">
@@ -4758,6 +4766,7 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order, exe
   }
   // After the position exists (its code_version is now stamped), never awaited.
   recordSignalSnapshotAtBuy(position, signalSnapshotAtBuy);
+  invalidateSessionRead('notKnown'); // a trade was recorded: the count may have changed
 
   state.portfolio.push(position);
   closeModal();
@@ -5557,9 +5566,10 @@ async function renderPortfolioTab() {
         </div>
         <div class="pf-price-cell">
           <div class="pf-price-label">Stop</div>
-          <div class="pf-price-val pf-red">$${p.stop.toFixed(2)}</div>
+          <div class="pf-price-val pf-red">${p.stop.toFixed(2)}</div>
         </div>
       </div>
+      <div style="padding:0 14px">${scanHistoryCardHtml(p.ticker, 'portfolio')}</div>
       ${intradayLineHtml}
       <div class="pf-grid">
         <div class="pf-grid-cell">
@@ -5644,6 +5654,8 @@ async function renderPortfolioTab() {
   const sumEl  = document.getElementById('pf-summary');
   if (listEl) listEl.innerHTML = staleBanner + (html || `<div class="empty-state"><p>No ${engineFilter} positions.</p></div>`);
   if (sumEl)  sumEl.innerHTML  = sumHtml;
+  ensureScanHistory();
+  refreshScanHistoryDom();
 }
 
 function buildWeekendBanner() {
@@ -6874,6 +6886,7 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
     // own persist('sold') already fired before this async write completed.
     record.supabaseId = data[0].id;
     persist('sold');
+    invalidateSessionRead('notKnown'); // a trade was recorded: the count may have changed
     return noteSaleWrite(pos, 'WRITTEN', null, null);
   } catch(e) {
     return noteSaleWrite(pos, 'SALE_FAILED', e.message, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
@@ -9531,39 +9544,148 @@ async function loadWorkflowHealth() {
   }
 }
 
+// ── Session reads (2026-11-12) ──
+// One mechanism for the reads whose answer changes only when something specific happens (the reviewer: the not_known
+// count and the scan history, the same shape, so one mechanism). Held in memory for the session, OUTSIDE `state`, so
+// persist() and the storage tiers never see them. A read covers a set of keys; asking for keys it already covers
+// re-uses it (sorting, switching tabs, the banner tick: no query); asking for more reads the union; invalidate()
+// marks it stale, and the next ask reads again. onSettle runs once the read lands or fails, to redraw.
+const _sessionReads = new Map(); // name -> { have: Set, status: 'loading'|'ready'|'failed', value, error, stale }
+function sessionRead(name, want, load, onSettle) {
+  const e = _sessionReads.get(name);
+  const wanted = [...want];
+  // a FAILED read is asked again next time, never held as the answer for the rest of the session
+  if (e && !e.stale && e.status !== 'failed' && wanted.every(k => e.have.has(k))) return e;
+  const next = { have: new Set([...(e && !e.stale ? e.have : []), ...wanted]), status: 'loading', value: null, error: null, stale: false };
+  _sessionReads.set(name, next);
+  Promise.resolve().then(() => load([...next.have]))
+    .then(v => { next.status = 'ready'; next.value = v; }, err => { next.status = 'failed'; next.error = err?.message || String(err); })
+    .then(() => { if (_sessionReads.get(name) === next && onSettle) onSettle(next); });
+  return next;
+}
+function invalidateSessionRead(name) { const e = _sessionReads.get(name); if (e) e.stale = true; }
+
 // db/042's not_known count in Settings, beside the other "is anything being written wrong" readouts (ruled
 // 2026-11-11: a warning in a workflow log is not a warning). The classification is core/execution-mode-count.js,
 // shared with the daily log (scripts/count-not-known.mjs). Both reads page and check their counts; a failed read
-// says so in red, never an empty count.
-async function loadNotKnownCount() {
+// says so in red, never an empty count. Read once per session and again only after a trade is recorded
+// (invalidateSessionRead('notKnown') at the buy's insert and the sale's write), not on every Settings render.
+async function readNotKnownCount() {
+  // CONTROL: trades_v2 is never empty, so a total of 0 means the reads are denied or broken (RLS answers a denied
+  // read with an empty list, not an error) -- and "none recorded without Live/Paper" would then be false comfort.
+  // Its limit: it catches a BLANKET denial, not a policy that filters some rows (anon's SELECT on trades_v2 is
+  // `using (true)` today, so the blanket case is the realistic one; a partial filter would pass this control).
+  const all = await supabaseClient.from('trades_v2').select('id', { count: 'exact', head: true });
+  if (all.error) throw all.error;
+  if (!all.count) throw new Error('trades_v2 reads back empty, so the count cannot be trusted');
+  const [pf, tr] = await Promise.all([
+    readAllRows(() => supabaseClient.from('portfolio').select('id, ticker, execution_mode, execution_mode_source, code_version', { count: 'exact' })
+      .eq('execution_mode', 'not_known').order('id', { ascending: true })),
+    readAllRows(() => supabaseClient.from('trades_v2').select('id, ticker, execution_mode, execution_mode_source, sale_code_version', { count: 'exact' })
+      .eq('execution_mode', 'not_known').order('id', { ascending: true })),
+  ]);
+  if (pf.error) throw pf.error;
+  if (tr.error) throw tr.error;
+  return notKnownLines(countNotKnown({ portfolio: pf.data, trades: tr.data }));
+}
+function renderNotKnownCount(entry) {
   const el = document.getElementById('not-known-count');
-  if (!el) return;
-  try {
-    // CONTROL: trades_v2 is never empty, so a total of 0 means the reads are denied or broken (RLS answers a denied
-    // read with an empty list, not an error) -- and "none recorded without Live/Paper" would then be false comfort.
-    const all = await supabaseClient.from('trades_v2').select('id', { count: 'exact', head: true });
-    if (all.error) throw all.error;
-    if (!all.count) throw new Error('trades_v2 reads back empty, so the count cannot be trusted');
-    const [pf, tr] = await Promise.all([
-      readAllRows(() => supabaseClient.from('portfolio').select('id, ticker, execution_mode, execution_mode_source, code_version', { count: 'exact' })
-        .eq('execution_mode', 'not_known').order('id', { ascending: true })),
-      readAllRows(() => supabaseClient.from('trades_v2').select('id, ticker, execution_mode, execution_mode_source, sale_code_version', { count: 'exact' })
-        .eq('execution_mode', 'not_known').order('id', { ascending: true })),
-    ]);
-    if (pf.error) throw pf.error;
-    if (tr.error) throw tr.error;
-    el.textContent = '';
-    el.style.color = '';
-    for (const l of notKnownLines(countNotKnown({ portfolio: pf.data, trades: tr.data }))) {
-      const d = document.createElement('div');
-      d.textContent = l.text; // text, never markup: tickers come from the tables
-      if (l.bad) d.style.color = 'var(--red)';
-      el.appendChild(d);
-    }
-  } catch (e) {
-    el.textContent = `Could not read the trades (${e.message || e}) — whether any was recorded without Live/Paper is unknown.`;
+  if (!el || entry.status === 'loading') return;
+  el.textContent = '';
+  el.style.color = '';
+  if (entry.status === 'failed') {
+    el.textContent = `Could not read the trades (${entry.error}) — whether any was recorded without Live/Paper is unknown.`;
     el.style.color = 'var(--red)';
+    return;
   }
+  for (const l of entry.value) {
+    const d = document.createElement('div');
+    d.textContent = l.text; // text, never markup: tickers come from the tables
+    if (l.bad) d.style.color = 'var(--red)';
+    el.appendChild(d);
+  }
+}
+function loadNotKnownCount() {
+  const entry = sessionRead('notKnown', ['all'], readNotKnownCount, renderNotKnownCount);
+  renderNotKnownCount(entry); // a cached answer draws at once; a read in flight draws when it lands
+}
+
+// ── Scan price history (Roman's feature, 2026-11-12; core/scan-history.js holds the wording) ──
+// One read for every ticker on screen (Signals, Portfolio, an open modal) through the one chunked, paged helper,
+// cached for the session (sessionRead), read again only when a ticker is new to it or a scan's own snapshot rows
+// have just been written. Drawn into placeholders by text, so a late answer never re-renders a tab.
+function scanHistoryWanted(extra) {
+  return new Set([...(state.signals || []).map(s => s.ticker), ...(state.portfolio || []).map(p => p.ticker), ...(extra || [])].filter(Boolean));
+}
+// A scan's snapshot rows just landed: the newest point changed. Read again for what is on screen, and redraw.
+function scanHistoryChanged() {
+  invalidateSessionRead('scanHistory');
+  ensureScanHistory();
+  refreshScanHistoryDom();
+}
+function ensureScanHistory(extra) {
+  return sessionRead('scanHistory', scanHistoryWanted(extra), async tickers => {
+    const { data, error } = await selectRatingSnapshotsByTickers(tickers);
+    if (error) throw error;
+    return scanPointsByTicker(data);
+  }, refreshScanHistoryDom);
+}
+// The card's placeholder: scope 'signals' compares with the scans BEFORE the one on screen, 'portfolio' with the last.
+function scanHistoryCardHtml(ticker, scope) {
+  return `<div class="price-mono" data-scan-hist="${ticker}" data-scan-scope="${scope}" style="font-size:11px;line-height:15px;color:var(--muted);margin-top:4px">${scanHistoryCardText(ticker, scope, false)}</div>`;
+}
+function scanHistoryCardText(ticker, scope, agesOnly) {
+  const e = _sessionReads.get('scanHistory');
+  const status = !e ? 'loading' : e.status;
+  const points = status === 'ready' ? (e.value.get(ticker) || []) : [];
+  const line = scanCardLine(status, points, scope === 'signals' ? (state.lastScanTime ?? null) : null, Date.now());
+  return agesOnly ? line.agesOnly : line.full;
+}
+// Every placeholder on the page, by text. The line may wrap to two lines (15px each); if prices and ages still need
+// more than two, the prices go and the ages stay (ruled 2026-11-11: if only one fits, the ages stay). Measured here,
+// never assumed: the 390px render showed the narrower Portfolio card dropping prices when one line was the limit.
+const SCAN_HISTORY_MAX_HEIGHT = 2 * 15 + 1;
+function refreshScanHistoryDom() {
+  for (const el of document.querySelectorAll('[data-scan-hist]')) {
+    const t = el.getAttribute('data-scan-hist'), scope = el.getAttribute('data-scan-scope');
+    el.textContent = scanHistoryCardText(t, scope, false);
+    if (el.scrollHeight > SCAN_HISTORY_MAX_HEIGHT) el.textContent = scanHistoryCardText(t, scope, true);
+  }
+  const m = document.getElementById('scan-hist-modal');
+  if (m) m.innerHTML = scanHistoryModalHtml(m.getAttribute('data-scan-modal'));
+}
+// The modal: the scan on screen (when this ticker is in it), marked, then up to 3 before it, with exact PT times,
+// the session each fell in, the price shown, and the change from the scan before, as text. Then what the number is.
+// An error message is untrusted text going into markup.
+function scanHistoryEscape(t) {
+  return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function scanHistoryModalHtml(ticker) {
+  const e = _sessionReads.get('scanHistory');
+  if (!e || e.status === 'loading') return `<div class="settings-hint">Loading…</div>`;
+  if (e.status === 'failed') return `<div class="settings-hint" style="color:var(--red)">Scan history could not be read (${scanHistoryEscape(e.error)}). Nothing is shown rather than a partial list.</div>`;
+  const points = e.value.get(ticker) || [];
+  if (!points.length) return `<div class="settings-hint">No recorded scans of ${ticker}. EDGE records a stock only when it scores ${RATING_SNAPSHOT_MIN_SCORE} or more.</div>`;
+  const onScreen = (state.signals || []).some(s => s.ticker === ticker) ? (state.lastScanTime ?? null) : null;
+  const { rows, total, first } = scanModalRows(points, onScreen);
+  const now = Date.now();
+  const when = ms => new Date(ms).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const hhmm = ms => new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
+  const SESSION_WORDS = { PRE_MARKET: 'pre-market', REGULAR: 'regular session', AFTER_HOURS: 'after-hours', CLOSED: 'market closed' };
+  const items = rows.map(r => `
+    <div style="padding:6px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;color:var(--muted)">${when(r.at)} PT · ${scanAgeLabel(r.at, now, 'modal')} · ${SESSION_WORDS[classifySession(scanPtDate(r.at), hhmm(r.at))] || 'session unknown'}${r.current ? ' · <strong>the scan on screen</strong>' : ''}</div>
+      <div class="price-mono" style="font-size:14px">$${r.price.toFixed(2)}${r.change ? ` <span style="font-size:12px;color:var(--muted)">${r.change} from the scan before</span>` : ''}</div>
+    </div>`).join('');
+  const earlier = rows.filter(r => !r.current).length;
+  const countLine = total > rows.length ? `${total} recorded scans of ${ticker} since ${new Date(first).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' })}.`
+    : earlier < SCAN_HISTORY_SHOWN ? `Only ${total} recorded scan${total === 1 ? '' : 's'} of ${ticker}.` : `${total} recorded scans of ${ticker}.`;
+  return `${items}
+    <div class="settings-hint" style="margin-top:6px">${countLine} The price EDGE was showing at each scan: a quote at that moment, not a traded price. Scans happen when you open or refresh the app, and EDGE records a stock only in scans where it scored ${RATING_SNAPSHOT_MIN_SCORE} or more, so the gaps between these times vary and may hide scans.</div>`;
+}
+function scanHistoryModalSection(ticker) {
+  return `<div class="section-label">Your recent scans of ${ticker}</div>
+      <div id="scan-hist-modal" data-scan-modal="${ticker}">${scanHistoryModalHtml(ticker)}</div>`;
 }
 
 const DB_ROW_LIMIT = 50000;

@@ -66,6 +66,8 @@ const REGISTRY = {
     { verdict: OK, empty: 'writeExecutionMode: update of the loaded row id, .select(\'id\') must return it; none = SETTINGS_NOT_SAVED, and the change log is not written', denied: 'the setting is not changed and says so; a trade waiting on the answer is recorded under the answer anyway' }],
   'scripts/audit-signal-log-splits.mjs|signal_log': [
     { verdict: OK, empty: 'guarded by assertReadable(signal_log) first', denied: 'the control throws: the audit fails instead of passing on nothing (fixed 2026-11-02; was PASS_ON_EMPTY)' }],
+  'core/store.js|rating_snapshots': [
+    { verdict: S, empty: 'selectRatingSnapshotsByTickers (the scan price history, 2026-11-12): chunked, paged, count checked; empty for a ticker = "No scans recorded" / "No earlier scans recorded", which is also what a ticker under 60 at every scan reads as (said in the modal)', denied: 'every card reads "No ... scans recorded" (an RLS denial is an empty list, not an error); the failed state is only reached by an error. A display, no decision: nothing is written or held from it' }],
   'scripts/count-not-known.mjs|${table}': [
     { verdict: OK, empty: 'the not_known rows of portfolio / trades_v2 (2026-11-12): paged, Content-Range total checked; run only after a trades_v2 control count is non-zero, so empty = genuinely none', denied: 'the control fails first: "could not read", exit 1, the daily run shows red' }],
   'scripts/count-not-known.mjs|trades_v2': [

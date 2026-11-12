@@ -593,7 +593,10 @@ function chainCalls(src, from) {
     if (ch === "'" || ch === '"' || ch === '`') { q = ch; continue; }
     if ('([{'.includes(ch)) depth++;
     else if (')]}'.includes(ch)) { if (depth === 0) break; depth--; }
-    else if (depth === 0 && ch === ';') break;
+    // a top-level ',' ends the chain too (2026-11-12): inside Promise.all([a.from(..)..., b.from(..)...]) the next
+    // element is not this chain's next call. Found when the lexer stripped a comment it had been leaving in, which had
+    // been ending such a chain by accident (an apostrophe in the comment opened a "string").
+    else if (depth === 0 && (ch === ';' || ch === ',')) break;
     else if (depth === 0 && ch === '.') {
       const m = src.slice(i).match(/^\.([a-zA-Z]+)\(/);
       if (m) { const args = balanced(src, i + m[0].length - 1); calls.push({ name: m[1], args: entries(`{${args.slice(1, -1)}}`) }); i += m[0].length - 1 + args.length - 1; }

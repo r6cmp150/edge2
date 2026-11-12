@@ -20,7 +20,8 @@ run('a scan writes its snapshots and deletes nothing', async () => {
     insert: async rows => { calls.push(['insert', name, rows.length]); return { error: null }; },
     delete: () => { calls.push(['delete', name]); const q = { lt: async () => ({ error: null }) }; return q; },
   });
-  const ctx = { console, Date, JSON, Math, supabaseClient: { from: table } };
+  // CHANGED 2026-11-12, declared: the scan price history adds hooks these functions now call; stubbed here, held by tests/scan-history.test.js.
+  const ctx = { console, Date, JSON, Math, supabaseClient: { from: table }, scanHistoryChanged: () => {} };
   vm.createContext(ctx);
   vm.runInContext(app.match(/^const RATING_SNAPSHOT_MIN_SCORE = \d+;$/m)[0] + '\n' + grab('writeRatingSnapshots') + '\n;globalThis.__w = writeRatingSnapshots;', ctx);
   await ctx.__w([{ ticker: 'A', score: 80, signal: 'SOFT BUY' }, { ticker: 'B', score: 40 }]);

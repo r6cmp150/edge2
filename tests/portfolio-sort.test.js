@@ -180,7 +180,9 @@ function fixture() {
 }
 
 function renderCtx() {
-  const ctx = { Date: FakeDate, Math, JSON, Set, Map, Intl, Object, String, Number, Array, Infinity, NaN, isFinite, console, Promise };
+  // CHANGED 2026-11-12, declared: the scan price history adds hooks these functions now call; stubbed here, held by tests/scan-history.test.js.
+  const ctx = { Date: FakeDate, Math, JSON, Set, Map, Intl, Object, String, Number, Array, Infinity, NaN, isFinite, console, Promise,
+    scanHistoryCardHtml: () => '', ensureScanHistory: () => {}, refreshScanHistoryDom: () => {} };
   vm.createContext(ctx);
   for (const f of ['core/clock.js', 'core/indicators.js', 'core/market-data.js', 'core/orders.js', 'core/edge-scoring.js', 'core/entry-gate.js']) vm.runInContext(strip(readSource(f)), ctx);
   vm.runInContext([

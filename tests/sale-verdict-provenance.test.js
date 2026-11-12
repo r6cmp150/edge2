@@ -109,6 +109,8 @@ run('the sale write sends verdict_provenance and signal_before_sale, and the ver
   const ctx = {
     console, Math, JSON, Date, Number, String,
     scoreLabel: () => 'WATCH', currentCodeVersion: () => ({ app: 'x', scoring: 2 }), persist() {},
+    // CHANGED 2026-11-12, declared: the scan price history adds hooks these functions now call; stubbed here, held by tests/scan-history.test.js.
+    invalidateSessionRead() {},
     noteSaleWrite: (p, outcome) => outcome,
     supabaseClient: { from: () => ({ insert: rows => { inserted = rows[0]; return { select: async () => ({ data: [{ id: 1 }], error: null }) }; } }) },
   };
