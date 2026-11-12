@@ -49,21 +49,30 @@ function readRuns(sha) {
   return JSON.parse(out).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
+const USAGE = 'usage: node scripts/check-push.mjs <sha> --before | node scripts/check-push.mjs <sha> [--wait-seconds N]';
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const sha = process.argv[2];
-  if (!/^[0-9a-f]{7,40}$/.test(sha || '')) { console.error('usage: node scripts/check-push.mjs <sha> --before | node scripts/check-push.mjs <sha> [--wait-seconds N]'); process.exit(2); }
-  const full = execFileSync('git', ['rev-parse', sha], { encoding: 'utf8' }).trim();
+  // 2026-11-12: every line this script prints names what it checked, and when it cannot identify its subject it says
+  // so and fails: exit 2, nothing checked. A usage message names nothing, so it must never pass for a verdict.
+  const notRun = why => { console.error(`CHECK NOT RUN: ${why}; nothing was checked.`); console.error(USAGE); process.exit(2); };
+  if (!/^[0-9a-f]{7,40}$/.test(sha || '')) notRun(sha === undefined ? 'no commit SHA given' : `${JSON.stringify(sha)} is not a commit SHA`);
+  let full;
+  try { full = execFileSync('git', ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { full = ''; }
+  if (!full) notRun(`${sha} is not a commit in this clone`);
   const pend = judgePending(full, fileAt(full, 'db/pending-migrations.json'), fileAt(full, 'db/live-columns.json'));
   if (process.argv.includes('--before')) { console.log(pend.ok ? `PUSH MAY PROCEED: ${pend.line}` : pend.line); process.exit(pend.ok ? 0 : 1); }
   if (!pend.ok) { console.log(pend.line.replace('PUSH REFUSED', 'PUSH FAILED (already deployed)')); process.exit(1); }
   const i = process.argv.indexOf('--wait-seconds');
-  const deadline = Date.now() + (i > 0 ? Number(process.argv[i + 1]) : 0) * 1000;
+  const wait = i > 0 ? Number(process.argv[i + 1]) : 0;
+  if (!(wait >= 0)) notRun(`--wait-seconds needs a number of seconds, got ${JSON.stringify(process.argv[i + 1] ?? null)}`); // NaN would poll forever
+  const deadline = Date.now() + wait * 1000;
   let verdict;
   for (;;) {
     let runs = null;
     try { runs = readRuns(full); } catch (e) {
       // gh failing isn't a green run. It can't tell, so the push isn't confirmed.
-      console.error(`PUSH NOT CONFIRMED: could not read the runs (${String(e.message).split('\n')[0]}).`);
+      console.error(`PUSH NOT CONFIRMED: could not read the ${WORKFLOW} runs for ${full.slice(0, 12)} (${String(e.message).split('\n')[0]}).`);
       process.exit(1);
     }
     verdict = judgePush(full, runs);

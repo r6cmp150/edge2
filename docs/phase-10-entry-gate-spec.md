@@ -2716,6 +2716,33 @@ both trees only because the defect happened not to touch a write site. Both vers
 that must agree are worth more than one believed to be clean. A test double is such a component: see "A test double
 must be able to represent the failure it is meant to detect" (§7.7, end).
 
+**A CHECK'S VERDICT NAMES WHAT IT CHECKED, AND A CHECK THAT CANNOT IDENTIFY ITS SUBJECT FAILS RATHER THAN PASSES
+(2026-11-12, the reviewer's rule).** A successful call does not identify the caller; an exit code of 0 does not
+identify what was examined. The instance, 13ccc81: `check-push --before` was called without its SHA, printed only a
+usage line, and the push chained after it went ahead. Run, not read: the script already exited 2 on a missing or bad
+SHA, with usage on stderr. The gate opened because the command was `check-push --before 2>&1 | tail -5 && git push`:
+`&&` saw tail's status, not the check's. And a usage line names nothing, so in the output it could pass for a check.
+`scripts/check-push.mjs` now prints `CHECK NOT RUN: <what it could not identify>; nothing was checked.` and exits 2
+for no SHA, a non-SHA, a SHA that is no commit in this clone (it used to die in a stack trace) and a `--wait-seconds`
+that is not a number (it used to poll forever); every PUSH verdict names its commit, and `tests/check-push.test.js`
+holds both (10 mutants killed), the gh-failure line by executing it against a fake `gh` that fails (a regex over
+source cannot see an unbound name), and every line `judgePending` can return by branch. The pipe that opened the gate
+is the truncation rule violated, not a new rule: see "An error is never truncated", its 13ccc81 line.
+The `scripts/git-hooks/pre-push` hook runs `--before` by SHA on every commit pushed to main; that is a seatbelt, not
+this rule's answer.
+
+**A VERDICT THAT APPEARS TWICE IS A FINDING (2026-11-12, the reviewer's rule).** Something is running that you did
+not account for. Explain the duplicate; never suppress or de-duplicate it. The instance: "PUSH MAY PROCEED" printed
+twice on 2bbc8e0's push, once from the explicit `--before` and once from the pre-push hook, and asking why is how the
+hook was found, along with the fact that it does not exist in a working tree whose checkout predates it.
+
+**A DIAGNOSIS ISSUED TOGETHER WITH AN INSTRUCTION TO MEASURE IT IS A HYPOTHESIS, AND IS WRITTEN AS ONE (2026-11-12,
+a reviewer rule: it governs what may be taken from the reviewer's notes).** Where a note states a cause and a check
+of that cause together, the check outranks the cause: run the check and report against it, not against the sentence.
+The instance: the reviewer wrote that `check-push` "exited 0 while checking nothing", with the instruction to run it
+and print the exit code first. Run: it exited 2 on no SHA, on `--before` alone and on a non-SHA. The false mechanism
+did not reach this spec because the measurement came first.
+
 **A PRE-REGISTERED SCRIPT EDITED AFTER ITS RUN IS RE-RUN, AND THE RESULT IS SHOWN UNCHANGED, OR THE RESULT IS
 WITHDRAWN (2026-11-12, the reviewer's rule). A declaration of harmlessness is not a measurement of it.**
 `prereg-peak-before-after.mjs` gained the no-sale-time exclusion after its first run; "0 such rows, so it cannot have
@@ -2730,6 +2757,10 @@ the test runner cutting the path off the one test that died in a parallel run. `
 its one-line summaries, the complete output of every file that did not pass, as captured, and `--json` carries it;
 `tests/run-tests-checker.test.js` holds it (5 mutants killed, among them a mistyped trim that ate trailing letters and
 was itself written while fixing this).
+- 13ccc81 (2026-11-12): `check-push --before 2>&1 | tail -5 && git push ... 2>&1 | tail -2`. One construct, two losses:
+  the first `tail` replaced the gate's exit status with its own, and the second cut the pre-push hook's output, so
+  whether the hook ran on 13ccc81 is NOT ESTABLISHED. A command whose output is the record of what happened is capture.
+  See "A check's verdict names what it checked".
 
 **THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
 mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which
