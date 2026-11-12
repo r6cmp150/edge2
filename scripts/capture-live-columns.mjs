@@ -33,6 +33,13 @@ if (!file || !captured || !by || !applied.length) {
   process.exit(2);
 }
 
+// The name carries the captured date, plus a letter for a day's later captures (live-schema-2026-11-11b.json): an
+// earlier capture is never overwritten to make room, and no capture is given a date it wasn't taken on.
+const named = /^live-schema-(\d{4}-\d{2}-\d{2})[a-z]?\.json$/.exec(path.basename(file));
+if (!named || named[1] !== captured) {
+  console.error(`${path.basename(file)}: not named live-schema-<captured date>[letter].json for --captured ${captured}`);
+  process.exit(2);
+}
 const raw = readFileSync(file);
 const parsed = JSON.parse(raw.toString('utf8'));
 const version = Array.isArray(parsed) ? 'v1' : parsed && parsed.query === 'inspect-public-schema-v2' ? 'v2' : null;

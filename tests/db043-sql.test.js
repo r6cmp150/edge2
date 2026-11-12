@@ -80,4 +80,17 @@ await run('the guard literal is the same text in run 1 (twice) and the rollback,
   for (const m of ['live', 'paper', 'not_known']) assert.ok(run2.includes(`jsonb_build_array('trades_v2', '${m}', 'copied_from_position', 'key'`), m);
   assert.ok(run2.includes(`jsonb_build_array('portfolio', 'paper', 'copied_from_position', 'check'`), 'portfolio stays refused');
 });
+
+await run('once a capture declares db/043 applied, the live constraint is run 1\'s own post-condition, and portfolio\'s is not widened', () => {
+  // Checked against the capture's constraint text, not against run 2's message: the expected text is built from the
+  // replace() run 1 reads back before it commits, taken from the file, so the two cannot drift apart.
+  const live = JSON.parse(readSource('db/live-columns.json'));
+  if (!live._migrations.applied.includes(43)) return;
+  const post = sql.match(/applied_043 constant text := replace\(\s*\$d\$(CHECK [\s\S]*?)\$d\$,\s*\$r\$([\s\S]*?)\$r\$,\s*\$r\$([\s\S]*?)\$r\$\);/);
+  assert.ok(post, 'run 1\'s post-condition literal');
+  const expected = post[1].replace(post[2], post[3]);
+  assert.notStrictEqual(expected, post[1], 'the replace changes something');
+  assert.strictEqual(live.checks.trades_v2.trades_v2_execution_mode_chk, expected);
+  assert.ok(!live.checks.portfolio.portfolio_execution_mode_chk.includes('copied_from_position'), 'portfolio refuses the new source');
+});
 })();
