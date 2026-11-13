@@ -151,5 +151,16 @@ function settingLabelsSrc() {
   return s.slice(i, s.indexOf('};', i) + 2);
 }
 
+// core/store.js's column validators, as source (carve of (c), 2026-11-12): MACRO_PATHS and RATING_TIERS with
+// checkedMacroPath, macroPathColumn and checkedRatingTier. Every writer of a macro path or a rating tier calls them,
+// so a test that evals a writer in isolation loads the real ones, never a stub that could accept what they refuse.
+function columnValidatorsSrc() {
+  const s = readSource('core/store.js');
+  const i = s.indexOf('const MACRO_PATHS = [');
+  const j = s.indexOf('function checkedRatingTier(');
+  if (i < 0 || j < 0) throw new Error('core/store.js: the column validators not found');
+  return s.slice(i, s.indexOf('\n}\n', j) + 3);
+}
+
 module.exports = {
-  virtualClock, readSource, evalModule, run, restoring, REPO_ROOT, settingLabelsSrc };
+  virtualClock, readSource, evalModule, run, restoring, REPO_ROOT, settingLabelsSrc, columnValidatorsSrc };

@@ -61,6 +61,7 @@ run('renderPortfolioTab: known render-time writes only (ratchet; spec §7.7 open
     'p.rsiSuspendedAtGainPct',      // first render with RSI >= 72 while protected -> recorded
     'state.portfolioPrices[p.ticker]', // last rendered price -> nav badge sell-warning count
     'state.portfolioPriceFetchFailed',
+    'state.displayedVerdicts[p.id]', // Verdict A, declared: the captured object IS the display, so a record may read it
   ];
   const found = [...new Set(['p', 'state'].flatMap(r => writesTo(src, r)))].sort();
   assert.deepStrictEqual(found, [...KNOWN].sort(), 'a new render-time write appeared (or a known one was fixed -- remove it from KNOWN)');

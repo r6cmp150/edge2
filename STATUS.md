@@ -200,7 +200,12 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
 - **S1 forward test, about a month out:** trades bought from 2026-11-12, at 20 S1 buy days (P&L after costs) and
   20 days with both S1 and S2-S4 trades (win rate, frictionless, reported separately). Roman changes nothing about
   what he trades: narrowing to S1 would act on an unestablished result and destroy the comparison group.
-- **Scoring v2 forward test: when v2 reaches 20 buy days, projected around 2026-11-24/25** (9 buy days by 11-06,
+- **RE-REGISTERED 2026-11-13, before post-(c) data: both forward tests (S1 and scoring v2) RESTART at the (c) build**
+  (`code_version.app` >= 20261112232800, by build stamp). Their populations are drawn from what the app showed, and
+  until (c) the macro reading raised the display line on 10 of 15 recorded-scan days. Pre-(c) trades are reported
+  apart, labelled "raised-line regime", with no verdict. The 11-24/25 projection below no longer holds; there is no
+  new date until the post-(c) buy rate is measured. Spec: the scoring v2 forward test's RE-REGISTERED paragraph.
+- **(superseded by the line above) Scoring v2 forward test: when v2 reaches 20 buy days, projected around 2026-11-24/25** (9 buy days by 11-06,
   9 in the 10 trading days since 10-27; a projection, not a deadline). AMENDED 2026-11-11, before its data: its
   bar is above realistic costs, not above zero (a frictionless bar would pass a strategy that loses money); see
   the spec. The result stands whichever way it falls.
@@ -259,13 +264,44 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   backed-up positions, scripts/audit-departed-positions.mjs (below) finds no real position MISSING a sale row,
   but only 61 are confirmed exactly and 15 can't be told; positions bought and sold between backups are not
   covered. Kept apart from the ghost check: they answer opposite questions. See loss modes A and B below.
-- Step 4 after db/037: a real buy and a real sale, both landing.
-- RUN-ME-8, the extended capture (read-only), saved as `live-schema-2026-11-06.json`; then `db/live-columns.json` is
-  regenerated from it with 037, 038 and 040 declared applied, and checked against it.
-- db/038's undo (RUN-ME-7) stays available only until the app code that fills db/038's columns is pushed.
-- His four phone-only Settings values, recorded by hand today (`risk_per_trade_pct`, `max_loss_pct`,
-  `float_threshold_shares`, `developer_tools`). They have no backup until db/038 runs and the app code that saves them
-  is live.
+- db/038's undo (RUN-ME-7) is RETIRED with (c)'s landing (2026-11-12): (c) writes db/038's columns, so undoing db/038
+  would break the app's writes. Do not run it.
+- His four phone-only Settings values (`risk_per_trade_pct`, `max_loss_pct`, `float_threshold_shares`,
+  `developer_tools`): the (c) build saves them to Supabase when he saves Settings; until then it reads the phone copy
+  only for a value Supabase lacks, and the banner says which are phone-only (tests/settings-sources.test.js).
+
+## The macro sign-test (pre-registered; its clock starts when Roman reloads onto the (c) build)
+- Its input is `macro_observations`, which only the (c) build writes: 0 rows at 2026-11-12T22:30Z, read with anon,
+  whose SELECT policy is `using (true)` (11-11b), so empty, not hidden. Nothing wrote it from db/038's application
+  (11-06) to (c)'s landing.
+- The bar is 20 labelled days with at least 5 off the most common sign (scripts/lib/macro-sign-test.mjs, unchanged).
+  A day's label is its earliest qualifying observation, the same rule in the app and the test, so an extra Groq ask
+  later in the day cannot relabel it.
+- **Declared 2026-11-13, before the first observation was written (part of the registration, not an amendment):** any
+  day on which the deployed build's macro-overlay constant changed is excluded from the sign-test, decided by the
+  build stamps on that day's rows (`macro_observations.code_version`), not by the rows' contents.
+- **Before (c), the macro reading was NOT observe-only: it raised the display line (established from code and data,
+  2026-11-13).** On main before (c), `getDisplayThreshold` (app.js 1791-1796) returned the elevated cut for RISK_OFF
+  and GEOPOLITICAL (every category) and for a weak sector's universe. It never consulted `disableMacroOverlay`, and the
+  scan used it (app.js 2275). Roman's switch was on (`settings.disable_macro_overlay = true`, live 2026-11-13T01:13Z), so
+  his scores carried no adjustment, but the condition still decided which signals he was shown. On recorded scans
+  (rating_snapshots, 2,724 rows from 10-13, read whole and paged) the line was raised on 10 of 15 days: 4 broad, 8
+  sector, some both. So the measurement window starts at (c) for a second, stronger reason than the empty observations
+  table: signal lists before (c) were filtered by the reading; after (c) they are not.
+- **Coverage risk (measured 2026-11-13):** only the app writes observations; the scheduled logger does not. So a day is
+  labelled only if Roman scans in the app that day. Over the 30 days ending 2026-11-11, there was an app scan on 13 of
+  22 trading days: every day from 10-27, none on 10-13 to 10-22 or on 10-26. Source: rating_snapshots in the backup
+  at a5bfcbc, counted by distinct PT date. Main writes only rows scoring 60 or more, so a scan with none would not show;
+  but those 9 days also have no buy or sale recorded. The proposal that would fix it: the logger observes (never
+  applies) the condition, so every scheduled run labels its day. It comes after the refusal diff.
+- The writer is counted every day by `scripts/count-macro-observations.mjs` in backup-tables.yml. The run goes red
+  when scans by an observing build point to observations that can't be read, or a decided reading has no
+  observation. Before the first scan by (c) it says NOT STARTED.
+- Observe-only is held by consequence, not by the switch: `tests/macro-observe-only.test.js`, tests A to F, and its
+  coverage cross-check against tests/macro-consumers.test.js.
+- `scripts/macro-sign-horizon.mjs` is SUPERSEDED by the pre-registration it produced (20 days, 5 or more off the
+  most common sign). It reads `data/backups/signal_log.json`, deleted in 164099a (2026-11-05, monthly backups). Left
+  where it is; not to be run, re-pointed or run with `--rev`.
 
 ## Being verified
 - Step 5 after db/037, per workflow, by reading each `workflow_runs` row back against what the run intended: the
@@ -275,10 +311,13 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 ## Gated (app code waiting on a migration)
 - The harness found service_role missing from its default-ACL model (it named anon and authenticated by hand); it now
   applies every captured grantee. That is how db/039 draft's surviving service_role EXECUTE showed up.
-- The gated stack declares db/038 and db/039 in `db/pending-migrations.json`; its suite is green with their columns
-  reported as PENDING, and `node scripts/check-push.mjs <sha> --before` refuses it until both are confirmed applied.
-- (c) macro observe-only, Verdict A, the macro-path vocabulary of revision e: waiting on db/038.
-- (d) rating_snapshots outcomes: waiting on db/039.
+- (c), macro observe-only, Verdict A and the macro-path vocabulary of revision e: LANDED 2026-11-12. It was carved
+  from `macro-gated` at 38e3e9c as end-state files, with (d) excluded and `scripts/probe-anon-privileges.mjs` dropped
+  (ruled: a worse instrument than db/037's run-2 grid and db/035-run-3's rolled-back insert). Its gate, db/038, had
+  been met since 2026-11-06. Main has no `db/pending-migrations.json`: nothing landing needs db/039, and db/038 is
+  applied.
+- (d) rating_snapshots outcomes: waiting on db/039. It is still on `macro-gated` (local only; in the 2026-11-12
+  bundle), whose pending list still names db/038, now stale. Correct that if the branch is ever landed.
 - After the app-code push: the daily count of rows written after the push date whose `macro_path` is `'unknown'`.
   Expected zero; any non-zero is a writer that doesn't compute a path, or a bug. Not built yet.
 
@@ -349,6 +388,12 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **Budget not enforced, or "Deployed" counts something it should not** (Roman's screenshot, 2026-11-12 12:34 PT,
+  Portfolio): `Budget: $1500.00  Deployed: $5689.70  Available: -$4189.70`. Parked by the reviewer; not investigated.
+- **The phone's storage is full** (the same screenshot): the red "Save failed — signals" banner is persist('signals')
+  failing in localStorage. `signals` is a tier-4 cache, which may not evict anything, so the cached signal list did not
+  save. It is not a database write. The banner's one expanded entry ("something about JCP", Roman's words) is not yet
+  known exactly: JCP is in no table and no code (read 2026-11-13T01:12Z).
 - **The walker's lexer mis-reads nested template literals** (found 2026-11-12, BOUNDED, not fixed). strip() in
   tests/_write-walker.js treats a template literal as a string ending at the next backtick, so a template nested
   inside `${ }` flips what it believes is code. Bound, measured against acorn 8.12.1 (exact comment ranges) on 104
@@ -383,11 +428,6 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   filters some rows (anon's SELECT on trades_v2 is using (true) today).
 - Portfolio sorting (a5a325e, 2026-11-02): Roman reports bugs (2026-11-11). Logged, not yet reproduced; cosmetic next to
   the price question.
-- **Owed, with a condition that enforces itself:** tests/stock-modal-render.test.js, rendering openStockModal with
-  fixture data and asserting the Add button is present and the appShowedAtBuy capture executes. It lands **before
-  the next edit to openStockModal**: tests/stock-modal-edit-guard.test.js pins the function's hash at 4e71a4a and
-  fails on any edit until the render test exists. Until then the capture's only evidence is a one-off scope check,
-  and a scope error there would replace the Add button with "Failed to load data".
 - Movers snapshot (reported 2026-11-08, not fixed): declared for the opening-momentum window (06:45–08:00 PT), it
   captured 11:51–15:01 PT since 10-27 (data/movers-snapshots/log.jsonl). Rows carry their real `capturedAt` and
   Alpaca's own open/closed, so no row is mislabelled. But 10 of 36 landed after the close as `marketOpen: false`,
@@ -428,6 +468,11 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - The default-ACL fix itself (scoped in the spec, not built).
 
 ## Closed recently, so they don't come back
+- **Closed by the record (2026-11-12 gate audit), each satisfied before it was crossed off:**
+  - step 4 after db/037 (a real buy and a real sale landing): 105 buys and 99 sales on 11-09/10, all landed;
+  - the RUN-ME-8 capture: `live-schema-2026-11-06.json`, with live-columns regenerated since from 11-11 and 11-11b;
+  - the owed render test: tests/stock-modal-render.test.js landed in dbee89f (2026-11-11), and the edit guard passes
+    by its own rule.
 - **`signal_log.taken_resolution` IS written; "nothing writes it" was WRONG (mine, 2026-11-11, retracted the same
   day).** scripts/fill-outcomes.mjs (pass 2, lines ~534-621) writes all four resolved values through
   `patchFor(id).taken_resolution = ...`. The enumerated-value guard's first run said nothing wrote them because the

@@ -58,6 +58,10 @@ async function fetchNewsForTickers(tickers) {
   }
 
   const start = new Date(Date.now() - lookbackHours * 3600 * 1000).toISOString();
+  // The exact request, for a caller that has to record what it was shown
+  // (the macro Groq ask, db/038). There is no `end` bound: the window ends at
+  // "now", so the same request later returns a different list.
+  state.newsLastRequest = { symbols: clean, start, requested_at: new Date().toISOString(), end_bound: null, lookback_hours: lookbackHours, limit_per_page: 50, sort: 'desc' };
   const allNews = [];
   const truncatedSymbols = [];
   const failedSymbols = [];

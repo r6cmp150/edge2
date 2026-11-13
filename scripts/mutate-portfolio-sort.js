@@ -33,6 +33,7 @@ const TESTS = {
   gate: 'tests/prior-session-daily-bar.test.js',
   sold: 'tests/portfolio-price-unavailable.test.js',
   dates: 'tests/unparseable-dates.test.js',
+  verdict: 'tests/sale-verdict-provenance.test.js',
 };
 
 // [file, test, name, from, to]
@@ -103,6 +104,30 @@ const M = [
   ['core/clock.js', 'dates', 'barsFreshness: an unparseable bar is skipped, not unknown', '  if (days.some(d => d == null)) return { barsAsOf: null, barsAgeTradingDays: null };\n  const barsAsOf = days.reduce((a, d) => (d > a ? d : a));', "  const barsAsOf = days.filter(Boolean).reduce((a, d) => (d > a ? d : a), '');", { behavioural: true }],
   ['core/clock.js', 'dates', 'barsFreshness: the old code verbatim (throws on no t; garbage -> age 0)', "  const days = bars.map(b => parseableDay(typeof b?.t === 'string' ? b.t.slice(0, 10) : null));\n  if (days.some(d => d == null)) return { barsAsOf: null, barsAgeTradingDays: null };\n  const barsAsOf = days.reduce((a, d) => (d > a ? d : a));", '  let newest = bars[0].t;\n  for (const b of bars) if (b.t > newest) newest = b.t;\n  const barsAsOf = newest.slice(0, 10);', { behavioural: true }],
   ['core/clock.js', 'dates', 'parseableDay: format only, no round-trip (2026-02-30 accepted)', "  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s ? s : null;", '  return s;', { behavioural: true }],
+  // the at-sale verdict (2026-11-02, db/035): not computed, marked, gated
+  ['app.js', 'verdict', 'sale computes a verdict again (calcUnifiedRecommendation)', "    verdictProvenance: 'not_recorded',\n    unifiedRecommendationAtSale: null,", "    verdictProvenance: 'not_recorded',\n    unifiedRecommendationAtSale: calcUnifiedRecommendation({ ...pos, rsi: pos.rsiAtBuy }, null, null).label,", { behavioural: true }],
+  ['app.js', 'verdict', 'provenance claims mixed_moment for a new sale', "    verdictProvenance: 'not_recorded',", "    verdictProvenance: 'mixed_moment',", { behavioural: true }],
+  ['app.js', 'verdict', 'lock_in_profits_fired defaults to false (a claim)', '    lockInProfitsFired: null,', '    lockInProfitsFired: false,', { behavioural: true }],
+  ['app.js', 'verdict', 'a verdict field omitted (the column default would fill it)', '    topHoldFactorsAtSale: null,\n', '', { behavioural: true }],
+  ['app.js', 'verdict', 'peak RSI falls back to the buy RSI again', '    peakRsiDuringHold: state.ownedPeakRSI[pos.ticker] ?? null,', '    peakRsiDuringHold: state.ownedPeakRSI[pos.ticker] ?? pos.rsiAtBuy ?? null,', { behavioural: true }],
+  ['app.js', 'verdict', 'signal_before_sale accepts a same-day scan', '  if (!(scan.date < saleDate)) {', '  if (!(scan.date <= saleDate)) {', { behavioural: true }],
+  ['app.js', 'verdict', 'signal_before_sale accepts a scan AFTER the sale', '  if (!(scan.date < saleDate)) {', '  if (false) {', { behavioural: true }],
+  ['app.js', 'verdict', 'signal_before_sale not written', "      signal_before_sale: record.signalBeforeSale ?? { state: 'NOT_RECORDED', reason: 'recorded by a build before db/035' },", '', { behavioural: true }],
+  ['app.js', 'verdict', 'old-build retry writes NULL signal (fails once NOT NULL)', "      signal_before_sale: record.signalBeforeSale ?? { state: 'NOT_RECORDED', reason: 'recorded by a build before db/035' },", '      signal_before_sale: record.signalBeforeSale ?? null,', { behavioural: true }],
+  ['app.js', 'verdict', 'verdict_provenance not written', '      verdict_provenance: saleVerdictProvenance(record),', '', { behavioural: true }],
+  ['app.js', 'verdict', 'old-build retry: provenance not classified', "  return record.unifiedRecommendationAtSale != null ? 'mixed_moment' : 'not_recorded';", '  return null;', { behavioural: true }],
+  ['app.js', 'verdict', 'not_recorded row keeps a lock_in false (a claim)', "      lock_in_profits_fired: saleVerdictProvenance(record) === 'not_recorded' ? null : record.lockInProfitsFired,", '      lock_in_profits_fired: record.lockInProfitsFired,', { behavioural: true }],
+  ['app.js', 'verdict', 'read-back collapses lock_in null to false (!!)', '    lockInProfitsFired: row.lock_in_profits_fired ?? null,', '    lockInProfitsFired: !!row.lock_in_profits_fired,', { behavioural: true }],
+  ['app.js', 'verdict', 'read-back collapses factors null to [] (||)', '    topExitFactorsAtSale: row.top_exit_factors_at_sale ?? null,', '    topExitFactorsAtSale: row.top_exit_factors_at_sale || [],', { behavioural: true }],
+  ['app.js', 'verdict', 'report gate removed (all sales)', "  return sold.filter(s => s.verdictProvenance === 'sale_moment');", '  return sold;', { behavioural: true }],
+  ['app.js', 'verdict', 'report gate admits rows with no provenance', "  return sold.filter(s => s.verdictProvenance === 'sale_moment');", "  return sold.filter(s => s.verdictProvenance !== 'mixed_moment');", { behavioural: true }],
+  ['app.js', 'verdict', 'URE factor accuracy ungated', '  const withFactors = saleMomentVerdicts(sold).filter(', '  const withFactors = sold.filter(', { behavioural: true }],
+  ['app.js', 'verdict', 'peak-RSI blocks put back (render-dependent)', '${holdStrongBlock}\n\n${peakRsiLeftOut}', '${holdStrongBlock}\n\nPeak RSI <65 during hold:', { behavioural: true }],
+  // unknown hold length (2026-11-02)
+  ['core/clock.js', 'verdict', 'marketClosesHeld: Invalid Date counts as 0 again', '  if (parseableDay(startDateStr) == null || parseableDay(endDateStr) == null) return null;\n', '', { behavioural: true }],
+  ['app.js', 'verdict', 'verdict on an unknown hold scores the window (+20/+10)', '  if (maxHold != null && days == null) {', '  if (false) {', { behavioural: true }],
+  ['core/orders.js', 'verdict', 'stale-order check treats unknown age as fresh', '  return closes == null || closes >= 1;', '  return closes >= 1;', { behavioural: true }],
+  ['app.js', 'sort', 'default sort key: unknown hold reads as 0 (null/n)', '    if (daysHeld == null) return null; // unknown hold: the unknown bucket, never null/n = 0\n', '', { behavioural: true }],
   // the producer invariant (2026-11-02): payload only on the stale state
   ['core/clock.js', 'sort', 'producer: CURRENT carries asOf too', "? { state: 'EARLIER_SESSION', asOf: fresh.dailyBarAsOf } : { state: 'CURRENT' };", "? { state: 'EARLIER_SESSION', asOf: fresh.dailyBarAsOf } : { state: 'CURRENT', asOf: fresh.dailyBarAsOf };"],
   ['core/clock.js', 'sort', 'producer: CURRENT carries openDate too', "return { state: 'CURRENT' };\n  return { state: 'PRIOR_SESSION'", "return { state: 'CURRENT', openDate };\n  return { state: 'PRIOR_SESSION'"],

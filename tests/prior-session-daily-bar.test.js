@@ -96,8 +96,8 @@ run('the bought data: exactly the five, of 88, are not buyable under the new rul
 
 run('wiring: both scans stamp it, the setting is recorded, old signals get their scan time, re-scoring reads it', () => {
   const app = readSource('app.js'), lg = readSource('scripts/log-signals-edge.mjs');
-  assert.ok(app.includes('Object.assign(s, scanFreshness(snap, scanMs));') && app.includes("s.scoreSettings = { disableMacroOverlay: !!state.settings.disableMacroOverlay };"));
-  assert.ok(lg.includes('Object.assign(s, global.scanFreshness(snap, scanMs));') && lg.includes("'scanFreshness'") && lg.includes('s.scoreSettings = { disableMacroOverlay: !!global.state.settings.disableMacroOverlay };'));
+  assert.ok(app.includes('Object.assign(s, scanFreshness(snap, scanMs));') && app.includes("s.scoreSettings = { disableMacroOverlay: MACRO_OVERLAY_PINNED_OFF, disableMacroOverlaySource: MACRO_OVERLAY_SOURCE };"));
+  assert.ok(lg.includes('Object.assign(s, global.scanFreshness(snap, scanMs));') && lg.includes("'scanFreshness'") && lg.includes("s.scoreSettings = { disableMacroOverlay: true, disableMacroOverlaySource: 'pinned_by_build' };"));
   assert.ok(app.includes('for (const s of state.signals) if (s && s.scannedAt == null) s.scannedAt = state.lastScanTime;'), 'loadState backfills scannedAt');
   const gate = readSource('core/entry-gate.js');
   assert.ok(gate.includes('return entryGatePriorSession(signal) || entryGateStaleDailyBar(signal) || entryGateNow();'));

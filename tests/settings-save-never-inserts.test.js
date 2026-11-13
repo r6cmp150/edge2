@@ -63,7 +63,9 @@ run('a loaded row: the save updates exactly that row and must get it back', asyn
 
 run('an EMPTY load (no row, or a denied read): the save refuses, inserts nothing, and says to reload', async () => {
   const { s, calls } = load({ loadRow: null });
-  assert.strictEqual(await s.loadSettingsFromSupabase(), null);
+  // db/038: an empty load is an error (the error-with-retry screen), never
+  // "nothing migrated yet" running on defaults.
+  await assert.rejects(s.loadSettingsFromSupabase(), e => /settings row is missing/.test(e.message) && /won't run on default settings/.test(e.message));
   await assert.rejects(s.saveSettingsToSupabase({ budget: 500 }), e => /NOT saved/.test(e.message) && /Nothing was changed/.test(e.message) && /Reload the app/.test(e.message));
   assert.strictEqual(inserts(calls).length, 0, 'never conjures a row');
   assert.strictEqual(calls.filter(q => q.verb === 'update').length, 0, 'and writes nothing at all');

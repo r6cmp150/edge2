@@ -29,7 +29,7 @@ run('calcUnifiedRecommendation counts the hold to asOfDate when given, to today 
 // can compute a sale-moment verdict.
 run('the sale computes no verdict; asOfDate stays threaded for a future sale-moment verdict', () => {
   assert.ok(!app.includes('function computeUnifiedSaleFields('), 'the mixed-moment at-sale verdict is gone');
-  assert.ok(grab('confirmMarkSold').includes('computeSaleVerdictFields(pos, saleDate)'));
+  assert.ok(grab('confirmMarkSold').includes('computeSaleVerdictFields(pos, saleDate, saleFill.at)'));
   assert.ok(grab('calcUnifiedRecommendation').includes('calcPeakRiskScore(position, currentSignal, snap, asOfDate)'));
   assert.ok(app.includes('function calcPeakRiskScore(position, currentSignal, snap, asOfDate = null) {'));
 });

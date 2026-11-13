@@ -480,6 +480,9 @@ function scanSessionAge(scannedAt) {
 //   { state: 'UNJUDGED' }   the dailyBar's date is unknown
 //   { state: 'CURRENT' }
 //   { state: 'EARLIER_SESSION', asOf }   asOf: the dailyBar's date
+// This answers "is this the newest bar there is?". Before the open, yesterday's
+// bar is, so it says CURRENT. For "is this bar from the reading's own date?" use
+// a different question: app.js macroBarState (a reading's move must be today's).
 function dailyBarSessionAge(fresh) {
   const age = fresh?.dailyBarAgeTradingDays;
   if (age == null) return { state: 'UNJUDGED' };

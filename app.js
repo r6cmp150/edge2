@@ -330,6 +330,21 @@ const MEAN_REV_RSI_MAX = 45;
 // VIX excluded — it's a CBOE index, not an equity, and is not obtainable through
 // Alpaca's /stocks endpoints on any tier. See Macro Market Overlay addendum.
 const MACRO_ETFS = ['SPY', 'XLE', 'XLK', 'XBI', 'XLF', 'XLI', 'XLRE', 'XLY'];
+// MACRO IS OBSERVE-ONLY (Roman, 2026-11-02; phase-10 spec "Macro condition:
+// observe-only"). The condition is fetched, shown and recorded, and affects
+// nothing: not the score, not the display cut, not what's stored as
+// buyable. The overlay branch stays inside scoreStock (scoring v2's hashed
+// source must not move) and is unreachable because this is pinned true at
+// every place settings are made: the defaults (loadState), the Supabase
+// load (which never reads disable_macro_overlay back), and the logger.
+// tests/macro-observe-only.test.js fails if any path can make it false.
+const MACRO_OVERLAY_PINNED_OFF = true;
+const MACRO_OVERLAY_SOURCE = 'pinned_by_build';
+// The AI prompts carry no market state during the measurement period, and
+// say so to the model (so it doesn't assume one) and to Roman (AI_NOT_
+// CONDITIONED_LABEL, shown with every AI result).
+const AI_NO_MARKET_STATE_LINE = 'No market-wide condition, index or sector move is given. Judge this stock on its own data only; do not assume a market condition.';
+const AI_NOT_CONDITIONED_LABEL = 'Not conditioned on the market state: the AI is given this stock\'s own data only (macro is observe-only during the measurement period).'; // the stamp's three states: user_off | user_on | pinned_by_build
 // UNVERIFIED_HYPHEN_SYMBOLS moved to core/market-data.js (Phase 0 extraction).
 const MACRO_CONDITIONS = [
   'RISK_OFF', 'GEOPOLITICAL', 'TECH_ROTATION_OUT', 'BROAD_RALLY', 'MOMENTUM_DAY',
@@ -922,6 +937,7 @@ let state = {
   selectedUniverse: 'OTHER',
   notifications: {},     // push notification state — persisted
   ownedScores: {},        // ticker → {score, label, scoringVersion, scannedAt, signal} snapshotted at each screener run (the full signal since 2026-10-28; read through currentSignalForHolding), for owned positions that no longer clear the display threshold — persisted, so read ONLY through currentOwnedScore() (a stored score from another formula is not evaluated, never used)
+  displayedVerdicts: {},  // position id → what its card last showed (Verdict A). Session only, never persisted.
   ownedPrevRSI: {},       // ticker → RSI from the previous portfolio render, for detecting "declining from peak" in calcPeakRiskScore — persisted
   ownedPeakRSI: {},       // ticker → highest RSI seen across the current hold, for peakRsiDuringHold on the sold record — persisted
   preMarketGroqCache: {}, // ticker → {pairs}|{raw} Groq pre-market read — session only, tap-triggered
@@ -933,7 +949,7 @@ function loadState() {
   // portfolio and settings are Supabase-backed now (Data Migration project,
   // Step 4) — no longer read from localStorage here at all. See
   // runDataLoadAndInit(), which fetches both right after this runs.
-  ['sold','analysisPeriods','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations','saleWriteFailures','snapshotWriteFailures','ratingWriteFailures'].forEach(k => {
+  ['sold','analysisPeriods','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations','saleWriteFailures','snapshotWriteFailures','ratingWriteFailures','macroGroqLast'].forEach(k => {
     const raw = localStorage.getItem('edge_' + k);
     if (raw) { try { state[k] = JSON.parse(raw); } catch(e) {} }
   });
@@ -958,11 +974,22 @@ function loadState() {
   if (Array.isArray(state.signals) && state.lastScanTime != null) {
     for (const s of state.signals) if (s && s.scannedAt == null) s.scannedAt = state.lastScanTime;
   }
+  // Defaults are INERT and the app says when it runs on them (phase-10 spec,
+  // "no fail-open defaults", 2026-11-02). Every user setting starts with
+  // source 'default'; the phone copy and Supabase replace value and source
+  // as they load, and the banner names any setting still on its default.
+  // disableMacroOverlay is not a user setting any more: macro is
+  // observe-only, pinned off by the build (MACRO_OVERLAY_PINNED_OFF). It
+  // used to default to false, so a scan before settings arrived ran WITH the
+  // overlay, against Roman's setting: a fail-open default.
   state.settings = Object.assign({
     alpacaKey: '', alpacaSecret: '', groqKey: '',
     budget: 500, includeUnder2: false, showWatch: true, minVolume: 100000,
-    forcePreMarketMode: false, disableMacroOverlay: false, developerTools: false, riskPerTradePct: 2, floatThresholdShares: 10000000, maxLossPct: DEFAULT_MAX_LOSS_PCT
+    forcePreMarketMode: false, developerTools: false, riskPerTradePct: 2, floatThresholdShares: 10000000, maxLossPct: DEFAULT_MAX_LOSS_PCT
   }, state.settings);
+  state.settings.disableMacroOverlay = MACRO_OVERLAY_PINNED_OFF;
+  state.settingsSource = Object.fromEntries(Object.keys(SETTINGS_COLUMNS).map(k => [k, 'default']));
+  state.settingsProblems = [];
   // API keys live in their own localStorage key, edge_apiKeys — authoritative
   // once present. If it doesn't exist yet but the legacy edge_settings blob
   // does (a user who saved keys before this update and hasn't resaved them
@@ -988,7 +1015,7 @@ function loadState() {
       }
     }
   } catch(e) {}
-  loadLocalOnlySettings(); // developerTools/riskPerTradePct — see core/store.js's comment on why these two aren't Supabase-backed yet
+  loadLocalOnlySettings(); // the phone's old copy of the four db/038 settings: read only, source 'phone' (core/store.js)
   state.notifications = Object.assign({
     enabled: true, permission: 'default',
     lastPriceCheck: null, lastDailyCheck: null, alertHistory: {}
@@ -1210,6 +1237,14 @@ function updateMarketBanner() {
     add('var(--yellow)', `${ratingFails.length} scan snapshot batch${ratingFails.length === 1 ? '' : 'es'} NOT saved (${rows} rows)${dropped}`,
       "The scan record of what was on screen didn't reach the database. Tap Retry (checks first, so nothing is saved twice).",
       '<button class="btn btn-sm btn-ghost" onclick="retryRatingWrites()">Retry</button>');
+  }
+  // Rows set aside before a snapshot write (2026-11-13): an off-list macro path or tier, named, the rest written.
+  const setAsideRows = Array.isArray(state.ratingRowsSetAside) ? state.ratingRowsSetAside : [];
+  if (setAsideRows.length) {
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const named = setAsideRows.slice(-5).map(r => `${esc(r.ticker)} (path ${esc(r.macroPath)}, tier ${esc(r.tier)})`).join(', ');
+    add('var(--yellow)', `${setAsideRows.length} scan snapshot row${setAsideRows.length === 1 ? '' : 's'} not written: ${named}${setAsideRows.length > 5 ? ', ...' : ''}`,
+      `A value outside the recorded vocabulary, so the row was set aside; every other row of that scan was written. Not retryable as it stands. Reason: ${esc(setAsideRows[setAsideRows.length - 1].reason)}`);
   }
   // Settings not running on Roman's saved values: the app works, but not on his
   // configuration. Below every lost-record line.
@@ -1586,61 +1621,98 @@ function classifyMacroCondition(changes) {
 // Fetches today's % change for the macro ETF basket and pattern-matches a
 // market condition. Called once per session (see runScreener) — result is
 // cached on state.macroContext, not re-fetched per scan or per card.
-async function fetchMacroContext() {
-  let changes;
-  try {
-    const snaps = await fetchSnapshots(MACRO_ETFS);
-    changes = {};
-    MACRO_ETFS.forEach(t => {
-      const snap = snaps[t];
-      const price = getLivePrice(snap);
-      const prevClose = snap?.prevDailyBar?.c || price;
-      changes[t] = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
-    });
-  } catch(e) {
-    console.warn('Macro context fetch error', e.message);
-    return null;
+// ── MACRO, OBSERVE-ONLY (db/038, 2026-11-02) ─────────────────────────
+// The condition is fetched EVERY scan (it used to be once per page load,
+// cached all day with no fetch time, so a logged condition could belong to
+// hours earlier: 10-29's 07:18 buys carry SPY +0.07 against -0.35 a minute
+// later). Each fetch is one macro_observations row holding both answers,
+// Groq's inputs, the path, the cut in effect (the base line, always) and
+// the adjustment that WOULD have applied. Nothing here changes a score, the
+// display cut, or what's shown (MACRO_OVERLAY_PINNED_OFF).
+const MACRO_REQUIRED_ETFS = ['SPY', 'XLE', 'XLK', 'XBI', 'XLF']; // what classifyMacroCondition reads
+const MACRO_GROQ_TEMPERATURE = 0; // a classifier: the same stored inputs must give the same answer (was 0.2)
+const MACRO_HEADLINE_HOURS = 6;
+const MACRO_HEADLINE_LIMIT = 5;
+
+// Percent change vs the previous close per ETF, or NULL when the quote or the
+// previous close is missing. Never 0: getLivePrice returns 0 for a missing
+// snapshot, which used to become a 0% move, a flat sector nobody measured,
+// fed straight into the classifier.
+//
+// A STALE quote is not a number either (2026-11-03). Before an ETF's first
+// trade of the day, Alpaca's dailyBar is the previous session's, so dailyBar
+// over prevDailyBar is YESTERDAY'S move, which looks perfectly valid. That
+// ETF's move is unjudged: NULL, and named in `unjudged`, not `missing`.
+function macroMovesFromSnapshots(snaps, nowMs) {
+  const changes = {};
+  const missing = [];
+  const unjudged = [];
+  const barDates = {};
+  for (const t of MACRO_ETFS) {
+    const snap = snaps ? snaps[t] : null;
+    const price = (snap && snap.dailyBar && snap.dailyBar.c) || (snap && snap.latestTrade && snap.latestTrade.p) || null;
+    const prev = (snap && snap.prevDailyBar && snap.prevDailyBar.c) || null;
+    const bar = macroBarState(snap, nowMs);
+    barDates[t] = bar.asOf ?? null;
+    if (!(price > 0) || !(prev > 0)) { changes[t] = null; missing.push(t); continue; }
+    if (bar.state !== 'CURRENT') { changes[t] = null; unjudged.push(t); continue; }
+    changes[t] = ((price - prev) / prev) * 100;
   }
-
-  const { condition, matched } = classifyMacroCondition(changes);
-
-  const context = {
-    changes,             // { SPY, XLE, XLK, XBI, XLF } — % change today
-    condition,            // pattern-match result (Step 1); may be revised by Groq in Step 2
-    matchedConditions: matched,
-    ambiguous: matched.length > 1,
-    source: 'pattern',    // becomes 'groq' if Step 2 resolves it
-    explanation: null,    // populated by Groq in Step 2
-    fetchedAt: Date.now(),
-  };
-
-  // Step 2: only call Groq when the pattern match is ambiguous or CHOPPY.
-  // fetchMacroContext() itself only runs once per session (see runScreener),
-  // so this single call is the session-level cache — no separate cache needed.
-  if (condition === 'CHOPPY' || context.ambiguous) {
-    const resolved = await resolveMacroConditionWithGroq(changes);
-    if (resolved) {
-      context.condition = resolved.condition;
-      context.explanation = resolved.explanation;
-      context.source = 'groq';
-    }
-    // else: Groq unavailable/failed — context.condition stays the Step 1
-    // pattern-match result (CHOPPY, or the first ambiguous match), per spec.
-  }
-
-  return context;
+  return { changes, missing, unjudged, barDates };
 }
 
-// Step 2: fetch the last 5 SPY/QQQ headlines from the last 6 hours, for the
-// Groq clarification prompt.
+// Is this ETF's dailyBar from the reading's own date? Same stamp as the gate
+// and the card (scanFreshness), but NOT dailyBarSessionAge's answer, on
+// purpose: that function calls a previous-session bar CURRENT before the open
+// and on a closed day, because the gate asks "is this the newest bar there
+// is?" and pre-market it is. The macro move asks "is this TODAY'S move?", and
+// pre-market it isn't. An undated bar is UNJUDGED, never assumed current.
+function macroBarState(snap, nowMs) {
+  const asOf = scanFreshness(snap, nowMs).dailyBarAsOf;
+  if (asOf == null) return { state: 'UNJUDGED' };
+  return { state: asOf === ptDateTimeOf(nowMs).date ? 'CURRENT' : 'EARLIER_SESSION', asOf };
+}
+
+// Which answer the banner shows, and the path that says why. The rule for
+// RESOLVING is unchanged (the pattern answer, unless it's CHOPPY, ambiguous,
+// or couldn't be computed, when Groq's answer is used if there is one); it
+// just no longer drives anything but the banner and the record.
+function decideMacroPath({ patternCondition, ambiguous, groqCondition }) {
+  const needsGroq = patternCondition == null || patternCondition === 'CHOPPY' || ambiguous;
+  if (!needsGroq) return { path: 'pattern', condition: patternCondition };
+  if (groqCondition) return { path: 'groq', condition: groqCondition };
+  // Groq needed and failed: the pattern's own classification stands when it has one (CHOPPY, or an ambiguous one).
+  // When there is none, the engine ran and classified nothing: its own value (db/038 revision e), never the same path
+  // as a classification told apart by a NULL condition.
+  if (patternCondition != null) return { path: 'pattern_groq_failed', condition: patternCondition };
+  return { path: 'unclassified', condition: null };
+}
+
+// When Groq is asked (phase-10 spec, one rule): once per trading day
+// UNCONDITIONALLY, so the disagreement record isn't conditioned on
+// ambiguity, plus again whenever the pattern answer changes intraday.
+// Otherwise the day's last answer is carried (groq_asked false).
+function macroGroqAskReason(last, tradingDate, patternCondition) {
+  if (!last || last.tradingDate !== tradingDate) return 'daily';
+  if (last.patternCondition !== patternCondition) return 'pattern_changed';
+  return null;
+}
+
+// The SPY/QQQ headlines from the last 6 hours, and the exact request behind
+// them (core/news.js state.newsLastRequest). The feed is irreproducible by
+// construction, so these are the only record of what Groq saw.
 async function fetchMacroHeadlines() {
   const news = await fetchNewsForTickers(['SPY', 'QQQ']);
-  const cutoff = Date.now() - 6 * 3600000;
-  return news
-    .filter(n => new Date(n.created_at).getTime() >= cutoff)
-    .slice(0, 5);
+  const cutoff = Date.now() - MACRO_HEADLINE_HOURS * 3600000;
+  const headlines = news.filter(n => new Date(n.created_at).getTime() >= cutoff).slice(0, MACRO_HEADLINE_LIMIT);
+  const request = Object.assign({}, state.newsLastRequest || null, {
+    filter_hours: MACRO_HEADLINE_HOURS, limit: MACRO_HEADLINE_LIMIT, returned: news.length,
+    news_unavailable: !!state.newsUnavailable,
+  });
+  return { headlines, request };
 }
 
+const fmtMove = v => (v == null ? 'not available' : `${v.toFixed(2)}%`);
 function buildMacroGroqPrompt(changes, headlines) {
   const headlineLines = headlines.length
     ? headlines.map(h => h.headline).join('\n')
@@ -1651,11 +1723,11 @@ RISK_OFF, GEOPOLITICAL, TECH_ROTATION_OUT, BROAD_RALLY, MOMENTUM_DAY,
 SECTOR_WEAKNESS_BIOTECH, SECTOR_WEAKNESS_ENERGY, SECTOR_WEAKNESS_TECH, CHOPPY
 
 ETF movements today:
-SPY: ${changes.SPY.toFixed(2)}%
-XLE: ${changes.XLE.toFixed(2)}%
-XLK: ${changes.XLK.toFixed(2)}%
-XBI: ${changes.XBI.toFixed(2)}%
-XLF: ${changes.XLF.toFixed(2)}%
+SPY: ${fmtMove(changes.SPY)}
+XLE: ${fmtMove(changes.XLE)}
+XLK: ${fmtMove(changes.XLK)}
+XBI: ${fmtMove(changes.XBI)}
+XLF: ${fmtMove(changes.XLF)}
 
 Recent market headlines:
 ${headlineLines}
@@ -1665,41 +1737,107 @@ Example: "GEOPOLITICAL — Oil prices spiking on Middle East tensions driving
 energy up while broad market sells off."`;
 }
 
-// Step 2: single Groq call to resolve an ambiguous/CHOPPY pattern match.
-// Returns { condition, explanation } on success, or null on any failure
-// (missing key, network error, unparseable response) so the caller falls
-// back to the Step 1 pattern-match result.
-async function resolveMacroConditionWithGroq(changes) {
+// One Groq ask, with everything it was given and everything it said. Never
+// throws: a failure is a recorded result (groq_failed, groq_error), since
+// pattern_groq_failed is a value the record has to be able to count.
+async function askMacroGroq(changes) {
+  const out = { groq_condition: null, groq_failed: true, groq_error: null, groq_model: GROQ_MODEL, groq_temperature: MACRO_GROQ_TEMPERATURE,
+    groq_request: null, groq_headlines: null, groq_headlines_empty: null, groq_raw_reply: null, explanation: null };
   const key = state.settings.groqKey;
-  if (!key) return null;
-
+  if (!key) { out.groq_error = 'no Groq key configured'; return out; }
   try {
-    const headlines = await fetchMacroHeadlines();
-    const prompt = buildMacroGroqPrompt(changes, headlines);
-
+    const { headlines, request } = await fetchMacroHeadlines();
+    out.groq_request = request;
+    out.groq_headlines = headlines.map(h => ({ id: h.id ?? null, created_at: h.created_at ?? null, source: h.source ?? null, headline: h.headline ?? '' }));
+    out.groq_headlines_empty = headlines.length === 0;
     const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-        max_tokens: 2000
-      })
+      body: JSON.stringify({ model: GROQ_MODEL, messages: [{ role: 'user', content: buildMacroGroqPrompt(changes, headlines) }], temperature: MACRO_GROQ_TEMPERATURE, max_tokens: 2000 }),
     });
     if (!r.ok) throw new Error(`Groq ${r.status}`);
     const data = await r.json();
-    const text = (data.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '');
-
+    const raw = data.choices?.[0]?.message?.content ?? '';
+    out.groq_raw_reply = raw;
+    const text = raw.trim().replace(/^["']|["']$/g, '');
     const re = new RegExp(`^\\**\\s*(${MACRO_CONDITIONS.join('|')})\\**\\s*[—-]+\\s*(.*)$`, 's');
     const match = text.match(re);
-    if (!match) return null;
-
-    return { condition: match[1], explanation: match[2].trim() };
-  } catch(e) {
-    console.warn('Macro Groq resolution error', e.message);
-    return null;
+    if (!match) { out.groq_error = 'the reply did not name one of the conditions'; return out; }
+    out.groq_condition = match[1];
+    out.explanation = match[2].trim();
+    out.groq_failed = false;
+    return out;
+  } catch (e) {
+    out.groq_error = String(e?.message || e).slice(0, 300);
+    return out;
   }
+}
+
+// The counterfactual, recorded and never applied: what the overlay would have
+// done to each category's score and display line under this condition.
+function macroWouldAdjust(condition) {
+  if (!condition) return null;
+  const categories = Object.keys(MACRO_ADJUSTMENTS.CHOPPY);
+  return {
+    score: Object.fromEntries(categories.map(c => [c, getMacroAdjustment(condition, c)])),
+    display_threshold: Object.fromEntries(categories.map(c => [c, wouldBeDisplayThreshold(condition, c)])),
+  };
+}
+
+// One observation per scan. Returns the context the rest of the app reads
+// (state.macroContext), or null when the ETF quotes couldn't be fetched at
+// all (state.macroFetchError says why; the banner shows it).
+async function observeMacro() {
+  const fetchedAt = new Date();
+  const tradingDate = ptDateStr(getPT(fetchedAt));
+  let snaps;
+  try { snaps = await fetchSnapshots(MACRO_ETFS); }
+  catch (e) { state.macroFetchError = { at: fetchedAt.toISOString(), message: String(e?.message || e) }; return null; }
+  state.macroFetchError = null;
+  const { changes, missing, unjudged, barDates } = macroMovesFromSnapshots(snaps, fetchedAt.getTime());
+  const incomplete = MACRO_REQUIRED_ETFS.some(t => changes[t] == null);
+  const { condition: patternCondition, matched } = incomplete ? { condition: null, matched: [] } : classifyMacroCondition(changes);
+  const ambiguous = matched.length > 1;
+  const reason = macroGroqAskReason(state.macroGroqLast, tradingDate, patternCondition);
+  const asked = reason ? await askMacroGroq(changes) : null;
+  if (asked) {
+    state.macroGroqLast = { tradingDate, patternCondition, condition: asked.groq_condition, failed: asked.groq_failed, error: asked.groq_error, explanation: asked.explanation, askedAt: fetchedAt.toISOString() };
+    persist('macroGroqLast');
+  }
+  const last = state.macroGroqLast || {};
+  const groqCondition = asked ? asked.groq_condition : (last.condition ?? null);
+  const { path, condition } = decideMacroPath({ patternCondition, ambiguous, groqCondition });
+  const displayThreshold = getDisplayThreshold(condition, state.selectedUniverse || 'OTHER');
+  const row = {
+    fetched_at: fetchedAt.toISOString(), trading_date: tradingDate, source: 'browser', feed: 'iex',
+    etf_moves: changes, missing_etfs: missing, unjudged_etfs: unjudged, etf_bar_dates: barDates, pattern_condition: patternCondition, pattern_matched: matched, pattern_incomplete: incomplete,
+    groq_asked: !!asked, groq_ask_reason: reason,
+    groq_condition: groqCondition, groq_failed: asked ? asked.groq_failed : (last.failed ?? null), groq_error: asked ? asked.groq_error : null,
+    groq_model: asked ? asked.groq_model : null, groq_temperature: asked ? asked.groq_temperature : null,
+    groq_request: asked ? asked.groq_request : null, groq_headlines: asked ? asked.groq_headlines : null,
+    groq_headlines_empty: asked ? asked.groq_headlines_empty : null, groq_raw_reply: asked ? asked.groq_raw_reply : null,
+    // applied: the overlay's position at this observation, from the same state.settings the score and the
+    // recommendation read (2026-11-12, the reviewer: a measurement protected by a switch records the switch's position).
+    // It was the literal false, which would have stayed false with the overlay on. Now an unpinned overlay writes true,
+    // and CHECK (applied = false) refuses the row: the failure is loud (the banner), never a row that lies.
+    path: checkedMacroPath(path), condition, display_threshold: displayThreshold, would_adjust: macroWouldAdjust(condition), applied: !state.settings.disableMacroOverlay,
+    code_version: currentCodeVersion(),
+  };
+  const ctx = {
+    changes, missing, unjudged, barDates, condition, patternCondition, matchedConditions: matched, ambiguous, groqCondition,
+    groqFailed: row.groq_failed, groqError: asked ? asked.groq_error : (last.error ?? null),
+    path, explanation: path === 'groq' ? ((asked ? asked.explanation : last.explanation) || null) : null,
+    fetchedAt: fetchedAt.getTime(), tradingDate, displayThreshold, observationId: null, observationError: null,
+  };
+  try {
+    const { data, error } = await supabaseClient.from('macro_observations').insert(row).select('id');
+    if (error) throw error;
+    ctx.observationId = data && data[0] ? data[0].id : null;
+    if (!ctx.observationId) ctx.observationError = 'saved, but its id could not be read back';
+  } catch (e) {
+    ctx.observationError = `${e?.code ? e.code + ': ' : ''}${e?.message || e}`.slice(0, 200);
+  }
+  return ctx;
 }
 
 // Step 3: category-specific score adjustments. Keys match state.selectedUniverse
@@ -1788,7 +1926,19 @@ const SECTOR_WEAKNESS_THRESHOLD_CATEGORIES = {
 };
 const BROAD_ELEVATED_CONDITIONS = ['RISK_OFF', 'GEOPOLITICAL'];
 
-function getDisplayThreshold(condition, category) {
+// The display cut in effect: the BASE line, every day, whatever the condition
+// (macro observe-only, 2026-11-02). It used to rise to the soft line (65 under
+// v2) on GEOPOLITICAL/RISK_OFF days, and for the affected categories on
+// sector-weakness days, whatever the overlay switch said, so an unrecorded
+// Groq judgment was setting the shortlist. The arguments stay so every
+// caller still says which condition and category it asked about.
+function getDisplayThreshold(condition, category) { // eslint-disable-line no-unused-vars
+  return BASE_SCORE_THRESHOLD;
+}
+
+// What the cut WOULD have been under the old rule: the counterfactual
+// macro_observations.would_adjust records. Never used to filter anything.
+function wouldBeDisplayThreshold(condition, category) {
   if (BROAD_ELEVATED_CONDITIONS.includes(condition)) return ELEVATED_SCORE_THRESHOLD;
   const affected = SECTOR_WEAKNESS_THRESHOLD_CATEGORIES[condition];
   if (affected && affected.includes(category)) return ELEVATED_SCORE_THRESHOLD;
@@ -1844,27 +1994,59 @@ const SECTOR_WEAKNESS_DISPLAY_NAME = {
   SECTOR_WEAKNESS_ENERGY: 'Energy',
 };
 
-// Signals tab banner — omitted entirely on CHOPPY days per spec ("no clutter
-// on normal days"). Rule 4: mentions the elevated threshold on days it's
-// active (RISK_OFF/GEOPOLITICAL broad, or SECTOR_WEAKNESS_* sector-specific);
-// falls back to the original copy unchanged for conditions with no threshold
-// change (BROAD_RALLY, MOMENTUM_DAY, TECH_ROTATION_OUT).
+// Signals tab macro banner (observe-only, db/038, 2026-11-02). ALWAYS shown
+// once a scan has tried to observe the condition; no setting can suppress it
+// (it used to vanish on CHOPPY days and whenever "Disable macro overlay" was
+// on, while the condition still raised the display line, and its text said
+// "score 50+" for a cut that was really 65). It states the condition, that
+// it's informational and affects nothing, how old the reading is, BOTH
+// answers when the pattern rule and Groq disagree, and anything missing.
+function macroBannerAge(ms) {
+  if (ms == null) return 'time not recorded';
+  const min = Math.round((Date.now() - ms) / 60000);
+  return min < 1 ? 'just now' : min < 60 ? `${min} min ago` : `${Math.floor(min / 60)} h ${min % 60} min ago`;
+}
 function buildMacroBanner() {
-  if (state.settings.disableMacroOverlay) return '';
   const ctx = state.macroContext;
-  if (!ctx || !ctx.condition || ctx.condition === 'CHOPPY') return '';
-
-  if (BROAD_ELEVATED_CONDITIONS.includes(ctx.condition)) {
-    return `<div class="macro-banner">⚠ <strong>${ctx.condition}</strong> — Only showing high-confidence signals across all sectors (score ${ELEVATED_SCORE_THRESHOLD}+) due to broad market conditions.</div>`;
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  if (!ctx) {
+    if (!state.macroFetchError) return '';
+    return `<div class="macro-banner">📊 <strong>Market condition unavailable</strong> — the ETF quotes couldn't be fetched (${esc(state.macroFetchError.message)}). Informational only: nothing shown or scored depends on it.</div>`;
   }
-
-  const sector = SECTOR_WEAKNESS_DISPLAY_NAME[ctx.condition];
-  if (sector) {
-    return `<div class="macro-banner">⚠ <strong>${ctx.condition}</strong> — ${sector} sector weak today. Only showing high-confidence ${sector} signals (score ${ELEVATED_SCORE_THRESHOLD}+). Other sectors unaffected.</div>`;
+  const parts = [];
+  // A reading that was not recorded says so FIRST, and what it costs, before the content (2026-11-13, the reviewer, from
+  // the 390px render: buried after the reassurance, it was read past). The raw error stays whole, last: it is the proof
+  // of the failure, not the statement of it.
+  if (ctx.observationError) parts.push('<strong class="macro-unrecorded">Not recorded</strong> — this reading was not saved, so today may not count toward the macro test.');
+  const head = ctx.condition
+    ? `<strong>${esc(ctx.condition)}</strong>`
+    : '<strong>Condition not determined</strong>';
+  const how = { pattern: 'pattern rule', groq: ctx.patternCondition == null ? 'Groq (the pattern rule could not run)' : 'Groq (the pattern rule did not decide)', pattern_groq_failed: 'pattern rule; Groq was asked and failed' }[ctx.path] || ctx.path;
+  parts.push(`Decided by ${esc(how)}.`);
+  // The rule's CHOPPY or an ambiguous match is no answer (phase-10 spec), so only a rule
+  // that decided can disagree.
+  const disagree = ctx.patternCondition && ctx.patternCondition !== 'CHOPPY' && !ctx.ambiguous && ctx.groqCondition && ctx.patternCondition !== ctx.groqCondition;
+  if (disagree) {
+    parts.push(`The two answers disagree: pattern rule <strong>${esc(ctx.patternCondition)}</strong>, Groq <strong>${esc(ctx.groqCondition)}</strong>. Both are recorded.`);
   }
-
-  const text = ctx.explanation || MACRO_INTERPRETATIONS[ctx.condition] || '';
-  return `<div class="macro-banner">📊 <strong>${ctx.condition}</strong> — ${text}</div>`;
+  if (ctx.missing && ctx.missing.length) parts.push(`Missing quotes: ${esc(ctx.missing.join(', '))}${ctx.patternCondition == null ? ', so the pattern rule could not run' : ''}.`);
+  if (ctx.unjudged && ctx.unjudged.length) parts.push(`Not judged, no trade today yet (the quote is an earlier session's): ${esc(ctx.unjudged.join(', '))}${ctx.patternCondition == null ? ', so the pattern rule could not run' : ''}.`);
+  // Each part is a sentence: Groq's explanation arrives without a full stop, and ran into the next part (the reviewer,
+  // from the c4 render: "...tech lags Informational only").
+  const sentence = t => (/[.!?]$/.test(t.trim()) ? t.trim() : `${t.trim()}.`);
+  if (ctx.explanation) parts.push(esc(sentence(ctx.explanation)));
+  else if (ctx.condition && MACRO_INTERPRETATIONS[ctx.condition]) parts.push(esc(sentence(MACRO_INTERPRETATIONS[ctx.condition])));
+  parts.push('Informational only: it changes no score, not the display line, not what is shown.');
+  if (ctx.observationError) parts.push(`The error, as the database returned it: ${esc(ctx.observationError)}`);
+  // One line on the Signals tab (2026-11-04): written out, this was 136px on a usual day
+  // and 169px at worst at 390px, on every scan, above the signals. A tap opens the rest.
+  // What Roman must not miss stays on the line, most important first: it can't wrap, so
+  // what's last is what gets clipped ("NOT RECORDED" was, behind the age, at 390px).
+  // A failure changes the CONTAINER (a red border, the macro-banner-unrecorded class) and leads the line in red: a state
+  // is read from the shape of the thing, not from the hue of one word inside it (the LIVE-band lesson).
+  const flags = [ctx.patternCondition == null ? 'rule could not run' : null, disagree ? 'answers differ' : null].filter(Boolean);
+  const failed = ctx.observationError ? '<span class="macro-unrecorded">NOT RECORDED</span> · ' : '';
+  return `<details class="macro-banner${ctx.observationError ? ' macro-banner-unrecorded' : ''}"><summary>${failed}📊 ${head}${flags.map(f => ` · ${f}`).join('')} · ${macroBannerAge(ctx.fetchedAt)}</summary>${parts.join(' ')}</details>`;
 }
 
 // ── 7. GROQ API ───────────────────────────────────────────────────
@@ -1958,15 +2140,12 @@ function buildAIPrompt(stock, pos) {
   const drDays = daysRemaining == null ? 'an unknown number of' : `${daysRemaining}`;
   const drWindow = daysRemaining == null ? 'remaining window (its length is unknown: the hold start date is not a date)' : `${daysRemaining}-day remaining window`;
 
-  const ctx = state.macroContext;
-  const conditionLabel = ctx?.condition || 'N/A';
-  const marketContext = ctx ? (ctx.explanation || MACRO_INTERPRETATIONS[ctx.condition] || 'N/A') : 'N/A';
-  const spyPct = ctx?.changes?.SPY;
-  const spyStr = spyPct != null ? `${spyPct>=0?'+':''}${spyPct.toFixed(2)}` : 'N/A';
-  const category = stock.category || state.selectedUniverse || 'OTHER';
-  const sectorETF = getSectorETFForCategory(category);
-  const sectorPct = sectorETF ? ctx?.changes?.[sectorETF] : null;
-  const sectorStr = sectorETF && sectorPct != null ? `${sectorPct>=0?'+':''}${sectorPct.toFixed(2)}` : 'N/A';
+  // NO MARKET STATE IN THIS PROMPT (2026-11-02, macro observe-only). The
+  // condition, its explanation, and SPY's and the sector ETF's moves came
+  // from state.macroContext; text Roman reads before buying would have let
+  // the condition act through prose, so the 20-day test would measure a
+  // loop, not a signal. REVERSIBLE: if a condition earns an effect at 60
+  // days, putting it back here is one of the options considered then.
 
   let prompt = `You are a short-term trading analyst giving a probability-based
 assessment. Be direct and specific. Express probabilities as whole
@@ -1987,10 +2166,7 @@ Distance to target: ${distToTargetPct.toFixed(1)}% away
 Distance to stop-loss: ${distToStopPct.toFixed(1)}% away
 Price vs 20-day MA: ${aboveBelow} by ${maPct.toFixed(1)}%
 Held: ${marketDaysLabel(daysHeld)} of an intended ${maxDays}-market-day window
-Current macro condition: ${conditionLabel}
-Market context: ${marketContext}
-SPY today: ${spyStr}%
-Relevant sector ETF today: ${sectorStr}%
+${AI_NO_MARKET_STATE_LINE}
 `;
 
   if (!pos) {
@@ -2203,12 +2379,16 @@ async function runScreener() {
   renderSkeletons();
 
   try {
-    // 0. Macro context — fetched once per session, cached on state.macroContext.
-    // Failure is non-fatal: scoring/UI just treat a null macroContext as no adjustment.
-    if (!state.macroContext) {
-      try {
-        state.macroContext = await fetchMacroContext();
-      } catch(e) { console.warn('Macro context error', e.message); }
+    // 0. Macro context: observed EVERY scan (db/038; it used to be once per
+    // page load and never refreshed). Observe-only, so a failure costs the
+    // record and the banner line, never a score: observeMacro doesn't throw
+    // for a Groq or a write failure, and a quote-fetch failure leaves null
+    // with state.macroFetchError for the banner.
+    try {
+      state.macroContext = await observeMacro();
+    } catch (e) {
+      state.macroContext = null;
+      state.macroFetchError = { at: new Date().toISOString(), message: String(e?.message || e) };
     }
 
     // 1. Batch snapshots
@@ -2303,7 +2483,14 @@ async function runScreener() {
         // today's (PRIOR_SESSION / STALE_DAILY_BAR, 2026-11-01), and the
         // one setting scoreStock reads, so a snapshot says what produced it.
         Object.assign(s, scanFreshness(snap, scanMs));
-        s.scoreSettings = { disableMacroOverlay: !!state.settings.disableMacroOverlay };
+        // Who set the overlay, never a bare boolean (2026-11-02): rows from
+        // the observe-only build on are pinned_by_build; Roman no longer has
+        // the toggle, so a bare `true` would read as his choice.
+        s.scoreSettings = { disableMacroOverlay: MACRO_OVERLAY_PINNED_OFF, disableMacroOverlaySource: MACRO_OVERLAY_SOURCE };
+        // The macro observation this scan made, and how its condition was
+        // decided (db/038). not_fetched = the ETF quotes couldn't be read.
+        s.macroPath = state.macroContext ? state.macroContext.path : 'not_fetched';
+        s.macroObservationId = state.macroContext ? state.macroContext.observationId : null;
         // The formula that scored it (2026-11-02): the portfolio sort ranks a
         // held ticker's score only if the current formula produced it.
         s.scoringVersion = SCORING_VERSION; s.scoringHash = SCORING_HASH;
@@ -2388,7 +2575,7 @@ async function runScreener() {
   setRefreshSpinning(false);
   renderSignalsTab();
   updateNavBadges();
-  writeRatingSnapshots(state.signals);
+  writeRatingSnapshots(state.lastFullScanResults);
 }
 
 // Best-effort mirror of this run's qualifying signals into Supabase. Never
@@ -2400,11 +2587,31 @@ async function runScreener() {
 // the GitHub-scheduled logger cannot cover; its 90-day purge would have
 // begun deleting it on 2026-11-11. The table is append-only now, and the
 // daily backup treats any shrink as a defect (scripts/backup-tables.mjs).
-// rating_snapshots holds shown signals scoring at least this (stated in the
-// report's no-history text and in db/039's coverage line from this value).
+// Every row this scan scored is written, with its tier (db/038): what the
+// logger records as SHOWN / BELOW_THRESHOLD, from the scan's own decision.
+// A NOT_EVALUATED candidate has no score, so it has no row. Before this build
+// only shown signals scoring at least RATING_SNAPSHOT_MIN_SCORE were written:
+// those rows have tier NULL, and that is the marker between the two eras. The
+// score history report keeps to that floor, so its averages stay comparable.
 const RATING_SNAPSHOT_MIN_SCORE = 60;
-async function writeRatingSnapshots(signals) {
-  const toWrite = (signals || []).filter(s => s.score >= RATING_SNAPSHOT_MIN_SCORE);
+async function writeRatingSnapshots(scored) {
+  const scoredRows = (scored || []).filter(r => r.signal).map(r => ({ ...r.signal, tier: r.tier }));
+  // CONTAINMENT (2026-11-13, the reviewer: a batch of independent rows does not fail as a batch). The validators below
+  // throw on an off-list value; one such row used to throw out of the build and drop the whole batch. Now it is set
+  // aside, named on the banner with its ticker and the rejected value, and every other row is written. (The full
+  // per-row write, with a one-row-at-a-time fallback on a refusal, is the next change after the refusal diff.)
+  const setAside = [];
+  const toWrite = scoredRows.filter(s => {
+    try { macroPathColumn(s.macroPath); checkedRatingTier(s.tier); return true; } catch (e) {
+      setAside.push({ ticker: s.ticker, macroPath: s.macroPath ?? null, tier: s.tier ?? null, reason: String(e?.message || e), at: new Date().toISOString() });
+      return false;
+    }
+  });
+  if (setAside.length) {
+    state.ratingRowsSetAside = [...(state.ratingRowsSetAside || []), ...setAside].slice(-50);
+    console.error('Scan snapshot rows set aside (not written):', setAside);
+    updateMarketBanner();
+  }
   if (!toWrite.length) return;
   let rows = null;
   try {
@@ -2418,6 +2625,16 @@ async function writeRatingSnapshots(signals) {
       volume_ratio: s.volRatio,
       price: s.price,
       macro_condition: s.macroCondition || null,
+      // db/038: how that condition was decided, the display cut this row
+      // passed, and the observation it came from. A signal from before this
+      // build carries none of them: unknown / not recorded, never a guess.
+      macro_path: macroPathColumn(s.macroPath),
+      display_threshold: s.thresholdAtBuy ?? null,
+      macro_observation_id: s.macroObservationId ?? null,
+      tier: checkedRatingTier(s.tier),
+      // db/038: which formula scored it, read from the row, never inferred from a date.
+      scoring_version: s.scoringVersion ?? null,
+      scoring_hash: s.scoringHash ?? null,
     }));
     const { error } = await supabaseClient.from('rating_snapshots').insert(rows);
     if (error) { console.error('Supabase snapshot write failed:', error.message); noteRatingFailure(rows, error); return; }
@@ -2792,11 +3009,12 @@ function buildPreMarketGroqPrompt(m) {
   const rsiStr = m.rsi == null ? 'unavailable' : m.rsi.toFixed(1);
   const rsiContext = preMarketRsiLabel(m.rsi) || 'unavailable';
   const headline = m.news?.headline || 'none';
-  const ctx = state.macroContext;
-  const conditionLabel = ctx?.condition || 'N/A';
-  const marketContext = ctx ? (ctx.explanation || MACRO_INTERPRETATIONS[ctx.condition] || 'N/A') : 'N/A';
-  const spyPct = ctx?.changes?.SPY;
-  const spyPreMarket = spyPct != null ? `${spyPct >= 0 ? '+' : ''}${spyPct.toFixed(2)}%` : 'unavailable';
+  // NO MARKET STATE IN THIS PROMPT (2026-11-02, macro observe-only). The
+  // condition, its explanation, and SPY's and the sector ETF's moves came
+  // from state.macroContext; text Roman reads before buying would have let
+  // the condition act through prose, so the 20-day test would measure a
+  // loop, not a signal. REVERSIBLE: if a condition earns an effect at 60
+  // days, putting it back here is one of the options considered then.
 
   return `You are a short-term trading analyst evaluating a pre-market
 price move. The regular market has not opened yet. Be direct and
@@ -2808,9 +3026,7 @@ Pre-market move: ${m.pct.toFixed(1)}% vs yesterday's close of $${prevClose.toFix
 RSI from yesterday's close: ${rsiStr}
 RSI context: ${rsiContext}
 Recent news: ${headline}
-Current macro condition: ${conditionLabel}
-Market context: ${marketContext}
-SPY pre-market: ${spyPreMarket}
+${AI_NO_MARKET_STATE_LINE}
 
 Important context: Pre-market moves on low volume frequently
 reverse at market open. Moves backed by news or unusually high
@@ -2905,6 +3121,7 @@ function renderPreMarketGroqResult(ticker, result) {
   } else {
     html += `<div class="ai-bullet">${(result.raw || '').replace(/\n/g, '<br>')}</div>`;
   }
+  html += `<div class="ai-bullet" style="color:var(--muted);font-size:11px">${AI_NOT_CONDITIONED_LABEL}</div>`;
   resultEl.innerHTML = html;
 }
 
@@ -4071,6 +4288,7 @@ function renderAIResult(result) {
     // response rather than silently dropping what Groq actually returned.
     html += `<div class="ai-bullet">${(result.raw || '').replace(/\n/g, '<br>')}</div>`;
   }
+  html += `<div class="ai-bullet" style="color:var(--muted);font-size:11px">${AI_NOT_CONDITIONED_LABEL}</div>`;
   sec.innerHTML = html;
 }
 
@@ -4698,6 +4916,7 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order, exe
     // to the base line, a threshold nobody computed, which the report then
     // counted as a normal-threshold buy.
     thresholdAtBuy: sig?.thresholdAtBuy ?? null,
+    macroPathAtBuy: macroPathColumn(sig ? sig.macroPath : null), // db/038 revision e: 'unknown' = no reading attached (not from a signal), never NULL
     barsAsOfAtBuy: sig?.barsAsOf ?? null, // db/031
     catalystSetup: sig?.catalystSetup || false,
     peakPrice:   price,
@@ -5397,7 +5616,7 @@ async function renderPortfolioTab() {
     // failed to load, which must degrade to the neutral fallback, not
     // silently borrow EDGE's math (see neutralEngineExitFallback's comment
     // for the bug this avoids).
-    let portBanner;
+    let portBanner, displayedVerdict, displayedSignal = null;
     if (p.engineSource && p.engineSource !== 'EDGE') {
       const dispatchedEngine = getEngine(p.engineSource);
       // priceUnavailable (2026-10-23): currentPrice is then the buy-price
@@ -5412,11 +5631,22 @@ async function renderPortfolioTab() {
           ? dispatchedEngine.evaluateExit(p, { price: currentPrice })
           : neutralEngineExitFallback(p, { price: currentPrice });
       portBanner = buildRegisteredEngineExitBanner(exitResult, earlierCloseTag); // computed, and marked
+      displayedVerdict = exitResult;
     } else {
       const currentSignal = currentSignalForHolding(p.ticker);
       const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);
       portBanner = buildUnifiedPortfolioBanner(unifiedResult, earlierCloseTag); // computed, and marked
+      displayedVerdict = unifiedResult;
+      displayedSignal = currentSignal;
     }
+    // Verdict A: a render-time write a record reads, declared on the ratchet in view-no-decision-writes.
+    // Legitimate only because the captured object IS the display, so it is exactly what the banner got.
+    state.displayedVerdicts[p.id] = capturedDisplay(displayedVerdict, {
+      price: currentPrice, price_unavailable: !!priceUnavailable, earlier_session_close: !!showsEarlierSessionClose,
+      rsi: rsi ?? null, prev_rsi: p.prevRSI ?? null, peak_price: p.peakPrice ?? null, momentum_protection: !!p.momentumProtectionActivated,
+      score: displayedSignal?.score ?? null, scanned_at: displayedSignal?.scannedAt ?? null,
+      macro_condition: macroConditionForRecord(), hold_closes: days ?? null,
+    }, new Date().toISOString());
     const fridayFlag   = buildFridayFlag(p, currentPrice, pnlPct);
     const priceDiffPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
     const nowCls = priceUnavailable ? 'pf-now-stale'
@@ -5535,7 +5765,7 @@ async function renderPortfolioTab() {
     const cachedAi = state.aiCache[p.ticker];
     const firstAiPair = cachedAi?.pairs?.[0];
     const aiReadHtml = firstAiPair
-      ? `<div class="pf-quick-read">${firstAiPair.label}: ${firstAiPair.pct}% likely</div>`
+      ? `<div class="pf-quick-read" title="${AI_NOT_CONDITIONED_LABEL.replace(/"/g, '&quot;')}">${firstAiPair.label}: ${firstAiPair.pct}% likely · AI, not market-conditioned</div>`
       : '';
 
     // Sort keys, three states each (see PORTFOLIO_SORTS). P/L is unknown
@@ -6682,7 +6912,9 @@ function renderIntradayLineCard(panel, priceTag = '') {
 function openMarkSoldModal(posId, currentPrice, withheldCloseAsOf = null) {
   const pos = state.portfolio.find(p => p.id === posId);
   if (pos && isPendingOrder(pos)) { showAlert('This is a pending order, not a position -- mark it filled first.'); return; }
-  const today = ptDateStr(getPT()); // PT, not the UTC date (CLAUDE.md getPT rule)
+  const now = getPT();
+  const today = ptDateStr(now); // PT, not the UTC date (CLAUDE.md getPT rule)
+  const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const sellTypeOpts = ORDER_TYPES.map(([v, l]) => `<option value="${v}"${v === 'market' ? ' selected' : ''}>${l}</option>`).join('');
   const priceUnavailable = currentPrice == null;
   showModal(`<div class="modal-handle"></div>
@@ -6698,13 +6930,20 @@ function openMarkSoldModal(posId, currentPrice, withheldCloseAsOf = null) {
           <input id="sold-price" class="form-input" type="number" step="0.01" value="${priceUnavailable ? '' : currentPrice.toFixed(2)}" placeholder="${priceUnavailable ? 'Fill price' : ''}">
         </div>
         <div class="form-group">
-          <label class="form-label">Date Sold</label>
-          <input id="sold-date" class="form-input" type="date" value="${today}">
+          <label class="form-label">Sell order type</label>
+          <select id="sold-order-type" class="form-input">${sellTypeOpts}</select>
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">Sell order type</label>
-        <select id="sold-order-type" class="form-input">${sellTypeOpts}</select>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Date Sold</label>
+          <input id="sold-date" class="form-input" type="date" value="${today}" oninput="if (this.value !== '${today}') document.getElementById('sold-time').value = ''">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Fill time (PT)</label>
+          <input id="sold-time" class="form-input" type="time" value="${hhmm}" data-default="${hhmm}">
+          <label class="form-check"><input id="sold-time-unknown" type="checkbox" onchange="const t = document.getElementById('sold-time'); t.disabled = this.checked; t.value = this.checked ? '' : t.dataset.default"> Time not known</label>
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">Why did you sell?</label>
@@ -6774,6 +7013,10 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       buy_session: pos.buySession || null,
       sell_date: saleDate,
       sell_time: record.sellTime,
+      sell_filled_at: record.sellFilledAt ?? null, // db/038
+      sell_filled_at_source: record.sellFilledAtSource ?? null,
+      verdict_displayed_at_sale: record.verdictDisplayedAtSale ?? null, // db/038: Verdict A
+      verdict_display_state: record.verdictDisplayState ?? null,
       sell_day_of_week: record.sellDayOfWeek,
       shares: pos.shares,
       buy_price: pos.buyPrice,
@@ -6788,6 +7031,9 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       duration_classification: pos.duration,
       price_tier: record.priceRange,
       macro_condition: pos.macroConditionAtBuy,
+      // db/038: how that condition was decided. NOT NULL with a default of
+      // 'unknown' in the table, so the absent case is said, never NULL.
+      macro_path: macroPathColumn(pos.macroPathAtBuy),
       catalyst_setup: !!pos.catalystSetup,
       sub10_adjustment: pos.subTenEntryAdjustment ?? 0,
       groq_at_purchase: pos.groqProbabilityAtBuy || null,
@@ -6866,7 +7112,7 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       bars_since_signal: pos.barsSinceSignal ?? null,
       entry_vs_signal_price_pct: pos.entryVsSignalPricePct ?? null,
       // db/027. buy_date/buy_time = the order; filled_at = the buy fill;
-      // sell_date/sell_time = the sell fill by construction. `??`: NULL
+      // sell_time = when the sale was recorded (db/038 corrects db/027's comment); the fill is sell_filled_at. `??`: NULL
       // means legacy / not recorded, never coerced.
       order_type: pos.orderType ?? null,
       filled_at: pos.filledAt ?? null,
@@ -7152,6 +7398,9 @@ async function confirmMarkSold(posId, btn) {
   // Fill-before-sale, validated here rather than as a cross-type SQL CHECK
   // (db/027 header): the sale can't be dated before the buy filled.
   const hold = holdSpan(pos, saleDate);
+  const soldTimeEl = document.getElementById('sold-time');
+  const saleFill = readSaleFill(saleDate, soldTimeEl.value, pos.filledAt, { notKnown: document.getElementById('sold-time-unknown').checked, defaultTime: soldTimeEl.dataset.default });
+  if (saleFill.error) { showAlert(saleFill.error); return; }
   if (saleDate < hold.startDate) { showAlert(`The sale date (${saleDate}) can't be before the buy ${hold.basis === 'fill' ? 'filled' : 'order date'} (${hold.startDate}).`); return; }
 
   // THE SALE FIRST, THEN THE PORTFOLIO ROW (2026-11-08). This used to await the
@@ -7176,7 +7425,7 @@ async function confirmMarkSold(posId, btn) {
     : null;
   // Rule 5: did the position actually exit via the trailing stop threshold?
   const trailingStopTriggered = !!pos.momentumProtectionActivated && salePrice <= pos.peakPrice * 0.85;
-  const saleVerdictFields = computeSaleVerdictFields(pos, saleDate);
+  const saleVerdictFields = computeSaleVerdictFields(pos, saleDate, saleFill.at);
 
   const record = {
     id: Date.now().toString(),
@@ -7232,6 +7481,9 @@ async function confirmMarkSold(posId, btn) {
     })(),
     // The SALE date's weekday, not the recording day's (phase-10 §7.7).
     sellDayOfWeek: DAY_NAMES[new Date(saleDate + 'T12:00:00Z').getUTCDay()],
+    sellFilledAt: saleFill.filledAt, // db/038: the fill, or null if not known; sell_time stays "recorded at"
+    sellFilledAtSource: saleFill.source, // entered | default | not_known
+    ...saleDisplayFields(state.displayedVerdicts?.[pos.id], saleDate, ptDateStr(getPT()), saleFill), // Verdict A
     distanceFromTargetAtSale: pos.target
       ? Math.round(((pos.target - salePrice) / pos.target) * 1000) / 10
       : null,
@@ -7540,15 +7792,40 @@ async function renderSoldTab() {
 // Supabase-only, unlike the trade fields above. Failure or an empty table
 // both fall through to the same "no snapshot history" message; there's
 // nothing to fall back to.
+// The condition on a captured card, for the audit. It reads nothing back into a decision.
+function macroConditionForRecord() { return state.macroContext?.condition ?? null; }
+
+// Verdict A in the report. Roman records a sale after placing it, so a card rendered after the fill is the
+// normal case: it is stated as a gap in minutes, never as a warning.
+function buildVerdictCaptureSection(sold) {
+  const STATES = ['CAPTURED_BEFORE_FILL', 'CAPTURED_AFTER_FILL', 'CAPTURED_FILL_UNKNOWN', 'NOT_DISPLAYED'];
+  const withState = sold.filter(s => s.verdictDisplayState);
+  const count = st => withState.filter(s => s.verdictDisplayState === st).length;
+  const minutes = (later, earlier) => (Date.parse(later) - Date.parse(earlier)) / 60000;
+  const quartiles = a => { const x = [...a].sort((p, q) => p - q); const q = f => x[Math.floor((x.length - 1) * f)]; return `median ${q(0.5).toFixed(0)} min, middle half ${q(0.25).toFixed(0)} to ${q(0.75).toFixed(0)} min, n=${x.length}`; };
+  const after = withState.filter(s => s.verdictDisplayState === 'CAPTURED_AFTER_FILL' && s.sellFilledAt && s.verdictDisplayedAtSale?.rendered_at)
+    .map(s => minutes(s.verdictDisplayedAtSale.rendered_at, s.sellFilledAt));
+  const entered = sold.filter(s => s.sellFilledAtSource === 'entered' && s.sellFilledAt && s.recordedAt).map(s => minutes(s.recordedAt, s.sellFilledAt));
+  return `=== VERDICT SHOWN AT SALE ===
+
+What the card showed, recorded as shown, including anything it got wrong. ${withState.length} of ${sold.length} sales carry a capture state; earlier sales predate this.
+  Card rendered before the fill: ${count(STATES[0])}
+  Card rendered after the fill: ${count(STATES[1])}${after.length ? ` (${quartiles(after)})` : ''}
+  On screen, not placed against the fill (no typed fill time): ${count(STATES[2])}
+  Not displayed, or recorded on a later day: ${count(STATES[3])}
+
+Recording minus fill: ${entered.length ? `${quartiles(entered)}, on typed fill times only. Selection bias: Roman is likeliest to type a time when the default looks wrong, so this is a cautious upper bound on default rows, not a measurement of them.` : 'not shown yet. It needs typed fill times, and accepted defaults would sit near zero by construction, making it look better than it is.'}`;
+}
+
 async function buildRatingSnapshotHistorySection(sold) {
   const noDataMsg = `=== RATING SNAPSHOT HISTORY ===
 
-No snapshot history yet — snapshots are recorded after each screener run for stocks scoring ${RATING_SNAPSHOT_MIN_SCORE}+`;
+No snapshot history yet — this history covers snapshots scoring ${RATING_SNAPSHOT_MIN_SCORE}+, recorded after each screener run`;
 
   let data;
   try {
     const res = await withTimeout(
-      readAllRows(() => supabaseClient.from('rating_snapshots').select('id, ticker, captured_at, score', { count: 'exact' }).order('captured_at', { ascending: true }).order('id', { ascending: true })),
+      readAllRows(() => supabaseClient.from('rating_snapshots').select('id, ticker, captured_at, score', { count: 'exact' }).gte('score', RATING_SNAPSHOT_MIN_SCORE).order('captured_at', { ascending: true }).order('id', { ascending: true })),
       30000,
       'Supabase rating_snapshots query timed out after 30s'
     );
@@ -7749,6 +8026,11 @@ function mapTradesV2ToSoldShape(row) {
     topPeakRiskFactorsAtSale: row.top_peak_risk_factors_at_sale ?? null,
     verdictProvenance: row.verdict_provenance ?? null, // db/035; null only before it is applied
     signalBeforeSale: row.signal_before_sale ?? null,
+    sellFilledAt: row.sell_filled_at ?? null,
+    sellFilledAtSource: row.sell_filled_at_source ?? null,
+    verdictDisplayedAtSale: row.verdict_displayed_at_sale ?? null,
+    verdictDisplayState: row.verdict_display_state ?? null,
+    recordedAt: row.created_at ?? null,
     // sellTimingResolved/bestExit*/priceAt5Days: writeSellTimingToSupabase
     // is disabled at this cutover (app.js:~1230), so these stay whatever
     // trades_v2 actually holds — null for every trade until the deferred
@@ -8434,6 +8716,135 @@ Factors that most strongly separated winners from losers:
 ${separationLines}`;
 }
 
+// The report's macro section (observe-only, db/038). From macro_observations:
+// per trading day, the last reading's condition and how it was decided, both
+// answers, and the cut in effect; Groq's failure rate; and progress toward the
+// two pre-committed tests' sample bars (phase-10 spec), generated from these
+// constants. Primary: predicted sign vs outcome. Secondary: rule vs Groq.
+//
+// THE PROGRESS LINE GATES A DECISION: it is what gets read to decide whether
+// to run the test. So it counts the WHOLE table, not the listed window (a bar
+// that can take longer than the window would otherwise never be met), and it
+// says "not yet" only when the read is proven good. A denied read comes back
+// as an empty list, which would read as "not enough collected, wait".
+const MACRO_TEST_MIN_DAYS = 20;
+const MACRO_TEST_MIN_DISAGREE_DAYS = 8;
+// Days away from the most common predicted sign. scripts/lib/macro-sign-test.mjs holds the same bar.
+const MACRO_TEST_MIN_AWAY_DAYS = 5;
+const MACRO_REPORT_DAYS = 45;
+const MACRO_READ_PAGE_ROWS = 1000;
+
+// One reading's rule: decided (it named a condition), abstained (CHOPPY or
+// ambiguous: it offered no answer to compare), or could not run. Only
+// "decided" is an opinion, so only it can disagree with Groq.
+function macroRuleStance(r) {
+  if (r.pattern_incomplete || !r.pattern_condition) return 'could_not_run';
+  return r.pattern_condition === 'CHOPPY' || (r.pattern_matched || []).length > 1 ? 'abstained' : 'decided';
+}
+// The day's label for the primary test: Groq's FIRST answer that day that was
+// given the moves. First, fixed in advance: a later ask has seen more of the day
+// the outcome is measured on. An answer given without the full moves is a
+// different mechanism and never labels a day (phase-10 spec).
+function macroGroqDayLabel(dayRows) {
+  const first = dayRows.slice().sort((a, b) => String(a.fetched_at).localeCompare(String(b.fetched_at))).find(r => macroRuleStance(r) !== 'could_not_run' && r.groq_condition);
+  return first ? first.groq_condition : null;
+}
+function buildMacroObservationSection(rows, readError, control) {
+  const head = '=== MARKET CONDITION (observe-only: recorded, never applied) ===\n';
+  const unknownProgress = `Pre-committed tests (phase-10 spec): progress UNKNOWN. This is not "not yet": do not wait on it, fix the read first.\n`;
+  if (readError) return `${head}Not available: macro_observations could not be read (${readError}). This is not "no observations".\n${unknownProgress}`;
+  if (!rows || !rows.length) {
+    if (control && control.state === 'NONE_CONFIRMED') return `${head}No observations recorded yet (the observe-only build logs one per scan). Read checked: ${control.detail}.\nPre-committed tests (phase-10 spec): no days logged for either: not yet.\n`;
+    return `${head}macro_observations read back EMPTY, and that can't be trusted: ${control ? control.detail : 'no read check was run'}.\n${unknownProgress}`;
+  }
+  const byDay = {};
+  for (const r of rows) (byDay[r.trading_date] = byDay[r.trading_date] || []).push(r);
+  const days = Object.keys(byDay).sort();
+  const tradingDays = days.filter(d => classifySession(d, '06:30') === 'REGULAR');
+  const asks = rows.filter(r => r.groq_asked);
+  const failed = asks.filter(r => r.groq_failed);
+  const on = (d, f) => byDay[d].some(f);
+  const decidedDays = tradingDays.filter(d => on(d, r => macroRuleStance(r) === 'decided'));
+  const abstainedDays = tradingDays.filter(d => !decidedDays.includes(d) && on(d, r => macroRuleStance(r) === 'abstained'));
+  const ruleVsGroq = r => macroRuleStance(r) === 'decided' && r.groq_condition && r.groq_condition !== r.pattern_condition;
+  const ruleVsGroqDays = tradingDays.filter(d => on(d, ruleVsGroq));
+  const bothNamedDays = ruleVsGroqDays.filter(d => on(d, r => ruleVsGroq(r) && r.groq_condition !== 'CHOPPY'));
+  const groqChoppyDays = ruleVsGroqDays.filter(d => on(d, r => ruleVsGroq(r) && r.groq_condition === 'CHOPPY'));
+  // The primary test's sample: each trading day's Groq label, and Groq's answers without the moves, kept apart.
+  const labelOf = Object.fromEntries(tradingDays.map(d => [d, macroGroqDayLabel(byDay[d])]));
+  const labelledDays = tradingDays.filter(d => labelOf[d]);
+  const daysLabelled = c => labelledDays.filter(d => labelOf[d] === c).length;
+  const choppyLabelled = daysLabelled('CHOPPY');
+  const named = Object.keys(MACRO_ADJUSTMENTS).filter(c => c !== 'CHOPPY' && daysLabelled(c));
+  // The direction each condition is tested in: its row for OTHER, the logger's universe, whose signals are the outcome.
+  const expected = c => (getMacroAdjustment(c, 'OTHER') > 0 ? 'expected higher' : 'expected lower');
+  const headlinesOnlyDays = tradingDays.filter(d => !labelOf[d] && on(d, r => macroRuleStance(r) === 'could_not_run' && r.groq_condition));
+  const signDays = s => labelledDays.filter(d => Math.sign(getMacroAdjustment(labelOf[d], 'OTHER')) === s).length;
+  const plusDays = signDays(1), minusDays = signDays(-1);
+  const awayFromCommon = labelledDays.length - Math.max(plusDays, minusDays, choppyLabelled);
+  const primaryMet = labelledDays.length >= MACRO_TEST_MIN_DAYS && awayFromCommon >= MACRO_TEST_MIN_AWAY_DAYS;
+  const groqVsNothingDays = tradingDays.filter(d => on(d, r => macroRuleStance(r) === 'abstained' && r.groq_condition && r.groq_condition !== 'CHOPPY'));
+  const since = new Date(Date.now() - MACRO_REPORT_DAYS * 864e5).toISOString().slice(0, 10);
+  const lines = days.filter(d => d >= since).map(d => {
+    const last = byDay[d].slice().sort((a, b) => String(a.fetched_at).localeCompare(String(b.fetched_at))).pop();
+    const both = last.pattern_condition && last.groq_condition && last.pattern_condition !== last.groq_condition ? ` (pattern ${last.pattern_condition}, Groq ${last.groq_condition})` : '';
+    const miss = (last.missing_etfs || []).length ? ` · missing ${last.missing_etfs.join(',')}` : '';
+    const stale = (last.unjudged_etfs || []).length ? ` · not judged ${last.unjudged_etfs.join(',')}` : '';
+    return `  ${d}  ${(last.condition || 'not determined').padEnd(24)} ${last.path}${both} · cut ${last.display_threshold} · ${byDay[d].length} reading(s)${miss}${stale}`;
+  });
+  const met = tradingDays.length >= MACRO_TEST_MIN_DAYS && ruleVsGroqDays.length >= MACRO_TEST_MIN_DISAGREE_DAYS;
+  return head
+    + `Source: macro_observations, all ${rows.length} readings: ${tradingDays.length} trading day(s)${days.length > tradingDays.length ? `, plus ${days.length - tradingDays.length} day(s) with no session, not counted` : ''}.\n`
+    + `Groq: asked ${asks.length} time(s), failed ${failed.length}${asks.length ? ` (${(100 * failed.length / asks.length).toFixed(0)}%)` : ''}.\n`
+    + `The rule: decided on ${decidedDays.length} trading day(s), only abstained on ${abstainedDays.length}, could not run at all on ${tradingDays.length - decidedDays.length - abstainedDays.length}.\n`
+    + `Groq's label for the day (its first answer given the moves): CHOPPY ${choppyLabelled}${named.map(c => `, ${c} ${daysLabelled(c)} (${expected(c)})`).join('')}.\n`
+    + `Groq named a condition on ${labelledDays.length - choppyLabelled} of ${labelledDays.length} labelled day(s), CHOPPY on ${choppyLabelled}.\n`
+    + `PRIMARY test, predicted sign vs day-mean close return (phase-10 spec): needs ${MACRO_TEST_MIN_DAYS}+ trading days labelled (have ${labelledDays.length}), ${MACRO_TEST_MIN_AWAY_DAYS}+ of them away from the most common predicted sign (have ${awayFromCommon}; + ${plusDays}, − ${minusDays}, CHOPPY ${choppyLabelled}): ${primaryMet ? 'sample bar MET, run scripts/run-macro-sign-test.mjs' : 'not yet'}. A day with no signal shown after its label drops out at the test.\n`
+    + `Rule DECIDED, Groq chose differently: ${ruleVsGroqDays.length} day(s): both named a condition on ${bothNamedDays.length}, rule named one and Groq said CHOPPY on ${groqChoppyDays.length} (they would justify different actions; a day can be both).\n`
+    + `SECONDARY test, rule vs Groq (phase-10 spec): needs ${MACRO_TEST_MIN_DAYS}+ trading days logged (have ${tradingDays.length}) and ${MACRO_TEST_MIN_DISAGREE_DAYS}+ days the rule decided and Groq chose differently (have ${ruleVsGroqDays.length}): ${met ? 'sample bar MET, the test can run' : 'not yet'}.\n`
+    + `Rule ABSTAINED, Groq named a condition: ${groqVsNothingDays.length} day(s).\n`
+    + `Groq on headlines alone (the rule could not run; excluded from both tests, a candidate mechanism of its own): ${headlinesOnlyDays.length} day(s) with no answer given the moves.\n`
+    + (lines.length ? `Last ${MACRO_REPORT_DAYS} days:\n${lines.join('\n')}\n` : '');
+}
+
+// The positive control behind an empty read. macro_observations can truly be
+// empty (before the build's first scan), so assertReadable's "never empty"
+// doesn't apply; the evidence has to come from elsewhere. A rating_snapshots
+// row with a real macro_path, or this session's own observation id, says the
+// observe-only build has observed, so an empty read is denied or broken.
+// macro_path is the evidence, not macro_observation_id: a denied read also
+// loses the id at insert (insert().select('id')), so every id would be NULL.
+async function macroObservationsControl() {
+  if (state.macroContext && state.macroContext.observationId) return { state: 'DENIED', detail: `this session recorded observation ${state.macroContext.observationId}, so rows exist that this read can't see` };
+  const { data: any, error: anyErr } = await supabaseClient.from('rating_snapshots').select('captured_at').limit(1);
+  if (anyErr) return { state: 'CANNOT_TELL', detail: `the check on rating_snapshots failed (${anyErr.code || ''} ${anyErr.message || anyErr})` };
+  if (!any || !any.length) return { state: 'CANNOT_TELL', detail: 'rating_snapshots, which is never empty, also read back empty, so nothing here can be read' };
+  const { data: used, error: usedErr } = await supabaseClient.from('rating_snapshots').select('captured_at').not('macro_path', 'in', '(unknown,not_fetched)').limit(1);
+  if (usedErr) return { state: 'CANNOT_TELL', detail: `the check on rating_snapshots.macro_path failed (${usedErr.code || ''} ${usedErr.message || usedErr})` };
+  if (used && used.length) return { state: 'DENIED', detail: `rating_snapshots has a row from ${used[0].captured_at} stamped by the observe-only build, so either this read is denied or the observation writes all failed` };
+  return { state: 'NONE_CONFIRMED', detail: 'rating_snapshots reads fine and no row of it came from the observe-only build' };
+}
+async function fetchMacroObservationsForReport() {
+  try {
+    const rows = [];
+    let total = null;
+    do {
+      const { data, error, count } = await withTimeout(
+        supabaseClient.from('macro_observations').select('id,fetched_at,trading_date,condition,path,pattern_condition,pattern_matched,pattern_incomplete,groq_condition,groq_asked,groq_failed,display_threshold,missing_etfs,unjudged_etfs', { count: 'exact' }).order('fetched_at', { ascending: true }).order('id', { ascending: true }).range(rows.length, rows.length + MACRO_READ_PAGE_ROWS - 1),
+        10000, 'macro_observations query timed out after 10s');
+      if (error) throw error;
+      total = count;
+      if (!data || !data.length) break;
+      rows.push(...data);
+    } while (total != null && rows.length < total);
+    if (total != null && rows.length !== total) throw new Error(`read ${rows.length} of ${total} rows, so a count from them would be short`);
+    if (rows.length) return { rows, error: null, control: { state: 'READ_OK' } };
+    return { rows, error: null, control: await macroObservationsControl() };
+  } catch (e) {
+    return { rows: null, error: `${e?.code ? e.code + ': ' : ''}${e?.message || e}`, control: null };
+  }
+}
+
 async function generateClaudeReport() {
   await checkBuildStatus({ force: true }); // the header states which build produced every figure below
   const btn = document.getElementById('report-btn');
@@ -8517,6 +8928,7 @@ async function generateClaudeReport() {
   // confirmAddPortfolio/confirmMarkSold's error handling.
   try {
   const ratingSnapshotSection = await buildRatingSnapshotHistorySection(sold);
+  const verdictCaptureSection = buildVerdictCaptureSection(sold);
   const winnerExitTimingSection = await buildWinnerExitTimingSection(sold);
   const sellTimingAnalysisSection = buildSellTimingAnalysisSection(sold);
   const sellTooEarlySection = await buildSellTooEarlySection(sold);
@@ -9063,6 +9475,8 @@ ${sellTooEarlySection}
 
 ${ratingSnapshotSection}
 
+${verdictCaptureSection}
+
 ${individualSignalPerformanceSection}
 
 ${ureFactorAccuracySection}
@@ -9131,20 +9545,20 @@ ${ureFactorAccuracySection}
 `;
   });
 
+  { const m = await fetchMacroObservationsForReport(); report += buildMacroObservationSection(m.rows, m.error, m.control) + '\n'; }
   report += `=== CURRENT SCORING FORMULA (for Claude's reference) ===
 
 Scoring System — Scoring Formula v${SCORING_VERSION} (raw signal points, summed directly — no
-longer normalized to a 0-100 scale. Floored at 0 after the Macro Market
-Overlay adjustment below is applied; uncapped above). Generated from the
-scorer itself (scoreComponents), so it can't drift from it:
+longer normalized to a 0-100 scale; uncapped above, floored at 0). Generated
+from the scorer itself (scoreComponents), so it can't drift from it:
 ${scoringLegendText()}
   Volume build means: 2 consecutive days rising + today >= ${VOL_BUILD_TODAY_MIN}x avg.
   Mean reversion means: price ${MEAN_REV_BELOW_MA_MIN}-${MEAN_REV_BELOW_MA_MAX}% below the 20-day MA, RSI under ${MEAN_REV_RSI_MAX}, RSI turning up.
+  Macro adjustment: 0, always (macro is observe-only; the condition is recorded, never applied).
 
 RAW_SCORE_MAX (${RAW_SCORE_MAX}) is the sum of max POSITIVE points only. The
-displayed score IS this raw sum plus the macro adjustment below — it can
-exceed ${RAW_SCORE_MAX} when that adjustment is positive, and floors at 0
-when negative signals and a negative macro adjustment combine.
+displayed score IS this raw sum (the macro adjustment is pinned at 0), floored
+at 0 when negative points outweigh positive ones.
 
 Labels (scoring v${SCORING_VERSION}): ${scoreThresholds().strong}+=STRONG BUY | ${scoreThresholds().soft}–${scoreThresholds().strong - 1}=SOFT BUY | ${scoreThresholds().watch}–${scoreThresholds().soft - 1}=WATCH | <${scoreThresholds().watch}=excluded. Each trade is labelled with the thresholds of the scoring version that scored its buy (v1: ${scoreThresholds(1).strong} / ${scoreThresholds(1).soft} / ${scoreThresholds(1).watch}).
 
@@ -9302,13 +9716,9 @@ function renderSettingsTab() {
       </div>
       <div class="settings-row">
         <div>
-          <div class="settings-label">Disable macro overlay</div>
-          <div class="settings-hint">Takes the market-condition points out of the score. It doesn't change the display line: on RISK_OFF and GEOPOLITICAL days, and for a weak sector's names, that still rises to ${ELEVATED_SCORE_THRESHOLD}, and this switch hides the banner that says so.</div>
+          <div class="settings-label">Macro condition: shown, recorded, affects nothing</div>
+          <div class="settings-hint">The market condition is on the banner and in the report, and is recorded with every scan you run in the app. It doesn't change any score, the display line, or what's shown. (Decided 2026-11-02: collect data first, then decide what it should do. This replaced the old "Disable macro overlay" switch, which only turned off the score adjustment and still raised the display line.)</div>
         </div>
-        <label class="toggle-wrap">
-          <input type="checkbox" id="set-disable-macro" ${s.disableMacroOverlay?'checked':''} onchange="savePref('disableMacroOverlay',this.checked)">
-          <span class="toggle-slider"></span>
-        </label>
       </div>
       <div class="settings-row" style="flex-direction:column;align-items:stretch;">
         <div class="settings-label">Fallback volume threshold (today, IEX)</div>
@@ -9326,9 +9736,9 @@ function renderSettingsTab() {
       <div class="score-table">
         ${scoringLegendRows().map(r => `<div class="score-row"><span>${r.name}</span><span>${legendPts(r.min)} to ${legendPts(r.max)} pts</span></div>`).join('')}
         <div class="score-row score-row-total"><span>Maximum (sum of the best band of each)</span><span>${RAW_SCORE_MAX} pts, uncapped above</span></div>
-        <div class="score-row"><span>Macro adjustment</span><span>${s.disableMacroOverlay ? '0 (overlay off)' : 'by market condition'}</span></div>
+        <div class="score-row"><span>Macro adjustment</span><span>0 (observe-only)</span></div>
         ${scoreLabelBands().map(b => `<div class="score-row"><span class="score-label-${b.label === 'STRONG BUY' ? 'strong' : b.label === 'SOFT BUY' ? 'soft' : 'watch'}">${b.label}</span><span>${b.text}</span></div>`).join('')}
-        <div class="score-row"><span>Shown at all</span><span>${scoreThresholds().watch}+ (scoring v${SCORING_VERSION}); ${ELEVATED_SCORE_THRESHOLD}+ on raised days</span></div>
+        <div class="score-row"><span>Shown at all</span><span>${scoreThresholds().watch}+ (scoring v${SCORING_VERSION})</span></div>
       </div>
     </div>
 
@@ -9713,8 +10123,6 @@ function scanHistoryModalSection(ticker) {
       <div id="scan-hist-modal" data-scan-modal="${ticker}">${scanHistoryModalHtml(ticker)}</div>`;
 }
 
-const DB_ROW_LIMIT = 50000;
-
 async function loadDatabaseUsage() {
   const el = document.getElementById('db-usage');
   if (!el) return;
@@ -9731,12 +10139,6 @@ async function loadDatabaseUsage() {
 
     const snapN = snapRes.count || 0;
     const tradeN = tradeRes.count || 0;
-    const total = snapN + tradeN;
-    const pct = Math.min(100, (total / DB_ROW_LIMIT) * 100);
-    const barClass = pct > 80 ? 'db-bar-red' : pct >= 60 ? 'db-bar-yellow' : 'db-bar-green';
-    const warning = pct > 80
-      ? `<div class="db-usage-warn">⚠ Consider archiving soon</div>`
-      : '';
 
     el.innerHTML = `
       <div class="settings-row">
@@ -9747,14 +10149,7 @@ async function loadDatabaseUsage() {
         <span class="settings-label">Trade records</span>
         <span class="mono">${tradeN.toLocaleString()} rows</span>
       </div>
-      <div class="settings-row">
-        <span class="settings-label">Total</span>
-        <span class="mono">${total.toLocaleString()} / ${DB_ROW_LIMIT.toLocaleString()} rows (free tier limit)</span>
-      </div>
-      <div class="db-usage-bar-track">
-        <div class="db-usage-bar-fill ${barClass}" style="width:${pct.toFixed(1)}%"></div>
-      </div>
-      ${warning}
+      <div class="settings-hint" style="padding:8px 14px 12px">Row counts only. The free plan's limit is on database size, which the app can't read.</div>
     `;
   } catch(e) {
     el.innerHTML = `<div class="settings-hint" style="color:var(--red)">Could not load database usage.</div>`;
@@ -10099,50 +10494,89 @@ function saveApiKeys() {
   showAlert('API keys saved.');
 }
 
-async function saveBudget() {
-  const prev = state.settings.budget;
-  state.settings.budget = parseFloat(document.getElementById('set-budget')?.value) || 500;
+// ONE save path for every setting (2026-11-02). The value is validated
+// first: an empty or invalid entry is refused and says so, never replaced by
+// the default (the old `parseFloat(...) || 2` stored a value nobody entered
+// and called it saved). Then it's written to Supabase, and "saved" appears
+// only once that write is confirmed. On any failure the old value and source
+// come back and the alert says what happened. The banner is re-rendered
+// either way, since a save can also clear a "phone only" or "default" line.
+async function saveSetting(key, value, label, after) {
+  const prev = state.settings[key], prevSource = state.settingsSource[key];
+  state.settings[key] = value;
+  state.settingsSource[key] = 'user';
   try {
-    await saveSettingsToSupabase(state.settings);
-  } catch(e) {
-    state.settings.budget = prev;
-    showAlert('Could not save budget to Supabase: ' + e.message);
-    return;
+    await saveSettingsToSupabase(state.settings, state.settingsSource);
+  } catch (e) {
+    state.settings[key] = prev;
+    state.settingsSource[key] = prevSource;
+    showAlert(`${label} NOT saved. ${e.message}`);
+    renderSettingsTab();
+    updateMarketBanner();
+    return false;
   }
-  updateBudgetBar();
-  showAlert('Budget saved.');
+  if (after) after();
+  updateMarketBanner();
+  showAlert(`${label} saved.`);
+  return true;
 }
 
-// Local-only (see core/store.js's persistLocalOnlySettings) — same reason
-// as toggleDeveloperTools: no Supabase settings-table column yet.
-function saveRiskPerTrade() {
-  state.settings.riskPerTradePct = parseFloat(document.getElementById('set-risk-per-trade')?.value) || 2;
-  persistLocalOnlySettings();
-  showAlert('Risk per trade saved.');
+// A number from a Settings field, or null with the reason (never a default).
+function readSettingNumber(id, { min, max, minExclusive = true, label }) {
+  const raw = document.getElementById(id)?.value;
+  const v = raw == null || String(raw).trim() === '' ? NaN : Number(raw);
+  const okMin = minExclusive ? v > min : v >= min;
+  if (!Number.isFinite(v) || !okMin || (max != null && v > max)) {
+    showAlert(`${label}: enter a number ${minExclusive ? 'above' : 'of at least'} ${min}${max != null ? ` and at most ${max}` : ''}. Nothing was saved.`);
+    return null;
+  }
+  return v;
 }
 
-function saveFloatThreshold() {
-  state.settings.floatThresholdShares = parseFloat(document.getElementById('set-float-threshold')?.value) || 10000000;
-  persistLocalOnlySettings();
-  showAlert('Float threshold saved.');
+async function saveBudget() {
+  const v = readSettingNumber('set-budget', { min: 0, label: 'Budget' });
+  if (v == null) return;
+  await saveSetting('budget', v, 'Budget', updateBudgetBar);
 }
 
-function saveMaxLossPct() {
-  state.settings.maxLossPct = parseFloat(document.getElementById('set-max-loss-pct')?.value) || DEFAULT_MAX_LOSS_PCT;
-  persistLocalOnlySettings();
-  showAlert('Max loss floor saved.');
+async function saveRiskPerTrade() {
+  const v = readSettingNumber('set-risk-per-trade', { min: 0, max: 100, label: 'Risk per trade' });
+  if (v == null) return;
+  await saveSetting('riskPerTradePct', v, 'Risk per trade');
+}
+
+async function saveFloatThreshold() {
+  const v = readSettingNumber('set-float-threshold', { min: 0, label: 'Float threshold' });
+  if (v == null) return;
+  await saveSetting('floatThresholdShares', v, 'Float threshold');
+}
+
+async function saveMaxLossPct() {
+  const v = readSettingNumber('set-max-loss-pct', { min: 0, max: 99.99, label: 'Max loss floor' });
+  if (v == null) return;
+  await saveSetting('maxLossPct', v, 'Max loss floor');
 }
 
 async function savePref(key, val) {
-  const prev = state.settings[key];
-  state.settings[key] = val;
+  await saveSetting(key, val, 'Setting');
+}
+
+// Every setting held only on this phone (or still on a default the user has
+// typed into nothing) goes up in one confirmed write: the banner's button.
+async function saveSettingsNow() {
+  // Tapping Save on the "built-in defaults" line IS choosing them, so those
+  // become 'user' for this write (and go back to 'default' if it fails).
+  const promoted = Object.keys(state.settingsSource).filter(k => state.settingsSource[k] === 'default');
+  for (const k of promoted) state.settingsSource[k] = 'user';
   try {
-    await saveSettingsToSupabase(state.settings);
-  } catch(e) {
-    state.settings[key] = prev;
-    showAlert('Could not save setting to Supabase: ' + e.message);
-    renderSettingsTab();
+    const written = await saveSettingsToSupabase(state.settings, state.settingsSource);
+    showAlert(`Settings saved to Supabase (${written.length}).`);
+  } catch (e) {
+    for (const k of promoted) state.settingsSource[k] = 'default';
+    showAlert(`Settings NOT saved. ${e.message}`);
   }
+  renderSettingsTab();
+  updateMarketBanner();
 }
 
 // TESTING ONLY — see getMarketStatus()/isPreMarketHours() overrides above.
@@ -10181,16 +10615,7 @@ async function changeExecutionMode(to, btn) {
 }
 
 async function toggleForcePreMarketMode(checked) {
-  state.settings.forcePreMarketMode = checked;
-  try {
-    await saveSettingsToSupabase(state.settings);
-  } catch(e) {
-    state.settings.forcePreMarketMode = !checked;
-    showAlert('Could not save setting to Supabase: ' + e.message);
-    renderSettingsTab();
-    return;
-  }
-  updateMarketBanner();
+  await saveSetting('forcePreMarketMode', checked, 'Force pre-market mode');
 }
 
 // Generic toggle — deliberately carries no engine-specific content here
@@ -10198,14 +10623,12 @@ async function toggleForcePreMarketMode(checked) {
 // reveals (currently: Warrior's Phase 4 replay panel) is rendered by that
 // engine's own renderTab(), gated on this same flag — this function only
 // owns the flag and its persistence.
-// Local-only (see core/store.js's persistLocalOnlySettings) — no
-// Supabase settings-table column exists for this yet, so there's nothing
-// to await or roll back on failure the way saveBudget() does.
-function toggleDeveloperTools(checked) {
-  state.settings.developerTools = checked;
-  persistLocalOnlySettings();
-  renderSettingsTab();
-  if (state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') renderWarriorTab();
+// Supabase-backed since db/038 (was phone-only, persistLocalOnlySettings).
+async function toggleDeveloperTools(checked) {
+  await saveSetting('developerTools', checked, 'Developer tools', () => {
+    renderSettingsTab();
+    if (state.activeTab === 'warrior' && typeof renderWarriorTab === 'function') renderWarriorTab();
+  });
 }
 
 // setMinVol removed 2026-10-22: settings.minVolume is now only the
@@ -11297,19 +11720,22 @@ function startClock() {
 // ── 24. INIT ─────────────────────────────────────────────────────
 
 // Fetches Portfolio and Settings from Supabase and populates state with
-// them (Data Migration project, Step 4). A missing settings row or an empty
-// portfolio table is a normal "nothing migrated yet" state, not a failure —
-// state.settings keeps the defaults loadState() already filled in, and
-// state.portfolio just stays []. A real Supabase error propagates up to the
-// caller, which is what drives the error-with-retry screen rather than a
-// silent localStorage fallback.
+// them (Data Migration project, Step 4). A missing settings row is NOT
+// "nothing migrated yet" any more (2026-11-02): Roman's row has existed since
+// 08-17, and an RLS-denied read returns the same empty result, so
+// loadSettingsFromSupabase throws and the caller shows the error-with-retry
+// screen instead of running on defaults. Each value Supabase holds replaces
+// the default (or phone value) and its source becomes 'supabase'; a NULL
+// column leaves the setting on its phone value or default, which the banner
+// names. (An empty portfolio is still read as "no positions": classified in
+// tests/empty-read-sites.test.js, one of auth step 4½'s sites.)
 async function loadPortfolioAndSettingsFromSupabase() {
   const [portfolio, settings] = await Promise.all([
     loadPortfolioFromSupabase(),
     loadSettingsFromSupabase(),
   ]);
   state.portfolio = portfolio;
-  if (settings) Object.assign(state.settings, settings);
+  for (const [k, v] of Object.entries(settings)) { state.settings[k] = v; state.settingsSource[k] = 'supabase'; }
 }
 
 function renderDataLoadingScreen() {

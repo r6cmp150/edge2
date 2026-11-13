@@ -187,7 +187,10 @@ function loadFromAppJs(appJsSrc, expectedFirst, expectedLast, exposeNames) {
 
 async function main() {
   global.state = {
-    settings: { alpacaKey: ALPACA_KEY_ID, alpacaSecret: ALPACA_SECRET_KEY, minVolume: 100000, includeUnder2: false, disableMacroOverlay: false },
+    // disableMacroOverlay pinned true (macro observe-only, 2026-11-02), as in the
+    // app. With macroContext null the adjustment was 0 anyway, so no score
+    // changes; the pin makes the stamp say so (pinned_by_build).
+    settings: { alpacaKey: ALPACA_KEY_ID, alpacaSecret: ALPACA_SECRET_KEY, minVolume: 100000, includeUnder2: false, disableMacroOverlay: true },
     macroContext: null, // KNOWN GAP -- see header comment
     ownedScores: {},
     portfolio: [],
@@ -307,7 +310,8 @@ async function main() {
       s.buildVersion = global.VERSION;
       Object.assign(s, global.barsFreshness(bars, today)); // db/031: as-of date of the scored history
       Object.assign(s, global.scanFreshness(snap, scanMs)); // scan time + dailyBar as-of (2026-11-01), same stamp as app.js
-      s.scoreSettings = { disableMacroOverlay: !!global.state.settings.disableMacroOverlay };
+      s.scoreSettings = { disableMacroOverlay: true, disableMacroOverlaySource: 'pinned_by_build' };
+      s.macroPath = 'not_fetched'; // the logger has no macro context (header: KNOWN GAP)
     }
     const shown = !!s && s.score >= displayThreshold && s.price >= minP2;
     return { ticker, signal: s, shown, tier: s ? (shown ? 'SHOWN' : 'BELOW_THRESHOLD') : 'NOT_EVALUATED' };

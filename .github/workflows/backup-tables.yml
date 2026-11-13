@@ -119,6 +119,25 @@ jobs:
           echo "The not_known count failed -- see the 'Count trades recorded without Live/Paper' step's log above: a defect (a build that records the mode wrote a trade without it) or an unreadable count. The backup was committed first." >&2
           exit 1
 
+      # 2026-11-12, landing (c): the macro sign-test's input. Read-only. Exit 1 = scans by an observing build exist but an
+      # observation they point to cannot be read, a decided reading has no observation (the write failed), or a read failed;
+      # a count of 0 alone can't tell "not written" from "not readable", so the control is rating_snapshots (the script's
+      # header). The next step turns it red. Before the first scan by (c) it says NOT STARTED and passes.
+      - name: Count macro observations against the scans that point to them (read-only; db/038, the sign-test's input)
+        id: macro_obs
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          node scripts/count-macro-observations.mjs
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Fail the run if the macro writer is not writing, or the count could not be read
+        if: always() && steps.macro_obs.outputs.exit_code != '0'
+        run: |
+          echo "The macro observation count failed -- see the 'Count macro observations' step's log above. The backup was committed first." >&2
+          exit 1
+
       - name: Fail the run if any table was rejected this run
         if: steps.backup.outputs.exit_code != '0'
         run: |

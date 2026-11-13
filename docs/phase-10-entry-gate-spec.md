@@ -2770,6 +2770,97 @@ was itself written while fixing this).
   whether the hook ran on 13ccc81 is NOT ESTABLISHED. A command whose output is the record of what happened is capture.
   See "A check's verdict names what it checked".
 
+**GATING IS BY DEPENDENCY, NOT BY BRANCH; A GATE'S LIST IS RE-READ WHEN WHAT IT WAITED FOR HAPPENS; AND A GATE AUDIT
+ASKS WHAT FEEDS EACH HELD ITEM (2026-11-12, the reviewer's rules).** A gate shared by unrelated work blocks the work
+that does not need it: before a stack is gated, each item is asked what it actually requires, and anything that
+requires nothing in the gate lands separately, then and there. A satisfied condition left in a gate's list is
+indistinguishable from an unsatisfied one, so the work behind it stays held with nobody deciding to hold it: clearing
+the list is part of applying the migration, not a tidy-up afterwards. The instance: `macro-gated`'s
+`db/pending-migrations.json` said `[38, 39]` for six days after db/038 was applied (2026-11-06). Behind it sat (c),
+the only writer of `macro_observations`, which is the pre-registered macro sign-test's input. So the only test of
+whether the macro reading predicts anything had no data and had never run. The audit that found it first asked what
+the sign-test required and called it free; the free item was the writer of its input. (c) landed with db/039's (d)
+left gated (STATUS, "Gated").
+
+**A PRECONDITION IS MET BY THE CHEAPEST INSTRUMENT THAT ACTUALLY ANSWERS ITS QUESTION (2026-11-12, the reviewer's
+rule).** Read what a precondition is for before deciding what satisfies it. "Regenerate live-columns from the live
+database" before landing (c) meant "establish that every column (c) names exists live", and the 11-11b capture, newer
+than every migration applied to date, established it without asking Roman for a capture. What it does not establish,
+accepted explicitly: a schema change made by hand outside the migration sequence would not be in 11-11b, and nothing
+here would see it until the next capture.
+
+**PREFER MAKING A SITE ENUMERABLE OVER DECLARING WHY IT CANNOT BE (2026-11-12, the reviewer's rule).** A declaration is
+a promise the guard then trusts; enumerable code is a fact the guard reads. Declare only what genuinely resists
+enumeration, and say what would have to change for it to become enumerable. The instance: (c), written before
+`tests/enumerated-values.test.js` existed, wrote eight values the guard could not read (`macro_path` at five sites,
+`macro_path_at_buy`, `macro_observations.path`, `rating_snapshots.tier`). They now all go through one list in
+`core/store.js` (`MACRO_PATHS`, with `checkedMacroPath` and `macroPathColumn`; `RATING_TIERS`, with
+`checkedRatingTier`), which the guard reads through its VALIDATED form, pinned to each validator's `throw`. No
+declaration was added. `'unclassified'` (a reading that ran and decided nothing) and `'unknown'` (no reading attached)
+are now a checked difference, not a convention.
+
+**A MEASUREMENT THAT DEPENDS ON SOMETHING STAYING FIXED HOLDS THAT THING FIXED BY TEST, NOT BY INTENTION (2026-11-12,
+the reviewer's rule).** A pre-registration fixes the procedure; it does nothing about the world the procedure runs in.
+The macro sign-test measures whether the reading predicts the market while the reading affects nothing. If the reading
+began affecting scores, the scan's cut, the logger's tiers or the held-position recommendation part-way through its 20
+labelled days, the outcomes would change and the data would look fine. **Observe-only was true by accident of
+implementation, not by construction.** The tests checked the switch (the pin is true, the reported adjustment is 0, the
+cut function returns the base line). Mutants that applied the reading while leaving the switch alone survived them:
+- the score adding the adjustment while reporting 0;
+- the scan filtering by the old raised cut.
+A third, the logger raising its cut, was first reported as a survivor and then withdrawn: the logger sets its macro
+context to null once and never assigns it, so that mutant could not change behaviour (an equivalent mutant). Two, not
+three. Then the coverage cross-check (next entry) found a third unheld place. `tests/macro-observe-only.test.js` now
+holds the consequence, each with a control that moves:
+- A, the whole score;
+- B, the real scan's complete fixture-to-tier map, at and one step either side of both cuts;
+- C, the logger's own tier code, and that its condition has no way in;
+- D, the recommendation;
+- E, the breakdown total;
+- F, the record.
+Its header says why it must not be removed as redundant.
+
+**A COVERAGE CLAIM IS ASSERTED AGAINST AN INVENTORY THE CLAIM DID NOT AUTHOR (2026-11-12, the reviewer's rule).** Tests
+written by the person who enumerated the paths cover the paths that person remembered. The instance: three tests
+written for observe-only, and a 121-file suite, all missed `calcUnifiedRecommendation`. It carries a -20/+20/-15 macro
+factor into the Portfolio cards, the SELL badge, the stock modal, the nav badge and the AI prompt's held block. With
+its pin check removed, the whole suite passed. The cross-check found it on its first run by reading
+`tests/macro-consumers.test.js`'s own classification: every consumer classed as able to act (INERT_PINNED,
+PASS_THROUGH) must be covered by a named test, and the count is pinned (10). Checking a premise found a second:
+`computeScoreBreakdown`'s total was taken as display only, but `openStockModal` shows it as the modal's score when there
+is no scanned or held score, and captures it into `appShowedAtBuy`, which a buy stores. So it has its own test, E.
+
+**A MEASUREMENT PROTECTED BY A SWITCH RECORDS THE SWITCH'S POSITION ALONGSIDE EACH OBSERVATION (2026-11-12, the
+reviewer's rule).** A test can hold what the code does with the switch; only the record can say where the switch was.
+The instance: `macro_observations.applied` was written as the literal `false`, so with the overlay on, the row would
+still have said false. `CHECK (applied = false)` would have been decoration. It is now
+`!state.settings.disableMacroOverlay`, the same state the score and the recommendation read: an unpinned overlay writes
+true and the database refuses the row (test F holds the row), and a refused observation is said on the banner (the
+existing test "a failed observation write is said on the banner"). In the (c) build the
+overlay is a build constant: the stored column is never read back, and Settings has no control for it. The residual,
+stated: if a deploy unpinned it part-way through a trading day, that day's earlier observations stay `false` and keep
+its label, while the later ones fail. The record shows the failures only on the phone's banner. So, declared in
+advance, as part of the registration (the reviewer's ruling; the date is the whole value): **any day on which the
+deployed build's macro-overlay constant changed is excluded from the sign-test, decided by the build stamps on that
+day's rows (`macro_observations.code_version`), not by the rows' contents. Declared 2026-11-13, before the first
+observation was written.** Made after the data existed, the same exclusion would be indistinguishable from fitting.
+
+**"DISPLAY ONLY" IS A CLAIM ABOUT EVERY CALLER, SO IT IS ESTABLISHED BY READING EVERY CALLER (2026-11-13, the
+reviewer's rule).** A function looks display-only from inside; whether its output reaches a decision, a stored column
+or a prompt is decided by its callers. The instance: `computeScoreBreakdown` was classed as covered because it
+"only displays" the score's adjustment. Reading its callers showed `openStockModal` uses its total as the modal's score
+for an unscanned stock and captures it into `appShowedAtBuy`, the stored record of what Roman was shown when he bought.
+That is two consumers found in two rounds by declining a reasonable-sounding premise: this one, and
+`calcUnifiedRecommendation`.
+
+**A CHECK THAT SCANS A WINDOW ESTABLISHES WHERE THE WINDOW ENDS (2026-11-12, the reviewer's rule).** A window that runs
+to the next `;` inside a `Promise.all` runs into the next call. The failure is silent, and it errs in the direction
+that comforts whoever reads the report: every site looks covered. The instance: `tests/unpaged-reads.test.js` read each
+query up to the next `;`. In `loadDatabaseUsage` that window ran past the `rating_snapshots` count into the
+`trades_v2` one, so the second read's `head: true` vouched for the first: a mutant dropping the first read's
+`head: true` passed. The window now also ends at the next `.from(`, and the mutant fails as `app.js|rating_snapshots`.
+After the fix the baseline surfaced nothing newly unbounded, so no other site had been vouched for by a neighbour.
+
 **A MUTATION SCORE IS VOID UNLESS THE SAME RUN SHOWS THE UNMUTATED BASELINE PASSING (2026-11-12, the reviewer's
 rule).** A mutant run reports the difference between two runs; without the first, every number it prints is the cost
 of the harness, not the strength of the test. **And the tell: a perfect kill rate is a symptom before it is a
@@ -2780,6 +2871,41 @@ throwaway script in the scratchpad, and that is where this rule is aimed: a scra
 baseline check gets skipped. The committed harness, `scripts/lib/mutants.cjs`, already runs the baseline first and
 runs no mutant when it fails; the scratch script went around it. So: use the committed harness, or give the scratch
 one the same first step. Rerun with a baseline that must pass first: 10 of 10, now meaning something.
+
+**A BASELINE IS CAPTURED COMPLETE, AND NEVER FILTERED OR ELIDED FOR READABILITY (2026-11-06).** Filtering belongs in
+how a capture is displayed, not in how it is stored. Every guard literal is generated from a capture that is provably
+complete (no role filter, no redundancy filter, no "..."), and the capture records its row count, which its loader
+checks. The case: the column-grants query of 2026-11-06 ended `and not has_table_privilege(...)`, so it stored 30 of
+the live 43 column grants; db/037's literal came from those 30, and Roman's run aborted on the column guard, correctly,
+before any change. The harness had not reproduced it because one test loaded the filtered 30 by its own route. An abort
+message is not a baseline either: it elides with "...". Complete capture: `grants-columns-2026-11-06.csv`, 43 rows,
+sha256 `15452d53...`, folded into the grants JSON as `column_level_all`.
+- **Measured the same day, both the opposite of what was assumed.** A table-level REVOKE removes the role's column grants
+  on that table PER PRIVILEGE, not all or nothing: `revoke insert on T` removes the role's column INSERT grants on T and
+  leaves its column UPDATE grants; it does so even when the role never held table-level INSERT (the workflow_runs shape);
+  and `revoke all` removes them all. A later table-level GRANT does not bring column grants back: they must be granted
+  again explicitly. (Harness, PostgreSQL 18.6; checked independently on 16.15, so the behaviour brackets production's
+  17.6.) So db/037's REVOKE ALL already removed the 13 redundant ones, and its rollback must grant back all of anon's 22
+  column grants. This is the form that matters at the auth cutover, which narrows table grants one privilege at a time. And in `grant/revoke insert, update (col)` the column list binds only to the privilege
+  before it, so that text means INSERT on the whole table. Written that way, db/037 revoked anon's table-level INSERT on
+  portfolio, which would have stopped positions being added; the after-check rolled it back in the harness.
+  `tests/column-grant-grammar.test.js`: in an unapplied migration a column list goes with exactly one privilege.
+- **ANY EXPERIMENT ASSERTS ITS BASELINE BEFORE IT MEASURES, not only a mutation run.** The independent check of the
+  mechanism above first read as contradicting the binding rule: a table-level UPDATE that shouldn't have been there,
+  leaked from the previous case in the same script. Asserting the clean starting state before each case caught it. The
+  mutation rule (every report states its baseline passed) is one instance of this.
+
+**A CONCLUSION DRAWN FROM A SEARCH IS A CONCLUSION ABOUT THE SEARCH'S OUTPUT (2026-11-12, the reviewer's rule).** A grep
+with a line limit, a query with a predicate, a key name guessed from another schema: each returns what it was shaped to
+return. Before ruling on what a file contains, read the file; before ruling on what a capture lacks, print its keys. The
+complete-baseline rule above, in the hands of whoever is checking. Two instances on the same day, both the reviewer's:
+- the macro sign-test was ruled unblocked ("it reads `signal_log`") from a grep cut by `head -20`. The first table the
+  script reads is `macro_observations`, which nothing on main had ever written, and the cut hid it. The script, run,
+  said so in one line.
+- auditing that finding, the reviewer searched the 11-11b capture for policies by `pg_policies`' column names
+  (`policyname`, `qual`, `with_check`), found none, and was one step from ruling the "anon select using (true)" claim
+  unsupported. The capture stores them as `name`, `using`, `check`. Printing the structure, not matching a pattern
+  against it, caught it. That is the more useful instance: an error made while auditing, by the auditor.
 
 **THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
 mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which
@@ -3451,6 +3577,7 @@ yesterday's dailyBar and still rank as current in the portfolio's "Highest
 current score" (which checks when the scan ran and which formula ran it,
 not which bar it read; see `portfolioScoreState`). Fix: stamp the refresh
 exactly as the main scan does, one helper for both.
+
 ### Decided: the at-sale verdict is not computed; stored ones are marked (2026-11-02)
 
 **What was wrong.** `computeUnifiedSaleFields` computed the exit verdict
@@ -3540,6 +3667,48 @@ rule behaved correctly** on 11-02 (it suppressed two bunched duplicates and
 let the one real scan through); it is not the defect and is not to be
 "fixed".
 
+### Supabase exposure: what the 2026-11-02 preflight established
+
+Read-only queries `db/035-preflight.sql` and `db/035-preflight-2.sql`, run by
+Roman 2026-11-02.
+
+- **`rls_auto_enable()` is protective, not a hole.** It is the function
+  behind the `ensure_rls` event trigger (ddl_command_end; CREATE TABLE /
+  CREATE TABLE AS / SELECT INTO), owned by postgres, and only runs
+  `alter table ... enable row level security` on each new public table
+  (search_path pinned to pg_catalog; a failure only logs). anon's EXECUTE
+  grant on it is unusable: it returns `event_trigger`, which Postgres won't
+  call directly. **It is why only `portfolio` and `db_meta` have RLS off:
+  both predate the trigger.** Every newer table got RLS automatically, so
+  new tables are safe by default.
+- **db/023's narrowing held.** `workflow_runs` has no table-level INSERT or
+  UPDATE grant for anon: INSERT on 5 of 11 columns, UPDATE on exactly the 4
+  the workflows write (completed_at, job_status, is_noop, noop_reason). Its
+  `using (true)` UPDATE policy is bounded by that column grant. The
+  preflight flagged it OPEN only because `has_table_privilege` can't see
+  column grants.
+- **Everywhere else anon holds full table-level grants** (Supabase's
+  default): UPDATE on every column of trades_v2, signal_log, portfolio,
+  scan_runs, setup_triggers, analysis_periods, rating_snapshots, settings.
+  RLS is the only barrier, and on two tables RLS is off.
+- **Explicit column grants in earlier migrations are redundant** (db/028,
+  db/031, db/033 on portfolio, scan_runs, signal_log, trades_v2): the
+  table-level grant already covers those columns, so they read like
+  narrowing and are not. No more of them. The real end state is narrow
+  column grants with the table-level grant revoked, as `workflow_runs`
+  has; step 4 of the auth cutover aims for that.
+- **`db_meta` is EDGE's**: the v2.0.0 connectivity ping (7d03d59,
+  2026-08-10), repointed to `settings` on 09-04, unread since; RLS off,
+  full anon grants. Closing it is in db/037's scope.
+- **Every UPDATE/DELETE the app, scripts and workflows perform as anon**
+  (enumerated 2026-11-02): `portfolio` update and delete (core/store.js),
+  `settings` update (core/store.js), `workflow_runs` PATCH of its four
+  status columns (all six workflows, scripts/test-db023-grants.mjs). The
+  loggers' upserts send `resolution=ignore-duplicates` (ON CONFLICT DO
+  NOTHING: INSERT only). fill-outcomes and audit-signal-log-splits PATCH
+  with `Authorization: Bearer <OUTCOME_FILLER_JWT>`, i.e. as role
+  outcome_filler, not anon. No app upsert exists.
+
 ### Process note (low priority): test rows in production (2026-11-02)
 
 A hand-inserted verification position (`ZZVERIFY`, `position_id`
@@ -3552,7 +3721,434 @@ and a named cleanup step in the same change, recorded here when it runs.
 Prefer no production rows at all: rolled-back transactions (the db/035 and
 db/037 behaviour runs) leave nothing behind.
 
-### Rules and findings landed ahead of the observe-only build (2026-11-04)
+### Scoped, after db/037: outcomes for rating_snapshots (db/039 + a second fill-outcomes pass)
+
+The highest-value item in the queue, and why, is under "THE SLOPE IS THE REASON DB/039 IS THE
+HIGHEST-VALUE ITEM IN THE QUEUE". (db/038 went to macro observe-only, so this became db/039.)
+
+Accepted 2026-11-02 with two conditions that are part of the change, not
+notes about it:
+1. **The coverage limits print themselves.** Wherever these outcomes are
+   reported, the output states: only rows scoring 60+ (no below-threshold
+   comparison), no stored bars, browser-scan price. A test asserts that the
+   report text carries it. (§7.2 was withdrawn on 2026-11-02 for quoting a
+   figure without its coverage; a caveat that lives only in a scope note
+   gets lost the same way.)
+2. **The mixed feed is measured before anything is concluded.** Entry
+   price = the browser's IEX snapshot; outcomes = SIP bars. Every return is
+   IEX-entry against SIP-exit, the venue error measured at 0-2.7% by IEX
+   share (`scripts/measure-iex-vs-sip-scoring.mjs`), the same order as a
+   30-minute effect. Quantify it on this dataset, split by IEX share, and
+   state it beside every figure. This couples the extension to the open
+   feed decision (memory project-edge2-feed).
+
+### Macro condition: observe-only, and the pre-committed accuracy test (2026-11-02)
+
+**Decision (Roman, 2026-11-02):** the macro condition is collected and
+shown, and it affects nothing: not the score, not the display cut (the
+base line every day, whatever the condition and whatever the switch), not
+what is stored as buyable. Why: an unrecorded Groq judgment had been
+setting the shortlist (the 20 -> 65 / 29 -> 73 cut) on the days 92 of 451
+trades were bought, with the banner hidden by the very switch that claimed
+to turn macro off.
+
+**"Is it accurate?" has no answer today, and none is given.** There is no
+ground truth for "today was a GEOPOLITICAL day", so neither the pattern
+rule nor Groq can be scored against a correct label. What CAN be tested is
+whether either answer predicts anything. Pre-committed, before any data, as
+restated 2026-11-04: **the primary test is whether the table's predicted sign
+carries information; rule versus Groq is secondary.**
+
+**Why this test (replacing "Groq versus nothing", 2026-11-04).** That test compared
+each named condition against Groq's CHOPPY days, and there may be no such group: of
+31 buy days, the first stored condition is CHOPPY on 1, and CHOPPY appears at all on
+4 (trades_v2 at 8535a85; 4 of 30 at d6e277d; planning rates only, sources mixed). A
+mechanism that names a condition on nearly every day discriminates little, which is
+worth knowing and is reported. It also leaves a CHOPPY-controlled test with no
+control. The new test uses every day, keeps one outcome and one pre-registered
+direction, and tests what a pass would make us do, apply the adjustment, not whether
+a label is "accurate", which has no ground truth. If the predicted sign carries no
+information, the table is wrong whatever the labels mean. It is also ONE test, not
+one per condition, so there is no multiple-comparison count to carry.
+
+- **UNITS, PINNED (2026-11-04).** `signal_log.ret_*` are FRACTIONS: 0.0123 is 1.23%.
+  `fill-outcomes.mjs` writes (price − reference) / reference. On real rows at 8535a85 that
+  lands on whole cents: EMAT $1.45 × 1.158621 = $1.68, AVD $1.245 × 0.851406 = $1.06, CCOI
+  $7.55 × 0.892715 = $6.74. In percent, those would be sub-cent moves. Median |ret_close| is
+  0.0082. "Points" everywhere in this section are percentage points of return, through one
+  function, `retToPoints`, used by the test and the planning table alike. §7.2's figures
+  are in the same units: `audit-rsi-figures.mjs` multiplies by 100. Held by
+  `tests/macro-sign-test.test.js`, which also shows ret_close 0.0098 apart failing the
+  minimum and 0.0102 apart clearing it.
+- **Data:** the db/038 macro log, both answers recorded separately every
+  scan day (pattern, Groq, path, ETF moves, fetch time, cut in effect).
+- **FORWARD DATA ONLY. THE 422 HISTORICAL CONDITIONS CANNOT ENTER THIS TEST.**
+  Of the 422 trades the replay could compare (trades_v2 at d6e277d), 45 match
+  the rule and 377 are Groq's or another moment's, and the record can't say
+  which. Their source is unknown, so they are not evidence about either
+  source. In a month there will be 422 tempting rows and a thin forward log.
+  The answer is still no. This test runs on db/038's log and nothing else.
+  - **What stays true, for a different reason:** "92 of 451 trades bought
+    under a raised cut" is unaffected. The app applied the raised cut on the
+    strength of what it stored, so that is an accurate count of trades bought
+    under a raised cut, whatever the condition's source. It says what the cut
+    did. It says nothing about whether the condition was right.
+  - **Planning reads two things and never joins them:** the spread of the outcome and
+    how the signs split (`scripts/macro-sign-horizon.mjs`, and the replay's sign
+    counts). The sign-to-return relationship on history has not been computed, and
+    must not be: that would be running this test on barred data, then pre-registering it.
+- **PRIMARY TEST (`scripts/lib/macro-sign-test.mjs`, run by
+  `scripts/run-macro-sign-test.mjs`; both committed before the log has a row):**
+  - **Per day, the predicted sign:** the sign of the condition's `MACRO_ADJUSTMENTS`
+    entry for OTHER: +1 for BROAD_RALLY and MOMENTUM_DAY, −1 for RISK_OFF, GEOPOLITICAL,
+    TECH_ROTATION_OUT and the three SECTOR_WEAKNESS conditions, 0 for CHOPPY. OTHER,
+    because the outcome is the logger's signals and the logger scans the OTHER universe.
+    `tests/macro-observe-only.test.js` fails if a condition's OTHER value goes to zero
+    and leaves it directionless.
+  - **The day's label: Groq's FIRST answer that trading day that was given the moves
+    (confirmed 2026-11-04).** A later ask has already seen part of the day being
+    measured: the same error that put post-sale scans inside the at-sale verdict. 12 of
+    30 buy days at d6e277d stored more than one condition, so it would have mattered.
+  - **ONE outcome, fixed now:** the day-mean `ret_close` of the EDGE logger's SHOWN
+    signals (signal_log, base cut, no macro), so one day is one observation, not its row
+    count. **Supporting, reported but never decisive:** the next trading day's IWM
+    return, close to close, SIP.
+  - **ONLY SIGNALS FIRST SHOWN AT OR AFTER THE LABEL COUNT (2026-11-04).** The same
+    look-ahead, on the other side. A signal shown before the label has part of its
+    return inside the moves the label was given, which would correlate with the sign
+    mechanically and in the direction that passes. A day with none drops out, and is
+    listed with why.
+  - **Test:** Pearson correlation of sign and outcome across days, one-sided in the
+    direction the table claims (higher where it predicts higher), by permuting BLOCKS OF
+    3 CONSECUTIVE DAYS from a random starting day: 10,000 shuffles, p < 0.05. Blocks keep
+    any run of conditions intact under the null. Simulated (no real data joined), 3-day
+    blocks cost 0 to 4 points of power, and where both signs and outcomes persist they
+    take false positives from 7-8% to 5-6%. At 25 days that is about 8 blocks.
+    - **Decided, not defensive:** history shows no clustering, and blocks aren't free. They
+      are the pre-registered PRIMARY because forward data may cluster where history doesn't.
+      **The day-shuffled p is reported as supporting and never decides.** Choosing between
+      them after seeing both would undo the pre-registration.
+    - **THE METHOD'S BLIND SPOT: A PATTERN CYCLING EVERY 3 DAYS.** Signs with period exactly
+      3 can't be told from their own shuffles, since every block looks alike, so p can't
+      fall below about 1/3 however strong the effect (r 0.96 gave p 0.33 in a fixture). Same-
+      as-yesterday is lag 1 and wouldn't see it, so the check is at lags 1 to 5. Stored signs,
+      trades_v2 at 8535a85, noise band about ±0.36: buy days in order −0.14, −0.33, +0.21,
+      −0.22, −0.09; on the trading calendar, gaps kept, −0.17, −0.14, +0.09, +0.13, −0.12.
+      The rule's replay at 07:00, 07:30, 09:00 and 11:00 PT, lag 3: −0.20, −0.18, 0.00, −0.04
+      (56 days, band about ±0.27). **Nothing shows at lag 3, so the block length stays 3.** Lag 2 on buy days, −0.33, is
+      near the band and is not the blind period: recorded so nobody rediscovers it as news. Every result prints the same
+      five numbers, and if lag 3 stands out the reading says the test is blind there.
+  - **Bar: at least 20 trading days, at least 5 of them away from the most common
+    predicted sign.** A correlation needs the sign to vary. It doesn't need every sign:
+    "5 of each" could never be met if Groq resembles the replay's rule, which gave + on
+    0 to 3 of 56 days. Below the bar there is no result, not a weak one.
+- **SECONDARY TEST, RULE VERSUS GROQ:** on days the rule decided and Groq chose
+  differently, does one source's condition separate outcomes where the other's
+  doesn't? A one-sided permutation test at p < 0.05 on the same outcome's day means.
+  **Bar: at least 20 trading days logged, at least 8 of them such days.** It takes as
+  long as it takes. It is not a reason to delay the primary test, and the primary test
+  passing doesn't settle it.
+- **The kinds of day, and which test each feeds:**
+  - **Every labelled day feeds the primary test,** CHOPPY days included, at sign 0. The
+    count of CHOPPY days is reported on its own: "Groq names something on N% of days"
+    is worth knowing whatever the test says.
+  - **The rule decided** (it named a condition, not CHOPPY, not ambiguous) **and
+    Groq chose differently.** The only rows that bear on rule versus Groq, and the
+    8-day bar counts these alone. Two sub-kinds, reported separately because they
+    would justify different actions: **both named a condition**, and **the rule
+    named one and Groq said CHOPPY**. A day can be both when its readings differ.
+  - **Why Groq's CHOPPY counts and the rule's doesn't (settled 2026-11-03; don't
+    re-argue it).** The rule's CHOPPY is a FALLTHROUGH: no rule fired, so nothing
+    was judged. Groq's CHOPPY is a SELECTION from the same menu it could have
+    answered differently: a positive judgement that nothing notable is happening.
+    They aren't symmetric. So the rule naming X while Groq says CHOPPY is a genuine
+    disagreement, and an important one: it is where following Groq means NOT applying
+    an adjustment the rule would have applied. The rule's CHOPPY against a named Groq
+    answer is one opinion against an abstention, and doesn't count toward the 8.
+  - **The rule abstained** (CHOPPY or ambiguous) **and Groq named something:**
+    reported as a count, no bar of its own.
+  - **Groq on headlines alone: EXCLUDED FROM BOTH TESTS, REPORTED SEPARATELY.** A
+    reading where a required ETF was missing or stale has `pattern_incomplete` true,
+    and Groq was asked without the full moves (even if only one ETF is absent).
+    Groq-with-moves and Groq-on-headlines are two different mechanisms, and pooling
+    them measures a mixture whose composition nobody controls. It is a candidate
+    mechanism in its own right and can have its own bar if it accumulates enough
+    days. The banner still shows it, with the incompleteness named.
+  - **Days with no session aren't counted** in anything.
+- **What we are waiting for, and when.** Dates are illustrations: logging can't start
+  until Roman has run db/035, db/037 and db/038 and the build ships, and they assume a
+  scan at 07:00 PT or later on EVERY trading day, because only the browser observes.
+  Missed days push them out. If the first logged day were 11-09 (11-16: a week later):
+  - **Primary, earliest possible: 20 trading days, 2026-12-07.**
+  - **Primary, likely: about 25 trading days, 2026-12-14.** Of 27 logged days at
+    8535a85, a shown signal was first shown at or after 07:00 PT on 27, 07:30 on 22, 09:00
+    on 21. With a label at about 07:30, 20 usable days take about 25.
+  - **The sign split barely moves this.** Simulated (`scripts/macro-sign-horizon.mjs`,
+    before any look-ahead drop): median 20 days for every split below; 90th percentile
+    30 on the stored split, 20 to 25 on the rule's.
+  - **Secondary: floor 22 trading days, 2026-12-09; about 43, 2027-01-11, if Groq
+    differs on half the days the rule decides; more on a single reading a day.** Groq's
+    real rate is unknown until logged.
+  - **The 60-day re-run before any effect ships: 2027-02-04.**
+- **REACHING THE BAR IS NOT THE SAME AS BEING ABLE TO SEE THE EFFECT.** Chance of
+  passing, if days the table calls + really beat days it calls − by the given gap
+  (`scripts/macro-sign-horizon.mjs --rev 8535a85 --before 10`, block test: day-mean sd
+  0.97 pts from 14 days of signals first shown before 10:00 PT; 2,000 worlds; a gap of 0
+  passes 5 to 6%). The noon-hour rows' spread is 0.38 pts, because their close is under an
+  hour away, so a figure from all rows (0.72) would overstate this.
+
+  | Split of +/−/CHOPPY | Source | 25 days: gap 0.25 / 0.5 / 1 / 2 pts | 60 days: gap 0.25 / 0.5 / 1 / 2 pts |
+  |---|---|---|---|
+  | 23 / 74 / 3 | stored first-of-day, trades_v2 at 8535a85 (31 days) | 14% / 30% / 72% / 99% | 23% / 54% / 95% / 100% |
+  | 5 / 32 / 63 | the rule at 09:00 PT, replay | 10% / 18% / 41% / 85% | 14% / 31% / 72% / 99% |
+  | 0 / 30 / 70 | the rule at 07:30 PT, replay | 10% / 14% / 31% / 75% | 11% / 23% / 57% / 97% |
+
+  The test runs on Groq's labels, and no row is them: the first mixes sources and the
+  other two are the rule's. The report's label line replaces all three within weeks.
+- **WHAT A MISS MEANS, WRITTEN BEFORE THERE IS ONE (2026-11-04):** no effect of about 2 points or larger was detected; smaller effects remain UNMEASURED. It does NOT read "the
+  condition carries no information". §7.2 turned an absence of data into a null result and
+  had to be withdrawn; this says what the null means while there is none to defend. "About
+  2 points" is where the table reaches 75% to 99% at 25 days. At 1 point a miss is
+  uninformative on the rule-like splits. The runner prints this reading itself
+  (`MISS_READING`), and a test holds it to these words.
+- **THE MINIMUM EFFECT WORTH ACTING ON: 1 PERCENTAGE POINT OF DAY-MEAN CLOSE RETURN, AND THE
+  TABLE DOESN'T IMPLY ANYTHING LIKE IT (2026-11-04).**
+  - **The table, OTHER column, in score points:** RISK_OFF −20, GEOPOLITICAL −10,
+    TECH_ROTATION_OUT and the three SECTOR_WEAKNESS conditions −5, BROAD_RALLY +10,
+    MOMENTUM_DAY +5, CHOPPY 0. Between + and − days that is 16.7 score points on the stored
+    labels, 30 at its widest.
+  - **What a score point is worth, within a day (same script, signal_log at 8535a85, 1,354
+    EDGE rows, shown and below the cut, no condition anywhere):**
+
+    | Rows | Outcome | Points per score point | Implied gap at 16.7 | Upper bound at 16.7 / at 30 |
+    |---|---|---|---|---|
+    | First shown before 10:00 PT, 14 days | ret_close | −0.0062 (se 0.0079) | −0.10 | 0.16 / 0.29 |
+    | All, 27 days | ret_close | −0.0030 (se 0.0044) | −0.05 | 0.10 / 0.17 |
+    | First shown before 10:00 PT, 14 days | ret_1d | −0.0192 (se 0.0191) | −0.32 | 0.32 / 0.57 |
+    | All, 26 days | ret_1d | −0.0087 (se 0.0117) | −0.15 | 0.25 / 0.44 |
+
+    Upper bound: mean plus two standard errors. Scoring versions are mixed in these rows.
+    This is narrow: it is about the close and the next day, not +3 days, and §7.2's limits
+    on what short-horizon rows can support apply here too. It does NOT say scoring predicts
+    nothing.
+  - **So the table implies a quarter of a point or less at the close, and the test can't
+    see that:** 10 to 14% power at 25 days, 11 to 23% at 60. **This test cannot support
+    applying `MACRO_ADJUSTMENTS` as written, and that is known now.**
+  - **What it can do:** find a gap far larger than the table's score points imply. Then the
+    table isn't confirmed; its sizes are wrong. 1 point is the floor because it is about one
+    day's spread (sd 0.97), and smaller gaps can't be seen in 60 days on the rule-like
+    splits (57 to 72% at 1 point). It is a judgement, not derived from the table.
+  - **`MACRO_ADJUSTMENTS` IS DEAD AS A SPECIFICATION (2026-11-04).** Not "unvalidated": its
+    claimed effect is below our measurement floor, so no amount of waiting will license it.
+    If a condition ever earns an effect, the size comes from the measured gap and the table
+    is rewritten from that, or deleted. Nothing in it survives as a number we apply. Until
+    then two things still read it, and neither applies a number: this test takes only each
+    entry's SIGN, as the hypothesis, and `would_adjust` records what the table would have done.
+  - **THE CONDITION QUESTION IS NOT MOOT; DON'T CONFLATE THE TWO.** The calculation above says
+    an adjustment of this size would matter little, GIVEN the observed score-to-return slope.
+    It does not say GEOPOLITICAL days behave like BROAD_RALLY days. That is the sign test, and
+    its power depends on the real day-to-day gap, not on the table's size. It is still worth
+    running: power for a 1-point gap at 25 days is 31 to 72%, depending on the split. 31 to 41%
+    is on the rule-like splits and 72% is the stored split, the best case in the table above.
+- **The point estimates above are on the wrong side of zero, inside noise, and not a finding.**
+  Why that makes db/039 the highest-value item in the queue, and that instrument's limits, are
+  under "THE SLOPE IS THE REASON DB/039 IS THE HIGHEST-VALUE ITEM IN THE QUEUE".
+- **THE POSITIVE-SIGN GROUP WILL BE THIN. SAID NOW, NOT DISCOVERED IN DECEMBER.** At 25 days
+  the stored split (7 of 31) gives 5.6 + days, right at the 5-day floor: a 70% chance of
+  reaching it. On the rule's 09:00 split it gives 1.3 (1%; 22% by 60 days), on its 07:30 split
+  none. **So a pass may license acting on negative conditions only**, and may say nothing
+  about raising any score. The result lists which signs it speaks for.
+- **The replay's sign counts (`scripts/replay-macro-firing.mjs`, Alpaca bars fetched
+  2026-11-04T03:56Z, IEX, 56 days, 08-13 to 10-30, the RULE, reconstructed moves, no
+  outcome):** 07:00 + 1, − 15, CHOPPY 40. 07:30 + 0, − 17, CHOPPY 39. 09:00 and 11:00
+  + 3, − 18, CHOPPY 35. 06:00 no answer on any day. Same sign as the day before: 34, 30, 24 and
+  22 of 55, by chance about 58, 58, 50 and 50%.
+- **How long the secondary bar may take (same script, fetched 2026-11-04 UTC):**
+  the rule named a condition at ANY of 07:00/07:30/09:00/11:00 PT on **21 of 56
+  days**, at all four on 3. At a single time: 10 (07:00), 12 (07:30), 17 (09:00),
+  13 (11:00). That caps the rate at 38% of days, so 8 such days take **at least
+  22 trading days even if Groq differed on every day the rule decided**. That is
+  a floor, not an estimate: if Groq differed on half of them it's about 43, and
+  a single reading a day needs more. No Groq rate is known yet, and the log is
+  the only thing that can measure it. Expect this bar to be met after the primary
+  one, possibly months after, and don't lower it for being slow.
+- **Decision bar:** nothing moves a score or the cut unless the primary test passes in its
+  pre-stated direction AND the measured gap between the predicted groups is at least 1 percentage point.
+  **Even then the table is not applied as written:** any effect is sized from the measured
+  gap, for the signs seen on at least 5 days, and the test is re-run at 60 days before it
+  ships. A pass below 1 point earns nothing. Otherwise it stays observe-only. Failing is a
+  result, recorded as such, and read as above.
+- **Stated limits:** 20-60 days is a small sample of market regimes. The logger's universe
+  is not Roman's. Groq's answers from before db/038 can't be reproduced or tested, because
+  their headlines weren't stored. From db/038 on, each ask stores its headlines (below).
+  - **Withdrawn 2026-11-04, a limit stated without evidence:** "conditions and returns both
+    cluster in runs". On what exists they don't: the sign repeats no more than chance (stored
+    57%, chance about 60%, buy days; the rule 22 to 34 of 55, chance 50 to 58%), and the
+    outcome's lag-1 autocorrelation is negative (−0.36, 27 days at 8535a85). Blocks are used
+    anyway: they cost almost nothing, and Groq's real persistence is unknown until logged.
+
+**Rules fixed with the observe-only scope (2026-11-02):**
+- **When Groq is asked, one rule:** once per trading day UNCONDITIONALLY,
+  for the disagreement record (asking only when the pattern rule is
+  ambiguous would condition the disagreement test on ambiguity, a
+  different measurement), plus again whenever the pattern answer changes
+  intraday. Every ask is logged, including failures, so Groq's failure
+  rate is a computed number.
+- **Groq's inputs are recorded, not just its answer.** Headlines come from
+  the Alpaca news API (`/v1beta1/news`, Benzinga's feed): symbols SPY and
+  QQQ, `start` = now minus the lookback (since the previous close, capped),
+  no `end`, newest first, then filtered to the last 6 hours and cut to 5.
+  **The feed is irreproducible by construction:** "now" moves, there is
+  no `end` bound, and articles are added and updated afterwards, so the
+  same query run later does not return the same list. That is the reason
+  the stored headlines are not optional. So each ask stores the request (symbols, start, end = fetch time, lookback,
+  the 6-hour filter), the headlines sent (id, created_at, source, text),
+  whether the list was EMPTY (the prompt then says "no recent headlines
+  available": an empty feed is a different defect from bad reasoning),
+  the model (`openai/gpt-oss-20b`), temperature (0.2) and the raw reply.
+- **Input precision comes before prediction.** The firing replay reports,
+  per day and per rule threshold, whether the IEX moves (what the app
+  reads) and the SIP moves fall on the SAME SIDE of it. If they disagree
+  on a firing decision often enough to matter, the classification is
+  noise at the input, and that is fixed before the predictive test is run.
+- **The replay includes a pre-market scan time** (06:00 PT), so the case
+  where the app may be reading the previous session's bar is measured,
+  not absent.
+- **A stale ETF quote is UNJUDGED, never a number (2026-11-03).** A missing
+  quote becomes NULL and is visibly incomplete. A stale one gives a move that
+  looks valid: yesterday's change presented as today's, classified confidently.
+  So each ETF's dailyBar is dated. One not from the reading's own PT date, or
+  with no date, has a NULL move and is named in `unjudged_etfs`, and a required
+  ETF unjudged makes the reading `pattern_incomplete` with no pattern answer. "The
+  rule couldn't run pre-market" is then recorded as that. `etf_bar_dates` stores
+  what the call was made on.
+  - **TWO DIFFERENT QUESTIONS ABOUT A BAR; DON'T REACH FOR THE WRONG ONE.**
+    `dailyBarSessionAge`: "is this the newest bar there is?" (the gate and the card).
+    `macroBarState`: "is this bar from the reading's own date?" (a move that must be
+    today's). The first answers CURRENT for a previous-session bar before the open and
+    on closed days, deliberately. Used for the macro move, it would pass the exact case
+    this rule exists to catch; the first version of this rule specified it, and that
+    was the error. They share a stamp (`scanFreshness`), not an answer. In session they
+    agree. `tests/macro-observe-only.test.js` holds both the agreement and the difference.
+  - **Groq is still asked** on such a reading (the daily ask is unconditional), told
+    the moves are "not available". Its answer can be the banner's, with `path` groq and
+    `pattern_incomplete` true, and the rule's failure named. It enters neither test.
+
+**Decided 2026-11-02: observe-only pins a SETTING; scoring stays v2.**
+The version identifies the formula; the settings stamp identifies the
+configuration it ran under (the 11-01 design: `disableMacroOverlay`
+stamped by both scans from outside `scoreStock`, so the hash need not
+move). Pinning the overlay off changes the configuration, not the formula.
+A v3 that copies v2's lines because the output is identical would assert
+a difference it doesn't have, and would cost a permanent "score change
+since buy — not evaluated" on every position held across the deploy.
+Conditions, part of the change:
+- **The overlay branch left in `scoreStock` is unreachable by
+  construction, not convention.** Two standing tests: one fails if the
+  setting is ever unpinned (any code path can make it false), one fails if
+  a non-zero macro adjustment ever reaches a score. Each has mutants that
+  turn the suite red, at least one built from the real call site (the
+  settings load in core/store.js and scoreStock's own
+  `disableMacroOverlay ? 0 : getMacroAdjustment(...)` line), not a
+  synthetic one.
+- **The stamp says who set it.** Three states, never a bare boolean:
+  `user_off`, `user_on`, `pinned_by_build`. Every row from the deploy on
+  is `pinned_by_build`; rows before it keep what they recorded. A reader
+  must not take a build's pin for Roman's choice: he no longer has the
+  toggle.
+- **Groq at temperature 0.** At 0.2 the same stored inputs can give a
+  different answer, which makes the record auditable but not
+  reproducible. At 0 the stored request reproduces, and the only
+  irreducible drift is the headline feed, handled by storing it (with the
+  explicit empty-feed state). Model and temperature are stored with each
+  ask, so a later change to either is visible in the record.
+
+**Principle for any future display cut (recorded 2026-11-02, decision
+later).** Under v2 Roman has never bought below 45, though 20–44 names
+were shown to him on non-raised days: evidence of no interest, not of no
+exposure. But 15% of his v2 buys are below 60, so a cut at 60 would have
+hidden choices he made (`scripts/report-buy-score-distribution.mjs` at
+d6e277d). When this is taken up, **the answer is not a new silent
+filter.** A cut is acceptable only when Roman set it and can see it: a
+visible setting (defaulted near 45, from the data above), with the count
+of candidates it is hiding shown on screen. A cut the user didn't set and
+can't see is the defect the observe-only change removed.
+
+**Principle (2026-11-02): no fail-open defaults.** A default that ENABLES
+a behaviour when configuration is unavailable is a fail-open default.
+`disableMacroOverlay: false` meant "no settings yet, so apply the
+adjustment", the wrong direction. Defaults are inert, and the app says
+when it is running on them. This covers every setting, not this one.
+
+**How the current build actually falls back (traced 2026-11-02):**
+- A Supabase ERROR on the settings read does NOT fall back: it stops on
+  the "Couldn't load your data" screen with Retry
+  (`runDataLoadAndInit`). Init awaits the load before the first render,
+  so no scan runs before settings arrive.
+- A MISSING settings row does fall back, silently: it is treated as
+  "nothing migrated yet" and the app runs on the defaults. An RLS-denied
+  SELECT returns an empty result, not an error, so it lands here too.
+  That makes this the path the auth plan's uid-keyed policies would hit
+  in any session that isn't signed in as Roman.
+- Four settings exist only in the phone's localStorage
+  (`edge_localOnlySettings`, no Supabase column): `riskPerTradePct`,
+  `floatThresholdShares`, `maxLossPct`, `developerTools`. Their load AND
+  save swallow every error (`catch(e) {}`), and their save says "saved"
+  regardless. Cleared storage or a new device puts them on defaults with
+  nothing on screen. They are in no backup.
+
+| Setting | Lives in | Default | Roman's value | Default differs? |
+|---|---|---|---|---|
+| budget | Supabase | 500 | 1500 | **yes** (sizing) |
+| includeUnder2 | Supabase | false | true | **yes** (sub-$2 names hidden) |
+| showWatch | Supabase | true | true | no |
+| minVolume | Supabase | 100000 | 100000 | no |
+| forcePreMarketMode | Supabase | false | false | no |
+| disableMacroOverlay | Supabase | **false** (fail-open) | true | **yes** (overlay ON) |
+| riskPerTradePct | localStorage only | 2 | not in any backup | unknown |
+| floatThresholdShares | localStorage only | 10,000,000 | not in any backup | unknown |
+| maxLossPct | localStorage only | 6 | not in any backup | unknown |
+| developerTools | localStorage only | false | not in any backup | unknown |
+
+Roman's values are from `settings` at d6e277d (row id 3, updated
+2026-08-28).
+
+**Settings save: never inserts on an empty read (shipped 67308c3,
+2026-11-02, stamp 20261103040000).** The save used to INSERT a fresh row
+whenever its id read came back empty. An RLS-denied read is empty, so a
+flaky read plus any Settings tap would have shadowed Roman's row with the
+defaults for good. Now the save updates the row the load read and must get
+it back; otherwise "Setting NOT saved ... Reload the app, then make the
+change again", with nothing written. There is no insert branch.
+- **Live check, 2026-11-03 04:47Z (read-only):** one row, id 3, holding
+  Roman's values. It has not fired. Every backup since 09-05 holds that
+  same row.
+- **Not evidence, recorded so it isn't overstated:** ids 1 and 2 do not
+  exist, so two inserts happened before backups began and those rows were
+  later deleted or rolled back. That fits setup work, and it fits this
+  insert branch firing. Nothing on record tells the two apart. It only
+  makes "this path is reachable in practice" read less theoretical.
+
+**Observe-only covers every channel (2026-11-02).** The condition's
+channels were found one at a time: the score adjustment, the display cut,
+then the AI-analysis prompts (the condition, its explanation, and SPY's and
+the sector ETF's moves were in both the buy and the pre-market prompt).
+- **The prompts carry no market state** for the measurement period, and say
+  so to the model. Every AI result is labelled "Not conditioned on the
+  market state".
+- **Why:** the pre-committed test measures whether the condition predicts
+  anything independent of the app acting on it. Text Roman reads before
+  buying is the app acting, so the test would measure a loop. And the banner
+  is now the ONE place that states the condition: a second channel for the
+  same fact can disagree with it.
+- **REVERSIBLE.** If a condition earns an effect at 60 days, putting it back
+  into the prompts is one of the options considered then, deliberately.
+- **Standing guard:** `tests/macro-consumers.test.js` lists every consumer
+  of the condition (by file and enclosing function) with its role: OBSERVE,
+  DISPLAY (the banner only), RECORD, HISTORY, COUNTERFACTUAL, INERT_PINNED,
+  PASS_THROUGH or DEFINITION. No role means "acts on it", so a fourth channel
+  can't be added unclassified. 5 mutants killed, including the original
+  prompt lines put back verbatim.
 
 **Rule: text that states a threshold, version or count is GENERATED from
 the value (2026-11-02).** It is never written beside the value, and a test
@@ -3647,6 +4243,55 @@ thing happened is the most consequential value a record carries.)
 was confirmed by fetching the served index.html, sw.js and app.js and finding the new stamps and
 the new sale code.
 
+**Firing replay, first run (2026-11-03; `scripts/replay-macro-firing.mjs`).**
+Source: Alpaca historical bars, fetched 2026-11-03T23:18Z. 56 trading days,
+08-13 to 10-30. Moves are RECONSTRUCTED (last 1-min close at or before the
+time, against the previous daily close), not the app's snapshot inputs.
+- **The rule rarely decides alone.** In session, CHOPPY or ambiguous (the
+  cases where the app needs Groq) at 70–82% of day-times. Structurally,
+  TECH_ROTATION_OUT can't fire alone while SPY > −1: XLK ≤ −1.5 also fires
+  SECTOR_WEAKNESS_TECH.
+- **Input precision passes in session.**
+  - IEX and SIP fall on opposite sides of a rule threshold on at most 6 of
+    229 day-times for any one threshold (XLF ≥ 0.5).
+  - The condition differs between the feeds on 4 of 224 in-session
+    day-times (1.8%), all at 07:30.
+  - Not material: the predictive test can proceed on IEX inputs in session.
+- **Pre-market fails on IEX.** At 06:00 PT, IEX has no bar yet for at least
+  one required ETF on 56 of 56 days, so the pattern rule can't run. SIP is
+  missing an ETF on 10 of 56.
+  - The live app reads a snapshot, whose pre-open daily bar may be the
+    previous session's: a stale move, not a missing one. The stale rule above
+    now withholds those.
+- **How many of the 422 would the stale rule have left unclassified? Mostly
+  unknowable (`node scripts/audit-macro-stale-moves.mjs`; pin d6e277d, Alpaca IEX
+  daily bars fetched 2026-11-04 UTC).**
+  - **87 of the 422 can be judged**, from the moves in signal_snapshot_at_buy
+    (10-29 and 10-30; 4 distinct readings). **None of the 87 is stale:** no ETF's
+    stored move equals its previous-session move. Positive control: the same test
+    detects the known stale APUS, BIAF and IPDN of 10-30.
+  - **335 can't be judged.** Nothing stored their moves or their bars' dates, and
+    the old fetch recorded no time. Unknown, not "not stale". So the count is
+    somewhere from 0 to 335, and no better answer exists.
+  - **Going forward, a proxy:** a replay time with no IEX bar yet today is one a
+    live snapshot would read as yesterday's. That is 06:00 PT on 56 of 56 days and
+    07:00 and later on 0 of 224 day-times. It is a reconstruction: expect pre-market
+    readings to go unclassified, and read the log for what really happens.
+- **The recorded conditions mostly aren't the rule's.** For 422 trades
+  (trades_v2 at d6e277d), the stored `macro_condition` matches the rule's
+  IEX answer at the latest replay time before the buy on only 45.
+  - 377 differ, mostly "rule CHOPPY, stored BROAD_RALLY (117) /
+    GEOPOLITICAL (67) / SECTOR_WEAKNESS_ENERGY (51)".
+  - Those stored conditions couldn't have been the rule's answer at that
+    reading. They're Groq-decided, or read at another moment by the old
+    once-per-page-load fetch. The record can't say which.
+- **Standing guard:** `tests/macro-classifier.test.js` holds fixtures for
+  every condition, the four stored contexts, and inclusive/exclusive
+  boundaries. It checks the replay's threshold list against the rule's
+  source. 14 mutants killed: always-one-value, each rule dropped, flipped
+  comparisons, the breadth count, a threshold drifting from the replay
+  list.
+
 **The queue tests, and a failure that is UNEXPLAINED (2026-11-03).**
 `tests/queue-pacing.test.js` failed once, at 23:26Z on 11-03, in a full strict run:
 serial, nothing else of ours running. It then passed on every rerun. It was written
@@ -3703,6 +4348,23 @@ descriptive only; the win-rate test below runs on new data and nowhere else.
 - The script that runs it is committed before its first run.
 
 ### PRE-REGISTERED FORWARD TEST: does scoring v2, as traded, make money? (2026-11-08)
+
+**RE-REGISTERED 2026-11-13, before any data from the new regime exists: it RESTARTS at the (c) build.** Its population
+is Roman's buys, and he buys from what the app shows. Until (c), the macro reading raised the display line, without
+consulting the overlay switch, on 10 of 15 recorded-scan days since 10-13. From (c) the line no longer moves. So the
+buys before and after (c) were drawn from different candidate sets: two experiments, and a pooled answer would mean
+neither (the reviewer's rule: a pre-registration that survives a regime change in its treatment was not a
+pre-registration of the thing it now measures). Chosen over "two regimes analysed separately", because the pre-(c)
+regime is closed at about 13 buy days and can never reach the 20-day bar on its own. So:
+- **Population:** the same, restricted to buys recorded by the (c) build or later (`code_version.app` >= 20261112232800),
+  by the build stamp on the row, never by date.
+- **When:** the first day that population reaches 20 buy days. No projection until the post-(c) buy rate is measured.
+- **The pre-(c) v2 buys** (scoring 2, before the (c) build) are reported beside the result, labelled "raised-line
+  regime", with no bar and no verdict.
+- Everything else (costs, bar, bootstrap, seed, null clause, largest-contributor test) is unchanged.
+- **The S1 forward test (above) is re-registered the same way, by the same rule:** its population (trades bought from
+  2026-11-12) is likewise drawn from what was shown, and 11-12 itself was in the raised-line regime. It counts from
+  the (c) build on, by build stamp, and its 11-12 trades are reported apart, labelled.
 
 **AMENDED 2026-11-11, before its data exists: the bar is above realistic costs, not above
 zero.** Roman was paper trading (his statement, 2026-11-11): the book is a frictionless paper
@@ -3781,8 +4443,7 @@ sentence.
 Within a day, across 1,354 EDGE rows shown and below the cut, the point estimate of return
 per score point is on the wrong side of zero: −0.0062 points at the close for rows first
 shown before 10:00 PT (se 0.0079, 14 days), −0.0030 across all rows (se 0.0044, 27 days).
-Source: signal_log at 8535a85, by `scripts/macro-sign-horizon.mjs`, which is on the local
-gated branch and not yet on main. Scoring versions are mixed in these rows.
+Source: signal_log at 8535a85, by `scripts/macro-sign-horizon.mjs`. Scoring versions are mixed in these rows.
 
 **Both are well inside noise. This is not a finding, and no conclusion follows from it.** It
 is the same signal_log whose coverage §7.2 was withdrawn over. But the score is the central
@@ -3909,6 +4570,48 @@ write-once triggers, event triggers, table comments). It reproduces a migration'
 (db/035 run 4's 3 of 4 came back first). **What it can't do yet:** the dump has no grants, so db/037, which only changes
 grants, can't be tested until the live grants are dumped; and the dump has no server version (the probe ran on
 PostgreSQL 18.6), so a version difference is not ruled out until `select version();` is run live.
+
+**db/037 rewritten around revoke-all-then-grant (2026-11-06).** Written against the live grants dump
+(`C:Userscmp15edge2live-grants-2026-11-06.json`, excluded from git like the schema dump). For each of EDGE's 12 tables it
+revokes everything from anon and authenticated, then grants back only what the enumerated paths use: anon SELECT and INSERT
+where the app, loggers or add path write; portfolio also UPDATE and DELETE; settings SELECT and UPDATE; trades SELECT (the
+backup); workflow_runs SELECT plus db/023's nine column grants; db_meta nothing, RLS on, no policy. authenticated ends with
+nothing. outcome_filler is the template and is untouched. The rating_snapshots 80-day anon delete policy goes. The shark
+tables are not touched. Two narrowing styles were in use (db/033 and the trades revoke removed table-level privileges only;
+db/023 added column grants); this uses explicit grants throughout, readable from a query. Guards compare the catalog's grant
+lists literally with the dump's, before and after, three-state. `tests/anon-write-paths.test.js` holds db/037's grants to the
+enumerated paths exactly both ways: a path nothing grants fails, and so does a grant nothing uses. Schema harness, against
+the reconstructed schema and the live grants: run 2 fails before (today's grid), then passes 288 table probes and 18 column
+probes; every refusal is the table privilege's own ("permission denied for table"); the rollback returns the dump's grid
+exactly, so run 1's own guard accepts it again; each guard fires on its own case.
+
+**The default-ACL fix: SCOPED, NOT BUILT (2026-11-06).** `pg_default_acl` gives anon and authenticated every privilege on every
+new table (`arwdDxtm`), EXECUTE on every new function and `rwU` on every new sequence, for objects created by `postgres` and by
+`supabase_admin`. That is why every table started fully open and why anon could execute `rls_auto_enable`. The fix: `alter
+default privileges for role postgres in schema public revoke all on tables / functions / sequences from anon, authenticated`,
+plus `revoke execute on functions from public` (Postgres's own default, separate from Supabase's). After it, a new object has no
+grants until its migration gives them.
+- **What it can't reach:** `supabase_admin`'s defaults. The SQL editor runs as `postgres` and can't alter another role's default
+  privileges, so objects created as `supabase_admin` (possibly the dashboard's table editor; not established) stay open. Every
+  migration here runs as `postgres`, so its objects are covered. To be measured once applied: create a table in the editor and
+  read its ACL.
+- **What it requires first:** every migration that creates something grants it explicitly (item 5: db/038's
+  `macro_observations`, db/039's `fill_rating_outcomes`), and every new serial or identity column's sequence gets
+  `usage` for the role that inserts. Otherwise the first insert after the fix fails.
+- **The empty-read interaction, named.** Row-level security answers a read it won't allow with an EMPTY LIST, not an error
+  (`tests/empty-read-sites.test.js`). Today a new table is born with every grant and, through `rls_auto_enable`, with RLS on and
+  no policy, so a forgotten policy reads as EMPTY: the db/033 class, 72 rows. After the fix, a forgotten GRANT reads as a
+  permission ERROR (42501) instead. That is louder only where the read site surfaces errors. A site that turns `error` into
+  `[]`, or is classified OK because "empty is handled", would turn the new error straight back into the old empty read. So the
+  fix comes with one addition to the empty-read registry: for each read site, what an ERROR does there, classified like the
+  empty case (OK / SILENT / PASS_ON_ERROR / WRITES_FROM_ERROR), and the fix does not ship while any site is anything but OK.
+- **Order:** item 5's explicit grants, then the error column in the registry, then the fix, then the measurement above.
+
+**TRIGGER without schema CREATE, measured (2026-11-06).** In the harness, a role with TRIGGER on a table (and EXECUTE on a
+function, which Postgres grants to PUBLIC by default) and no schema CREATE could attach an existing trigger function. Attached
+BEFORE INSERT, UPDATE or DELETE, the write-once functions then refused the owner's inserts, updates and deletes: a denial of
+service that includes recording a sale. The role could not drop the trigger (owner only) or write a function of its own. No
+data leaked. So TRIGGER was worth revoking, and was revoked by hand on 2026-11-06; db/037 keeps it revoked.
 
 **It has three dependents (2026-11-05):** auth step 4's policies, written against five tables whose definitions we
 have never read; the backup's key uniqueness for four tables, inferred from data; and **a local schema to test
@@ -4068,12 +4771,15 @@ fill moment, which is currently unreachable, because of four blockers:
    News isn't stored, and partial-day volume at a past minute isn't known. The last scan before the sale is
    a different moment.
 
-**A doesn't depend on step 2.5.** Roman's complaint was that a stored label could never match the card. A stores what the card showed, verbatim, so the two match by
-construction, whatever the inputs were. What A inherits is their quality: the captured verdict can carry a render-dependent factor, "RSI declining from peak (92 → 92)" among them, and
-it says what was on screen, not what was true. Step 2.5 is what fixes the inputs, for the card and everything downstream, and it is a separate decision.
+**A doesn't depend on step 2.5.** Roman's complaint was that a stored label could never match the card, because it used `rsiAtBuy` where the card used live RSI. A captures the card's output, so
+the two match by construction. **A is an audit of the app's output, so it records the errors faithfully.** If the card showed "RSI declining from peak (92 → 92)", recording that is the right behaviour:
+the question A answers is "what was the app telling me", and the answer includes the app telling him something that described nothing. Do not "improve" A by cleaning up what it captures.
 
-**Sizes, estimated from reading the code on 2026-11-05, not measured, for the reviewer. Nothing goes to Roman until the reviewer has ruled.**
-- **A: about half a session, plus one migration.** As scoped on 11-03. Every captured card is `CAPTURED_FILL_UNKNOWN` until db/038 stores a fill, and its column could join db/038 while that is unrun.
+**Step 2.5 is its own decision, not a follow-on.** The exit-engine inputs have 77 references, and any change to the advice Roman sees is a change to the behaviour of his trading tool; measured 2026-11-05, it changes no label (§7.6 step 2.5). It gets its own
+approval, with the before and after stated: which positions' advice changes, and by how much.
+
+**Sizes, estimated from reading the code on 2026-11-05, not measured.**
+- **A: about half a session, built.** Its columns joined db/038, so the build's only wait is Roman's SQL. Those are different things: the build is about half a session, and the wait is his SQL, which gates it entirely.
 - **Step 2.5: about 2 to 3 sessions, and no SQL expected. Parked behind db/039 and Roman's SQL (2026-11-05): measured at zero label changes, so it fixes the record rather than the recommendation (§7.6 step 2.5).** The derivation mostly exists for the display panel (`computeIntradayPanel`, `fetchIntradaySipBars`).
   - Hold high, with its split check, IEX fallback label and NULL on a partial fetch: about half a session.
   - The exit engine's inputs, "computed from 7 of 9 factors", and the renamed day-over-day RSI factor: about 1 session. It is where the risk is: the inputs have 77 references, and the exit advice changes.
@@ -4183,3 +4889,55 @@ first: n=70, −$377.03, 14 days at b4620bc, and the same 252 population.
 - **Nothing about time of day is established.** The wording for Roman: the gate stays a precaution; 07:30–10:00 has done best overall but mostly in one good week; on days he bought in both windows the difference is unclear; the after-close cell was poorest and he has already stopped.
 
 BEKE and AGNT (11-04) were still open at this pin, so a later rerun's n differs for that reason.
+
+**For db/039:** the coverage line states the snapshot cut from
+`RATING_SNAPSHOT_MIN_SCORE` and the display cut from each row's
+`display_threshold`. Rows before db/038 say "cut not recorded".
+
+**TWO ERAS OF rating_snapshots: NEVER POOL THEM WITHOUT SAYING SO (2026-11-04).** From the
+build that ships with db/038, every row a scan scores is written, with `tier` set to SHOWN or
+BELOW_THRESHOLD, the scan's own decision and the same words as signal_log. A NOT_EVALUATED
+candidate has no score, so it has no row.
+- **`tier IS NULL`: the first era.** Only shown signals scoring 60+. It stays at 60, and
+  nothing can recover the rows it didn't write.
+- **`tier` set: the second era.** Everything scored, so limit 1 under "BEST INSTRUMENT
+  AVAILABLE" applies only to the first era. The other three limits still apply to both.
+- A rank comparison across the whole score range can use the second era only. db/039's
+  coverage line prints the count from each era separately.
+- The score history report stays on the 60+ floor in both eras, so its averages stay comparable.
+
+### The sell form's fill: `sell_filled_at`, from db/038
+
+The 2026-11-03 scope, with one declared departure (see "The verdict saved with a sale").
+- **`trades_v2.sell_filled_at`** (timestamptz): the sale's fill. **`sell_filled_at_source`:** `entered`, `default`
+  (the form's starting value accepted) or `not_known`, which is `sell_filled_at` NULL and is never blocked. Requiring a
+  time would force a guess, and a guess stored as a fill is the defect this replaces. A CHECK keeps the two columns
+  consistent. NULL in both: a sale from before db/038.
+- **Rows from before db/038 have no fill, and that is a gap, not an era.** `sell_time` is never an input.
+- **Marking a row labels it; it doesn't discard it. What each state supports:**
+
+  | `sell_filled_at_source` | Minute-level work | Hour-level work |
+  |---|---|---|
+  | `entered` | Yes | Yes |
+  | `default` | No | Yes, with the gap distribution beside the figure |
+  | `not_known` | No | No, and the figure says how many it excluded |
+
+  Roman won't look up a fill for forty trades a week, so most rows will be `default`, and the exit-hour question is
+  an hour question. The default is when the form opened, usually a few minutes after the fill, so its hour bucket is
+  usually right.
+- **The limit on that "usually":** the gap distribution is measured on `entered` rows, and a default's own error can't
+  be measured. Those samples may not match: Roman is likeliest to type a time when the default is visibly wrong, so
+  `entered` gaps probably run larger than `default` gaps. **That is selection bias in the measurement, and it makes the
+  gap distribution a cautious upper bound on `default` rows, not a measurement of them. Say it in those terms wherever the
+  distribution is reported.** Separately, and whatever the gap's size, a fill just before the hour lands in the next bucket.
+- **Selling on an earlier day:** changing the date clears the time, so today's clock can't be stored against
+  another day.
+- **What the fill is for:** exit-hour analysis, and placing the last scan before the sale in `signal_before_sale`,
+  where a same-day scan is before or after the fill by its own instant. No exit rule judges it: the sale computes no
+  verdict (db/035).
+
+### db/038 carries a revision, and run 2 reads it back (2026-11-05)
+
+db/038 has been declared void and reissued several times, and that depended on a notice surviving a relay. So its stamp (`-- REVISION`) is stored in the database, in `macro_observations`'s table
+comment, and run 2 reads it back and fails on any other revision, naming what was applied. Pasting an old copy is detected, not announced against. A test ties the stamp to the file's contents, so the file
+can't change without it. Run 2 checks each part separately: macro, settings, sell_filled_at, capture and scoring, and verdict A. One row of counts for a migration doing five unrelated things would only say that something is wrong.

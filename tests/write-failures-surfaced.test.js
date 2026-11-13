@@ -6,7 +6,7 @@
 'use strict';
 const assert = require('assert');
 const vm = require('vm');
-const { readSource, run, settingLabelsSrc } = require('./_lib');
+const { readSource, run, settingLabelsSrc, columnValidatorsSrc } = require('./_lib');
 
 const app = readSource('app.js');
 const grab = name => { const i = app.search(new RegExp(`^(async )?function ${name}\\(`, 'm')); assert.ok(i >= 0, name); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
@@ -40,13 +40,16 @@ function ctx({ insertSnapshot, ratingInsert, ratingLanded = [], ratingVisible = 
     renderLiveBand: () => {},
   };
   vm.createContext(c);
-  vm.runInContext([line('const SNAPSHOT_LOG_KEY = '), line('const RATING_FAILURES_KEPT = '), line('const RATING_SNAPSHOT_MIN_SCORE = '),
+  // CHANGED 2026-11-12, declared (carve of (c)): the writers call core/store.js's column validators; loaded here for real (tests/_lib.js columnValidatorsSrc), never stubbed.
+  vm.runInContext([columnValidatorsSrc(), line('const SNAPSHOT_LOG_KEY = '), line('const RATING_FAILURES_KEPT = '), line('const RATING_SNAPSHOT_MIN_SCORE = '),
     ...['noteSnapshotWrite', 'recordSignalSnapshotAtBuy', 'noteSnapshotFailure', 'clearSnapshotFailure', 'retrySnapshotWrite',
       'writeRatingSnapshots', 'noteRatingFailure', 'retryRatingWrites', 'settingsBannerLine', 'updateMarketBanner'].map(grab), settingLabelsSrc()].join('\n')
     + '\n;Object.assign(globalThis, { recordSignalSnapshotAtBuy, retrySnapshotWrite, writeRatingSnapshots, retryRatingWrites, updateMarketBanner });', c);
   return { c, banner, persisted, calls };
 }
 const pos = { id: 'p1', ticker: 'ABC', codeVersion: null };
+
+const scored = list => list.map(s => (s.unscored ? { ticker: s.ticker, signal: null, shown: false, tier: 'NOT_EVALUATED' } : { ticker: s.ticker, signal: s, shown: true, tier: 'SHOWN' }));
 
 run('a failed buy snapshot reaches the banner with Retry, and the row is kept (persisted)', async () => {
   const { c, banner, persisted } = ctx({ insertSnapshot: async () => { throw Object.assign(new Error('new row violates row-level security policy'), { code: '42501' }); } });
@@ -81,9 +84,9 @@ run('snapshot Retry: lands -> cleared; already landed (23505) -> cleared; still 
 run('a failed rating_snapshots batch reaches the banner; Retry checks it did not land before inserting again', async () => {
   let fail = true;
   const h = ctx({ ratingInsert: async () => (fail ? { error: { code: '42501', message: 'denied' } } : { error: null }) });
-  await h.c.writeRatingSnapshots([{ ticker: 'A', score: 80, signal: 'SOFT BUY' }, { ticker: 'B', score: 70 }, { ticker: 'C', score: 40 }]);
+  await h.c.writeRatingSnapshots(scored([{ ticker: 'A', score: 80, signal: 'SOFT BUY' }, { ticker: 'B', score: 70 }, { ticker: 'C', score: null, unscored: true }]));
   assert.strictEqual(h.c.state.ratingWriteFailures.length, 1);
-  assert.strictEqual(h.c.state.ratingWriteFailures[0].rows.length, 2, 'the 60+ rows kept');
+  assert.strictEqual(h.c.state.ratingWriteFailures[0].rows.length, 2, 'the scored rows kept');
   assert.ok(h.banner.innerHTML.includes('1 scan snapshot batch NOT saved (2 rows)'), h.banner.innerHTML);
   fail = false;
   const before = h.calls.ratingInserts;
@@ -92,7 +95,7 @@ run('a failed rating_snapshots batch reaches the banner; Retry checks it did not
   assert.strictEqual(h.c.state.ratingWriteFailures.length, 0, 'cleared');
 
   const landed = ctx({ ratingInsert: async () => ({ error: { message: 'x' } }), ratingLanded: [{ ticker: 'A' }, { ticker: 'B' }] });
-  await landed.c.writeRatingSnapshots([{ ticker: 'A', score: 80 }, { ticker: 'B', score: 70 }]);
+  await landed.c.writeRatingSnapshots(scored([{ ticker: 'A', score: 80 }, { ticker: 'B', score: 70 }]));
   const n = landed.calls.ratingInserts;
   await landed.c.retryRatingWrites();
   assert.strictEqual(landed.calls.ratingInserts, n, 'it had landed: NOT inserted again');
@@ -101,14 +104,14 @@ run('a failed rating_snapshots batch reaches the banner; Retry checks it did not
   // Rows at the same instant but for OTHER tickers are not this batch: it
   // must still be inserted, never counted as landed (that would drop it).
   const others = ctx({ ratingInsert: async () => (others.c.state.ratingWriteFailures.length ? { error: null } : { error: { message: 'x' } }), ratingLanded: [{ ticker: 'Z1' }, { ticker: 'Z2' }] });
-  await others.c.writeRatingSnapshots([{ ticker: 'A', score: 80 }, { ticker: 'B', score: 70 }]);
+  await others.c.writeRatingSnapshots(scored([{ ticker: 'A', score: 80 }, { ticker: 'B', score: 70 }]));
   const k = others.calls.ratingInserts;
   await others.c.retryRatingWrites();
   assert.strictEqual(others.calls.ratingInserts, k + 1, 'other tickers at that instant: still inserted');
   assert.strictEqual(others.c.state.ratingWriteFailures.length, 0);
 
   const partial = ctx({ ratingInsert: async () => ({ error: { message: 'x' } }), ratingLanded: [{ ticker: 'A' }] });
-  await partial.c.writeRatingSnapshots([{ ticker: 'A', score: 80 }, { ticker: 'B', score: 70 }]);
+  await partial.c.writeRatingSnapshots(scored([{ ticker: 'A', score: 80 }, { ticker: 'B', score: 70 }]));
   const m = partial.calls.ratingInserts;
   await partial.c.retryRatingWrites();
   assert.strictEqual(partial.calls.ratingInserts, m, 'partly landed: not retried (would duplicate)');
@@ -120,8 +123,8 @@ run('Retry\'s fourth state, CANNOT TELL: a read that sees nothing (denied looks 
   // call this "not landed" and insert again.
   for (const [label, opts] of [['control empty', { ratingVisible: [] }], ['control errors', { ratingVisibleError: { code: '42501', message: 'denied' } }]]) {
     const h = ctx({ ratingInsert: async () => ({ error: { message: 'x' } }), ...opts });
-    await h.c.writeRatingSnapshots([{ ticker: 'A', score: 80 }, { ticker: 'B', score: 70 }]);
-    await h.c.writeRatingSnapshots([{ ticker: 'C', score: 90 }]);
+    await h.c.writeRatingSnapshots(scored([{ ticker: 'A', score: 80 }, { ticker: 'B', score: 70 }]));
+    await h.c.writeRatingSnapshots(scored([{ ticker: 'C', score: 90 }]));
     const n = h.calls.ratingInserts;
     await h.c.retryRatingWrites();
     assert.strictEqual(h.calls.ratingInserts, n, `${label}: nothing inserted`);
@@ -133,7 +136,7 @@ run('Retry\'s fourth state, CANNOT TELL: a read that sees nothing (denied looks 
 
 run('kept failures are capped, and what is dropped is counted on the banner, never hidden', async () => {
   const { c, banner } = ctx({ ratingInsert: async () => ({ error: { message: 'down' } }) });
-  for (let i = 0; i < 25; i++) await c.writeRatingSnapshots([{ ticker: 'T' + i, score: 70 }]);
+  for (let i = 0; i < 25; i++) await c.writeRatingSnapshots(scored([{ ticker: 'T' + i, score: 70 }]));
   assert.strictEqual(c.state.ratingWriteFailures.length, 20);
   assert.strictEqual(c.state.ratingWriteFailuresDropped, 5);
   assert.ok(banner.innerHTML.includes('5 older batch(es) dropped'), banner.innerHTML);

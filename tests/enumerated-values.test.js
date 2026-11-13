@@ -169,6 +169,25 @@ const LEAVES = {
     pins: [['scripts/log-signals-warrior.mjs', "try { refuseTestOverridesWithWrite('log-signals-warrior'); }"], ['scripts/lib/test-override-guard.mjs', "allowedArgs = ['--write']"], ['scripts/lib/test-override-guard.mjs', 'const badArgs = argv.filter(a => !allowedArgs.includes(a));']],
   },
 };
+// Validators over a list the code holds (2026-11-12, carve of (c); ruled: make a site enumerable rather than declare
+// why it cannot be). A call returns only its list's values, read from the list's own literal in the file named; the
+// line that makes it so (the throw on anything else) is pinned, so a validator that stops validating fails here.
+const VALIDATED = {
+  checkedMacroPath: { file: 'core/store.js', list: 'MACRO_PATHS', pin: "if (!MACRO_PATHS.includes(path)) throw new Error(" },
+  checkedRatingTier: { file: 'core/store.js', list: 'RATING_TIERS', pin: "if (!RATING_TIERS.includes(tier)) throw new Error(" },
+};
+function validated(name, ctx) {
+  const d = VALIDATED[name], s = ctx.sources.get(d.file) || '';
+  const body = new RegExp(`function\\s+${name}\\s*\\([^)]*\\)\\s*\\{`).exec(s);
+  if (!body) throw NE(`VALIDATED ${name}: no function ${name} in ${d.file}`);
+  const fnText = W.balanced(s, body.index + body[0].length - 1);
+  if (!fnText.includes(d.pin)) throw NE(`VALIDATED ${name}: its body no longer contains "${d.pin}"`);
+  const m = new RegExp(`const\\s+${d.list}\\s*=\\s*`).exec(s);
+  if (!m) throw NE(`VALIDATED ${name}: no const ${d.list} in ${d.file}`);
+  const arr = W.balanced(s, m.index + m[0].length);
+  const vals = W.entries(`{${arr.slice(1, -1)}}`).map(e => { const x = e.match(/^'([^']*)'$/); if (!x) throw NE(`${d.list}: an entry that is not a plain string: ${e.slice(0, 30)}`); return x[1]; });
+  return { values: new Set(vals), nullable: false };
+}
 // Calls that replay an earlier call's arguments (a retry): skipped when tracing a parameter to its callers, because
 // the values are those the first call passed, which the trace already reads.
 const REPLAYS = {
@@ -178,15 +197,12 @@ const REPLAYS = {
 //   external: who writes it         default: the column's DEFAULT writes it (verified against the capture)
 //   pending: the change that will   reserved: the decision it waits on, with a review date
 const each = (vals, d) => Object.fromEntries(vals.map(v => [v, d]));
-const MACRO = ['pattern', 'groq', 'pattern_groq_failed', 'unclassified', 'not_fetched'];
-const GATED = 'the macro-gated branch (worktree edge2-gated), whose commits write it; db/038 is applied, so they ship when cleared';
 // The app side of db/042 shipped 2026-11-12: every value it was pending on is now written by the app and read here as
 // such, so its pending entries are gone. What it does not write is declared below by name.
 const DB_PATTERNS = {
   '~^derived_from_robinhood_export_[0-9]{4}-[0-9]{2}-[0-9]{2}$': { external: 'hand-run SQL from a match against Roman\'s Robinhood export (STATUS.md, waiting on Roman)' },
   '~^declared_by_roman_[0-9]{4}-[0-9]{2}-[0-9]{2}$': { external: 'hand-run SQL recording Roman\'s testimony, labelled as such' },
 };
-const MACRO_PATHS = { ...each(MACRO, { pending: GATED }), unknown: { default: 'a row written before, or without, a macro classification (db/038)' } };
 const DECLARED = {
   // a buy is live or paper, never not_known, from this build (core/store.js recordedModeColumns refuses it); every
   // portfolio row from before the app side has not_known by the column DEFAULT
@@ -194,17 +210,12 @@ const DECLARED = {
   // a sale copies its position's mode (copied_from_position), so nothing records a mode AT a sale
   'trades_v2.execution_mode_source': { recorded_at_trade: { reserved: 'a trade recorded directly as closed, with no position (a manual entry, or a Warrior sale): no such path exists; if none is commissioned by the review, the value comes out of the trades_v2 CHECK', review: '2026-12-31' }, ...DB_PATTERNS },
   'portfolio.execution_mode_source': DB_PATTERNS,
-  'trades_v2.macro_path': MACRO_PATHS,
-  'rating_snapshots.macro_path': MACRO_PATHS,
-  'portfolio.macro_path_at_buy': MACRO_PATHS,
-  'macro_observations.path': each(MACRO, { pending: GATED }),
-  'macro_observations.feed': each(['iex', 'sip'], { pending: GATED }),
-  'macro_observations.groq_ask_reason': each(['daily', 'pattern_changed'], { pending: GATED }),
-  'macro_observations.source': each(['browser', 'logger'], { pending: GATED }),
-  'rating_snapshots.tier': each(['SHOWN', 'BELOW_THRESHOLD'], { pending: GATED }),
+  // CHANGED 2026-11-12 (carve of (c)): every macro path, rating tier, fill-time source and verdict display state is now
+  // written by the app (paths and tiers through core/store.js's validators, read here through VALIDATED), so their
+  // pending entries are gone. Two permitted values nothing writes, which the gated branch never wrote either:
+  'macro_observations.feed': { sip: { reserved: 'a macro reading recorded by the scheduled logger rather than the browser: not built. If nothing is commissioned by the review, the value comes out of the CHECK (the logger reads SIP; the browser reads IEX)', review: '2026-12-31' } },
+  'macro_observations.source': { logger: { reserved: 'a macro reading recorded by the scheduled logger rather than the browser: not built. If nothing is commissioned by the review, the value comes out of the CHECK', review: '2026-12-31' } },
   'rating_snapshots.outcome_selection': each(['first_in_30min', 'not_selected'], { pending: 'db/039 (not applied) and its app commit (d) on the macro-gated branch' }),
-  'trades_v2.sell_filled_at_source': each(['entered', 'default', 'not_known'], { pending: `${GATED} (the sale form's fill time)` }),
-  'trades_v2.verdict_display_state': each(['CAPTURED_BEFORE_FILL', 'CAPTURED_AFTER_FILL', 'CAPTURED_FILL_UNKNOWN', 'NOT_DISPLAYED'], { pending: `${GATED} (verdict A)` }),
   'trades_v2.verdict_provenance': { sale_moment: { reserved: 'verdict B (a verdict computed at the sale moment), not commissioned; if it is still not commissioned at the review, the value comes out of the CHECK', review: '2026-12-31' } },
   'scan_runs.session': { FORCED_TEST: { external: 'db/CORRECTION_2026-10-09_forced_test_scan.sql, one row (scan 3da6957d); no code may write it (the test-override guard refuses --session with --write)' } },
   'signal_log.taken_resolution': { unresolved: { default: 'a signal not yet resolved; fill-outcomes.mjs moves it to the other four' } },
@@ -346,6 +357,7 @@ function values(expr, src, at, ctx, depth = 0) {
     return union(objects(m[1], src, at, ctx, depth + 1).map(o => prop(o, m[2], depth + 1)));
   }
   if ((m = expr.match(/^([A-Za-z_$][\w$]*)\(/)) && W.balanced(expr, m[0].length - 1).length === expr.length - m[0].length + 1) {
+    if (VALIDATED[m[1]]) return validated(m[1], ctx);
     const bind = callBind(m[1], expr, src, at, ctx);
     return union(returnsOf(m[1], ctx).map(r => values(r.expr, r.src, r.at, { ...ctx, file: r.file, bind }, depth + 1)));
   }

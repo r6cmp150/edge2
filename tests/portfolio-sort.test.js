@@ -208,7 +208,7 @@ async function renderIn(ctx, mode, alter = () => {}) {
   const els = { 'tab-content': { innerHTML: '', insertAdjacentHTML() {} }, 'pf-list': { innerHTML: '' }, 'pf-summary': { innerHTML: '' } };
   Object.assign(ctx, {
     state: { settings: { alpacaKey: 'k' }, portfolio: tracked, ownedScores: fx.ownedScores, signals: [], lastScanTime: null,
-      ownedPrevRSI: fx.ownedPrevRSI, ownedPeakRSI: {}, portfolioPrices: {}, deletedPositionIds: new Set(), aiCache: {},
+      ownedPrevRSI: fx.ownedPrevRSI, ownedPeakRSI: {}, portfolioPrices: {}, displayedVerdicts: {}, deletedPositionIds: new Set(), aiCache: {},
       portfolioEngineFilter: 'ALL', portfolioSort: mode, sold: [], macroContext: null },
     document: { getElementById: id => els[id] || null },
     localStorage: { getItem: () => null, setItem() {} },
@@ -226,7 +226,7 @@ async function renderIn(ctx, mode, alter = () => {}) {
     buildUnifiedPortfolioBanner: (r, tag) => `<div class="stub-banner" data-tag="${tag === undefined ? 'UNDEFINED' : tag ? 'TAG:' + encodeURIComponent(tag) : ''}"></div>`,
     buildRegisteredEngineExitBanner: (r, tag) => `<div class="stub-banner" data-status="${r.status}" data-tag="${tag === undefined ? 'UNDEFINED' : tag ? 'TAG:' + encodeURIComponent(tag) : ''}"></div>`,
     getEngine: () => ({ evaluateExit: (pos, live) => { verdicts[pos.ticker] = { engine: pos.engineSource, price: live.price }; return { status: 'HOLDING', reasons: [] }; } }),
-    neutralEngineExitFallback: () => ({}), buildFridayFlag: () => '',
+    neutralEngineExitFallback: () => ({}), buildFridayFlag: () => '', capturedDisplay: () => ({}), macroConditionForRecord: () => null,
     updateBudgetBar() {}, buildPendingOrdersHtml: () => '', buildWeekendBanner: () => '', buildEngineFilterControl: () => '',
     renderBuildStatus() {}, checkBuildStatus() {}, renderEngineBadge: () => '', listingWarningText: () => '',
     computeTradeMetrics: () => ({ totalPnL: 0, count: 0, excluded: 0 }),

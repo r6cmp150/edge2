@@ -7,7 +7,7 @@
 // SALE_FAILED. A failed sale is kept, persisted, with what Retry needs.
 'use strict';
 const assert = require('assert');
-const { readSource, run: runNow, settingLabelsSrc } = require('./_lib');
+const { readSource, run: runNow, settingLabelsSrc, columnValidatorsSrc } = require('./_lib');
 const queue = []; const run = (n, f) => queue.push([n, f]);
 
 const app = readSource('app.js');
@@ -37,7 +37,8 @@ function load(insertResult, stored = { sell_price: 10.1, shares: 10, sell_date: 
     select: cols => ({ eq: (c, v) => ({ limit: async n => { global.__reads.push([cols, c, v, n]); if (stored instanceof Error) return { data: null, error: { message: stored.message } }; return { data: stored ? [stored] : [], error: null }; } }) }),
   }) };
   // eslint-disable-next-line no-eval
-  eval(settingLabelsSrc() + '\n' + [constLine('MAX_SALE_ATTEMPTS'), constLine('SALE_COMPARED_FIELDS')].join('\n') + '\n' + ['saleVerdictProvenance', 'saleModeColumns', 'writeTradeToSupabase', 'noteSaleWrite', 'compareRecordedSale', 'retrySaleWrite', 'dismissSaleNotice', 'settingsBannerLine', 'updateMarketBanner'].map(grab).join('\n') +
+  // CHANGED 2026-11-12, declared (carve of (c)): the writers call core/store.js's column validators; loaded here for real (tests/_lib.js columnValidatorsSrc), never stubbed.
+  eval(columnValidatorsSrc() + '\n' + settingLabelsSrc() + '\n' + [constLine('MAX_SALE_ATTEMPTS'), constLine('SALE_COMPARED_FIELDS')].join('\n') + '\n' + ['saleVerdictProvenance', 'saleModeColumns', 'writeTradeToSupabase', 'noteSaleWrite', 'compareRecordedSale', 'retrySaleWrite', 'dismissSaleNotice', 'settingsBannerLine', 'updateMarketBanner'].map(grab).join('\n') +
     '\nglobal.__w = writeTradeToSupabase; global.__retry = retrySaleWrite; global.__dismiss = dismissSaleNotice; global.__banner = updateMarketBanner;');
   return { persisted, el };
 }

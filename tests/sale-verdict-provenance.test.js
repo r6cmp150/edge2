@@ -10,7 +10,7 @@
 'use strict';
 const assert = require('assert');
 const vm = require('vm');
-const { readSource, run } = require('./_lib');
+const { readSource, run, columnValidatorsSrc } = require('./_lib');
 
 const app = readSource('app.js');
 const grab = name => {
@@ -116,7 +116,8 @@ run('the sale write sends verdict_provenance and signal_before_sale, and the ver
   };
   vm.createContext(ctx);
   // CHANGED 2026-11-12, declared: the sale row also carries db/042's mode, through saleModeColumns.
-  vm.runInContext(grab('saleVerdictProvenance') + grab('saleModeColumns') + grab('writeTradeToSupabase') + '\n;globalThis.__w = writeTradeToSupabase;', ctx);
+  // CHANGED 2026-11-12, declared (carve of (c)): the writers call core/store.js's column validators; loaded here for real (tests/_lib.js columnValidatorsSrc), never stubbed.
+  vm.runInContext(columnValidatorsSrc() + '\n' + grab('saleVerdictProvenance') + grab('saleModeColumns') + grab('writeTradeToSupabase') + '\n;globalThis.__w = writeTradeToSupabase;', ctx);
   const f = saleCtx({ sig: null }).__f({ ticker: 'A', engineSource: 'EDGE' }, '2026-11-02');
   const record = { ...plain(f), sellTime: '10:00', sellDayOfWeek: 'Monday', source: 'Own Decision' };
   const outcome = await ctx.__w({ ticker: 'A', buyDate: '2026-10-30', shares: 1, buyPrice: 1, id: 'p1' }, record, '2026-11-02', 1.1, 0.1, 10);

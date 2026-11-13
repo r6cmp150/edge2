@@ -30,6 +30,8 @@ const REGISTRY = {
   'app.js|settings': [
     { verdict: OK, empty: 'testSupabaseConnection: only the error is read; empty = connected', denied: 'connected (true), which it is' }],
   'app.js|rating_snapshots': [
+    { verdict: OK, empty: 'macroObservationsControl: the table is never empty, so an empty read = CANNOT_TELL', denied: 'CANNOT_TELL: the macro progress line says UNKNOWN' },
+    { verdict: OK, empty: 'macroObservationsControl: no row stamped by the observe-only build = none confirmed, only after the read above returned a row', denied: 'only reached once the read above has returned a row; an error is CANNOT_TELL' },
     { verdict: OK, empty: 'retryRatingWrites positive control: the table is never empty, so an empty read = CANNOT TELL', denied: 'CANNOT TELL: nothing retried, every batch kept, banner says why (fixed 2026-11-02; was WRITES_FROM_EMPTY)' },
     { verdict: OK, empty: 'retryRatingWrites landed check: no rows at that captured_at = not landed', denied: 'only reached once the control has read a row, so an empty here is a real "not landed"' },
     { verdict: S, empty: 'score-history report: "no data"', denied: 'report says no history exists' },
@@ -51,6 +53,9 @@ const REGISTRY = {
   'app.js|analysis_periods': [
     { verdict: OK, empty: 'load: empty with periods already on this phone = cannot tell', denied: 'keeps the phone\'s periods, banner says so (fixed 2026-11-02; was WRITES_FROM_EMPTY)' },
     { verdict: S, empty: 'start period: insert().select() then data[0]', denied: 'insert lands, select reads empty, data[0] is undefined: throws after the write succeeded' }],
+  'app.js|macro_observations': [
+    { verdict: OK, empty: 'report: goes to macroObservationsControl; "none yet" only if rating_snapshots reads and no row of it came from the observe-only build', denied: 'control says DENIED or CANNOT_TELL; the progress line says UNKNOWN, never "not yet" (fixed 2026-11-03; was SILENT: this line gates running the test)' },
+    { verdict: OK, empty: 'observeMacro: insert().select(\'id\') returns no row = id not read back', denied: 'observationError "saved, but its id could not be read back", shown on the macro banner; snapshot rows carry a NULL observation id, never a guessed one' }],
   'app.js|workflow_runs': [
     { verdict: OK, empty: 'health panel: every job red, "no run recorded"', denied: 'loud false alarm, misleads nobody into acting as if healthy' }],
   'core/store.js|portfolio': [
@@ -60,7 +65,7 @@ const REGISTRY = {
     { verdict: OK, empty: 'deletePositionFromSupabase: delete().select() removed no row -> existence check (2026-11-08; was "no error = deleted")', denied: 'goes to the existence check (next entry)' },
     { verdict: S, empty: 'delete existence check: no row = ALREADY_GONE; the sale goes on to the insert, where trades_v2_position_id_once refuses a second copy', denied: 'reads as ALREADY_GONE: no sale is lost or doubled (the index decides), but a row still there would go unreported' }],
   'core/store.js|settings': [
-    { verdict: S, empty: 'loadSettingsFromSupabase: no row = "nothing migrated yet", runs on defaults', denied: 'budget 500, sub-$2 hidden, overlay ON, nothing on screen' },
+    { verdict: OK, empty: 'loadSettingsFromSupabase: no row throws SETTINGS_ROW_MISSING (the row has existed since 08-17)', denied: 'the error-with-retry screen, never defaults' },
     { verdict: OK, empty: 'saveSettingsToSupabase: update of the loaded row id, .select(\'id\') must return it; none = refuse', denied: 'refuses: "Setting NOT saved ... Reload the app", nothing written; the insert branch is gone (67308c3, 2026-11-02; was WRITES_FROM_EMPTY)' },
     { verdict: OK, empty: 'readExecutionMode (db/042, 2026-11-12): no row = THROWS, never null (null is "never set", a different answer)', denied: 'the add asks Live or Paper and changes no setting; Settings refuses the change: "Live/Paper NOT changed"' },
     { verdict: OK, empty: 'writeExecutionMode: update of the loaded row id, .select(\'id\') must return it; none = SETTINGS_NOT_SAVED, and the change log is not written', denied: 'the setting is not changed and says so; a trade waiting on the answer is recorded under the answer anyway' }],
@@ -72,6 +77,10 @@ const REGISTRY = {
     { verdict: OK, empty: 'the not_known rows of portfolio / trades_v2 (2026-11-12): paged, Content-Range total checked; run only after a trades_v2 control count is non-zero, so empty = genuinely none', denied: 'the control fails first: "could not read", exit 1, the daily run shows red' }],
   'scripts/count-not-known.mjs|trades_v2': [
     { verdict: OK, empty: 'the CONTROL: trades_v2 is never empty; a total of 0 = cannot tell', denied: 'exit 1, "could not read", red' }],
+  // 2026-11-12, landing (c). One paged reader, two tables (rating_snapshots, macro_observations); held by
+  // tests/macro-observation-count.test.js in every state, the denied read included.
+  'scripts/count-macro-observations.mjs|${table}': [
+    { verdict: OK, empty: 'rating_snapshots with macro_path <> unknown empty = NOT STARTED (no scan by an observing build), said as such; macro_observations empty is judged against the scans: a decided reading with no readable observation is red, quotes-only scans owe none', denied: 'a denied macro_observations read is 200, empty, count 0: the scans that point to observations make it red ("cannot be read here"); a denied rating_snapshots read can only look like NOT STARTED -- the one case the control cannot see, and its own daily backup (backup-tables.mjs, floors) is the check on that table' }],
   'scripts/backup-tables.mjs|${table}': [
     { verdict: OK, empty: 'judged by backup-rules floors and the portfolio rule', denied: 'refused: below the floor' },
     { verdict: OK, empty: 'month-file tables: the count the rows we hold must equal; no count at all throws', denied: 'a count of 0 against the rows we hold: refused, nothing written' }],

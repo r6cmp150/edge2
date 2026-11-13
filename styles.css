@@ -764,6 +764,11 @@ a { color: var(--blue); }
   color: var(--text-dim);
 }
 .macro-banner strong { color: var(--blue); }
+.macro-banner summary { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.macro-banner[open] summary { margin-bottom: 6px; }
+/* 2026-11-13: a reading that was not recorded changes the container, not one word in it. */
+.macro-banner.macro-banner-unrecorded { border-color: var(--red); background: rgba(255,77,109,0.08); }
+.macro-banner .macro-unrecorded { color: var(--red); font-weight: 700; } /* outranks .macro-banner strong (blue) */
 
 /* ── Badges ── */
 .badge {
@@ -1598,6 +1603,7 @@ input:checked + .toggle-slider::before { transform: translateX(20px); }
 }
 .form-input:focus { outline: none; border-color: var(--blue); }
 .form-row { display: flex; gap: 10px; }
+.form-check { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .form-row .form-group { flex: 1; }
 .decision-btns { display: flex; gap: 8px; margin-top: 6px; }
 .decision-btn {

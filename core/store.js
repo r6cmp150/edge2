@@ -38,22 +38,32 @@ function persistApiKeys() {
 // exclusively Supabase-backed per the Data Migration project's Step 4 —
 // this is a narrow, explicit exception for the two fields with nowhere
 // else to go, not a reversion of that decision.
-function persistLocalOnlySettings() {
-  try {
-    localStorage.setItem('edge_localOnlySettings', JSON.stringify({
-      developerTools: state.settings.developerTools,
-      riskPerTradePct: state.settings.riskPerTradePct,
-      floatThresholdShares: state.settings.floatThresholdShares, // Phase 6 (2026-09-04) — same no-Supabase-column gap as the two above, not a reversion of the Data Migration decision
-      maxLossPct: state.settings.maxLossPct, // Phase 9 §3.4 (2026-09-15) — same gap, no settings-table column for it yet
-    }));
-  } catch(e) {}
+//
+// db/038 (2026-11-02): all four now have Supabase columns, and Supabase is
+// where they're saved. This phone's old copy is only READ, once per load,
+// for a value Supabase doesn't have yet (column NULL): that setting's source
+// is then 'phone', the banner says so, and the next successful settings
+// save uploads it. Nothing writes the phone copy any more. Both the read and
+// the parse used to swallow every error (catch(e) {}); a failure is now a
+// settings problem on the banner, not a silent reset to defaults.
+const PHONE_ONLY_SETTINGS_KEY = 'edge_localOnlySettings';
+const PHONE_ONLY_SETTING_KEYS = ['riskPerTradePct', 'floatThresholdShares', 'maxLossPct', 'developerTools'];
+
+function noteSettingsProblem(message) {
+  (state.settingsProblems = state.settingsProblems || []).push(message);
 }
 
 function loadLocalOnlySettings() {
-  try {
-    const raw = localStorage.getItem('edge_localOnlySettings');
-    if (raw) Object.assign(state.settings, JSON.parse(raw));
-  } catch(e) {}
+  let raw;
+  try { raw = localStorage.getItem(PHONE_ONLY_SETTINGS_KEY); }
+  catch (e) { noteSettingsProblem(`couldn't read the settings stored on this phone (${e?.message || e})`); return; }
+  if (!raw) return;
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (e) { noteSettingsProblem(`the settings stored on this phone are unreadable (${e?.message || e})`); return; }
+  for (const k of PHONE_ONLY_SETTING_KEYS) {
+    if (parsed && parsed[k] != null) { state.settings[k] = parsed[k]; state.settingsSource[k] = 'phone'; }
+  }
 }
 
 // Quota-failure surfacing (2026-09-04, found live while adding
@@ -104,6 +114,9 @@ const PERSIST_TIER = {
   saleWriteFailures: 1, snapshotWriteFailures: 1, ratingWriteFailures: 1,
   ownedPeakRSI: 2, ownedPrevRSI: 2, warriorPreMarketRvolObservations: 2,
   signalToggles: 3, selectedUniverse: 3, notifications: 3, lastScanTime: 3, lastPassedCount: 3, lastScanDroppedCount: 3,
+  // (c), carved 2026-11-12: the day's last Groq macro answer, which keeps Groq to one ask per trading day. Losing it costs
+  // one extra Groq ask: small session state.
+  macroGroqLast: 3,
   sold: 4, analysisPeriods: 4, signals: 4, news: 4, ownedScores: 4, universeAssetCache: 4, universePriorCloseCache: 4,
   warrior30DayVolumeCache: 4, warriorPreMarketVolumeCache: 4, warriorFloatCache: 4, warriorEdgarCikMapCache: 4,
 };
@@ -214,6 +227,7 @@ function mapSupabasePortfolioRowToPosition(row) {
     trimmedAtrAtBuy: row.trimmed_atr_at_buy,
     macroConditionAtBuy: row.macro_condition_at_buy,
     thresholdAtBuy: row.threshold_at_buy,
+    macroPathAtBuy: row.macro_path_at_buy ?? null, // db/038
     barsAsOfAtBuy: row.bars_as_of_at_buy ?? null, // db/031: read back, so the update path resends it
     catalystSetup: !!row.catalyst_setup,
     peakPrice: row.peak_price,
@@ -264,6 +278,29 @@ function mapSupabasePortfolioRowToPosition(row) {
   };
 }
 
+// db/038 (revision e): the macro path vocabulary. ONE list for every writer (portfolio.macro_path_at_buy,
+// trades_v2.macro_path, rating_snapshots.macro_path, macro_observations.path), and the list
+// tests/enumerated-values.test.js reads the written values from (carve of (c), 2026-11-12, ruled: enumerable code over
+// declarations). 'unclassified' is a reading that ran and decided nothing; 'unknown' is NOT in it: it means no reading
+// was attached at all, only macroPathColumn() writes it, and macro_observations can never hold it (its CHECK has none).
+const MACRO_PATHS = ['pattern', 'groq', 'pattern_groq_failed', 'unclassified', 'not_fetched'];
+function checkedMacroPath(path) {
+  if (!MACRO_PATHS.includes(path)) throw new Error(`not a macro path: ${JSON.stringify(path)} (db/038's MACRO_PATHS)`);
+  return path;
+}
+// A column that may say "no reading attached": a missing path is 'unknown', anything else must be on the list. An
+// unexpected value throws here, before the write, rather than at the database's CHECK.
+function macroPathColumn(path) {
+  if (path == null) return 'unknown';
+  return checkedMacroPath(path);
+}
+// rating_snapshots.tier: only scored rows are written (NOT_EVALUATED has no score), so these two.
+const RATING_TIERS = ['SHOWN', 'BELOW_THRESHOLD'];
+function checkedRatingTier(tier) {
+  if (!RATING_TIERS.includes(tier)) throw new Error(`not a rating tier: ${JSON.stringify(tier)} (RATING_TIERS)`);
+  return tier;
+}
+
 function mapPositionToSupabaseRow(position) {
   return {
     position_id: position.id,
@@ -288,6 +325,7 @@ function mapPositionToSupabaseRow(position) {
     trimmed_atr_at_buy: position.trimmedAtrAtBuy,
     macro_condition_at_buy: position.macroConditionAtBuy,
     threshold_at_buy: position.thresholdAtBuy,
+    macro_path_at_buy: macroPathColumn(position.macroPathAtBuy), // db/038 revision e: NOT NULL DEFAULT 'unknown'; a position from before has none
     bars_as_of_at_buy: position.barsAsOfAtBuy ?? null, // db/031
     catalyst_setup: !!position.catalystSetup,
     peak_price: position.peakPrice,
@@ -496,24 +534,42 @@ const SETTINGS_NOT_SAVED = 'Setting NOT saved: EDGE2 could not confirm your sett
   + '(a connection or permission problem looks the same as a missing row). Nothing was changed. '
   + 'Reload the app, then make the change again.';
 
+// Every user setting and its column (db/038 added the last four).
+// disableMacroOverlay is NOT here: macro is observe-only and the overlay is
+// pinned off by the build (MACRO_OVERLAY_PINNED_OFF in app.js); the save
+// writes the column as true and the load never reads it back into settings.
+const SETTINGS_COLUMNS = {
+  budget: 'budget', includeUnder2: 'include_under2', showWatch: 'show_watch', minVolume: 'min_volume',
+  forcePreMarketMode: 'force_pre_market_mode', riskPerTradePct: 'risk_per_trade_pct',
+  floatThresholdShares: 'float_threshold_shares', maxLossPct: 'max_loss_pct', developerTools: 'developer_tools',
+};
+const BOOLEAN_SETTINGS = new Set(['includeUnder2', 'showWatch', 'forcePreMarketMode', 'developerTools']);
+const SETTINGS_ROW_MISSING = 'Your settings row is missing from Supabase (or this session can\'t read it: '
+  + 'a permission problem looks the same). EDGE2 won\'t run on default settings. Reload to try again; '
+  + 'if it persists, the row has to be restored in SQL.';
+
+// Returns ONLY the settings Supabase holds a value for: a NULL column (one of
+// the four db/038 added, before its first save) is absent, so the caller keeps
+// that setting's phone value or default and its source says which. A missing
+// row is an error, never "nothing migrated yet": Roman's row has existed since
+// 2026-08-17, and an RLS-denied read returns the same empty result.
 async function loadSettingsFromSupabase() {
   const { data, error } = await supabaseClient
     .from('settings').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
-  if (!data) { settingsRowId = null; return null; }
+  if (!data) { settingsRowId = null; throw new Error(SETTINGS_ROW_MISSING); }
   settingsRowId = data.id;
-  return {
-    budget: data.budget,
-    includeUnder2: !!data.include_under2,
-    showWatch: !!data.show_watch,
-    minVolume: data.min_volume,
-    forcePreMarketMode: !!data.force_pre_market_mode,
-    disableMacroOverlay: !!data.disable_macro_overlay,
-    // db/042: shown in Settings and on the Add button. Never what a trade is recorded under: confirm re-reads it
-    // (readExecutionMode), so a tab left open can't record under a toggle changed elsewhere.
-    executionMode: data.execution_mode ?? null,
-    executionModeSetAt: data.execution_mode_set_at ?? null,
-  };
+  const out = {};
+  for (const [k, col] of Object.entries(SETTINGS_COLUMNS)) {
+    if (data[col] == null) continue;
+    out[k] = BOOLEAN_SETTINGS.has(k) ? !!data[col] : data[col];
+  }
+  // db/042: shown in Settings and on the Add button. Never what a trade is recorded under: confirm re-reads it
+  // (readExecutionMode), so a tab left open can't record under a toggle changed elsewhere. Not in SETTINGS_COLUMNS:
+  // it is never saved through saveSettingsToSupabase, only through writeExecutionMode. (Carve of (c), 2026-11-12.)
+  out.executionMode = data.execution_mode ?? null;
+  out.executionModeSetAt = data.execution_mode_set_at ?? null;
+  return out;
 }
 
 // db/042: the toggle as the database holds it NOW: { mode: 'live' | 'paper' | null (never set), setAt }. Throws when
@@ -565,19 +621,22 @@ async function writeExecutionMode(to, from) {
   return { settings: null, log: null, at };
 }
 
-async function saveSettingsToSupabase(settings) {
-  const row = {
-    budget: settings.budget,
-    include_under2: !!settings.includeUnder2,
-    show_watch: !!settings.showWatch,
-    min_volume: settings.minVolume,
-    force_pre_market_mode: !!settings.forcePreMarketMode,
-    disable_macro_overlay: !!settings.disableMacroOverlay,
-    updated_at: new Date().toISOString(),
-  };
+// Writes every setting whose source is a real value (supabase, phone, user),
+// never one still on its default: a default nobody chose must not become a
+// stored setting. On success, every written setting's source is 'supabase'.
+async function saveSettingsToSupabase(settings, sources = (typeof state !== 'undefined' && state.settingsSource) || {}) {
+  const row = { disable_macro_overlay: true, updated_at: new Date().toISOString() };
+  const written = [];
+  for (const [k, col] of Object.entries(SETTINGS_COLUMNS)) {
+    if (sources[k] === 'default' || settings[k] === undefined) continue;
+    row[col] = BOOLEAN_SETTINGS.has(k) ? !!settings[k] : settings[k];
+    written.push(k);
+  }
   if (settingsRowId == null) throw new Error(SETTINGS_NOT_SAVED);
   const { data, error } = await supabaseClient
     .from('settings').update(row).eq('id', settingsRowId).select('id');
   if (error) throw error;
   if (!data || data.length !== 1) throw new Error(SETTINGS_NOT_SAVED);
+  for (const k of written) sources[k] = 'supabase';
+  return written;
 }

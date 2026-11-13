@@ -28,6 +28,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { alpacaHeaders, fetchBars } from './lib/alpaca-bars.mjs';
+import { signAutocorrelation } from './lib/macro-sign-test.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
@@ -120,6 +121,24 @@ async function main() {
     const allDay = days.filter(d => session.filter(r => r.day === d).every(decided));
     console.log(`  ${feed.toUpperCase()} in session (07:00-11:00 PT): a condition named at ANY of the 4 times on ${anyDay.size} of ${days.length} days; at ALL 4 on ${allDay.length}`);
     if (anyDay.size) console.log(`  ${feed.toUpperCase()} so 8 rule-vs-Groq days need at least ${Math.ceil(8 * days.length / anyDay.size)} trading days, if Groq differed on EVERY day the rule decided (a floor, not an estimate)`);
+  }
+
+  // 3c: how the predicted sign would split, the input to the primary test's horizon
+  // (scripts/macro-sign-horizon.mjs). The RULE's answers: Groq's can't be replayed, and
+  // the test runs on Groq's. Counts only. Nothing here touches an outcome: joining these
+  // to returns would run the test on data it is barred from (phase-10 spec).
+  const edge = fs.readFileSync(path.join(ROOT, 'core/edge-scoring.js'), 'utf8');
+  const adjAt = edge.indexOf('const MACRO_ADJUSTMENTS = {');
+  const adjCtx = {};
+  vm.createContext(adjCtx);
+  vm.runInContext(edge.slice(adjAt, edge.indexOf('\n};\n', adjAt) + 4) + ';globalThis.T = MACRO_ADJUSTMENTS;', adjCtx);
+  console.log('\n== PREDICTED SIGN BALANCE (the rule, IEX, not Groq; counts only, no outcome) ==');
+  for (const hm of TIMES) {
+    const at = results.filter(r => r.feed === 'iex' && r.time === hm && r.condition != null);
+    const sign = r => Math.sign(adjCtx.T[r.condition].OTHER);
+    const same = at.slice(1).filter((r, k) => sign(r) === sign(at[k])).length;
+    const expected = [1, -1, 0].reduce((a, s) => a + (at.filter(r => sign(r) === s).length / Math.max(1, at.length)) ** 2, 0);
+    console.log(`  ${hm} PT  of ${at.length} days with an answer: + ${at.filter(r => sign(r) > 0).length}, - ${at.filter(r => sign(r) < 0).length}, CHOPPY ${at.filter(r => sign(r) === 0).length} | same sign as the day before ${same} of ${Math.max(0, at.length - 1)} (by chance about ${(100 * expected).toFixed(0)}%) | autocorrelation lags 1-5: ${at.length > 5 ? signAutocorrelation(at.map(sign)).map(v => v.toFixed(2)).join(' ') : 'n/a'}`);
   }
 
   // 4: IEX vs SIP, same side of each threshold?

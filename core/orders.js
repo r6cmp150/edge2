@@ -161,6 +161,40 @@ function readOrderEntry(prefix, buyDate) {
   return _readFillInstant(document.getElementById(`${prefix}-fill-date`).value, document.getElementById(`${prefix}-fill-time`).value, buyDate, orderType);
 }
 
+// The sale's fill, from the sell form (db/038). sell_time is the moment a sale was
+// recorded, so nothing could say what hour a sale happened. Can't be in the future
+// or before the buy filled. buyFilledAt is null on positions from before db/027:
+// there, only the form's date check applies.
+//
+// Three states, never a guess: entered, the default accepted, or not known. Requiring
+// a time would force a guess, and a guess stored as a fill is the defect this fixes.
+// defaultTime is what the form started at.
+function readSaleFill(saleDate, saleTime, buyFilledAt, { notKnown = false, defaultTime = null } = {}) {
+  if (notKnown) return { filledAt: null, at: null, source: 'not_known' };
+  if (!saleDate || !/^\d{2}:\d{2}$/.test(saleTime || '')) return { error: 'Enter the time the sale filled (PT), or tick "Time not known".' };
+  const [h, m] = saleTime.split(':').map(Number);
+  const at = ptWallClockToInstant(saleDate, h, m).getTime();
+  if (at > Date.now() + 60000) return { error: "The sale's fill time can't be in the future." };
+  if (buyFilledAt && at < Date.parse(buyFilledAt)) return { error: "The sale's fill time can't be before the buy filled." };
+  return { filledAt: new Date(at).toISOString(), at, source: saleTime === defaultTime ? 'default' : 'entered' };
+}
+
+// Verdict A (phase-10, "The verdict saved with a sale"): what the card showed, captured, never recomputed.
+// It audits the app's output, so it records the app's errors faithfully too: don't clean up what it holds.
+// JSON, so the stored copy can't move with the live objects, and non-finite numbers become null.
+function capturedDisplay(verdict, inputs, renderedAtIso) {
+  return JSON.parse(JSON.stringify({ rendered_at: renderedAtIso, verdict, inputs }));
+}
+
+// Which kind of capture a sale holds. Only a typed fill can place the card against the fill: a default
+// starts when the form opens, after the card rendered, so comparing with it would always say BEFORE.
+function saleDisplayFields(capture, saleDate, todayPT, saleFill) {
+  if (!capture || saleDate !== todayPT) return { verdictDisplayedAtSale: null, verdictDisplayState: 'NOT_DISPLAYED' };
+  const state = saleFill.source !== 'entered' ? 'CAPTURED_FILL_UNKNOWN'
+    : Date.parse(capture.rendered_at) <= saleFill.at ? 'CAPTURED_BEFORE_FILL' : 'CAPTURED_AFTER_FILL';
+  return { verdictDisplayedAtSale: capture, verdictDisplayState: state };
+}
+
 // Shared by the add forms and Mark filled. A fill can't precede the order
 // date or be in the future.
 function _readFillInstant(fillDate, fillTime, buyDate, orderType) {

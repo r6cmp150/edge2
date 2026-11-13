@@ -40,10 +40,13 @@ function appReads() {
   for (const f of files) {
     const src = strip(readSource(f));
     for (const m of src.matchAll(/\.from\('([a-z_0-9]+)'\)/g)) {
-      const tail = src.slice(m.index + m[0].length, m.index + m[0].length + 20000).split(';')[0];
+      // CHANGED 2026-11-12, declared: the window also ends at the next .from( -- inside Promise.all([...]) it ran on to
+      // the next query, so loadDatabaseUsage's trades_v2 `head: true` vouched for its rating_snapshots read (a mutant
+      // dropping that read's head: true passed). One read's bound never covers another's.
+      const tail = src.slice(m.index + m[0].length, m.index + m[0].length + 20000).split(';')[0].split('.from(')[0];
       if (!/\.select\(/.test(tail)) continue;
       const head = src.slice(Math.max(0, m.index - 80), m.index);
-      const bounded = /readAllRows\(\(\) =>[\s\S]*$/.test(head) || /\.limit\(|\.maybeSingle\(|head: true|\.insert\(|\.update\(|\.eq\('(id|captured_at)'/.test(tail);
+      const bounded = /readAllRows\(\(\) =>[\s\S]*$/.test(head) || /\.limit\(|\.range\(|\.maybeSingle\(|head: true|\.insert\(|\.update\(|\.eq\('(id|captured_at)'/.test(tail);
       out.push({ key: `${f}|${m[1]}`, bounded });
     }
   }
