@@ -9901,6 +9901,10 @@ function renderSettingsTab() {
         <div class="settings-hint" id="workflow-health">Loading…</div>
       </div>
       <div class="settings-row" style="flex-direction:column;align-items:stretch;">
+        <span class="settings-label">Storage on this phone (read-only)</span>
+        <div class="settings-hint" id="storage-readout">Reading…</div>
+      </div>
+      <div class="settings-row" style="flex-direction:column;align-items:stretch;">
         <span class="settings-label">Trades without Live/Paper</span>
         <div class="settings-hint" id="not-known-count">Loading…</div>
       </div>
@@ -9935,6 +9939,7 @@ function renderSettingsTab() {
     </div>
   `;
   loadDatabaseUsage();
+  renderStorageReadout();
   loadNotKnownCount();
   loadWorkflowHealth();
   renderBuildStatus(); // fill the Build row with the last check (current / stale / unknown)
@@ -10151,6 +10156,64 @@ function scanHistoryModalHtml(ticker) {
 function scanHistoryModalSection(ticker) {
   return `<div class="section-label">Your recent scans of ${ticker}</div>
       <div id="scan-hist-modal" data-scan-modal="${ticker}">${scanHistoryModalHtml(ticker)}</div>`;
+}
+
+// ── Storage on this phone (2026-11-13, cleared by the reviewer with four constraints) ──
+// Only Roman's phone can say what older builds left in its storage, so this lists it: EVERY localStorage key with its
+// size, largest first, and the total (never "the top N": a measurement that filters cannot find the unexpected). Each
+// key is labelled by what THIS build knows about it: its persist tier, the code that writes it outside persist(), or
+// "not named by this build", the hypothesis under test. READ-ONLY: no delete control (clearing storage destroys the
+// peak RSI of open positions), and it writes nothing, caches nothing, records no "last checked": a diagnostic that
+// writes to what it diagnoses is not one. Sizes are in characters (key + value); stored, that is about two bytes per
+// character (UTF-16). How a browser counts the quota differs between browsers, so no limit is claimed.
+const STORAGE_KEYS_OUTSIDE_PERSIST = {
+  edge2_pin_hash: 'the PIN (written outside persist)',
+  edge_apiKeys: 'the Alpaca and Groq keys (written outside persist)',
+  edge2_portfolioSort: 'the Portfolio sort (written outside persist)',
+  edge_layoutAnomalies: 'the layout log, last 20 (written outside persist)',
+  edge_snapshotWrites: 'buy-snapshot counters (written outside persist)',
+  edge_localOnlySettings: 'old phone-only settings: read by this build, never written',
+  edge_settings: 'legacy settings: read once by this build, never written',
+};
+function storageKeyLabel(k) {
+  if (k.startsWith('edge_') && typeof PERSIST_TIER !== 'undefined' && PERSIST_TIER[k.slice(5)] != null) {
+    const t = PERSIST_TIER[k.slice(5)];
+    return `tier ${t} (${{ 1: 'a queued write', 2: 'measured state', 3: 'settings or session state', 4: 'a cache' }[t]})`;
+  }
+  return STORAGE_KEYS_OUTSIDE_PERSIST[k] || 'not named by this build';
+}
+function storageReadoutRows() {
+  const rows = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k == null) continue;
+    const v = localStorage.getItem(k) || '';
+    rows.push({ key: k, chars: k.length + v.length, label: storageKeyLabel(k) });
+  }
+  return rows.sort((a, b) => b.chars - a.chars || a.key.localeCompare(b.key));
+}
+function renderStorageReadout() {
+  const el = document.getElementById('storage-readout');
+  if (!el) return;
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let rows;
+  try { rows = storageReadoutRows(); } catch (e) {
+    el.innerHTML = `<span style="color:var(--red)">This phone's storage could not be read (${esc(e?.message || e)}).</span>`;
+    return;
+  }
+  const total = rows.reduce((n, r) => n + r.chars, 0);
+  const fmt = n => n.toLocaleString('en-US');
+  el.innerHTML = `<div>${rows.length} key${rows.length === 1 ? '' : 's'}, ${fmt(total)} characters in all (about ${fmt(Math.round(total * 2 / 1024))} KB as stored). Largest first; nothing here can be deleted from the app.</div>`
+    + `<div style="margin-top:6px">${rows.map(r => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="word-break:break-all"><span class="mono">${esc(r.key)}</span><br><span style="color:${/not named/.test(r.label) ? 'var(--yellow)' : 'var(--muted)'}">${esc(r.label)}</span></span><span class="mono" style="white-space:nowrap">${fmt(r.chars)}</span></div>`).join('')}</div>`
+    + '<div id="storage-quota" style="margin-top:6px"></div>';
+  // The browser's own estimate, if it gives one. It covers this site's other storage too and may not count
+  // localStorage at all, so it is labelled as the browser's figure, never as this site's localStorage limit.
+  if (navigator.storage && typeof navigator.storage.estimate === 'function') {
+    navigator.storage.estimate().then(q => {
+      const qe = document.getElementById('storage-quota');
+      if (qe && q && q.quota) qe.textContent = `The browser's estimate for this site (all storage types; it may not count the above): ${fmt(q.usage || 0)} of ${fmt(q.quota)} bytes.`;
+    }, () => {});
+  }
 }
 
 async function loadDatabaseUsage() {
