@@ -164,7 +164,7 @@ await run('banner says the position was closed elsewhere, and how to fix it', ()
   // CHANGED 2026-11-13, declared: the banner's failed-save detail is persistFailureDetail now (by tier); loaded for real.
   eval(persistFailureDetailSrc() + '\n' + settingLabelsSrc() + '\n' + fnSrc('app.js', 'settingsBannerLine') + '\n' + fnSrc('app.js', 'updateMarketBanner') + '\nglobal.__banner = updateMarketBanner;');
   // CHANGED 2026-11-04, declared: detail and buttons sit behind a tap now (tests/banner-one-line.test.js).
-  global.state = { bannerExpanded: true, persistFailure: null, positionSaveFailures: { a: { ticker: 'SNXX', code: 'POSITION_MISSING', message: '' } } };
+  global.state = { bannerExpanded: true, persistFailures: {}, positionSaveFailures: { a: { ticker: 'SNXX', code: 'POSITION_MISSING', message: '' } } };
   global.__banner();
   assert.ok(/SNXX was closed in another session/.test(el.innerHTML) && /Refresh to update/.test(el.innerHTML), el.innerHTML);
   global.state.positionSaveFailures = { a: { ticker: 'SNXX', code: 'POSITION_UNWRITABLE', message: '' } };
@@ -174,11 +174,12 @@ await run('banner says the position was closed elsewhere, and how to fix it', ()
   // dropped: it shows again the moment the persist failure clears.
   global.state.positionSaveFailures = { a: { ticker: 'SNXX', code: 'POSITION_MISSING', message: '' } };
   global.state.bannerExpanded = false;
-  global.state.persistFailure = { key: 'ownedPrevRSI', message: 'quota', at: 'x' };
+  // CHANGED 2026-11-13, declared: state.persistFailures, one entry per key (it was one slot).
+  global.state.persistFailures = { ownedPrevRSI: { key: 'ownedPrevRSI', tier: 2, message: 'quota', at: 'x' } };
   global.__banner();
   assert.ok(/Save failed — ownedPrevRSI/.test(el.innerHTML) && !/SNXX/.test(el.innerHTML), 'persistFailure wins the banner');
   assert.ok(global.state.positionSaveFailures.a, 'the position notice survives being outranked');
-  global.state.persistFailure = null;
+  global.state.persistFailures = {};
   global.__banner();
   assert.ok(/SNXX was closed in another session/.test(el.innerHTML), 'and returns once persistFailure clears');
   global.state.positionSaveFailures = {};

@@ -23,7 +23,8 @@ function load(fixture) {
   return el;
 }
 const ALL = {
-  persistFailure: { key: 'sold' },
+  // CHANGED 2026-11-13, declared: state.persistFailures, one entry per key (it was one slot).
+  persistFailures: { sold: { key: 'sold', tier: 4, at: 'x' } },
   saleWriteFailures: { a: { ticker: 'DUP', code: 'SALE_DUPLICATE' }, b: { ticker: 'HUN', code: 'SALE_FAILED' }, c: { ticker: 'BIAF', code: 'SALE_FAILED' } },
   positionSaveFailures: { p: { ticker: 'SNXX', code: 'POSITION_UNWRITABLE', message: 'x' } },
   snapshotWriteFailures: { s: { ticker: 'CLF', row: {} } },
@@ -36,6 +37,24 @@ run('no problem: market status and its countdown, nothing else', () => {
   const el = load({});
   assert.ok(el.innerHTML.includes('Market open') && el.innerHTML.includes('Closes in 2h 14m'));
   assert.ok(!el.innerHTML.includes('banner-line') && !el.innerHTML.includes('banner-panel'));
+});
+
+// 2026-11-13: every outstanding failed save is its own line, the most important tier first. The cache's text says
+// "nothing more important is unsaved" only when that is true of the record (restored deliberately with the per-key
+// map; it was deleted while the record was one slot and could not hold it).
+run('every failed save is listed, most important first; a cache promises nothing while a queue is unsaved', () => {
+  const store = readSource('core/store.js');
+  const tiers = store.slice(store.indexOf('const PERSIST_TIER = {'), store.indexOf('\n', store.indexOf('const persistTier = ')) + 1);
+  // eslint-disable-next-line no-eval
+  eval(tiers.replace('const PERSIST_TIER', 'global.PERSIST_TIER').replace('const persistTier', 'global.persistTier'));
+  try {
+    const both = load({ bannerExpanded: true, persistFailures: { news: { key: 'news', tier: 4, at: '1' }, saleWriteFailures: { key: 'saleWriteFailures', tier: 1, at: '2' } } }).innerHTML;
+    const q = both.indexOf('Save failed — saleWriteFailures'), c = both.indexOf('Save failed — news');
+    assert.ok(q >= 0 && c >= 0 && q < c, 'both listed, the queue first: ' + both.slice(0, 300));
+    assert.ok(!/Nothing more important is unsaved/.test(both), 'no promise while a queue is unsaved');
+    const alone = load({ bannerExpanded: true, persistFailures: { news: { key: 'news', tier: 4, at: '1' } } }).innerHTML;
+    assert.ok(/Nothing more important is unsaved: every save that failed on this phone is listed here\./.test(alone), 'and the promise, when true');
+  } finally { delete global.PERSIST_TIER; delete global.persistTier; }
 });
 
 run('collapsed: the most urgent title, how many more, and market status; nothing that can overflow', () => {

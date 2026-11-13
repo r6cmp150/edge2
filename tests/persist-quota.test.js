@@ -45,13 +45,14 @@ async function testPersistSucceedsAndClearsAPriorFailure() {
   });
   global.state.foo = { a: 1 };
   global.state.bar = { b: 2 };
-  global.state.persistFailure = { key: 'bar', message: 'stale failure from earlier', at: 'x' };
+  // CHANGED 2026-11-13, declared: state.persistFailures, one entry per key (it was one slot).
+  global.state.persistFailures = { bar: { key: 'bar', message: 'stale failure from earlier', at: 'x' } };
   persist('foo');
-  assert.strictEqual(global.state.persistFailure.key, 'bar', 'another key saving fine says nothing about bar: kept');
+  assert.deepStrictEqual(Object.keys(global.state.persistFailures), ['bar'], 'another key saving fine says nothing about bar: kept');
   assert.strictEqual(calls.length, 0);
   persist('bar');
-  console.log('persistFailure after bar itself saved:', global.state.persistFailure, '| banner calls:', calls.length);
-  assert.strictEqual(global.state.persistFailure, null, 'the failed key saving clears its failure');
+  console.log('persistFailures after bar itself saved:', global.state.persistFailures, '| banner calls:', calls.length);
+  assert.deepStrictEqual(global.state.persistFailures, {}, 'the failed key saving clears its failure');
   assert.strictEqual(calls.length, 1, 'banner must be told to refresh when the failure clears');
 }
 
@@ -78,11 +79,12 @@ async function testPersistSurfacesQuotaFailureInsteadOfSwallowingIt() {
   });
   global.state.warriorPreMarketRvolObservations = [{ big: 'data' }];
   persist('warriorPreMarketRvolObservations');
-  console.log('persistFailure after a quota error:', global.state.persistFailure, '| banner calls:', calls.length);
-  assert.ok(global.state.persistFailure, 'a write failure must be recorded, not silently swallowed');
-  assert.strictEqual(global.state.persistFailure.key, 'warriorPreMarketRvolObservations');
-  assert.ok(/quota/i.test(global.state.persistFailure.message));
-  assert.ok(global.state.persistFailure.at, 'must record when the failure happened');
+  const f = (global.state.persistFailures || {}).warriorPreMarketRvolObservations;
+  console.log('persistFailures after a quota error:', global.state.persistFailures, '| banner calls:', calls.length);
+  assert.ok(f, 'a write failure must be recorded, not silently swallowed');
+  assert.strictEqual(f.key, 'warriorPreMarketRvolObservations');
+  assert.ok(/quota/i.test(f.message));
+  assert.ok(f.at, 'must record when the failure happened');
   assert.strictEqual(calls.length, 1, 'banner must be told to show the failure immediately, not on the next unrelated render');
 }
 
@@ -99,7 +101,9 @@ async function testPersistSurvivesAConsecutiveDifferentKeyFailure() {
   global.state.a = 1;
   global.state.b = 2;
   assert.doesNotThrow(() => { persist('a'); persist('b'); }, 'a persist failure for one key must never throw out to the caller');
-  assert.strictEqual(global.state.persistFailure.key, 'b', 'the flag reflects the most recent failure');
+  // CHANGED 2026-11-13, declared: both failures stand (it used to say the flag reflects only the most recent one,
+  // which is the single slot that could hide a lost write).
+  assert.deepStrictEqual(Object.keys(global.state.persistFailures).sort(), ['a', 'b'], 'every failed key is recorded, none displaced');
 }
 
 (async () => {

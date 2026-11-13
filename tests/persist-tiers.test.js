@@ -39,6 +39,11 @@ function load(storage, st = {}) {
 const muted = fn => async () => { const w = console.warn, e = console.error; console.warn = () => {}; console.error = () => {}; try { await fn(); } finally { console.warn = w; console.error = e; } };
 const big = n => 'x'.repeat(n);
 
+// CHANGED 2026-11-13, declared: the failure record is state.persistFailures, one entry per key, never displaced (it
+// was one slot). The cases below are the same claims, read from the map, plus the scratch measurement that found the
+// slot's hole, as a test.
+const failed = () => Object.keys(global.state.persistFailures || {}).sort();
+
 run('a queue write that hits the quota evicts caches, largest first, until it fits; the queue lands', muted(async () => {
   const s = quotaStorage(3000, { edge_news: big(900), edge_signals: big(1500), edge_ownedScores: big(300) });
   const { persist } = load(s, { saleWriteFailures: { 1: { ticker: 'UEC', note: big(1200) } } });
@@ -47,7 +52,7 @@ run('a queue write that hits the quota evicts caches, largest first, until it fi
   assert.ok(!s.m.has('edge_signals'), 'the largest cache went first');
   assert.ok(s.m.has('edge_ownedScores'), 'no more evicted than needed');
   assert.deepStrictEqual(global.state.persistEvictions[0].evicted.map(e => e.key), s.m.has('edge_news') ? ['signals'] : ['signals', 'news']);
-  assert.strictEqual(global.state.persistFailure, undefined, 'no failure recorded: it landed');
+  assert.deepStrictEqual(failed(), [], 'no failure recorded: it landed');
 }));
 
 run('measured state (tier 2) evicts caches too', muted(async () => {
@@ -62,7 +67,7 @@ run('a cache write never evicts anything, and its failure is recorded', muted(as
   const { persist } = load(s, { signals: [big(600)] });
   assert.strictEqual(persist('signals'), false);
   assert.ok(s.m.has('edge_news') && s.m.has('edge_saleWriteFailures'), 'nothing evicted for a cache');
-  assert.strictEqual(global.state.persistFailure.key, 'signals');
+  assert.deepStrictEqual(failed(), ['signals']);
 }));
 
 run('a queue write never evicts a queue or measured state, only caches; with no cache left it fails, said', muted(async () => {
@@ -70,30 +75,44 @@ run('a queue write never evicts a queue or measured state, only caches; with no 
   const { persist } = load(s, { saleWriteFailures: { 1: big(400) } });
   assert.strictEqual(persist('saleWriteFailures'), false);
   assert.ok(s.m.has('edge_snapshotWriteFailures') && s.m.has('edge_ownedPrevRSI'));
-  assert.strictEqual(global.state.persistFailure.key, 'saleWriteFailures');
-  assert.strictEqual(global.state.persistFailure.tier, 1);
+  assert.deepStrictEqual(failed(), ['saleWriteFailures']);
+  assert.strictEqual(global.state.persistFailures.saleWriteFailures.tier, 1);
 }));
 
-run('a lower-tier failure never overwrites a higher-tier one; a same-or-higher tier does', muted(async () => {
+run('every failure is kept: no failure, of any tier, displaces another', muted(async () => {
   const s = quotaStorage(10);
-  const { persist } = load(s, { saleWriteFailures: { 1: 'x' }, news: ['n'], ownedPeakRSI: { a: 1 } });
+  const { persist } = load(s, { saleWriteFailures: { 1: 'x' }, news: ['n'], ownedPeakRSI: { a: 1 }, snapshotWriteFailures: { 2: 'y' } });
   persist('saleWriteFailures');
   persist('news');
-  assert.strictEqual(global.state.persistFailure.key, 'saleWriteFailures', 'a cache failure does not cover a queue failure');
   persist('ownedPeakRSI');
-  assert.strictEqual(global.state.persistFailure.key, 'saleWriteFailures', 'tier 2 does not cover tier 1');
-  global.state.persistFailure = { key: 'news', tier: 4 };
-  persist('ownedPeakRSI');
-  assert.strictEqual(global.state.persistFailure.key, 'ownedPeakRSI', 'tier 2 does cover a cache failure');
+  persist('snapshotWriteFailures');
+  assert.deepStrictEqual(failed(), ['news', 'ownedPeakRSI', 'saleWriteFailures', 'snapshotWriteFailures'], 'all four stand');
+}));
+
+// THE SCRATCH MEASUREMENT OF 2026-11-13, as a test: under the single slot, queue A fails, queue B fails (replacing A),
+// B saves (clearing the slot), and A is unsaved with nothing naming it; a cache failure after that then reads as the
+// only one. A sale record could be lost this way, silently.
+run('queue A fails, queue B fails, B saves: A is still named, and a later cache failure does not hide it', muted(async () => {
+  const s = quotaStorage(60);
+  const { persist } = load(s, { saleWriteFailures: { a: big(80) }, snapshotWriteFailures: { b: big(80) }, news: [big(80)] });
+  persist('saleWriteFailures');
+  persist('snapshotWriteFailures');
+  assert.deepStrictEqual(failed(), ['saleWriteFailures', 'snapshotWriteFailures']);
+  global.state.snapshotWriteFailures = {};
+  assert.strictEqual(persist('snapshotWriteFailures'), true, 'B saves');
+  assert.deepStrictEqual(failed(), ['saleWriteFailures'], 'A is still named after B saved');
+  persist('news');
+  assert.deepStrictEqual(failed(), ['news', 'saleWriteFailures'], 'and a later cache failure does not hide it');
+  assert.strictEqual(s.getItem('edge_saleWriteFailures'), null, 'A really is unsaved: the record is telling the truth');
 }));
 
 run('only the failed key saving clears its failure', muted(async () => {
   const s = quotaStorage(100000);
-  const { persist } = load(s, { news: ['n'], saleWriteFailures: {}, persistFailure: { key: 'saleWriteFailures', tier: 1 } });
+  const { persist } = load(s, { news: ['n'], saleWriteFailures: {}, persistFailures: { saleWriteFailures: { key: 'saleWriteFailures', tier: 1 } } });
   persist('news');
-  assert.strictEqual(global.state.persistFailure.key, 'saleWriteFailures');
+  assert.deepStrictEqual(failed(), ['saleWriteFailures'], 'another key saving says nothing about this one');
   persist('saleWriteFailures');
-  assert.strictEqual(global.state.persistFailure, null);
+  assert.deepStrictEqual(failed(), []);
 }));
 
 run('sold is stored bounded: the most recent sales under the cap, with its own date and the total', muted(async () => {

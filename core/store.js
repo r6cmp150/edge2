@@ -80,13 +80,13 @@ function loadLocalOnlySettings() {
 // applying the same principle here rather than adding a second, narrower
 // try/catch around just the new field.
 //
-// state.persistFailure is checked by updateMarketBanner (app.js) and
+// state.persistFailures is checked by updateMarketBanner (app.js) and
 // rendered as a real, alarming banner state — not muted like the other
 // disclosures this session added elsewhere (Phase 5 unvalidated, RVOL
 // caveats), because THIS one means state stops saving at all, which is a
 // materially worse failure than "one metric wasn't measured this scan."
-// Cleared automatically the next time ANY persist() call succeeds, so a
-// transient/resolved quota issue doesn't leave a stale alarm on screen.
+// (Once cleared by ANY successful persist(); since 2026-11-08 only by the same key; since 2026-11-13 one entry per
+// key, removed only by that key saving. See "Failure record" below.)
 //
 // Known, not fixed here: persistApiKeys/persistLocalOnlySettings (above)
 // have the identical silent-swallow shape — out of scope for this pass
@@ -110,6 +110,10 @@ function loadLocalOnlySettings() {
 // Failure record, CHANGED 2026-11-08: a success clears the failure only for the SAME
 // key (it used to be any key, so a cache saving fine erased a queue that hadn't), and a
 // lower-tier failure never overwrites a higher-tier one.
+// CHANGED 2026-11-13: state.persistFailures, ONE ENTRY PER KEY. The record was a single slot: a same-tier failure
+// replaced the one there, and that key's later save cleared it, so queue A's failure could vanish while A stayed
+// unsaved (measured with a scratch run of this persist()). Now nothing is displaced: a failure records its own key,
+// and only that key saving removes it. The banner lists every outstanding failure, most important tier first.
 const PERSIST_TIER = {
   saleWriteFailures: 1, snapshotWriteFailures: 1, ratingWriteFailures: 1,
   ownedPeakRSI: 2, ownedPrevRSI: 2, warriorPreMarketRvolObservations: 2,
@@ -170,7 +174,8 @@ function persist(key) {
         console.warn(`persist('${key}', tier ${tier}): evicted cache(s) ${evicted.map(e => `${e.key} (${e.size} chars)`).join(', ')} to make room.`);
         (state.persistEvictions = state.persistEvictions || []).push({ for: key, evicted, at: new Date().toISOString() });
       }
-      if (state.persistFailure && state.persistFailure.key === key) { state.persistFailure = null; updateMarketBanner(); }
+      // Only this key saving removes this key's entry (the per-entry form of 11-08's same-key rule).
+      if (state.persistFailures && state.persistFailures[key]) { delete state.persistFailures[key]; updateMarketBanner(); }
       return true;
     } catch (e) {
       // persist() never throws to its caller: a storage that can't even be read for a
@@ -183,8 +188,10 @@ function persist(key) {
         continue;
       }
       console.error(`persist('${key}', tier ${tier}) failed — localStorage write threw: ${e.message}${evicted.length ? ` after evicting ${evicted.map(v => v.key).join(', ')}` : ''}. State for '${key}' may not survive a reload.`);
-      const prev = state.persistFailure;
-      if (!prev || persistTier(prev.key) >= tier) state.persistFailure = { key, tier, message: e.message, at: new Date().toISOString(), evicted };
+      // One entry per key, never displaced (2026-11-13): a single slot let a second failure replace the first, and
+      // that key's later save clear it, so a queued sale could be left unsaved with nothing naming it.
+      if (!state.persistFailures || typeof state.persistFailures !== 'object') state.persistFailures = {};
+      state.persistFailures[key] = { key, tier, message: e.message, at: new Date().toISOString(), evicted };
       updateMarketBanner();
       return false;
     }

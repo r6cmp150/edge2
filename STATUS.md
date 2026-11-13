@@ -320,6 +320,15 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   where it is; not to be run, re-pointed or run with `--rev`.
 
 ## Being verified
+- **The production-write refusal (01284d5): CONFIRMED IN PRODUCTION 2026-11-13** by a scheduled run, not a triggered
+  one (a trigger would itself be a production write). Log EDGE signals, run 43477950917, 17:57Z, at 2bf0876 (which
+  contains 01284d5):
+  - the firing step ran with `EDGE2_PRODUCTION_WRITE: workflow_runs` in its env;
+  - the logger step ran with `EDGE2_PRODUCTION_WRITE: log-signals-edge`, and the script printed "PRODUCTION WRITE
+    PERMITTED: log-signals-edge (EDGE2_PRODUCTION_WRITE=log-signals-edge). It will write:";
+  - the outcome step PATCHed `{"job_status": "success", "is_noop": false, ...}`.
+  The REFUSED text appears in the log only inside each step's echoed script. Every scheduled run since 01284d5 is
+  green: EDGE and Warrior loggers, and the movers capture.
 - Step 5 after db/037, per workflow, by reading each `workflow_runs` row back against what the run intended: the
   backup and two Warrior logger runs verified on 2026-11-06. Still to verify: fill-outcomes (after 20:30Z; the only
   path using outcome_filler's 21 column grants) and the EDGE logger. `setup_triggers`: no rows yet, so not checked.
@@ -413,12 +422,14 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   peak RSI of open positions. It is replaced (2026-11-13) by a text that depends on the key's tier and ends, in its own
   paragraph, with "do not clear this site's data while any position is open". FIRST in the storage work: what fills
   the store, measured largest first, then the eviction.
-- **The failure record is a single slot (measured 2026-11-13, a scratch run of the real persist()):** a same-tier
-  failure replaces the one recorded, and a key's later successful save clears the slot. So queue A fails, queue B
-  fails (replacing A), B saves (clearing the slot): A is unsaved and nothing names it. A later cache failure then shows
-  as if it were the only one. Cross-key clearing does NOT happen (tests/persist-tiers.test.js, "only the failed key
-  saving clears its failure"), and priority replacement is tested; the slot is the hole. The banner therefore makes no
-  "nothing more important is unsaved" promise. The fix belongs to the storage work: a failure per key.
+- **FIXED 2026-11-13: the failure record was a single slot** (measured that day with a scratch run of the real
+  persist()). A same-tier failure replaced the one recorded, and that key's later save cleared the slot. So queue A
+  failed, queue B failed (replacing A), B saved: A was unsaved and nothing named it, a silent loss path for a queued
+  sale. It is now `state.persistFailures`, one entry per key, never displaced and removed only by that key saving. The
+  banner lists every outstanding failure, most important first. tests/persist-tiers.test.js runs the scratch
+  measurement as a test, and 4 mutants are killed, including the restored slot. The cache's "nothing more important
+  is unsaved" was RESTORED deliberately: it is said only when no more important failure is outstanding.
+  Not changed, flagged: a tier-1 body names its variable (`saleWriteFailures`); the reviewer's ruling covered tier 2.
 - **The walker's lexer mis-reads nested template literals** (found 2026-11-12, BOUNDED, not fixed). strip() in
   tests/_write-walker.js treats a template literal as a string ending at the next backtick, so a template nested
   inside `${ }` flips what it believes is code. Bound, measured against acorn 8.12.1 (exact comment ranges) on 104

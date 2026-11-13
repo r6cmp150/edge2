@@ -902,7 +902,7 @@ let state = {
   warrior30DayVolumeCache: null, // { date, avgVolumes: {symbol: avgDailyVolume} } — core/universe.js, Phase 3 Pillar 3 (RVOL), daily cache — persisted
   warriorPreMarketVolumeCache: null, // { date, historyBySymbol: {symbol: [{date,volume}]} } — core/universe.js, pre-market-specific RVOL baseline (2026-09-04), daily cache — persisted
   warriorPreMarketRvolObservations: [], // [{capturedAt,date,symbol,ratio,todayPreMarketVolume,avgPreMarketVolume,daysInAverage}] — engines/warrior/gate.js, accumulates across mornings so a real pre-market RVOL threshold can eventually be set from data instead of the unvalidated placeholder — persisted, capped (see gate.js's _trimPreMarketRvolObservations)
-  persistFailure: null, // { key, message, at } — core/store.js's persist(), set on ANY localStorage write failure (quota exhaustion, etc), cleared on the next successful persist() — surfaced via updateMarketBanner, not silent
+  persistFailures: {}, // { [key]: { key, tier, message, at, evicted } } — core/store.js persist(): one entry per key whose localStorage write failed (quota exhaustion, etc), never displaced, removed only when that key saves — surfaced via updateMarketBanner, most important tier first (2026-11-13; it was one slot)
   snapshotWriteFailures: {}, // { [positionId]: { ticker, message, at, row } } -- a buy's signal_snapshot_at_buy row that failed to write; PERSISTED so Retry can land it (2026-11-02: a failure only counted in Settings is how 72 snapshots were lost)
   ratingWriteFailures: [], // [{ at, message, rows }] -- rating_snapshots batches that failed to write; PERSISTED, capped at RATING_FAILURES_KEPT, Retry re-inserts after checking they didn't land
   saleWriteFailures: {}, // { [positionId]: { ticker, code: 'SALE_FAILED'|'SALE_DUPLICATE', message, at, args } } -- writeTradeToSupabase; PERSISTED, because the portfolio row is already deleted when the sale write runs: this is the only copy of an unrecorded sale until Retry lands it
@@ -1164,10 +1164,14 @@ const MEASURED_STATE_NAMES = {
   ownedPrevRSI: 'the previous RSI reading of your open positions',
   warriorPreMarketRvolObservations: "Warrior's pre-market volume observations",
 };
-function persistFailureDetail(key) {
+// moreImportant: how many outstanding failed saves are of a more important tier. RESTORED 2026-11-13, deliberately:
+// "nothing more important is unsaved" came out when the record was one slot (it could not be held); with one entry
+// per key, every failed save is listed, so it is said exactly when no more important failure is outstanding.
+function persistFailureDetail(key, moreImportant = 0) {
   const tier = typeof persistTier === 'function' ? persistTier(key) : 3;
   const never = `<br><br>${NEVER_CLEAR}`;
-  if (tier === 4) return `This site's storage on the phone is full, so the ${key} cache could not be saved. Nothing recorded in the database is affected. No action is needed for this cache: it is rebuilt by the next scan, or read again from the database.${never}`;
+  const nothingMore = moreImportant === 0 ? ' Nothing more important is unsaved: every save that failed on this phone is listed here.' : '';
+  if (tier === 4) return `This site's storage on the phone is full, so the ${key} cache could not be saved. Nothing recorded in the database is affected.${nothingMore} No action is needed for this cache: it is rebuilt by the next scan, or read again from the database.${never}`;
   if (tier === 1) return `This site's storage on the phone is full, so ${key}, the record of a write that has not reached the database, could not be saved on the phone. It is still held in this open app: use Retry on its line here before closing or reloading.${never}`;
   if (tier === 2) return `This site's storage on the phone is full, so ${MEASURED_STATE_NAMES[key] || key}, measured on this phone and kept nowhere else, could not be saved. It is still held in this open app and is saved again at its next update. Until then, do not close or reload the app.${never}`;
   return `This site's storage on the phone is full, so ${key} could not be saved. It is still held in this open app; a reload may lose this change.${never}`;
@@ -1179,8 +1183,11 @@ function updateMarketBanner() {
   if (!el) return;
   const problems = [];
   const add = (color, title, detail, button = '') => problems.push({ color, title, detail, button });
-  if (state.persistFailure) {
-    add('var(--red)', `Save failed — ${state.persistFailure.key}`, persistFailureDetail(state.persistFailure.key));
+  // Every outstanding failed save, most important tier first, then oldest (2026-11-13: one per key, never displaced).
+  const saveFails = Object.values(state.persistFailures || {}).sort((x, y) => (x.tier - y.tier) || String(x.at).localeCompare(String(y.at)));
+  for (const f of saveFails) {
+    const moreImportant = saveFails.filter(o => o.tier < f.tier).length;
+    add('var(--red)', `Save failed — ${f.key}`, persistFailureDetail(f.key, moreImportant));
   }
   // SALE_FAILED first: a real trade record that would otherwise be lost
   // (writeTradeToSupabase -> noteSaleWrite).

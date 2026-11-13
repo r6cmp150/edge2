@@ -32,11 +32,21 @@ run('no failed-save text, for any key, suggests freeing space, reloading as a fi
 });
 
 // The tier-4 text once said "nothing more important is unsaved (it would be named here instead)". It came out
-// (2026-11-13): the failure record is a single slot, so a queue failure can be replaced by another queue's and then
-// cleared by that one's later save, leaving the first unsaved and unnamed (measured; STATUS, Open). A failure message
-// carries no reassurance a test cannot hold.
-run('no text promises that nothing more important is unsaved', () => {
-  for (const k of keys) assert.ok(!/nothing more important|would be named here/i.test(ctx.__d(k)), k);
+// (2026-11-13) while the failure record was a single slot, which could not hold it. RESTORED the same day, deliberately,
+// with the per-key map: every failed save is listed, so it is said exactly when no more important failure is
+// outstanding, and only by a cache. A failure message carries no reassurance a test cannot hold, and this one is held:
+// here for the text, and in tests/banner-one-line.test.js for the banner that counts what is outstanding.
+run('the promise is made only by a cache, and only when no more important failure is outstanding', () => {
+  for (const k of keys) {
+    const promise = /Nothing more important is unsaved/;
+    if (ctx.__tier(k) === 4) {
+      assert.ok(promise.test(ctx.__d(k, 0)), `${k}: none more important outstanding, so it says so`);
+      assert.ok(!promise.test(ctx.__d(k, 1)), `${k}: one more important outstanding, so it must not`);
+    } else {
+      assert.ok(!promise.test(ctx.__d(k, 0)) && !promise.test(ctx.__d(k, 1)), `${k}: only a cache makes the promise`);
+    }
+    assert.ok(!/would be named here/i.test(ctx.__d(k, 0)), k);
+  }
 });
 
 run('each tier says what is actually safe for that tier', () => {
@@ -53,7 +63,9 @@ run('each tier says what is actually safe for that tier', () => {
 
 run('the banner uses it; the old text is gone from the app', () => {
   const app = readSource('app.js');
-  assert.ok(app.includes("add('var(--red)', `Save failed — ${state.persistFailure.key}`, persistFailureDetail(state.persistFailure.key));"), 'the banner line calls persistFailureDetail');
+  // CHANGED 2026-11-13, declared: one banner line per outstanding failure (the per-key map), each with its count of more
+  // important failures.
+  assert.ok(app.includes("add('var(--red)', `Save failed — ${f.key}`, persistFailureDetail(f.key, moreImportant));"), 'each failed save calls persistFailureDetail with what outranks it');
   const code = app.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n'); // the comment quoting the old text is not text Roman sees
   assert.ok(!/Free up space|then reload/i.test(code), 'the old remedy is gone from every string the app can show');
 });
