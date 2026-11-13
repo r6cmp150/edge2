@@ -197,7 +197,11 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   and price cannot be separated in this data: which of them the pattern tracks is **unknown**, not "both".
 
 ## Decision points (a date by which something is decided, not a reminder)
-- **S1 forward test, about a month out:** trades bought from 2026-11-12, at 20 S1 buy days (P&L after costs) and
+- **THE SCHEDULE, IN ONE LINE (2026-11-13): three measurements restarted at (c) from zero (the macro sign-test, the
+  scoring-v2 forward test, the S1 forward test), and all three advance only when Roman uses the app. Two of them also
+  need him to record buys, and for those there is no engineering fix: they need trades. The logger-observes proposal
+  fixes only the sign-test's dependence on his scanning.**
+- **S1 forward test (RESTARTED at (c), confirmed by the reviewer 2026-11-13; see the RE-REGISTERED line below):** trades bought from 2026-11-12, at 20 S1 buy days (P&L after costs) and
   20 days with both S1 and S2-S4 trades (win rate, frictionless, reported separately). Roman changes nothing about
   what he trades: narrowing to S1 would act on an unestablished result and destroy the comparison group.
 - **RE-REGISTERED 2026-11-13, before post-(c) data: both forward tests (S1 and scoring v2) RESTART at the (c) build**
@@ -271,6 +275,10 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   only for a value Supabase lacks, and the banner says which are phone-only (tests/settings-sources.test.js).
 
 ## The macro sign-test (pre-registered; its clock starts when Roman reloads onto the (c) build)
+- **(c) is 0c60fbf** (pushed 2026-11-13, Tests run 43351284464 green). GitHub Pages served `app.js?v=20261112232800` at
+  2026-11-13T02:20Z, read by Claude only: the reviewer's shells cannot reach the host, so that is ONE witness. **The
+  confirming observation is Roman's:** "Disable macro overlay" is gone from Settings only in the (c) build, so if he
+  reports it gone, (c) is what his phone is running. Not established until he does.
 - Its input is `macro_observations`, which only the (c) build writes: 0 rows at 2026-11-12T22:30Z, read with anon,
   whose SELECT policy is `using (true)` (11-11b), so empty, not hidden. Nothing wrote it from db/038's application
   (11-06) to (c)'s landing.
