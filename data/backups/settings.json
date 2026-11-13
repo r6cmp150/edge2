@@ -7,13 +7,13 @@
     "min_volume": 100000,
     "force_pre_market_mode": false,
     "created_at": "2026-08-17T00:25:38.767963+00:00",
-    "updated_at": "2026-08-28T04:07:41.326+00:00",
+    "updated_at": "2026-11-12T15:24:10.854+00:00",
     "disable_macro_overlay": true,
     "risk_per_trade_pct": 2,
     "float_threshold_shares": 10000000,
     "max_loss_pct": 6,
     "developer_tools": false,
-    "execution_mode": null,
-    "execution_mode_set_at": null
+    "execution_mode": "paper",
+    "execution_mode_set_at": "2026-11-12T15:24:10.854+00:00"
   }
 ]
