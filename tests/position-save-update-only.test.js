@@ -11,7 +11,7 @@
 // failures must reach the market banner, not just the console.
 'use strict';
 const assert = require('assert');
-const { readSource, run, settingLabelsSrc } = require('./_lib');
+const { readSource, run, settingLabelsSrc, persistFailureDetailSrc } = require('./_lib');
 
 const fnSrc = (file, name) => {
   const m = readSource(file).match(new RegExp(`(async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`));
@@ -161,7 +161,8 @@ await run('banner says the position was closed elsewhere, and how to fix it', ()
   global.renderLiveBand = () => {};
   global.getMarketStatus = () => ({ color: 'x', label: 'OPEN', countdown: '' });
   // eslint-disable-next-line no-eval
-  eval(settingLabelsSrc() + '\n' + fnSrc('app.js', 'settingsBannerLine') + '\n' + fnSrc('app.js', 'updateMarketBanner') + '\nglobal.__banner = updateMarketBanner;');
+  // CHANGED 2026-11-13, declared: the banner's failed-save detail is persistFailureDetail now (by tier); loaded for real.
+  eval(persistFailureDetailSrc() + '\n' + settingLabelsSrc() + '\n' + fnSrc('app.js', 'settingsBannerLine') + '\n' + fnSrc('app.js', 'updateMarketBanner') + '\nglobal.__banner = updateMarketBanner;');
   // CHANGED 2026-11-04, declared: detail and buttons sit behind a tap now (tests/banner-one-line.test.js).
   global.state = { bannerExpanded: true, persistFailure: null, positionSaveFailures: { a: { ticker: 'SNXX', code: 'POSITION_MISSING', message: '' } } };
   global.__banner();

@@ -302,6 +302,14 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   at a5bfcbc, counted by distinct PT date. Main writes only rows scoring 60 or more, so a scan with none would not show;
   but those 9 days also have no buy or sale recorded. The proposal that would fix it: the logger observes (never
   applies) the condition, so every scheduled run labels its day. It comes after the refusal diff.
+- **The first countable day is the first day Roman scans BETWEEN THE OPEN AND THE CLOSE**, which is narrower than "a
+  day he uses the app". The test counts only signals first shown at or after the day's label, and the logger's signals
+  are all in the session. The first observation (2026-11-12 18:34:59 PT, 1 row, `applied` false, build
+  20261112232800, path pattern, SECTOR_WEAKNESS_BIOTECH; read 2026-11-13T02:52Z) proves the write path end to end, but
+  that day will drop as "all signals first shown before the label".
+- **The first post-(c) scan of the unraised line** (Roman's screenshot, 2026-11-12 18:35 PT): 239 stocks scanned
+  [OTHER], 0 strong buy, 5 soft buy, with the display line no longer moved by the macro reading. Recorded from day one
+  so the before and after is not reconstructed later.
 - The writer is counted every day by `scripts/count-macro-observations.mjs` in backup-tables.yml. The run goes red
   when scans by an observing build point to observations that can't be read, or a decided reading has no
   observation. Before the first scan by (c) it says NOT STARTED.
@@ -400,8 +408,17 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   Portfolio): `Budget: $1500.00  Deployed: $5689.70  Available: -$4189.70`. Parked by the reviewer; not investigated.
 - **The phone's storage is full** (the same screenshot): the red "Save failed — signals" banner is persist('signals')
   failing in localStorage. `signals` is a tier-4 cache, which may not evict anything, so the cached signal list did not
-  save. It is not a database write. The banner's one expanded entry ("something about JCP", Roman's words) is not yet
-  known exactly: JCP is in no table and no code (read 2026-11-13T01:12Z).
+  save. It is not a database write. JCP is WITHDRAWN: the expanded entry, in full, was "Save failed — signals / Storage
+  full? Free up space, then reload." That text invited clearing the site's data, which destroys the only copy of the
+  peak RSI of open positions. It is replaced (2026-11-13) by a text that depends on the key's tier and ends, in its own
+  paragraph, with "do not clear this site's data while any position is open". FIRST in the storage work: what fills
+  the store, measured largest first, then the eviction.
+- **The failure record is a single slot (measured 2026-11-13, a scratch run of the real persist()):** a same-tier
+  failure replaces the one recorded, and a key's later successful save clears the slot. So queue A fails, queue B
+  fails (replacing A), B saves (clearing the slot): A is unsaved and nothing names it. A later cache failure then shows
+  as if it were the only one. Cross-key clearing does NOT happen (tests/persist-tiers.test.js, "only the failed key
+  saving clears its failure"), and priority replacement is tested; the slot is the hole. The banner therefore makes no
+  "nothing more important is unsaved" promise. The fix belongs to the storage work: a failure per key.
 - **The walker's lexer mis-reads nested template literals** (found 2026-11-12, BOUNDED, not fixed). strip() in
   tests/_write-walker.js treats a template literal as a string ending at the next backtick, so a template nested
   inside `${ }` flips what it believes is code. Bound, measured against acorn 8.12.1 (exact comment ranges) on 104

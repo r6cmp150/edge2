@@ -5,7 +5,7 @@
 // be seen in a browser; what's checkable here is what the layout rests on.
 'use strict';
 const assert = require('assert');
-const { readSource, run, settingLabelsSrc } = require('./_lib');
+const { readSource, run, settingLabelsSrc, persistFailureDetailSrc } = require('./_lib');
 
 const app = readSource('app.js');
 const grab = n => { const i = app.search(new RegExp(`^function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
@@ -17,7 +17,8 @@ function load(fixture) {
   global.renderLiveBand = () => {};
   global.getMarketStatus = () => ({ color: 'var(--green)', label: 'Market open', countdown: 'Closes in 2h 14m' });
   // eslint-disable-next-line no-eval
-  eval(`${settingLabelsSrc()}\n${grab('settingsBannerLine')}\n${grab('toggleBannerDetail')}\n${grab('updateMarketBanner')}\nglobal.__b = updateMarketBanner; global.__t = toggleBannerDetail;`);
+  // CHANGED 2026-11-13, declared: the banner's failed-save detail is persistFailureDetail now (by tier); loaded for real.
+  eval(`${persistFailureDetailSrc()}\n${settingLabelsSrc()}\n${grab('settingsBannerLine')}\n${grab('toggleBannerDetail')}\n${grab('updateMarketBanner')}\nglobal.__b = updateMarketBanner; global.__t = toggleBannerDetail;`);
   global.__b();
   return el;
 }

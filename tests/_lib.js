@@ -162,5 +162,15 @@ function columnValidatorsSrc() {
   return s.slice(i, s.indexOf('\n}\n', j) + 3);
 }
 
+// app.js's failed-save detail (2026-11-13): updateMarketBanner calls persistFailureDetail, which reads NEVER_CLEAR, so a
+// test that evals the banner in isolation loads both, for real.
+function persistFailureDetailSrc() {
+  const s = readSource('app.js');
+  const i = s.indexOf('const NEVER_CLEAR = ');
+  const j = s.indexOf('function persistFailureDetail(');
+  if (i < 0 || j < 0) throw new Error('app.js: persistFailureDetail not found');
+  return s.slice(i, s.indexOf('\n}\n', j) + 3); // NEVER_CLEAR, MEASURED_STATE_NAMES and the function, contiguous
+}
+
 module.exports = {
-  virtualClock, readSource, evalModule, run, restoring, REPO_ROOT, settingLabelsSrc, columnValidatorsSrc };
+  virtualClock, readSource, evalModule, run, restoring, REPO_ROOT, settingLabelsSrc, columnValidatorsSrc, persistFailureDetailSrc };

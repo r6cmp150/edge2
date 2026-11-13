@@ -1150,6 +1150,29 @@ function renderLiveBand() {
   band.textContent = '● LIVE · adds recorded as placed at your broker'; // one line at 390px (measured)
 }
 
+// What a failed save on this phone means, and what is safe to do, by the failed key's tier (2026-11-13, the reviewer:
+// the old text, "Storage full? Free up space, then reload.", invites clearing the site's data, which destroys the only
+// copy of tier-2 measured state: the peak RSI of open positions, written onto their sale records). Freeing space on the
+// phone does not help either: the browser's quota is per site. The text does NOT claim that nothing more important is
+// unsaved: the failure record is a single slot, and a same-tier failure replaces it, so a queue's failure can be
+// replaced and then cleared by another queue's later save while the first stays unsaved (measured 2026-11-13; STATUS).
+// The never-clear sentence is its own paragraph, after the rest: never buried behind "no action is needed".
+const NEVER_CLEAR = "Do not clear this site's data while any position is open: the peak RSI of open positions is kept only on this phone, and clearing it writes a wrong peak RSI into their sale records.";
+// Tier-2 keys in Roman's words; the key itself stays in the banner's title, which is what makes a screenshot diagnosable.
+const MEASURED_STATE_NAMES = {
+  ownedPeakRSI: 'the peak RSI of your open positions',
+  ownedPrevRSI: 'the previous RSI reading of your open positions',
+  warriorPreMarketRvolObservations: "Warrior's pre-market volume observations",
+};
+function persistFailureDetail(key) {
+  const tier = typeof persistTier === 'function' ? persistTier(key) : 3;
+  const never = `<br><br>${NEVER_CLEAR}`;
+  if (tier === 4) return `This site's storage on the phone is full, so the ${key} cache could not be saved. Nothing recorded in the database is affected. No action is needed for this cache: it is rebuilt by the next scan, or read again from the database.${never}`;
+  if (tier === 1) return `This site's storage on the phone is full, so ${key}, the record of a write that has not reached the database, could not be saved on the phone. It is still held in this open app: use Retry on its line here before closing or reloading.${never}`;
+  if (tier === 2) return `This site's storage on the phone is full, so ${MEASURED_STATE_NAMES[key] || key}, measured on this phone and kept nowhere else, could not be saved. It is still held in this open app and is saved again at its next update. Until then, do not close or reload the app.${never}`;
+  return `This site's storage on the phone is full, so ${key} could not be saved. It is still held in this open app; a reload may lose this change.${never}`;
+}
+
 function updateMarketBanner() {
   renderLiveBand(); // runs at startup, on every clock tick and after every state change the banner follows
   const el = document.getElementById('market-banner');
@@ -1157,7 +1180,7 @@ function updateMarketBanner() {
   const problems = [];
   const add = (color, title, detail, button = '') => problems.push({ color, title, detail, button });
   if (state.persistFailure) {
-    add('var(--red)', `Save failed — ${state.persistFailure.key}`, 'Storage full? Free up space, then reload.');
+    add('var(--red)', `Save failed — ${state.persistFailure.key}`, persistFailureDetail(state.persistFailure.key));
   }
   // SALE_FAILED first: a real trade record that would otherwise be lost
   // (writeTradeToSupabase -> noteSaleWrite).
