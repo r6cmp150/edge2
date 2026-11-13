@@ -119,11 +119,18 @@ import { reportNoopDecision } from './lib/workflow-instrumentation.mjs';
 import { refuseTestOverridesWithWrite } from './lib/test-override-guard.mjs';
 import { scheduledScanGate } from './lib/scan-gate.mjs';
 import { codeVersionForRun, triggerTypeForRun } from './lib/code-version.mjs';
+import { requireProductionWrite } from './lib/production-write.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
 // Before anything else: no test override may reach a stored column (scripts/lib/test-override-guard.mjs).
 try { refuseTestOverridesWithWrite('log-signals-edge'); } catch (e) { console.error(e.message); process.exit(1); }
+// 2026-11-12: --write is a production write, so it also needs EDGE2_PRODUCTION_WRITE=log-signals-edge (the workflow step
+// declares it). Columns as the write sites below name them; tests/production-writes.test.js holds them to the walker's.
+if (WRITE) requireProductionWrite('log-signals-edge', [
+  { table: 'scan_runs', verb: 'insert', rows: 'one row for this scan', columns: ['id', 'engine_source', 'session', 'scan_date', 'started_at', 'trigger_type', 'universe_source', 'universe_count', 'universe_detail', 'universe_snapshot_captured_at', 'prefilter_rule', 'prefilter_rejections', 'prefiltered_count', 'evaluated_count', 'fetch_failed_count', 'aborted', 'abort_reason', 'code_version'] },
+  { table: 'signal_log', verb: 'insert', rows: 'one row per signal this scan shows', columns: ['scan_session', 'signal_date', 'symbol', 'engine_source', 'tier', 'first_shown_at', 'reference_price', 'bars_as_of', 'signal_snapshot', 'code_version'] },
+]);
 
 const SUPABASE_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';

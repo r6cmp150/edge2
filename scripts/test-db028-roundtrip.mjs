@@ -24,7 +24,17 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
-import { createClient } from '@supabase/supabase-js';
+import { requireProductionWrite } from './lib/production-write.mjs';
+
+// 2026-11-12: it writes to the live portfolio table every time it runs, so it runs only with
+// EDGE2_PRODUCTION_WRITE=test-db028-roundtrip. The refusal comes first, before even loading supabase-js (no longer a
+// static import, which would fail before any refusal where the package isn't installed).
+requireProductionWrite('test-db028-roundtrip', [
+  { table: 'portfolio', verb: 'insert', rows: 'one test position, ticker ZZDB028, position_id db028-<timestamp>', columns: ['every column core/store.js mapPositionToSupabaseRow maps, as the add form writes them'] },
+  { table: 'portfolio', verb: 'update', rows: 'that test row only: a background save, then code_version set to null (expected refused by the db/028 trigger)', columns: ['the mapped columns', 'code_version'] },
+  { table: 'portfolio', verb: 'delete', rows: 'that test row only (cleanup, always runs)', columns: [] },
+]);
+const { createClient } = await import('@supabase/supabase-js');
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const read = f => readFileSync(path.join(ROOT, f), 'utf8');

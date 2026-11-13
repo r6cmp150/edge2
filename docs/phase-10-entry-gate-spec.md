@@ -2861,6 +2861,38 @@ query up to the next `;`. In `loadDatabaseUsage` that window ran past the `ratin
 `head: true` passed. The window now also ends at the next `.from(`, and the mutant fails as `app.js|rating_snapshots`.
 After the fix the baseline surfaced nothing newly unbounded, so no other site had been vouched for by a neighbour.
 
+**NO CODE IN THIS REPO WRITES TO PRODUCTION BY DEFAULT. A PRODUCTION WRITE REQUIRES A DELIBERATE HUMAN ACT AT THE
+MOMENT OF THE WRITE (2026-11-11/12, the reviewer's rules).** In the app that act is Roman's tap. Everywhere else there
+is no such act, so a named variable stands in for it: `EDGE2_PRODUCTION_WRITE` must equal the writer's own name
+(`scripts/lib/production-write.mjs`). A variable that cannot be set once, globally, for everything is the difference
+between a deliberate act and an environment someone configured last month. Scheduled jobs set it in the workflow step
+that writes, where it reads as a declaration of what that step does. The refusal always exits non-zero (3), so a
+scheduled job that lost its variable goes red rather than quietly writing nothing, and it prints what it would have
+written. Stated by its reason, not as "scripts and workflows, not the app", because the reason decides the case a file
+list does not cover:
+- an app write without a tap would need its own justification. There is none today. The app's writes and their
+  triggers are listed in `tests/_write-walker.js` (COVERAGE), and that list separates taps **for viewing** that write
+  from taps **for writing**: rendering the Portfolio tab writes, and so does a scan.
+- a script that drives the app (`scripts/replay-scan.mjs`, Playwright) makes taps no human made. Today nothing it
+  clicks reaches a write site, but nothing blocks one either. That is recorded here as an open item, not resolved.
+The writers are derived, never remembered: the walker's write sites, plus a write-marker scan of the scripts the walker
+never reads. `tests/production-writes.test.js` holds every writer to its refusal, before its first write, with a plan
+whose tables and columns are the walker's. It also holds every workflow step that runs a writer, or writes
+`workflow_runs` with curl, to its own declaration. Out of scope by decision: `backup-tables.mjs`, which writes to git,
+not to the database (git writes have their own push protocol); its workflow's `workflow_runs` steps are in scope like
+every other workflow's. Retired: fill-outcomes.yml's `run_grant_checks` option, a production write behind a button
+anyone could press. It ran twice, on 2026-09-15, and was skipped or absent in the other six dispatches.
+
+**TO ESTABLISH THAT CODE DOES NOT DO SOMETHING, PREVENT IT AND SEE WHETHER ANYTHING BREAKS (2026-11-11, the
+reviewer's rule).** A search finds what it knows to look for; a prohibition catches what nobody thought of. State the
+limits of the prohibition, not the limits of the search. The instances:
+- the 2026-11-11 suite run with the network blocked: 109/109, 0 blocked attempts. That covers the paths this suite
+  executes on that tree, not paths it never runs.
+- `tests/production-writes.test.js`: every writer run without its variable, with `fetch` replaced by one that throws,
+  exits 3 before any request.
+In both, the block is shown to work first, so a clean result cannot mean a block that does nothing. That is the
+baseline rule applied to an instrument instead of a test.
+
 **A MUTATION SCORE IS VOID UNLESS THE SAME RUN SHOWS THE UNMUTATED BASELINE PASSING (2026-11-12, the reviewer's
 rule).** A mutant run reports the difference between two runs; without the first, every number it prints is the cost
 of the harness, not the strength of the test. **And the tell: a perfect kill rate is a symptom before it is a

@@ -112,7 +112,10 @@ jobs:
     steps:
       - name: Log workflow firing (Phase 9 §2.7 scheduler instrumentation)
         id: log_fired
+        env:
+          EDGE2_PRODUCTION_WRITE: workflow_runs # 2026-11-12: this step inserts this run's workflow_runs row (scripts/lib/production-write.mjs)
         run: |
+          [ "$EDGE2_PRODUCTION_WRITE" = "workflow_runs" ] || { echo "PRODUCTION WRITE REFUSED: log-signals-edge.yml firing log: EDGE2_PRODUCTION_WRITE is not workflow_runs. Nothing was written. It would have written: insert workflow_runs (workflow_name, trigger_type, declared_cron, actual_fired_at, run_url): one row for this run."; exit 3; }
           # declared_cron is NULL when there was no cron (workflow_dispatch), never
           # '': delay queries compare actual_fired_at with the declared time, and
           # NULL is what "where declared_cron is not null" naturally excludes.
@@ -134,6 +137,7 @@ jobs:
 
       - name: Run logger
         env:
+          EDGE2_PRODUCTION_WRITE: log-signals-edge # 2026-11-12: with --write this step writes production, and the script prints what it writes
           ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
         run: |
@@ -163,7 +167,10 @@ jobs:
       # job.status, never a literal. NULL job_status = this step never ran.
       - name: Log workflow outcome (Phase 9 §2.7)
         if: always()
+        env:
+          EDGE2_PRODUCTION_WRITE: workflow_runs # 2026-11-12: this step updates this run's workflow_runs row (scripts/lib/production-write.mjs)
         run: |
+          [ "$EDGE2_PRODUCTION_WRITE" = "workflow_runs" ] || { echo "PRODUCTION WRITE REFUSED: log-signals-edge.yml outcome log: EDGE2_PRODUCTION_WRITE is not workflow_runs. Nothing was written. It would have written: update workflow_runs (completed_at, job_status, is_noop, noop_reason): this run's row, by id."; exit 3; }
           ID="${{ steps.log_fired.outputs.id }}"
           if [ -z "$ID" ]; then echo "::error::workflow_runs insert returned no id -- the §2.7 firing log is writing nowhere (see the firing step output: missing table, RLS, or Supabase down). Failing on purpose: as a skip this stayed silent for 24 days across all six workflows."; exit 1; fi
           REASON_JSON=$(node -e "console.log(JSON.stringify(process.env.WORKFLOW_NOOP_REASON || null))")

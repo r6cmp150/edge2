@@ -66,9 +66,16 @@ import { selectByIds } from './lib/select-by-ids.mjs';
 import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
 import { fetchAllRows, warnIfAtPageLimit } from './lib/read-all.mjs';
 import { describeStale } from './lib/stale-unresolved.mjs';
+import { requireProductionWrite } from './lib/production-write.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
+// 2026-11-12: --write is a production write, so it also needs EDGE2_PRODUCTION_WRITE=fill-outcomes (the workflow step
+// declares it). Columns as the write sites below name them; tests/production-writes.test.js holds them to the walker's.
+if (WRITE) requireProductionWrite('fill-outcomes', [
+  { table: 'signal_log', verb: 'update', rows: 'each logged signal whose outcome horizons have now closed, matched by id', columns: ['ret_5m', 'ret_15m', 'ret_30m', 'ret_close', 'ret_close_split_in_window', 'ret_1d', 'ret_1d_split_in_window', 'ret_3d', 'ret_3d_split_in_window', 'ret_5d', 'ret_5d_split_in_window', 'matched_trade_id', 'taken_resolution', 'outcomes_filled_at'] },
+  { table: 'trades_v2', verb: 'update', rows: 'each sale whose after-sale prices have now closed, matched by id', columns: ['price_at_plus1_day', 'price_at_plus2_days', 'price_at_plus5_days', 'best_exit_price', 'best_exit_date', 'best_exit_timing', 'sell_timing_resolved'] },
+]);
 
 const SUPABASE_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';

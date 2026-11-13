@@ -11,6 +11,16 @@
 // rather than imported since these two scripts test different roles with
 // different grant shapes and shouldn't share a code path that could drift
 // out of sync with either one's actual grants.
+//
+// 2026-11-12: it writes to production every time it runs (and leaves its rows: anon has no delete policy, so it prints
+// the cleanup SQL), so it runs only with EDGE2_PRODUCTION_WRITE=test-outcome-filler-role-production.
+import { requireProductionWrite } from './lib/production-write.mjs';
+requireProductionWrite('test-outcome-filler-role-production', [
+  { table: 'scan_runs', verb: 'insert', rows: 'one dummy run, scan_date 2026-09-10 (left behind; cleanup SQL printed)', columns: ['id', 'engine_source', 'session', 'scan_date', 'started_at', 'universe_source', 'universe_count', 'evaluated_count'] },
+  { table: 'signal_log', verb: 'insert', rows: 'one dummy row, symbol __ROLE_TEST__, under that run (left behind; cleanup SQL printed)', columns: ['signal_date', 'symbol', 'engine_source', 'tier', 'first_shown_at', 'signal_snapshot', 'reference_price', 'scan_session'] },
+  { table: 'signal_log', verb: 'update', rows: 'that dummy row only: ret_5m (expected to land), reference_price (expected refused)', columns: ['ret_5m', 'reference_price'] },
+  { table: 'trades_v2', verb: 'update', rows: 'one REAL row, pnl_dollars 999999 (expected refused; a landed write here corrupts a real trade)', columns: ['pnl_dollars'] },
+]);
 const SUPABASE_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';
 const ROLE_JWT = process.env.OUTCOME_FILLER_JWT;

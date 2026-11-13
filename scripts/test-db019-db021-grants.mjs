@@ -29,6 +29,15 @@
 // phase-9-entry-exit-spec.md §6 test 3's re-select is that check, done
 // with real production data rather than a redundant synthetic write to
 // the same money-bearing table.
+//
+// 2026-11-12: no workflow runs this any more (fill-outcomes.yml's run_grant_checks option is retired). It writes to
+// real production rows every time it runs, so it runs only with EDGE2_PRODUCTION_WRITE=test-db019-db021-grants.
+import { requireProductionWrite } from './lib/production-write.mjs';
+requireProductionWrite('test-db019-db021-grants', [
+  { table: 'trades_v2', verb: 'update', rows: 'one REAL row, its own buy_price written back (expected refused)', columns: ['buy_price'] },
+  { table: 'signal_log', verb: 'update', rows: 'one REAL row: set true, then restored to false (expected to land, both times)', columns: ['ret_5d_split_in_window'] },
+  { table: 'signal_log', verb: 'update', rows: 'one REAL row, its own reference_price written back (expected refused)', columns: ['reference_price'] },
+]);
 const SUPABASE_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';
 const ROLE_JWT = process.env.OUTCOME_FILLER_JWT;

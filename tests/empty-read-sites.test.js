@@ -69,8 +69,10 @@ const REGISTRY = {
     { verdict: OK, empty: 'saveSettingsToSupabase: update of the loaded row id, .select(\'id\') must return it; none = refuse', denied: 'refuses: "Setting NOT saved ... Reload the app", nothing written; the insert branch is gone (67308c3, 2026-11-02; was WRITES_FROM_EMPTY)' },
     { verdict: OK, empty: 'readExecutionMode (db/042, 2026-11-12): no row = THROWS, never null (null is "never set", a different answer)', denied: 'the add asks Live or Paper and changes no setting; Settings refuses the change: "Live/Paper NOT changed"' },
     { verdict: OK, empty: 'writeExecutionMode: update of the loaded row id, .select(\'id\') must return it; none = SETTINGS_NOT_SAVED, and the change log is not written', denied: 'the setting is not changed and says so; a trade waiting on the answer is recorded under the answer anyway' }],
-  'scripts/audit-signal-log-splits.mjs|signal_log': [
-    { verdict: OK, empty: 'guarded by assertReadable(signal_log) first', denied: 'the control throws: the audit fails instead of passing on nothing (fixed 2026-11-02; was PASS_ON_EMPTY)' }],
+  // CHANGED 2026-11-12, declared: 'scripts/audit-signal-log-splits.mjs|signal_log' removed. No workflow runs that script
+  // since fill-outcomes.yml's run_grant_checks option was retired, so its read left this test's scope (scripts the
+  // workflows run). The read is unchanged; its classification was: guarded by assertReadable(signal_log) first, and a
+  // denied read makes the control throw (fixed 2026-11-02).
   'core/store.js|rating_snapshots': [
     { verdict: S, empty: 'selectRatingSnapshotsByTickers (the scan price history, 2026-11-12): chunked, paged, count checked; empty for a ticker = "No scans recorded" / "No earlier scans recorded", which is also what a ticker under 60 at every scan reads as (said in the modal)', denied: 'every card reads "No ... scans recorded" (an RLS denial is an empty list, not an error); the failed state is only reached by an error. A display, no decision: nothing is written or held from it' }],
   'scripts/count-not-known.mjs|${table}': [
@@ -105,15 +107,9 @@ const REGISTRY = {
     { verdict: OK, empty: 'post-insert re-select: control first, then it must equal the rows the insert returned', denied: 'the control throws: the job fails red (fixed 2026-11-02; was PASS_ON_EMPTY: logged 0 and exited 0)' }],
   'scripts/log-signals-warrior.mjs|setup_triggers': [
     { verdict: OK, empty: 'post-insert re-select: control first, then it must equal the rows the insert returned', denied: 'the control throws: the job fails red (fixed 2026-11-02; was PASS_ON_EMPTY: logged 0 and exited 0)' }],
-  'scripts/test-db019-db021-grants.mjs|trades_v2': [
-    { verdict: OK, empty: 'row pick: firstRow() requires exactly one row', denied: 'throws: the grant test fails (fixed 2026-11-02; was PASS_ON_EMPTY: exited 0 having tested nothing)' },
-    { verdict: OK, empty: 're-read after PATCH: firstRow() then expect() the value', denied: 'throws (fixed 2026-11-02; was PASS_ON_EMPTY: printed "expect X" and never compared)' }],
-  'scripts/test-db019-db021-grants.mjs|signal_log': [
-    { verdict: OK, empty: 'row pick / re-read: firstRow() then expect()', denied: 'throws (fixed 2026-11-02; was PASS_ON_EMPTY)' },
-    { verdict: OK, empty: 'row pick / re-read: firstRow() then expect()', denied: 'throws (fixed 2026-11-02; was PASS_ON_EMPTY)' },
-    { verdict: OK, empty: 'row pick / re-read: firstRow() then expect()', denied: 'throws (fixed 2026-11-02; was PASS_ON_EMPTY)' },
-    { verdict: OK, empty: 'row pick / re-read: firstRow() then expect()', denied: 'throws (fixed 2026-11-02; was PASS_ON_EMPTY)' },
-    { verdict: OK, empty: 'row pick / re-read: firstRow() then expect()', denied: 'throws (fixed 2026-11-02; was PASS_ON_EMPTY)' }],
+  // CHANGED 2026-11-12, declared: 'scripts/test-db019-db021-grants.mjs|trades_v2' (2 reads) and '|signal_log' (5 reads)
+  // removed, for the same reason: no workflow runs that script any more. Their classification was: every row pick and
+  // re-read goes through firstRow() then expect(), and throws on empty or denied (fixed 2026-11-02).
 };
 
 const list = (dir, re) => fs.readdirSync(path.join(REPO_ROOT, dir)).filter(f => re.test(f)).map(f => `${dir}/${f}`);

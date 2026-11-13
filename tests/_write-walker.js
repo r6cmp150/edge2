@@ -8,9 +8,34 @@
 //
 // FILES SCANNED: app.js, core/*.js, shell/*.js, engines/warrior/*.js; scripts/*.mjs and scripts/lib/*.mjs EXCEPT
 // scripts/test-* and scripts/probe-*; .github/workflows/*.yml.
-// FILES NEVER SEEN: scripts/test-* and scripts/probe-* (hand-run probes; fill-outcomes.yml can run
-// scripts/test-db019-db021-grants.mjs, which PATCHes production), any *.cjs, sw.js, engines/edge (no files today),
-// index.html inline scripts, anything under tests/ and data/.
+// FILES NEVER SEEN: scripts/test-* and scripts/probe-* (hand-run; no workflow runs any of them since 2026-11-12, when
+// fill-outcomes.yml's run_grant_checks option was retired), any *.cjs, sw.js, engines/edge (no files today), index.html
+// inline scripts, anything under tests/ and data/. CHANGED 2026-11-12: a never-seen script with a write marker must
+// still refuse without EDGE2_PRODUCTION_WRITE (tests/production-writes.test.js, part 3), but the walker does not read
+// its columns: its plan's columns are declared by hand.
+//
+// THE APP'S WRITES AND WHAT TRIGGERS THEM (2026-11-12, the reviewer's boundary: a production write requires a deliberate
+// human act at the moment of the write; in the app that act is Roman's tap). Traced from each write site to its callers
+// by reading them, on this tree; nothing below is enforced by a test. NO APP WRITE HAPPENS WITHOUT A TAP: opening the
+// app writes nothing (the 2026-11-11 headless observer saw 0 writes, with its control recording a settings PATCH; limit:
+// run with no keys and no prices), and the 30-second clock redraws the banner and badges, which write nothing.
+// But not every tap that writes is a tap FOR WRITING:
+//   TAPS FOR VIEWING THAT WRITE:
+//   - RENDERING THE PORTFOLIO TAB WRITES. renderPortfolioTab -> backgroundSavePosition -> savePositionToSupabase
+//     (core/store.js, portfolio update) saves peakPrice/peakPriceDate, momentumProtectionActivated and
+//     rsiSuspendedAtGainPct whenever a fresh price moves them. It renders on: the Portfolio nav button, its own refresh
+//     button, the header refresh while on Portfolio, sort and engine-filter buttons; and after the writing taps that
+//     touch a position (Confirm Sale, Mark filled, Cancel order, Remove again).
+//   - A SCAN WRITES rating_snapshots (app.js writeRatingSnapshots, insert) and, from (c) (0c60fbf), macro_observations
+//     (app.js observeMacro, one insert per scan, before the scan's data is fetched). runScreener runs only on the header refresh while on
+//     Signals, the Signals refresh buttons and the stale-data banner, and a universe button. It never runs on its own.
+//   TAPS FOR WRITING (the tap is the decision to write): EDGE's add form (portfolio insert and signal_snapshot_at_buy
+//     insert) and Warrior's (portfolio insert only), Confirm Sale (trades_v2 insert, portfolio delete), Mark filled (portfolio update),
+//     Cancel order and Remove again (portfolio delete), the Live/Paper answer and the Settings toggle (settings update,
+//     execution_mode_changes insert), Settings saves (budget, preferences, pre-market mode, through saveSetting since
+//     (c); and the banner's "Save to Supabase" for phone-only settings, saveSettingsNow: settings update), Start Period
+//     (analysis_periods insert), and the banner's Retry buttons (rating_snapshots, signal_snapshot_at_buy).
+// Deletes are not write sites to the walker (see WRITES NOT recognised); the list above includes them by reading.
 //
 // WRITES recognised:
 //   app files: supabaseClient-style `.from('<literal table>')` then (whitespace allowed) `.insert(` / `.update(` /

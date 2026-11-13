@@ -46,9 +46,15 @@ import { resolveSellTiming, detectSplitInWindow } from './lib/sell-timing.mjs';
 import { selectByIds } from './lib/select-by-ids.mjs';
 import { assertReadable, assertReReadComplete } from './lib/readable.mjs';
 import { fetchAllRows } from './lib/read-all.mjs';
+import { requireProductionWrite } from './lib/production-write.mjs';
 
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const WRITE = process.argv.includes('--write');
+// 2026-11-12: --write is a production write, so it also needs EDGE2_PRODUCTION_WRITE=audit-signal-log-splits. No workflow
+// runs it any more (fill-outcomes.yml's run_grant_checks option is retired): it is run by hand, on purpose, or not at all.
+if (WRITE) requireProductionWrite('audit-signal-log-splits', [
+  { table: 'signal_log', verb: 'update', rows: 'each filled signal whose return window contains a split, matched by id', columns: ['ret_close', 'ret_close_split_in_window', 'ret_1d', 'ret_1d_split_in_window', 'ret_3d', 'ret_3d_split_in_window', 'ret_5d', 'ret_5d_split_in_window'] },
+]);
 const SUPABASE_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';
 

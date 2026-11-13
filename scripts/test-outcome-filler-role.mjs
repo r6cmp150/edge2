@@ -40,6 +40,15 @@
 //     the role couldn't act on that row, but it's a DIFFERENT claim than
 //     "permission denied," and reporting it as an ordinary rejection
 //     would hide that difference.
+//
+// 2026-11-12: it writes to production every time it runs (and leaves its row: anon has no delete policy, so it prints
+// the cleanup SQL), so it runs only with EDGE2_PRODUCTION_WRITE=test-outcome-filler-role.
+import { requireProductionWrite } from './lib/production-write.mjs';
+requireProductionWrite('test-outcome-filler-role', [
+  { table: 'signal_log', verb: 'insert', rows: 'one dummy row, symbol __ROLE_TEST__ (left behind; cleanup SQL printed)', columns: ['signal_date', 'symbol', 'engine_source', 'tier', 'first_shown_at', 'signal_snapshot', 'reference_price'] },
+  { table: 'signal_log', verb: 'update', rows: 'that dummy row only: ret_5m (expected to land), ret_15m (expected refused)', columns: ['ret_5m', 'ret_15m'] },
+  { table: 'trades_v2', verb: 'update', rows: 'a random id that matches no row (expected refused)', columns: ['pnl_dollars'] },
+]);
 const SUPABASE_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';
 const TEST_JWT = process.env.OUTCOME_FILLER_TEST_JWT;
