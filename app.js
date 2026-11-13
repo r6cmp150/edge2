@@ -9916,9 +9916,10 @@ function renderSettingsTab() {
         <button class="btn btn-ghost btn-sm" onclick="checkBuildStatus({ force: true })">Check for a newer build</button>
       </div>
       <div class="settings-row">
-        <button class="btn btn-ghost btn-sm" onclick="exportAllData(this)">Export All Data</button>
+        <button class="btn btn-ghost btn-sm" onclick="exportAllData(this)">Download Database Copy</button>
         <button class="btn btn-danger btn-sm" onclick="clearAllData()">Clear All Data</button>
       </div>
+      <div class="settings-hint" id="export-scope" style="padding:0 16px 12px">${EXPORT_SCOPE_TEXT}</div>
     </div>
 
     <div class="settings-section mt12">
@@ -10974,6 +10975,11 @@ async function testPremarketGap() {
 // after Step 6's cleanup has wiped the old local copies. Output JSON shape
 // (version/exported/settings/portfolio/sold keys, redacted key placeholders)
 // is unchanged from before — only the data source moved.
+// Renamed 2026-11-13 from "Export All Data" (the reviewer: a control is named for what it does). Measured that day: it
+// reads the database (settings, positions, trades_v2), never this phone's storage, so it holds none of the state kept
+// only on the phone, and nothing imports it back; it works on a full store for the same reason. No import path is to
+// be built: a restored value's provenance would be "from a file", a state no column records.
+const EXPORT_SCOPE_TEXT = 'Downloads a copy of the database records: settings (keys redacted), positions and trades. It is not a backup of this phone: it does not include the peak RSI of open positions or any queued write, and nothing can be loaded back from it.';
 async function exportAllData(btn) {
   if (btn) btn.disabled = true;
   try {
@@ -11006,9 +11012,22 @@ async function exportAllData(btn) {
   }
 }
 
+// What "Clear All Data" removes, ONE list, and the confirm is built from it, so the two cannot drift (2026-11-13, the
+// reviewer). The old confirm said "This will delete your portfolio and trade history. This cannot be undone." That was
+// false: positions, trades and settings live in the database, and these are this phone's copies of them, which load
+// again. It also never touched what IS kept only on this phone (the peak RSI of open positions, the queued writes),
+// and still does not. The confirm names the keys as the Storage readout lists them, so the two describe one world.
+const CLEAR_ALL_KEYS = ['settings', 'portfolio', 'sold', 'analysisPeriods', 'signals', 'lastScanTime', 'news', 'lastPassedCount'];
+function clearAllDataText() {
+  // (the reviewer, 2026-11-13) what it costs comes first, the identifiers last: a phone-width confirm is read in order.
+  return `This removes ${CLEAR_ALL_KEYS.length} copies kept on this phone. `
+    + 'Your positions, trades and settings in the database are not touched; the app loads them again from the database when it next starts. '
+    + 'It does not remove the peak RSI of open positions or any queued write: those stay. '
+    + `The ${CLEAR_ALL_KEYS.length}, as listed under Storage on this phone: ${CLEAR_ALL_KEYS.map(k => 'edge_' + k).join(', ')}.`;
+}
 function clearAllData() {
-  showConfirm('Are you sure? This will delete your portfolio and trade history. This cannot be undone.', () => {
-    ['settings','portfolio','sold','analysisPeriods','signals','lastScanTime','news','lastPassedCount'].forEach(k => {
+  showConfirm(clearAllDataText(), () => {
+    CLEAR_ALL_KEYS.forEach(k => {
       localStorage.removeItem('edge_' + k);
     });
     TICKERS = MASTER_TICKERS;
