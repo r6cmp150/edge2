@@ -2893,6 +2893,43 @@ limits of the prohibition, not the limits of the search. The instances:
 In both, the block is shown to work first, so a clean result cannot mean a block that does nothing. That is the
 baseline rule applied to an instrument instead of a test.
 
+**GENERATED TEXT IS WRITTEN TO A FILE AND INSERTED AS BYTES, NEVER PASSED THROUGH A STRING LITERAL IN ANOTHER LANGUAGE
+(2026-11-13, the reviewer's rule).** A backslash or a newline in text carried through a Python or shell heredoc, a
+`node -e` or a sed expression is reinterpreted on the way. `\r?\n` became a real carriage return and line feed, or a
+backslash was halved. On 2026-11-12 and 13 that happened at least five times:
+- the regex in 1ad78c1's new test, which voided its first mutant run;
+- the spec entry describing exactly that;
+- a declaration-editing script;
+- a test-assertion sed;
+- a render anchor and the `_lib` helper edits.
+Each was found by an ad-hoc check and fixed by falling back to an editor that writes the bytes given. So prose, code
+and anchors go into a file through a tool that writes bytes as given, and are inserted from that file. A script that
+must carry text inside a literal builds the special characters by code (`String.fromCharCode`), never by escape.
+`tests/control-characters.test.js` holds the result: no control character but tab and line feed in any tracked text
+file outside data/, and no `\r?\n` in Markdown prose.
+
+**A CHECK RUN BY HAND TWICE BECOMES A COMMITTED TEST (2026-11-12, the reviewer's rule).** The second manual run is the
+evidence that the first was not a one-off. The control-character check above was run by hand more than five times
+before it was committed.
+
+**A WRITE ATTEMPTED IN ORDER TO PROVE IT IS REFUSED IS ATTEMPTED INSIDE A TRANSACTION THAT CANNOT COMMIT (2026-11-12,
+the reviewer's rule).** The proof requires the attempt; it does not require the write to survive. A client-side probe
+against a live endpoint cannot offer this, because it has no transaction to roll back, and that is a reason to prefer
+a server-side statement over a client-side probe, not a reason to guard the probe. The instance is
+`db/035-run-3-anon-insert-rolled-back.sql`: `begin; set local role anon; insert into trades_v2 ...; rollback;`. The
+write is genuinely attempted, as anon, against the real table with its real constraints and policies, and it cannot
+commit. `scripts/probe-anon-privileges.mjs` (POST, PATCH and DELETE against the live REST endpoint as anon, made
+"safe" by a one-column insert and a filter matching no row) was dropped from the `macro-gated` landing for this reason
+and stays out of main. It remains in the 2026-11-12 bundle as history.
+
+**PREFER OBSERVING A PERMISSION TO EXERCISING IT (2026-11-12, the reviewer's rule).** Exercising a permission answers
+only for the verbs someone wrote, and in the destructive direction only by being destructive. Observing it answers
+for all of them at no risk. Exercise only what observation cannot reach (whether the layer above honours the grant),
+and then only in a form that cannot persist. The instance: db/037's run-2 permission grid observes every privilege on
+the twelve tables, including ones nobody thought to exercise, which the dropped probe could never report on. An
+RLS-filtered write and a filter that matches nothing both answer 200 with an empty body, so the probe's
+non-destructive cases taught nothing, and its only informative case was the one that does damage.
+
 **A MUTATION SCORE IS VOID UNLESS THE SAME RUN SHOWS THE UNMUTATED BASELINE PASSING (2026-11-12, the reviewer's
 rule).** A mutant run reports the difference between two runs; without the first, every number it prints is the cost
 of the harness, not the strength of the test. **And the tell: a perfect kill rate is a symptom before it is a
