@@ -59,9 +59,9 @@ await run('the runner states the tree before any result, in both output forms', 
   const headNow = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: d, encoding: 'utf8' }).trim();
   assert.notStrictEqual(headNow, head);
   const runner = path.join(REPO_ROOT, 'scripts/run-tests.mjs');
-  const text = spawnSync(process.execPath, [runner, tests], { cwd: d, encoding: 'utf8' }).stdout;
+  const text = spawnSync(process.execPath, [runner, tests], { cwd: d, encoding: 'utf8', timeout: 600000 }).stdout;
   assert.strictEqual(text.split('\n')[0], `TREE: ${headNow} clean`, 'its first line');
-  const json = JSON.parse(spawnSync(process.execPath, [runner, tests, '--json'], { cwd: d, encoding: 'utf8' }).stdout);
+  const json = JSON.parse(spawnSync(process.execPath, [runner, tests, '--json'], { cwd: d, encoding: 'utf8', timeout: 600000 }).stdout);
   assert.strictEqual(json.tree, `${headNow} clean`);
 });
 

@@ -62,7 +62,7 @@ await run('the script exits non-zero on anything but green, and if gh can\'t ans
   // CHANGED 2026-11-12, declared: the line now names the commit whose runs it could not read.
   assert.ok(/PUSH NOT CONFIRMED: could not read the \$\{WORKFLOW\} runs for \$\{full\.slice\(0, 12\)\}[\s\S]{0,80}process\.exit\(1\)/.test(src));
   assert.ok(src.includes("'--commit', sha"), 'for this exact commit');
-  const bad = spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts/check-push.mjs'), 'not-a-sha'], { encoding: 'utf8' });
+  const bad = spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts/check-push.mjs'), 'not-a-sha'], { encoding: 'utf8', timeout: 120000 });
   assert.strictEqual(bad.status, 2);
 });
 
@@ -151,7 +151,7 @@ const dirWith = files => {
 const runner = (tests, extra = [], env = {}) => {
   const clean = { ...process.env };
   for (const k of Object.keys(clean)) if (k.startsWith('GITHUB_') || k === 'CI' || k === 'TZ') delete clean[k];
-  return spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts/run-tests.mjs'), tests, ...extra], { encoding: 'utf8', env: { ...clean, ...env } });
+  return spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts/run-tests.mjs'), tests, ...extra], { encoding: 'utf8', env: { ...clean, ...env }, timeout: 600000 });
 };
 const PROBE = "const fs = require('fs'); if (process.env.CI !== 'true' || process.env.GITHUB_ACTIONS !== 'true' || process.env.TZ !== 'UTC' || !fs.existsSync(process.env.GITHUB_ENV || 'none')) { console.log('FAIL: no CI environment'); process.exit(1); } console.log('PASS: CI environment');\n";
 

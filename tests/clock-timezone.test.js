@@ -63,6 +63,7 @@ function runUnderTZ(tz, epochMs) {
   const res = spawnSync(process.execPath, [RUNNER, String(epochMs)], {
     env: { ...process.env, TZ: tz },
     encoding: 'utf8',
+    timeout: 120000,
   });
   if (res.status !== 0) {
     throw new Error(`runner failed under TZ=${tz}: ${res.stderr}`);

@@ -3460,6 +3460,51 @@ entries that point at each other.
   entry above (a0a7dbd); the count itself was never committed. Its fix is
   the parser-free raw-source count.
 
+**A process spawned by a scratch harness carries a timeout and never goes
+through a shell (2026-11-14, the reviewer).** The committed guard
+(`tests/spawn-timeouts.test.js`: every node spawn in tests/ and scripts/ has
+a timeout or a named kill timer, and none goes through a shell) cannot see
+scratch code. This rule is what covers it. An orphan from a throwaway script
+competes with every run that follows, and is attributed to the code under
+test.
+- **Instance: PID 9472** (`node tests/stock-modal-render.test.js`). It ran
+  from 2026-11-11 20:55 local until it was stopped on 2026-11-14, 55,625 CPU
+  seconds, almost certainly left by a scratch mutant harness's
+  `execSync('node ' + t, { timeout })`. Measured on that machine: a timed-out
+  `execSync('node x')` kills the shell and leaves `node x` running, while a
+  timed-out `spawnSync(process.execPath, [x])` leaves nothing. With it gone,
+  the suite took 1 min 55 s, against over 10 minutes with it.
+- **The runner was not the gap** (the reviewer's premise, corrected by
+  reading): it already fails a hung file at its time limit as TIMEOUT. Its
+  kill reaches only its direct child, though, so a test that spawns node
+  without a timeout of its own leaves a grandchild. Those 13 spawns now carry
+  timeouts.
+- **Not added: a standing "no orphans left" check in the runner.** Listing
+  processes is cheap on both platforms, once per run (`ps` on Linux, one
+  CIM query of about 1-2 s on Windows). But a node process cannot be
+  attributed to this run rather than to another run going on at the same
+  time, so the check would fail on a legitimate parallel run. This rule
+  carries it instead.
+
+**A validator accepts everything its own writer writes, and everything the
+database accepts (2026-11-14, the reviewer, naming their own error).** Both
+directions, as a round trip: write, read, write again must not throw. The
+app's accepted set is compared against the column's CHECK, not against the
+author's list. A check narrower than the data it guards is not a stricter
+check, it is a defect with better manners.
+- **Instance: `macroPathColumn` (0c60fbf, 2026-11-12, fixed 1d927eb
+  2026-11-14).** The enumeration ruled by the reviewer on 11-13 ("prefer
+  making a site enumerable") refused `'unknown'`, a value the same module
+  writes, that is the column's DEFAULT, and that every position from before
+  db/038 carries. **The reviewer cleared it, and that clearance was the last
+  gate before Roman's phone.** For two days every sale and every position
+  save of his 6 open positions threw on the phone, and the GRNT and VG sales
+  sat queued. The suite missed it because no test ever handed the writer a
+  value it had written itself: a system never tested against its own output
+  is tested against our expectations of it. The guard is
+  `tests/macro-path-unknown.test.js`, which checks against the CHECKs
+  captured from production in both directions.
+
 ## Appendix — provenance
 
 **Not quotable under §7.7 (2026-10-21):** the parse and grouping below

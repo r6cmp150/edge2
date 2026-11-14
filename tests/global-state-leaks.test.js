@@ -15,7 +15,7 @@ function runner(files) {
   const tests = path.join(dir, 'tests');
   fs.mkdirSync(tests);
   for (const [n, src] of Object.entries(files)) fs.writeFileSync(path.join(tests, n), src);
-  const r = spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts/run-tests.mjs'), tests, '--json'], { cwd: dir, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [path.join(REPO_ROOT, 'scripts/run-tests.mjs'), tests, '--json'], { cwd: dir, encoding: 'utf8', timeout: 600000 });
   return { exit: r.status, ...JSON.parse(r.stdout) };
 }
 const file = body => `const { run } = require(${LIB});\n${body}\n`;
@@ -104,7 +104,7 @@ await run('a file that touches the variables CI sets for real passes with them s
   const names = fs.readdirSync(dir).filter(f => f.endsWith('.test.js') && /GITHUB_|process\.env\.CI\b/.test(fs.readFileSync(path.join(dir, f), 'utf8')) && f !== 'global-state-leaks.test.js');
   assert.ok(names.includes('workflow-instrumentation.test.js'), 'the enumeration sees the file that leaked');
   for (const f of names) {
-    const r = spawnSync(process.execPath, [path.join(dir, f)], { cwd: REPO_ROOT, encoding: 'utf8', env });
+    const r = spawnSync(process.execPath, [path.join(dir, f)], { cwd: REPO_ROOT, encoding: 'utf8', env, timeout: 120000 });
     assert.strictEqual(r.status, 0, `${f} fails with CI's variables set:\n${(r.stdout + r.stderr).split('\n').filter(l => /FAIL|left global/.test(l)).join('\n')}`);
   }
 });

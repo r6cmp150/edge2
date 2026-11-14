@@ -147,7 +147,7 @@ process.on('SIGINT', () => process.exit(130));
 
 // Baseline: every test passes unmutated, or a "kill" proves nothing.
 for (const t of new Set(M.map(m => m[1]))) {
-  const r = spawnSync(process.execPath, [TESTS[t]], { cwd: ROOT, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [TESTS[t]], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
   if (r.status !== 0 || /^FAIL/m.test(r.stdout + r.stderr)) { console.error(`baseline FAILS: ${TESTS[t]}`); process.exit(2); }
 }
 
@@ -156,7 +156,7 @@ for (const [file, test, name, from, to, opts = {}] of M) {
   const n = orig[file].split(from).length - 1;
   if (n !== 1) { console.log(`ANCHOR x${n}  ${name}`); survived++; continue; }
   fs.writeFileSync(path.join(ROOT, file), orig[file].replace(from, to));
-  const r = spawnSync(process.execPath, [TESTS[test]], { cwd: ROOT, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [TESTS[test]], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
   const failed = [...(r.stdout + r.stderr).matchAll(/^FAIL: (.*)$/gm)].map(m => m[1]);
   const behaviourFails = failed.filter(t => !LINT_TESTS.some(re => re.test(t)));
   const crashed = r.status !== 0 && !failed.length;

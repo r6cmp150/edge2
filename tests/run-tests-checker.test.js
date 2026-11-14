@@ -20,7 +20,7 @@ function dirWith(files) {
   return d;
 }
 function runner(dir, extra = []) {
-  const r = spawnSync(process.execPath, [RUNNER, dir, '--json', ...extra], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [RUNNER, dir, '--json', ...extra], { encoding: 'utf8', timeout: 600000 });
   return { exit: r.status, report: JSON.parse(r.stdout) };
 }
 const verdicts = report => Object.fromEntries(report.results.map(r => [r.file, r.verdict]));
@@ -70,7 +70,7 @@ run('an error is never truncated: a crash\'s whole output, path included, and a 
     // process.stderr.write, no trailing newline: the output's very last character is the message's last "s"
     'b-long-fail.test.js': "console.log('\\nPASS: one');\nconsole.error('\\nFAIL: long');\nprocess.stderr.write('" + longMsg + "');\nprocess.exitCode = 1;\n",
   });
-  const text = spawnSync(process.execPath, [RUNNER, d], { encoding: 'utf8' }).stdout;
+  const text = spawnSync(process.execPath, [RUNNER, d], { encoding: 'utf8', timeout: 600000 }).stdout;
   assert.ok(/===== FULL OUTPUT: DEAD a-dies\.test\.js/.test(text), 'a full-output section for the dead file');
   assert.ok(text.includes('the-missing-path.json'), 'the path the crash failed on is in the runner\'s output');
   assert.ok(text.includes(longMsg), 'the long FAIL message, whole');
@@ -78,7 +78,7 @@ run('an error is never truncated: a crash\'s whole output, path included, and a 
   const dead = report.results.find(r => r.file === 'a-dies.test.js');
   assert.ok(dead.output.includes('the-missing-path.json') && dead.output.includes('ENOENT'), '--json carries the whole output too');
   assert.ok(report.results.find(r => r.file === 'b-long-fail.test.js').output.includes('END-OF-MESSAGE'));
-  const good = spawnSync(process.execPath, [RUNNER, dirWith({ 'g.test.js': GOOD })], { encoding: 'utf8' }).stdout;
+  const good = spawnSync(process.execPath, [RUNNER, dirWith({ 'g.test.js': GOOD })], { encoding: 'utf8', timeout: 600000 }).stdout;
   assert.ok(!/FULL OUTPUT/.test(good), 'a passing file prints no output section');
 });
 
