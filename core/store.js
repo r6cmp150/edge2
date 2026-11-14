@@ -297,8 +297,13 @@ function checkedMacroPath(path) {
 }
 // A column that may say "no reading attached": a missing path is 'unknown', anything else must be on the list. An
 // unexpected value throws here, before the write, rather than at the database's CHECK.
+// FIXED 2026-11-14: 'unknown' itself passes. This function writes it, the column's DEFAULT is it, and every position
+// from before db/038 was loaded back holding it. But it was then handed to checkedMacroPath, which refused it, so
+// every position save and every sale of such a position threw on the phone before anything was sent. All 6 open
+// positions, and the GRNT and VG sales queued on Roman's phone, were in that state from (c), 0c60fbf (2026-11-12),
+// until this fix. The three columns' CHECKs all accept 'unknown'; only this check did not.
 function macroPathColumn(path) {
-  if (path == null) return 'unknown';
+  if (path == null || path === 'unknown') return 'unknown';
   return checkedMacroPath(path);
 }
 // rating_snapshots.tier: only scored rows are written (NOT_EVALUATED has no score), so these two.
