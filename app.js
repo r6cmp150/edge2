@@ -5510,7 +5510,16 @@ async function renderPortfolioTab() {
     const earlierCloseTag = showsEarlierSessionClose
       ? `<span class="pf-earlier-close-tag" title="No trade on the feed yet today: this is the ${quoteAge.asOf} close">${quoteAge.asOf} close</span>`
       : '';
-    const rsi = closes.length >= 15 ? calcRSI(closes) : p.rsiAtBuy;
+    // The RSI is MEASURED, or it is null with the reason (2026-11-13, the reviewer: "a fallback that substitutes one
+    // measurement for another is a defect, not a default"). It fell back to p.rsiAtBuy, from the first commit until
+    // this one. That value was written into ownedPrevRSI and, through Math.max, into ownedPeakRSI, which is copied
+    // into trades_v2.peak_rsi_during_hold at the sale. A failed daily-bar fetch therefore wrote every holding's buy RSI
+    // in as its peak during the hold. calcRSI is never called below 15 closes: it answers 50 there, which is no
+    // measurement either.
+    const rsi = closes.length >= 15 ? calcRSI(closes) : null;
+    const rsiNotMeasured = rsi != null ? null
+      : priceFetchFailed ? 'the price and daily-bar fetch failed'
+      : `${closes.length} daily close${closes.length === 1 ? '' : 's'} came back, 15 needed`;
     const trimmedAtr = bars.length >= 15 ? calcTrimmedATR(bars) : 0;
 
     // Intraday one-liner (Phase 9 §7) — priceUnavailable means
@@ -5595,7 +5604,7 @@ async function renderPortfolioTab() {
     // Rule 5 support: first time RSI hits the (soon-to-be-suspended) 72+ threshold
     // while protected, snapshot the gain% at that instant — sticky, never overwritten —
     // so the report can later show what an RSI-based exit would have left on the table.
-    if (!priceUnavailable && p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi >= 72) {
+    if (!priceUnavailable && p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi != null && rsi >= 72) {
       p.rsiSuspendedAtGainPct = ((currentPrice - p.buyPrice) / p.buyPrice) * 100;
       if (state.deletedPositionIds.has(p.id)) return;
       backgroundSavePosition(p);
@@ -5664,7 +5673,7 @@ async function renderPortfolioTab() {
       displayedVerdict = exitResult;
     } else {
       const currentSignal = currentSignalForHolding(p.ticker);
-      const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);
+      const unifiedResult = calcUnifiedRecommendation({ ...p, currentPrice, rsi, rsiNotMeasured, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);
       portBanner = buildUnifiedPortfolioBanner(unifiedResult, earlierCloseTag); // computed, and marked
       displayedVerdict = unifiedResult;
       displayedSignal = currentSignal;
@@ -5673,7 +5682,7 @@ async function renderPortfolioTab() {
     // Legitimate only because the captured object IS the display, so it is exactly what the banner got.
     state.displayedVerdicts[p.id] = capturedDisplay(displayedVerdict, {
       price: currentPrice, price_unavailable: !!priceUnavailable, earlier_session_close: !!showsEarlierSessionClose,
-      rsi: rsi ?? null, prev_rsi: p.prevRSI ?? null, peak_price: p.peakPrice ?? null, momentum_protection: !!p.momentumProtectionActivated,
+      rsi: rsi ?? null, rsi_not_measured: rsiNotMeasured, prev_rsi: p.prevRSI ?? null, peak_price: p.peakPrice ?? null, momentum_protection: !!p.momentumProtectionActivated,
       score: displayedSignal?.score ?? null, scanned_at: displayedSignal?.scannedAt ?? null,
       macro_condition: macroConditionForRecord(), hold_closes: days ?? null,
     }, new Date().toISOString());
@@ -6173,6 +6182,10 @@ function calcUnifiedRecommendation(position, currentSignal, macroContext, snap, 
     else if (rsi >= 65) add(`RSI ${rsi.toFixed(0)} — band 65–75`, -10);
     else if (rsi >= 55) add(`RSI ${rsi.toFixed(0)} — band 55–65`, 20);
     else if (rsi >= 35) add(`RSI ${rsi.toFixed(0)} — band 35–55`, 15);
+  } else {
+    // Not measured (2026-11-13): said on the card, scored nothing, and never replaced by another reading (the buy's
+    // RSI stood in here, unmarked, until this change).
+    add(`RSI not measured${position.rsiNotMeasured ? ` — ${position.rsiNotMeasured}` : ''}`, 0);
   }
 
   // ── Current signal score (tier + drift vs score at buy)
@@ -11782,22 +11795,18 @@ function updateNavBadges() {
         // Counted, never dropped (a position that needs selling keeps its
         // warning), and the badge says so: the card's own quoteAge.
         const onEarlierClose = cached.quoteAge.state === 'EARLIER_SESSION_CLOSE';
-        // Same dispatch shape as renderPortfolioTab's banner (Phase 7) --
-        // kept in sync deliberately, not two independent implementations of
-        // "does this position warrant a warning." See that call site's
-        // comment for why 'EDGE'/falsy is the native case, not a branch on
-        // a registered engine's id.
-        if (p.engineSource && p.engineSource !== 'EDGE') {
-          const dispatchedEngine = getEngine(p.engineSource);
-          const exitResult = (dispatchedEngine && dispatchedEngine.evaluateExit)
-            ? dispatchedEngine.evaluateExit(p, { price })
-            : neutralEngineExitFallback(p, { price });
-          if (exitResult.status === 'SELL_NOW' || exitResult.status === 'SELL_SOON') { warnCount++; if (onEarlierClose) earlierCloseWarnCount++; }
-          return;
-        }
-        const currentSignal = currentSignalForHolding(p.ticker);
-        const result = calcUnifiedRecommendation({ ...p, currentPrice: price, rsi: p.rsiAtBuy, priceFetchFailed: state.portfolioPriceFetchFailed }, currentSignal, state.macroContext);
-        if (result.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(result.label)) { warnCount++; if (onEarlierClose) earlierCloseWarnCount++; }
+        // The count is OF THE CARDS' OWN VERDICTS (2026-11-13, the reviewer: "a count and the thing it counts must
+        // come from one computation"). It used to compute its own: the same dispatch as the card, but for EDGE with
+        // the buy's RSI as the current RSI, every 30 seconds, so it could disagree with the cards it summarises.
+        // Now it reads what each card last showed (state.displayedVerdicts, written by the same render that writes
+        // the cached price above, so they share a lifecycle). A holding no card has shown adds nothing, as a holding
+        // with no cached price never did.
+        const shown = state.displayedVerdicts?.[p.id]?.verdict;
+        if (!shown) return;
+        const warns = (p.engineSource && p.engineSource !== 'EDGE')
+          ? (shown.status === 'SELL_NOW' || shown.status === 'SELL_SOON')
+          : (shown.hardFloor || ['SELL NOW', 'SELL SOON', 'CONSIDER SELLING', 'LOCK IN PROFITS'].includes(shown.label));
+        if (warns) { warnCount++; if (onEarlierClose) earlierCloseWarnCount++; }
       });
     }
     // Pending orders that have sat through a close need an answer from

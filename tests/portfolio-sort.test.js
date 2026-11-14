@@ -200,7 +200,10 @@ function renderCtx() {
 async function renderIn(ctx, mode, alter = () => {}) {
   const fx = fixture();
   alter(fx);
-  const writes = {}, saves = [], persists = [], verdicts = {};
+  // CHANGED 2026-11-13, declared: two optional fixture hooks (fx.barsFail: the daily-bar fetch throws; fx.bars[t]:
+  // that symbol's bars) and rsiSeen/captures, which record the RSI each verdict and capture was handed. Existing
+  // cases set neither hook and read neither map.
+  const writes = {}, saves = [], persists = [], verdicts = {}, rsiSeen = {}, captures = [];
   const tracked = fx.portfolio.map(p => {
     writes[p.id] = [];
     return new Proxy(p, { set(t, k, v) { writes[t.id].push([k, v]); t[k] = v; return true; } });
@@ -213,7 +216,8 @@ async function renderIn(ctx, mode, alter = () => {}) {
     document: { getElementById: id => els[id] || null },
     localStorage: { getItem: () => null, setItem() {} },
     fetchSnapshots: async () => fx.snapshots,
-    fetchMultiBars: async () => ({ results: Object.fromEntries(Object.entries(fx.snapshots).map(([t, s]) => [t, dailyBars(s.dailyBar.c)])) }),
+    fetchMultiBars: fx.barsFail ? async () => { throw new Error('bars down (fixture)'); }
+      : async () => ({ results: Object.fromEntries(Object.entries(fx.snapshots).map(([t, s]) => [t, (fx.bars && fx.bars[t]) || dailyBars(s.dailyBar.c)])) }),
     fetchAHSnapshots: async () => ({}),
     fetchTodaySipBarsMulti: async () => ({ barsBySymbol: {}, failedSymbols: [] }),
     fetchHeldListing: async tickers => Object.fromEntries(tickers.map(t => [t, 'listed'])),
@@ -222,11 +226,11 @@ async function renderIn(ctx, mode, alter = () => {}) {
     backgroundSavePosition: p => saves.push([p.id, JSON.stringify(p)]),
     persist: k => persists.push(k),
     // Record what each verdict was computed from: "computed, never blocked".
-    calcUnifiedRecommendation: (pos) => { verdicts[pos.ticker] = { engine: 'EDGE', price: pos.currentPrice, priceFetchFailed: pos.priceFetchFailed }; return {}; },
+    calcUnifiedRecommendation: (pos) => { verdicts[pos.ticker] = { engine: 'EDGE', price: pos.currentPrice, priceFetchFailed: pos.priceFetchFailed }; rsiSeen[pos.ticker] = { rsi: pos.rsi, why: pos.rsiNotMeasured }; return {}; },
     buildUnifiedPortfolioBanner: (r, tag) => `<div class="stub-banner" data-tag="${tag === undefined ? 'UNDEFINED' : tag ? 'TAG:' + encodeURIComponent(tag) : ''}"></div>`,
     buildRegisteredEngineExitBanner: (r, tag) => `<div class="stub-banner" data-status="${r.status}" data-tag="${tag === undefined ? 'UNDEFINED' : tag ? 'TAG:' + encodeURIComponent(tag) : ''}"></div>`,
     getEngine: () => ({ evaluateExit: (pos, live) => { verdicts[pos.ticker] = { engine: pos.engineSource, price: live.price }; return { status: 'HOLDING', reasons: [] }; } }),
-    neutralEngineExitFallback: () => ({}), buildFridayFlag: () => '', capturedDisplay: () => ({}), macroConditionForRecord: () => null,
+    neutralEngineExitFallback: () => ({}), buildFridayFlag: () => '', capturedDisplay: (v, inputs) => { captures.push(inputs); return {}; }, macroConditionForRecord: () => null,
     updateBudgetBar() {}, buildPendingOrdersHtml: () => '', buildWeekendBanner: () => '', buildEngineFilterControl: () => '',
     renderBuildStatus() {}, checkBuildStatus() {}, renderEngineBadge: () => '', listingWarningText: () => '',
     computeTradeMetrics: () => ({ totalPnL: 0, count: 0, excluded: 0 }),
@@ -234,7 +238,7 @@ async function renderIn(ctx, mode, alter = () => {}) {
   await ctx.renderPortfolioTab();
   const list = els['pf-list'].innerHTML;
   return {
-    writes, saves, persists, verdicts, list, summary: els['pf-summary'].innerHTML,
+    writes, saves, persists, verdicts, rsiSeen, captures, peak: { ...ctx.state.ownedPeakRSI }, prev: { ...ctx.state.ownedPrevRSI }, list, summary: els['pf-summary'].innerHTML,
     order: [...list.matchAll(/<div class="pf-ticker">([A-Z]+) /g)].map(m => m[1]).join(' '),
     maps: JSON.stringify([ctx.state.ownedPrevRSI, ctx.state.ownedPeakRSI, ctx.state.portfolioPrices]),
     finalPositions: JSON.stringify(fx.portfolio),
@@ -353,7 +357,8 @@ run('wiring: the stale-close state never reaches priceUnavailable or exit dispat
       assert.ok(!/priceUnavailable\s*=|priceFetchFailed:|evaluateExit|calcUnifiedRecommendation|exitResult\s*=|backgroundSavePosition|peakPrice/.test(l), `${name} reaches the exit path: ${l.trim()}`);
     }
   }
-  assert.ok(code.includes("calcUnifiedRecommendation({ ...p, currentPrice, rsi, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);"), 'recommendation call unchanged');
+  // CHANGED 2026-11-13, declared: the call also carries rsiNotMeasured (the RSI is measured or null, with its reason).
+  assert.ok(code.includes("calcUnifiedRecommendation({ ...p, currentPrice, rsi, rsiNotMeasured, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);"), 'recommendation call unchanged');
   assert.ok(code.includes("openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf}'` : 'null'})"), 'Mark as Sold: withheld on an earlier close, never pre-filled from it');
   // The verdict is computed whatever the quote's age: the exit dispatch
   // conditions mention priceUnavailable only.
@@ -576,12 +581,14 @@ run('exit side, the real banner builders: every branch carries the tag when give
 
 run('exit side, nav badge: an earlier-close warning is COUNTED (never dropped) and the badge is marked', () => {
   const badge = { textContent: '', title: '', classList: { s: new Set(), toggle(c, on) { on ? this.s.add(c) : this.s.delete(c); }, has(c) { return this.s.has(c); } } };
+  // CHANGED 2026-11-13, declared: the badge counts the cards' captured verdicts (state.displayedVerdicts) and
+  // computes none. Same assertions; the verdicts are now handed in as the card captured them.
+  const shownSell = { verdict: { label: 'SELL NOW' } };
   const run1 = (prices) => {
     const ctx = { console, Math, document: { getElementById: () => badge }, isAfternoonMode: () => true,
-      getHoldings: () => [{ ticker: 'AAA', engineSource: 'EDGE' }, { ticker: 'DDD', engineSource: 'EDGE' }, { ticker: 'ZZZ', engineSource: 'EDGE' }],
-      currentSignalForHolding: () => null, calcUnifiedRecommendation: () => ({ label: 'SELL NOW' }),
-      getPendingOrders: () => [], isStalePendingOrder: () => false, getEngine: () => null, neutralEngineExitFallback: () => ({}),
-      state: { portfolioPrices: prices, portfolioPriceFetchFailed: false, macroContext: null } };
+      getHoldings: () => [{ id: 'a', ticker: 'AAA', engineSource: 'EDGE' }, { id: 'd', ticker: 'DDD', engineSource: 'EDGE' }, { id: 'z', ticker: 'ZZZ', engineSource: 'EDGE' }],
+      getPendingOrders: () => [], isStalePendingOrder: () => false,
+      state: { portfolioPrices: prices, portfolioPriceFetchFailed: false, displayedVerdicts: { a: shownSell, d: shownSell, z: shownSell } } };
     vm.createContext(ctx);
     vm.runInContext(grabFn('updateNavBadges') + '\nupdateNavBadges();', ctx);
     return badge;
@@ -593,6 +600,70 @@ run('exit side, nav badge: an earlier-close warning is COUNTED (never dropped) a
   const c = run1({ AAA: { price: 10, quoteAge: { state: 'CURRENT' } }, DDD: { price: 11, quoteAge: { state: 'UNJUDGED' } } });
   assert.strictEqual(String(c.textContent), '2');
   assert.ok(!c.classList.has('badge-earlier-close') && c.title === '', 'not marked when nothing counted is on an earlier close');
+});
+
+// 2026-11-13: the RSI is measured, or it is not. Until this change, a holding with fewer than 15 daily closes was
+// handed p.rsiAtBuy as its current RSI, and that went into ownedPrevRSI and, through Math.max, ownedPeakRSI. A failed
+// daily-bar fetch did it to every holding at once. The fixture never had an rsiAtBuy, so the fallback wrote
+// undefined, which the `rsi != null` guard dropped: the old suite could not see the defect. Every holding here
+// carries one, set ABOVE anything the bars would give, so a substitute would raise the peak.
+const withBuyRsi = fx => { for (const p of fx.portfolio) p.rsiAtBuy = 97; };
+run('the RSI is measured or not: a failed daily-bar fetch writes no prev or peak RSI, and the card is told why', async () => {
+  const ctx = renderCtx();
+  const ok = await renderIn(ctx, 'TIME_LIMIT', withBuyRsi);
+  // Positive control: with bars, the real calcRSI is measured, written, and is not the buy RSI.
+  const measured = Object.entries(ok.rsiSeen).filter(([, s]) => s.rsi != null);
+  assert.ok(measured.length >= 5, `measured with bars: ${JSON.stringify(ok.rsiSeen)}`);
+  for (const [t, s] of measured) {
+    assert.ok(s.rsi !== 97 && s.why == null, `${t}: measured, not the buy RSI`);
+    assert.strictEqual(ok.peak[t], s.rsi, `${t}: peak written from the measurement`);
+  }
+  const down = await renderIn(ctx, 'TIME_LIMIT', fx => { withBuyRsi(fx); fx.barsFail = true; });
+  assert.deepStrictEqual(down.peak, {}, 'no peak RSI written from an unmeasured RSI');
+  assert.deepStrictEqual(down.prev, { AAA: 55, GGG: 61 }, 'the previous RSI is left as it was, not overwritten');
+  assert.ok(!down.persists.includes('ownedPeakRSI') && !down.persists.includes('ownedPrevRSI'), 'nothing persisted for it');
+  const edge = Object.entries(down.rsiSeen);
+  assert.ok(edge.length >= 5);
+  for (const [t, s] of edge) assert.deepStrictEqual({ ...s }, { rsi: null, why: 'the price and daily-bar fetch failed' }, `${t}: not measured, and why`);
+  for (const c of down.captures) assert.ok(c.rsi === null && c.rsi_not_measured === 'the price and daily-bar fetch failed', 'the captured card says so too');
+});
+
+run('one symbol short of 15 closes: only it is unmeasured; the rest are measured as usual', async () => {
+  const ctx = renderCtx();
+  const r = await renderIn(ctx, 'TIME_LIMIT', fx => { withBuyRsi(fx); fx.bars = { AAA: dailyBars(10.5).slice(-5) }; });
+  assert.deepStrictEqual({ ...r.rsiSeen.AAA }, { rsi: null, why: '5 daily closes came back, 15 needed' });
+  assert.ok(!('AAA' in r.peak), 'no peak for AAA');
+  assert.strictEqual(r.prev.AAA, 55, "AAA's previous RSI is kept, not replaced by its buy RSI");
+  assert.ok(typeof r.rsiSeen.BBB.rsi === 'number' && r.rsiSeen.BBB.rsi !== 97 && r.peak.BBB === r.rsiSeen.BBB.rsi, 'BBB measured and written');
+});
+
+// 2026-11-13 (the reviewer: "a count and the thing it counts must come from one computation"). The badge computed
+// its own EDGE verdict with the buy's RSI as the current RSI, so it could count a warning no card showed, or miss
+// one a card did show. It now counts exactly what the cards show, and nothing a card has not shown.
+run('nav badge: it counts what the cards show, never a verdict of its own', () => {
+  const badge = { textContent: '', title: '', classList: { toggle() {}, has() { return false; } } };
+  const holdings = [
+    { id: 'h', ticker: 'HOLD', engineSource: 'EDGE', rsiAtBuy: 80 },   // card: HOLD. The buy RSI would have scored it lower.
+    { id: 's', ticker: 'SELL', engineSource: 'EDGE', rsiAtBuy: 45 },   // card: SELL SOON
+    { id: 'f', ticker: 'FLOOR', engineSource: 'EDGE', rsiAtBuy: 50 },  // card: a hard floor
+    { id: 'w', ticker: 'WAR', engineSource: 'WARRIOR' },              // card: SELL_NOW from the engine
+    { id: 'u', ticker: 'UNSEEN', engineSource: 'EDGE', rsiAtBuy: 90 }, // priced, but no card has shown it
+  ];
+  const prices = Object.fromEntries(holdings.map(p => [p.ticker, { price: 10, quoteAge: { state: 'CURRENT' } }]));
+  const computed = [];
+  const ctx = { console, Math, document: { getElementById: () => badge }, isAfternoonMode: () => true, getHoldings: () => holdings,
+    getPendingOrders: () => [], isStalePendingOrder: () => false,
+    // Present so that a badge computing its own verdict is caught doing it, not crashing.
+    calcUnifiedRecommendation: p => { computed.push(p.ticker); return { label: p.rsi >= 75 ? 'SELL NOW' : 'HOLD' }; },
+    currentSignalForHolding: () => null, getEngine: () => null, neutralEngineExitFallback: () => ({ status: 'HOLDING' }),
+    state: { portfolioPrices: prices, portfolioPriceFetchFailed: false, macroContext: null, displayedVerdicts: {
+      h: { verdict: { label: 'HOLD' } }, s: { verdict: { label: 'SELL SOON' } }, f: { verdict: { label: 'HOLD', hardFloor: true } },
+      w: { verdict: { status: 'SELL_NOW' } } } } };
+  vm.createContext(ctx);
+  vm.runInContext(grabFn('updateNavBadges') + '\nupdateNavBadges();', ctx);
+  assert.deepStrictEqual(computed, [], 'the badge computes no verdict of its own');
+  assert.strictEqual(String(badge.textContent), '3', 'SELL SOON, the hard floor and the engine SELL_NOW: what the cards show, and only that');
+  assert.ok(!/rsiAtBuy/.test(grabFn('updateNavBadges')), 'the buy RSI is never read as a current one');
 });
 
 run('an unknown hold length (start date not a date): unranked in the default sort, said on the card, never "0 closes"', async () => {

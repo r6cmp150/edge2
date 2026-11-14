@@ -60,7 +60,9 @@ const REGISTRY = {
   'app.js|buildMacroObservationSection':    ['HISTORY', 'the report\'s per-day record: condition, path, both answers, cut, Groq failure rate, test progress'],
   'app.js|generateClaudeReport':            ['HISTORY', 'win rate by the condition stored at buy, for past trades'],
   'app.js|buildSupabaseArchiveReport':      ['HISTORY', 'the same, in the archive report'],
-  'app.js|updateNavBadges':                 ['PASS_THROUGH', 'calcUnifiedRecommendation for the Portfolio badge count'],
+  // CHANGED 2026-11-13, declared: updateNavBadges is no longer a consumer. The badge counts the cards' own captured
+  // verdicts (state.displayedVerdicts) instead of computing its own, so it reads no macroContext. Its verdicts come
+  // from renderPortfolioTab, whose entry below covers them.
   'core/edge-scoring.js|MACRO_ADJUSTMENTS': ['DEFINITION', 'the adjustment table (hashed source, scoring v2)'],
   'core/edge-scoring.js|getMacroAdjustment':['DEFINITION', 'the table lookup'],
   'core/edge-scoring.js|scoreStock':        ['INERT_PINNED', 'macroAdjustment = disableMacroOverlay ? 0 : ...; the pin holds it at 0; stores the condition and moves on the signal'],

@@ -413,6 +413,12 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **Before Portfolio has rendered, the nav badge shows a confident zero** (the reviewer, 2026-11-14, on
+  review-rsi-not-measured.diff). This predates that diff. The badge counts the cards' captured verdicts; before
+  that, it counted verdicts computed from a cached price that the same render writes. Either way, until a card has
+  rendered there is nothing to count, so it shows no badge. To anyone looking, no badge says "nothing needs
+  selling", which is a different statement from "nothing has been computed yet": the three-state problem in a
+  one-character display. To decide later: what an uncomputed badge looks like.
 - **Budget not enforced, or "Deployed" counts something it should not** (Roman's screenshot, 2026-11-12 12:34 PT,
   Portfolio): `Budget: $1500.00  Deployed: $5689.70  Available: -$4189.70`. Parked by the reviewer; not investigated.
 - **The phone's storage is full** (the same screenshot): the red "Save failed — signals" banner is persist('signals')

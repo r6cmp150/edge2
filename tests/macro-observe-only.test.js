@@ -726,7 +726,9 @@ const COVERED_BY = {
   'app.js|calcUnifiedRecommendation': 'D',
   // each hands state.macroContext to calcUnifiedRecommendation only (their classification says so): D holds the callee
   // for every condition, so what they receive cannot move what they show
-  'app.js|buildAIPrompt': 'D', 'app.js|openStockModal': 'D', 'app.js|renderPortfolioTab': 'D', 'app.js|renderSignalsTab': 'D', 'app.js|updateNavBadges': 'D',
+  'app.js|buildAIPrompt': 'D', 'app.js|openStockModal': 'D', 'app.js|renderPortfolioTab': 'D', 'app.js|renderSignalsTab': 'D',
+  // CHANGED 2026-11-13, declared: updateNavBadges left the inventory. It no longer consumes the condition at all: it
+  // counts the cards' captured verdicts (renderPortfolioTab, covered by D above) instead of computing its own.
   'app.js|computeScoreBreakdown': 'E',
 };
 run('the coverage cross-check: every consumer the inventory says could act on the condition is covered by a named test above', () => {
@@ -740,5 +742,8 @@ run('the coverage cross-check: every consumer the inventory says could act on th
   assert.deepStrictEqual(stale, [], 'a coverage entry whose consumer is no longer in the inventory');
   const self = readSource('tests/macro-observe-only.test.js');
   for (const [k, t] of Object.entries(COVERED_BY)) assert.ok(self.includes(`run('${t}. `), `${k}: covering test ${t} not found`);
-  assert.strictEqual(Object.keys(COVERED_BY).length, 10, 'the coverage count is pinned: a change is a decision, made here');
+  // CHANGED 2026-11-13, declared: 10 -> 9. A reduction in CONSUMERS, not in coverage: updateNavBadges no longer reads
+  // the macro condition at all (it counts the cards' captured verdicts instead of computing its own), so there is one
+  // fewer thing that could act on the condition, and every one that remains is still covered. Not weakened to pass.
+  assert.strictEqual(Object.keys(COVERED_BY).length, 9, 'the coverage count is pinned: a change is a decision, made here');
 });
