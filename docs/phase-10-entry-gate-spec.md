@@ -3505,6 +3505,57 @@ check, it is a defect with better manners.
   `tests/macro-path-unknown.test.js`, which checks against the CHECKs
   captured from production in both directions.
 
+**A fallback that substitutes one measurement for another is a defect, not a
+default (2026-11-14, the reviewer).** Where a value cannot be measured, the
+honest output is "not measured", in the record and on the screen. A plausible
+substitute is worse than a gap, because a gap is visible. The fabricated
+neutral is its purest form: 50 for an RSI, 5 for a risk on a 1-10 scale, 0 for
+a score. Each is defensible on its own, and each reads as a measurement.
+**Six instances in two days (2026-11-13 and 11-14), in two files, by four
+routes.** The reviewer's count was "five in four files". This one is mine,
+from the list below, and it adds the report readers as the sixth:
+1. `renderPortfolioTab` (app.js): the RSI fell back to the buy's RSI, then
+   went into the previous and peak RSI, and the peak into
+   `trades_v2.peak_rsi_during_hold`. Present since the first commit. Found
+   while reading for the 11-06 measured-state proposal. Fixed dd1ba4e.
+2. `updateNavBadges` (app.js): it passed `rsi: p.rsiAtBuy` as the current RSI,
+   so the badge could disagree with the cards. Found by grepping instance 1's
+   pattern. Fixed dd1ba4e.
+3. `calcRSI` (core/indicators.js): it returned 50 below 15 closes. Found by
+   the same grep. Unreachable from the scan's scoring (`scoreStock` refuses
+   first), reachable from the modal, the AI prompt and the pre-market movers.
+4. `finalizeAddPortfolio` (app.js): `|| 0` for the score, RSI and volume
+   ratio, and `|| 5` for the risk, on a buy with no signal. It never fired
+   (0 of 817 sales, 0 of 6 open positions). Found by tracing LUNL's buy RSI.
+5. `buildAIPrompt` (app.js): `liveRsi ?? stock.rsi` handed the model the
+   scan's older reading under the live one's name, in prose that sounds
+   equally confident either way. Found by tracing the modal's RSI to the
+   prompt.
+6. The readers of 4's nulls, `generateClaudeReport` and
+   `buildSupabaseArchiveReport` (app.js): `|| 0` in the averages and the RSI
+   and volume buckets, and an `avg()` that returned 0 for an empty set. Found
+   by grepping every reader once the writer emitted null.
+Instances 3 to 6 were fixed in one commit.
+
+**A writer that starts emitting null makes every reader that coerces null
+newly reachable. They are one change (2026-11-14, the reviewer).** Before a
+writer's fallback becomes null, every reader of that field is found, and each
+one skips the null and says how many it skipped. An average over nothing is
+null, never 0. The writer never ships first: if the readers are too big for
+the same commit, the writer waits. Instance: the `?? null` at buy (4 above)
+and its readers (6 above). One measured hazard with it: a null handed to a
+comparison is a number in JavaScript (`null < 50` is true), so the display
+callers give the core helpers NaN. Handed null, they returned the under-35
+band, a WEEK hold window and 2 extra risk points (measured 2026-11-14).
+
+**Before costing a defect, establish that it can reach the thing it would
+cost (2026-11-14, the reviewer, on their own over-escalation).** Reachability
+is usually the cheapest question in the set, and it is almost always the one
+that settles the size of the answer. Instance: the 24 stored RSIs of exactly
+50 were taken for the fallback until a twenty-line read showed that
+`scoreStock` refuses fewer than 15 bars before it calls `calcRSI`. The fetch
+then confirmed 125-126 closes behind each case it covered.
+
 ## Appendix — provenance
 
 **Not quotable under §7.7 (2026-10-21):** the parse and grouping below

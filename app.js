@@ -2142,7 +2142,12 @@ function deriveVolumeTrend(bars) {
 // whichever label pair each branch instructs Groq to respond with.
 function buildAIPrompt(stock, pos) {
   const livePrice = stock.livePrice ?? stock.price;
-  const liveRsi = stock.liveRsi ?? stock.rsi;
+  // The modal's own measurement when it made one (liveRsi present, even as null), else the stock's. A null liveRsi
+  // is "not measured", and the scan's older reading never stands in for it (2026-11-14: `??` did that, and it handed
+  // the model a different measurement under the live one's name).
+  const liveSaid = stock.liveRsi !== undefined;
+  const liveRsi = liveSaid ? stock.liveRsi : stock.rsi;
+  const liveRsiNotMeasured = liveSaid ? stock.liveRsiNotMeasured : stock.rsiNotMeasured;
   const todayChange = stock.todayChange ?? 0;
   const duration = pos ? pos.duration : stock.duration;
   const entry = pos ? pos.buyPrice : stock.entry;
@@ -2185,7 +2190,7 @@ number percentages. For each probability name exactly one key factor
 Stock: ${stock.ticker} (${stock.company || stock.ticker})
 Current price: $${livePrice.toFixed(2)}
 Today's change: ${todayChange.toFixed(2)}%
-RSI (14-day): ${liveRsi.toFixed(1)}
+RSI (14-day): ${liveRsi == null ? `not measured (${liveRsiNotMeasured || 'no reason recorded'})` : liveRsi.toFixed(1)}
 Volume ratio vs 10-day average: ${stock.volRatio.toFixed(2)}x
 Volume trend: ${volumeTrend}
 Signal score: ${stock.score}/100
@@ -2230,7 +2235,7 @@ within the ${maxDays}-day window}`;
     // here — it's the same live state.signals entry (or fallback) already
     // used for every other live field in this prompt.
     let unifiedPromptBlock;
-    const ur = calcUnifiedRecommendation({ ...pos, currentPrice: livePrice, rsi: liveRsi, priceFetchFailed: stock.priceFetchFailed }, stock, state.macroContext);
+    const ur = calcUnifiedRecommendation({ ...pos, currentPrice: livePrice, rsi: liveRsi, rsiNotMeasured: liveRsiNotMeasured, priceFetchFailed: stock.priceFetchFailed }, stock, state.macroContext);
     if (ur.hardFloor || ur.cannotEvaluate) {
       unifiedPromptBlock = `\nUnified recommendation: ${ur.label}\n`;
     } else if (ur.label === 'LOCK IN PROFITS') {
@@ -2752,9 +2757,13 @@ async function computePreMarketMovers(snapshots, candidates, allBars, newsMap) {
     const prevClose = snap.prevDailyBar?.c || 0;
     const pct = prevClose > 0 ? ((prePrice - prevClose) / prevClose) * 100 : 0;
     const bars = allBars[ticker];
-    const rsi = (bars && bars.length) ? calcRSI(bars.map(b => b.c)) : null;
+    // Measured, or null with the reason (2026-11-14): 1-14 bars used to get calcRSI's 50, shown as "Neutral" and given
+    // to the pre-market prompt as if read.
+    const n = bars ? bars.length : 0;
+    const rsi = n ? calcRSI(bars.map(b => b.c)) : null;
+    const rsiNotMeasured = rsi != null ? null : n === 0 ? 'no daily bars came back' : `${n} daily close${n === 1 ? '' : 's'} came back, 15 needed`;
     const news = newsMap[ticker] || null;
-    return { ticker, prePrice, pct, rsi, news };
+    return { ticker, prePrice, pct, rsi, rsiNotMeasured, news };
   }).filter(m => m.prePrice > 0);
 
   movers.sort((a,b) => Math.abs(b.pct) - Math.abs(a.pct));
@@ -2992,7 +3001,7 @@ function buildPreMarketDetailPanel(m) {
   const company = COMPANY_NAMES[m.ticker];
   const prevClose = preMarketPrevClose(m);
   const rsiLabel = preMarketRsiLabel(m.rsi);
-  const rsiStr = m.rsi == null ? 'N/A' : m.rsi.toFixed(1);
+  const rsiStr = m.rsi == null ? `not measured${m.rsiNotMeasured ? ` (${m.rsiNotMeasured})` : ''}` : m.rsi.toFixed(1);
   const headline = m.news?.headline || null;
 
   return `<div class="premarket-detail hidden" id="premarket-detail-${m.ticker}">
@@ -3036,8 +3045,8 @@ function togglePreMarketRow(ticker) {
 // the same ticker is both a pre-market mover and a regular signal.
 function buildPreMarketGroqPrompt(m) {
   const prevClose = preMarketPrevClose(m);
-  const rsiStr = m.rsi == null ? 'unavailable' : m.rsi.toFixed(1);
-  const rsiContext = preMarketRsiLabel(m.rsi) || 'unavailable';
+  const rsiStr = m.rsi == null ? `not measured (${m.rsiNotMeasured || 'no reason recorded'})` : m.rsi.toFixed(1);
+  const rsiContext = preMarketRsiLabel(m.rsi) || 'not measured';
   const headline = m.news?.headline || 'none';
   // NO MARKET STATE IN THIS PROMPT (2026-11-02, macro observe-only). The
   // condition, its explanation, and SPY's and the sector ETF's moves came
@@ -3503,6 +3512,7 @@ const VOL_BAND_DESCRIPTIONS = {
   'under-0.5x': 'band below 0.5× (lowest)',
 };
 function rsiBandDescription(rsi) {
+  if (rsi == null) return 'RSI not measured'; // a null would land in the under-35 band below (null < 35 is true)
   const bucket = scoreComponents({ rsi }).rsiBucket;
   return bucket ? RSI_BAND_DESCRIPTIONS[bucket] : 'RSI unavailable';
 }
@@ -3515,8 +3525,9 @@ function computeScoreBreakdown(s) {
   // fallback object that has none.
   const rsVsSPY       = s.rsVsSPY       ?? (s.todayChange - (s.spyChange || 0));
   const consUpDays    = s.consUpDays     ?? 0;
+  // An unmeasured RSI goes in as NaN (no band, 0 points), never null, which would land in the under-35 band.
   const c = scoreComponents({
-    volRatio: s.volRatio, todayChange: s.todayChange, rsi: s.rsi, price: s.price, ma20: s.ma20,
+    volRatio: s.volRatio, todayChange: s.todayChange, rsi: s.rsi ?? NaN, price: s.price, ma20: s.ma20,
     volBuild: s.volBuild, meanReversion: s.meanReversion, catalystSetup: s.catalystSetup,
     consUpDays, rsVsSPY,
   });
@@ -3532,7 +3543,7 @@ function computeScoreBreakdown(s) {
   const rows = [
     { key: 'vol',    short: 'vol',       label: `Volume (${s.volRatio.toFixed(1)}× avg) — ${volNote}`,                          pts: volPts,     fired: volPts > 0, neutral: volPts === 0 },
     { key: 'mom',    short: 'momentum',  label: `Price momentum (${s.todayChange>=0?'+':''}${s.todayChange.toFixed(1)}% today)`, pts: momPts,     fired: momPts > 0 },
-    { key: 'rsi',    short: 'RSI',       label: `RSI position (${s.rsi.toFixed(0)}) — ${rsiNote}`,                              pts: rsiPts,     fired: rsiPts > 0, neutral: rsiPts === 0 },
+    { key: 'rsi',    short: 'RSI',       label: s.rsi == null ? `RSI not measured${s.rsiNotMeasured ? ` — ${s.rsiNotMeasured}` : ''}` : `RSI position (${s.rsi.toFixed(0)}) — ${rsiNote}`,                            pts: rsiPts,     fired: rsiPts > 0, neutral: rsiPts === 0 },
     { key: 'ma',     short: 'MA',        label: `Above 20-day MA ($${s.ma20.toFixed(2)})`,                                      pts: maPts,      fired: maPts > 0 },
     { key: 'relstr', short: 'rel str',   label: `Relative strength (${rsSign}${rsVsSPY.toFixed(1)}% vs SPY ${spySign}${(s.spyChange||0).toFixed(1)}%)`, pts: relStrPts, fired: relStrPts > 0 },
     { key: 'consup', short: 'up days',   label: `Consecutive up days (${consUpDays} day${consUpDays !== 1 ? 's' : ''})`,        pts: consUpPts,  fired: consUpPts > 0 },
@@ -3798,7 +3809,17 @@ async function openStockModal(ticker) {
     // recommendation block and buildAIPrompt() (which reads _modalStock,
     // not this local price) can refuse to evaluate instead of guessing.
     const modalPriceUnavailable = !s?.price && sorted.length === 0;
+    // Measured, or null with the reason (2026-11-14): calcRSI said 50 below 15 closes, and that 50 reached this modal's
+    // display, an owned position's recommendation block, and the AI prompt built from _modalStock. The prompt is the most
+    // consequential: a model reasons from a number nobody measured and then speaks with the confidence of the rest of the
+    // prompt. rsiIn is what the core helpers get: NaN, the scorer's "no RSI" (no band, 0 points; the legend's own
+    // convention). They never get the null itself, because null < 50 and null < 35 are true, so a null would be
+    // read as the under-35 band, a WEEK duration and 2 extra risk points (measured 2026-11-14).
     const rsi     = calcRSI(closes);
+    const rsiNotMeasured = rsi != null ? null
+      : closes.length === 0 ? 'no daily bars came back'
+      : `${closes.length} daily close${closes.length === 1 ? '' : 's'} came back, 15 needed`;
+    const rsiIn = rsi ?? NaN;
 
     // high52/low52 are used directly in the template below, unconditionally
     // — unlike everything in the s-absent branch below, these are NOT dead
@@ -3831,13 +3852,13 @@ async function openStockModal(ticker) {
       const volRatio = avgVol10 > 0 ? ((sorted[sorted.length-1]?.v||0) / avgVol10) : 1;
       const last10ExclToday = sorted.slice(-11, -1);
       const swingHigh10 = last10ExclToday.length ? Math.max(...last10ExclToday.map(b => b.h)) : null;
-      const duration = classifyDuration(rsi, volRatio, closes);
+      const duration = classifyDuration(rsiIn, volRatio, closes);
       return {
         ticker, company: COMPANY_NAMES[ticker]||ticker,
-        price, rsi, atr, ma20, volRatio, bars: sorted,
+        price, rsi, rsiNotMeasured, atr, ma20, volRatio, bars: sorted,
         duration,
         ...calcEntryTargetStop(price, trimmedAtr, duration, { high52, swingHigh10, ma20 }),
-        score: 0, risk: calcRiskScore(price, atr, rsi, volRatio, false),
+        score: 0, risk: calcRiskScore(price, atr, rsiIn, volRatio, false),
         priceRange: price <= 3 ? '$1–$3' : price <= 9 ? '$4–$9' : '$10–$20',
         todayChange, signal: 'WATCH', news: null
       };
@@ -3889,6 +3910,7 @@ async function openStockModal(ticker) {
       ...breakdownStock,
       livePrice: _chartBarsMinute[_chartBarsMinute.length - 1]?.c || price,
       liveRsi: rsi,
+      liveRsiNotMeasured: rsiNotMeasured,
       priceFetchFailed: modalPriceUnavailable,
     };
 
@@ -3971,7 +3993,7 @@ async function openStockModal(ticker) {
     // state.signals snapshot).
     const unifiedModalBlock = ownedPos
       ? buildUnifiedRecommendationModalBlock(calcUnifiedRecommendation(
-          { ...ownedPos, currentPrice: _modalStock.livePrice, rsi: _modalStock.liveRsi, priceFetchFailed: modalPriceUnavailable },
+          { ...ownedPos, currentPrice: _modalStock.livePrice, rsi: _modalStock.liveRsi, rsiNotMeasured: _modalStock.liveRsiNotMeasured, priceFetchFailed: modalPriceUnavailable },
           currentSignalForHolding(ticker),
           state.macroContext
         ))
@@ -4082,7 +4104,7 @@ async function openStockModal(ticker) {
       ${intradayPanelHtml}
       <div class="signal-row">
         <span class="signal-key">RSI (14-day)</span>
-        <span class="signal-val">${stock.rsi.toFixed(1)} — ${rsiLabel}</span>
+        <span class="signal-val">${stock.rsi == null ? `not measured${stock.rsiNotMeasured ? ` — ${stock.rsiNotMeasured}` : ''}` : `${stock.rsi.toFixed(1)} — ${rsiLabel}`}</span>
       </div>
       <div class="signal-row">
         <span class="signal-key">Volume vs 10-day avg</span>
@@ -4929,10 +4951,15 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order, exe
     target:   sig?.target || price * 1.10,
     stop:     sig?.stop   || price * 0.92,
     duration: sig?.duration || '3-DAY',
-    scoreAtBuy:      sig?.score || 0,
-    rsiAtBuy:        sig?.rsi   || 0,
-    volRatioAtBuy:   sig?.volRatio || 0,
-    riskAtBuy:       sig?.risk  || 5,
+    // ?? null, not || 0 / || 5 (2026-11-14): a buy added without a signal has no score, RSI, volume ratio or risk,
+    // and a stored 0 (or 5) is a plausible value nobody computed. It NEVER FIRED: 0 of 817 sales and 0 of the 6 open
+    // positions held a 0 or a null in rsi_at_buy (read 2026-11-14 02:31Z). The three columns are nullable: the
+    // database has stored NULL in them (data/backups/portfolio.json at d7ec63b, row ZZVERIFY). `??` also keeps a
+    // genuine 0, which `||` kept only by accident.
+    scoreAtBuy:      sig?.score ?? null,
+    rsiAtBuy:        sig?.rsi   ?? null,
+    volRatioAtBuy:   sig?.volRatio ?? null,
+    riskAtBuy:       sig?.risk  ?? null,
     newsAtBuy:       sig?.news?.headline || '',
     signalsFiredAtBuy: sig?.signalsFired || [],
     volBuildNearMiss:      sig?.volBuildNearMiss      || null,
@@ -5876,7 +5903,7 @@ async function renderPortfolioTab() {
         </div>
         <div class="pf-grid-cell">
           <div class="pf-grid-label">Score at Purchase</div>
-          <div class="pf-grid-val">${p.scoreAtBuy} <span class="pf-score-label ${scoreBuyCls}">${scoreBuyLabel}</span></div>
+          <div class="pf-grid-val">${p.scoreAtBuy ?? '—'} <span class="pf-score-label ${scoreBuyCls}">${scoreBuyLabel}</span></div>
         </div>
         <div class="pf-grid-cell">
           <div class="pf-grid-label">Score Now</div>
@@ -7821,7 +7848,7 @@ async function renderSoldTab() {
         </div>
       </div>
       <div class="card-sub mt4">
-        Score ${s.scoreAtBuy}/100 · RSI ${s.rsiAtBuy?.toFixed(0)} · ${s.duration || 'SAME DAY'} · ${s.sellWarningAtSale?.replace('_',' ')||'HOLDING'} at sale
+        Score ${s.scoreAtBuy ?? '—'}/100 · RSI ${s.rsiAtBuy == null ? '—' : s.rsiAtBuy.toFixed(0)} · ${s.duration || 'SAME DAY'} · ${s.sellWarningAtSale?.replace('_',' ')||'HOLDING'} at sale
       </div>
       ${buildSellTimingHtml(s)}
     </div>`;
@@ -9012,17 +9039,26 @@ async function generateClaudeReport() {
   const ownWins = owns.filter(isWin);
   const totalPnL = sold.reduce((s,t) => s + t.pnlDollar, 0);
 
-  const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : 0;
+  // avg of an empty set is NULL, never 0 (2026-11-14, the reviewer): a 0.0 average over nothing reads as a measured
+  // zero. fmt prints a null as a dash. avgRecorded is for the at-buy fields: it averages the RECORDED values only and
+  // says how many it skipped. A buy with no signal stores null there (?? null, the same commit), and `|| 0` would
+  // have averaged each one in as a measured zero. Writer and readers are one change: the writer's null is what made
+  // every coercing reader reachable.
+  const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : null;
+  const fmt = (v, d) => (v == null ? '—' : v.toFixed(d));
+  const avgRecorded = (arr, fn) => { const v = arr.map(fn).filter(x => x != null); return { v: v.length ? v.reduce((s, x) => s + x, 0) / v.length : null, skipped: arr.length - v.length }; };
+  const fmtRecorded = (r, d, unit = '') => `${fmt(r.v, d)}${r.v != null ? unit : ''}${r.skipped ? ` (${r.skipped} not recorded, skipped)` : ''}`;
+  const notBucketed = (k) => { const n = sold.filter(s => s[k] == null).length; return n ? `\n  not recorded (not bucketed): ${n} trade${n === 1 ? '' : 's'}` : ''; };
   // Average over KNOWN holds only (2026-11-02): an unknown hold (null) used
   // to count as 0 market days through `daysHeld || 0`.
   const avgKnownHold = arr => {
     const known = arr.filter(s => typeof s.daysHeld === 'number');
     const excluded = arr.length - known.length;
     if (!known.length) return excluded ? `unknown (${excluded} without a hold length)` : '—';
-    return `${avg(known, s => s.daysHeld).toFixed(1)}${excluded ? ` (${excluded} without a hold length excluded)` : ''}`;
+    return `${fmt(avg(known, s => s.daysHeld), 1)}${excluded ? ` (${excluded} without a hold length excluded)` : ''}`;
   };
-  const avgWinPnL = avg(wins, s => s.pnlDollar).toFixed(2);
-  const avgLossPnL = avg(losses, s => s.pnlDollar).toFixed(2);
+  const avgWinPnL = fmt(avg(wins, s => s.pnlDollar), 2);
+  const avgLossPnL = fmt(avg(losses, s => s.pnlDollar), 2);
   // Two independent measures, kept as two variables on purpose — a single
   // `best`/`worst` picked by one measure but printed with the other's
   // number was the exact bug found in this report (2026-09-12): BBAI was
@@ -9040,10 +9076,13 @@ async function generateClaudeReport() {
   // with that line's classification of a breakeven trade.
   const pnlOnWins = wins.reduce((s,t) => s + t.pnlDollar, 0);
   const pnlOnLosses = losses.reduce((s,t) => s + t.pnlDollar, 0);
-  const avgWinAbs = Math.abs(parseFloat(avgWinPnL));
-  const avgLossAbs = Math.abs(parseFloat(avgLossPnL));
-  const winLossRatio = avgLossAbs > 0 ? (avgWinAbs / avgLossAbs) : null;
-  const breakEvenWinRatePct = (avgWinAbs + avgLossAbs) > 0 ? (avgLossAbs / (avgWinAbs + avgLossAbs) * 100) : null;
+  // From the averages themselves (null when there are no wins or no losses), never by re-parsing the printed text,
+  // which is now a dash for an empty set and would parse to NaN.
+  const avgWinRaw = avg(wins, s => s.pnlDollar), avgLossRaw = avg(losses, s => s.pnlDollar);
+  const avgWinAbs = avgWinRaw == null ? null : Math.abs(avgWinRaw);
+  const avgLossAbs = avgLossRaw == null ? null : Math.abs(avgLossRaw);
+  const winLossRatio = avgWinAbs != null && avgLossAbs > 0 ? (avgWinAbs / avgLossAbs) : null;
+  const breakEvenWinRatePct = avgWinAbs != null && avgLossAbs != null && (avgWinAbs + avgLossAbs) > 0 ? (avgLossAbs / (avgWinAbs + avgLossAbs) * 100) : null;
   const actualWinRatePct = winRatePct(sold) ?? 0;
   const pctOfBudget = state.settings.budget ? (totalPnL / state.settings.budget * 100) : null;
 
@@ -9053,7 +9092,7 @@ As % of budget:       ${pctOfBudget!=null?`${pctOfBudget>=0?'+':''}${pctOfBudget
 Expectancy per trade: ${sold.length?`${(totalPnL/sold.length)>=0?'+':''}$${(totalPnL/sold.length).toFixed(2)}`:'N/A'}
 Total P&L on wins:    +$${pnlOnWins.toFixed(2)} across ${wins.length} trades
 Total P&L on losses:  $${pnlOnLosses.toFixed(2)} across ${losses.length} trades
-Win/loss size ratio:  ${winLossRatio!=null?winLossRatio.toFixed(2):'N/A'}  (avg win $${avgWinAbs.toFixed(2)} vs avg loss $${avgLossAbs.toFixed(2)})
+Win/loss size ratio:  ${winLossRatio!=null?winLossRatio.toFixed(2):'N/A'}  (avg win $${fmt(avgWinAbs, 2)} vs avg loss $${fmt(avgLossAbs, 2)})
 Break-even win rate at this ratio: ${breakEvenWinRatePct!=null?breakEvenWinRatePct.toFixed(0)+'%':'N/A'}  — actual ${actualWinRatePct.toFixed(0)}%`;
 
   const cumulativePnlSection = (() => {
@@ -9107,33 +9146,33 @@ Break-even win rate at this ratio: ${breakEvenWinRatePct!=null?breakEvenWinRateP
       const p = s.sellPrice;
       return p >= min && p <= max;
     });
-    return `${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?fmt(avg(t,s=>s.pnlPct), 1):'—'}%`;
   };
 
   const durStats = (dur, label) => {
     const t = sold.filter(s => s.duration === dur);
-    return `${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?fmt(avg(t,s=>s.pnlPct), 1):'—'}%`;
   };
 
 
   const rsiBucket = (lo, hi, label) => {
-    const t = sold.filter(s => (s.rsiAtBuy||0) >= lo && (s.rsiAtBuy||0) < hi);
-    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    const t = sold.filter(s => s.rsiAtBuy != null && s.rsiAtBuy >= lo && s.rsiAtBuy < hi);
+    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,s=>s.pnlPct), 1):'—'}%`;
   };
 
   const volBucket = (lo, hi, label) => {
-    const t = sold.filter(s => (s.volRatioAtBuy||0) >= lo && (s.volRatioAtBuy||0) < hi);
-    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    const t = sold.filter(s => s.volRatioAtBuy != null && s.volRatioAtBuy >= lo && s.volRatioAtBuy < hi);
+    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,s=>s.pnlPct), 1):'—'}%`;
   };
 
   const macroCondStats = (condition, label) => {
     const t = sold.filter(s => s.macroConditionAtBuy === condition);
-    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,s=>s.pnlPct), 1):'—'}%`;
   };
 
   const macroSectorWeaknessStats = (label) => {
     const t = sold.filter(s => (s.macroConditionAtBuy||'').startsWith('SECTOR_WEAKNESS'));
-    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,s=>s.pnlPct), 1):'—'}%`;
   };
 
   const thresholdBucket = (predicate, label) => {
@@ -9172,21 +9211,21 @@ sell warning compliance) that might help me trade better.
 ${(()=>{
   if (!sold.length) return '  No completed trades yet.';
   const flags = [];
-  const avgRsiW = avg(wins,s=>s.rsiAtBuy||0);
-  const avgRsiL = avg(losses,s=>s.rsiAtBuy||0);
-  if (wins.length && losses.length && Math.abs(avgRsiW-avgRsiL)/Math.max(avgRsiL,1)*100 > 15) {
+  const avgRsiW = avgRecorded(wins,s=>s.rsiAtBuy).v;
+  const avgRsiL = avgRecorded(losses,s=>s.rsiAtBuy).v;
+  if (avgRsiW != null && avgRsiL != null && Math.abs(avgRsiW-avgRsiL)/Math.max(avgRsiL,1)*100 > 15) {
     const dir = avgRsiW < avgRsiL ? 'LOWER' : 'HIGHER';
     flags.push(`⚠ Avg RSI at purchase: wins ${avgRsiW.toFixed(1)} vs losses ${avgRsiL.toFixed(1)} — wins had ${dir} RSI than losses.\n  Current scoring rewards RSI ${(r => { const b = r.bands.reduce((x, y) => (y.pts > x.pts ? y : x)); return `${b.text} with ${legendPts(b.pts)} pts`; })(scoringLegendRows().find(r => r.name.startsWith('RSI')))}. Sample size: ${sold.length} trades.\n  Consider re-evaluating once sample reaches 25-30 trades.`);
   }
-  const avgVolW = avg(wins,s=>s.volRatioAtBuy||0);
-  const avgVolL = avg(losses,s=>s.volRatioAtBuy||0);
-  if (wins.length && losses.length && Math.abs(avgVolW-avgVolL)/Math.max(avgVolL,1)*100 > 15) {
+  const avgVolW = avgRecorded(wins,s=>s.volRatioAtBuy).v;
+  const avgVolL = avgRecorded(losses,s=>s.volRatioAtBuy).v;
+  if (avgVolW != null && avgVolL != null && Math.abs(avgVolW-avgVolL)/Math.max(avgVolL,1)*100 > 15) {
     const dir = avgVolW < avgVolL ? 'LOWER' : 'HIGHER';
     flags.push(`⚠ Avg volume ratio at purchase: wins ${avgVolW.toFixed(2)}x vs losses ${avgVolL.toFixed(2)}x — wins had ${dir} volume ratio than losses.\n  Current scoring rewards higher volume. Sample size: ${sold.length} trades.\n  Consider re-evaluating once sample reaches 25-30 trades.`);
   }
-  const avgScoreW = avg(wins,s=>s.scoreAtBuy||0);
-  const avgScoreL = avg(losses,s=>s.scoreAtBuy||0);
-  if (wins.length && losses.length && Math.abs(avgScoreW-avgScoreL)/Math.max(avgScoreL,1)*100 > 15) {
+  const avgScoreW = avgRecorded(wins,s=>s.scoreAtBuy).v;
+  const avgScoreL = avgRecorded(losses,s=>s.scoreAtBuy).v;
+  if (avgScoreW != null && avgScoreL != null && Math.abs(avgScoreW-avgScoreL)/Math.max(avgScoreL,1)*100 > 15) {
     const dir = avgScoreW < avgScoreL ? 'LOWER' : 'HIGHER';
     flags.push(`⚠ Avg signal score at purchase: wins ${avgScoreW.toFixed(1)} vs losses ${avgScoreL.toFixed(1)} — wins had ${dir} score than losses.\n  Current scoring uses 80+ = STRONG BUY. Sample size: ${sold.length} trades.\n  Consider re-evaluating once sample reaches 25-30 trades.`);
   }
@@ -9213,18 +9252,18 @@ Win rate: ${winRatePct(sold)!=null?winRatePct(sold).toFixed(0)+'%':'N/A'} (${win
   - App signal win rate: ${winRatePct(apps)!=null?winRatePct(apps).toFixed(0)+'%':'N/A'}
   - Own decision win rate: ${winRatePct(owns)!=null?winRatePct(owns).toFixed(0)+'%':'N/A'}
 
-Average profit on wins: +$${avgWinPnL} (${avg(wins,s=>s.pnlPct).toFixed(1)}%)
-Average loss on losses: $${avgLossPnL} (${avg(losses,s=>s.pnlPct).toFixed(1)}%)
+Average profit on wins: +$${avgWinPnL} (${fmt(avg(wins,s=>s.pnlPct), 1)}%)
+Average loss on losses: $${avgLossPnL} (${fmt(avg(losses,s=>s.pnlPct), 1)}%)
 Best trade by $:   ${bestByDollar.ticker} ${bestByDollar.pnlDollar>=0?'+':''}$${bestByDollar.pnlDollar.toFixed(2)} (${bestByDollar.pnlPct>=0?'+':''}${bestByDollar.pnlPct.toFixed(1)}%)
 Best trade by %:   ${bestByPct.ticker} ${bestByPct.pnlPct>=0?'+':''}${bestByPct.pnlPct.toFixed(1)}% (${bestByPct.pnlDollar>=0?'+':''}$${bestByPct.pnlDollar.toFixed(2)})
 Worst trade by $:  ${worstByDollar.ticker} $${worstByDollar.pnlDollar.toFixed(2)} (${worstByDollar.pnlPct.toFixed(1)}%)
 Worst trade by %:  ${worstByPct.ticker} ${worstByPct.pnlPct.toFixed(1)}% ($${worstByPct.pnlDollar.toFixed(2)})
 
 Signal data at purchase — wins vs losses:
-  Avg RSI:          wins ${avg(wins,s=>s.rsiAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.rsiAtBuy||0).toFixed(1)}
-  Avg volume ratio: wins ${avg(wins,s=>s.volRatioAtBuy||0).toFixed(2)}x | losses ${avg(losses,s=>s.volRatioAtBuy||0).toFixed(2)}x
-  Avg risk score:   wins ${avg(wins,s=>s.riskAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.riskAtBuy||0).toFixed(1)}
-  Avg signal score: wins ${avg(wins,s=>s.scoreAtBuy||0).toFixed(1)}  | losses ${avg(losses,s=>s.scoreAtBuy||0).toFixed(1)}
+  Avg RSI:          wins ${fmtRecorded(avgRecorded(wins,s=>s.rsiAtBuy), 1)}  | losses ${fmtRecorded(avgRecorded(losses,s=>s.rsiAtBuy), 1)}
+  Avg volume ratio: wins ${fmtRecorded(avgRecorded(wins,s=>s.volRatioAtBuy), 2, 'x')} | losses ${fmtRecorded(avgRecorded(losses,s=>s.volRatioAtBuy), 2, 'x')}
+  Avg risk score:   wins ${fmtRecorded(avgRecorded(wins,s=>s.riskAtBuy), 1)}  | losses ${fmtRecorded(avgRecorded(losses,s=>s.riskAtBuy), 1)}
+  Avg signal score: wins ${fmtRecorded(avgRecorded(wins,s=>s.scoreAtBuy), 1)}  | losses ${fmtRecorded(avgRecorded(losses,s=>s.scoreAtBuy), 1)}
   Avg hold time:    wins ${avgKnownHold(wins)} | losses ${avgKnownHold(losses)} market days held (Fri->Mon = 1; calendar days before 2026-10-09)
   Hold measured from: ${(() => { const c = {}; sold.forEach(s => { const b = s.holdBasis || 'order date (legacy row)'; c[b] = (c[b] || 0) + 1; }); return Object.entries(c).map(([b, k]) => `${k} ${b}`).join(', '); })()}
 
@@ -9232,13 +9271,13 @@ RSI at purchase — win rate by bucket:
 ${rsiBucket(0,45,'<45    ')}
 ${rsiBucket(45,55,'45–55  ')}
 ${rsiBucket(55,65,'55–65  ')}
-${rsiBucket(65,999,'65+    ')}
+${rsiBucket(65,999,'65+    ')}${notBucketed('rsiAtBuy')}
 
 Volume ratio at purchase — win rate by bucket:
 ${volBucket(0,1.0,'<1.0x  ')}
 ${volBucket(1.0,2.0,'1.0–2x ')}
 ${volBucket(2.0,3.0,'2–3x   ')}
-${volBucket(3.0,999,'3x+    ')}
+${volBucket(3.0,999,'3x+    ')}${notBucketed('volRatioAtBuy')}
 
 Unified recommendation at time of sale (real counts — see this section's
 own note in the code if this ever reads 0/0/0 again, that was the bug):
@@ -9349,11 +9388,11 @@ ${(()=>{
 
   const sessionStats = (session, label) => {
     const t = sold.filter(s => s.buySession === session);
-    return `  ${(label+':').padEnd(25)}${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${(label+':').padEnd(25)}${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg ${t.length?fmt(avg(t,s=>s.pnlPct), 1):'—'}%`;
   };
   const dayOfWeekStats = (day) => {
     const t = sold.filter(s => s.buyDayOfWeek === day);
-    return `  ${(day+':').padEnd(11)}${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${(day+':').padEnd(11)}${t.length} trades | ${winRatePct(t)!=null?winRatePct(t).toFixed(0):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,s=>s.pnlPct), 1):'—'}%`;
   };
 
   const entryTiming = `=== ENTRY TIMING ANALYSIS ===
@@ -9374,10 +9413,10 @@ ${dayOfWeekStats('Friday')}`;
   const subTenPenalty= withSubTen.filter(s => s.subTenEntryAdjustment < 0);
   const subTenNone   = withSubTen.filter(s => s.subTenEntryAdjustment === 0);
   const subTenBucketStats = (arr) => {
-    return `  Total: ${arr.length} | win rate ${winRatePct(arr)!=null?winRatePct(arr).toFixed(0):'—'}% | avg outcome ${arr.length?avg(arr,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  Total: ${arr.length} | win rate ${winRatePct(arr)!=null?winRatePct(arr).toFixed(0):'—'}% | avg outcome ${arr.length?fmt(avg(arr,s=>s.pnlPct), 1):'—'}%`;
   };
-  const avgSubTenBonus   = subTenBonus.length   ? avg(subTenBonus, s=>s.subTenEntryAdjustment).toFixed(1) : null;
-  const avgSubTenPenalty = subTenPenalty.length ? Math.abs(avg(subTenPenalty, s=>s.subTenEntryAdjustment)).toFixed(1) : null;
+  const avgSubTenBonus   = subTenBonus.length   ? fmt(avg(subTenBonus, s=>s.subTenEntryAdjustment), 1) : null;
+  const avgSubTenPenalty = subTenPenalty.length ? fmt(Math.abs(avg(subTenPenalty, s=>s.subTenEntryAdjustment)), 1) : null;
 
   const subTenSection = `=== SUB-$10 ENTRY ADJUSTMENT ANALYSIS ===
 
@@ -9402,7 +9441,7 @@ ${subTenBucketStats(subTenNone)}`;
   const groqRunTrades = sold.filter(s => s.groqProbabilityAtBuy);
   const groqNotRunTrades = sold.filter(s => !s.groqProbabilityAtBuy);
   const groqBucketStats = (arr) => {
-    return `Win rate: ${winRatePct(arr)!=null?winRatePct(arr).toFixed(0):'—'}% | avg outcome ${arr.length?avg(arr,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `Win rate: ${winRatePct(arr)!=null?winRatePct(arr).toFixed(0):'—'}% | avg outcome ${arr.length?fmt(avg(arr,s=>s.pnlPct), 1):'—'}%`;
   };
 
   let groqSection;
@@ -9427,10 +9466,10 @@ Trades where Groq was run before buying:          ${groqRunTrades.length}
 
   const distBucket = (predicate, label) => {
     const t = sold.filter(s => s.distanceFromTargetAtSale != null && predicate(s.distanceFromTargetAtSale));
-    return `  ${label.padEnd(35)}${t.length} trades | avg outcome ${t.length?avg(t,s=>s.pnlPct).toFixed(1):'—'}%`;
+    return `  ${label.padEnd(35)}${t.length} trades | avg outcome ${t.length?fmt(avg(t,s=>s.pnlPct), 1):'—'}%`;
   };
   const withDist = sold.filter(s => s.distanceFromTargetAtSale != null);
-  const avgDist = withDist.length ? avg(withDist, s=>s.distanceFromTargetAtSale).toFixed(1) : null;
+  const avgDist = withDist.length ? fmt(avg(withDist, s=>s.distanceFromTargetAtSale), 1) : null;
 
   const exitTiming = `=== EXIT TIMING ANALYSIS ===
 
@@ -9448,10 +9487,10 @@ Average distance from target at sale across all trades: ${avgDist!=null?`${avgDi
 === MOMENTUM PROTECTION ===
 
 Trades where Momentum Protection activated:     ${momentumActivatedTrades.length}
-Avg outcome on those trades:                    ${momentumActivatedTrades.length ? avg(momentumActivatedTrades, s=>s.pnlPct).toFixed(1) : '—'}%
-Trades where trailing stop triggered exit:      ${momentumTrailingTrades.length} | avg outcome ${momentumTrailingTrades.length ? avg(momentumTrailingTrades, s=>s.pnlPct).toFixed(1) : '—'}%${momentumTrailingUnknown.length ? ` (${momentumTrailingUnknown.length} trade${momentumTrailingUnknown.length===1?'':'s'} excluded — trailing-stop status unknown, migrated before this field was captured)` : ''}
+Avg outcome on those trades:                    ${momentumActivatedTrades.length ? fmt(avg(momentumActivatedTrades, s=>s.pnlPct), 1) : '—'}%
+Trades where trailing stop triggered exit:      ${momentumTrailingTrades.length} | avg outcome ${momentumTrailingTrades.length ? fmt(avg(momentumTrailingTrades, s=>s.pnlPct), 1) : '—'}%${momentumTrailingUnknown.length ? ` (${momentumTrailingUnknown.length} trade${momentumTrailingUnknown.length===1?'':'s'} excluded — trailing-stop status unknown, migrated before this field was captured)` : ''}
 Trades where RSI would have triggered early:    ${momentumRsiEarlyTrades.length} | avg gain at that
-  point ${momentumRsiEarlyTrades.length ? avg(momentumRsiEarlyTrades, s=>s.rsiSuspendedAtGainPct).toFixed(1) : '—'}% (shows how much would have been left on the table)
+  point ${momentumRsiEarlyTrades.length ? fmt(avg(momentumRsiEarlyTrades, s=>s.rsiSuspendedAtGainPct), 1) : '—'}% (shows how much would have been left on the table)
 
 === CATALYST SETUP ANALYSIS ===
 
@@ -9465,8 +9504,8 @@ ${(()=>{
   const worst = flagged.reduce((a,b) => b.pnlPct < a.pnlPct ? b : a);
   return `  Total flagged trades: ${flagged.length}
   Win rate on flagged trades: ${winRatePct(flagged)!=null?winRatePct(flagged).toFixed(0):'—'}%
-  Avg outcome on flagged trades: ${avg(flagged, s=>s.pnlPct).toFixed(1)}%
-  Avg outcome on non-flagged trades: ${nonFlagged.length ? avg(nonFlagged, s=>s.pnlPct).toFixed(1) : '—'}%
+  Avg outcome on flagged trades: ${fmt(avg(flagged, s=>s.pnlPct), 1)}%
+  Avg outcome on non-flagged trades: ${nonFlagged.length ? fmt(avg(nonFlagged, s=>s.pnlPct), 1) : '—'}%
   Best flagged trade: ${best.ticker} ${best.pnlPct >= 0 ? '+' : ''}${best.pnlPct.toFixed(1)}%
   Worst flagged trade: ${worst.ticker} ${worst.pnlPct >= 0 ? '+' : ''}${worst.pnlPct.toFixed(1)}%`;
 })()}
@@ -9482,7 +9521,7 @@ ${(()=>{
 
   const bucket = (label, predicate) => {
     const t = withUnified.filter(predicate);
-    return `  ${label.padEnd(20)}${t.length} trades | avg outcome ${t.length ? avg(t, s=>s.pnlPct).toFixed(1) : '—'}%`;
+    return `  ${label.padEnd(20)}${t.length} trades | avg outcome ${t.length ? fmt(avg(t, s=>s.pnlPct), 1) : '—'}%`;
   };
   const distribution = `Distribution of recommendations at time of sale:
 ${bucket('SELL NOW:', s => s.unifiedRecommendationAtSale.startsWith('SELL NOW'))}
@@ -9556,11 +9595,11 @@ ${ureFactorAccuracySection}
   Shares: ${s.shares} | Held: ${marketDaysLabel(s.daysHeld)}
   Result: ${s.sellPriceUnverified ? 'UNKNOWN — sell price unverified' : `${s.pnlDollar>=0?'WIN':'LOSS'} $${s.pnlDollar.toFixed(2)} (${s.pnlPct.toFixed(1)}%)`}
   ${s.sellPriceUnverified ? '⚠ Excluded from every P&L/win-rate aggregate elsewhere in this report (db/026) — sell_price was fabricated (buy price substituted for a missing live quote), not a real outcome.\n  ' : ''}Source: ${s.source}
-  Signal score at purchase: ${s.scoreAtBuy}/100
+  Signal score at purchase: ${s.scoreAtBuy == null ? 'not recorded' : `${s.scoreAtBuy}/100`}
   Signals fired at purchase: ${(s.signalsFiredAtBuy||[]).length ? s.signalsFiredAtBuy.join(', ') : 'none'}
   RSI at purchase: ${s.rsiAtBuy?.toFixed(1)||'N/A'}
   Volume ratio at purchase: ${s.volRatioAtBuy?.toFixed(2)||'N/A'}x
-  Risk score at purchase: ${s.riskAtBuy||'N/A'}/10
+  Risk score at purchase: ${s.riskAtBuy == null ? 'not recorded' : `${s.riskAtBuy}/10`}
   Duration classification: ${s.duration}
   Price tier: ${s.priceRange}
   News at purchase: ${s.newsAtBuy||'none'}
@@ -9583,7 +9622,7 @@ ${ureFactorAccuracySection}
     Sub-$10 timing:    ${fmtPts(s.subTenEntryAdjustment)}
     Raw total:         ${s.rawScoreAtBuy!=null?`${s.rawScoreAtBuy}/${RAW_SCORE_MAX} (approximate)`:'N/A'}
     Macro adjustment:  ${fmtPts(s.macroAdjustmentPts)} (${s.macroConditionAtBuy||'none'})
-    Final score:       ${s.scoreAtBuy}/100
+    Final score:       ${s.scoreAtBuy == null ? 'not recorded' : `${s.scoreAtBuy}/100`}
 
 `;
   });
@@ -10280,51 +10319,58 @@ function buildSupabaseArchiveReport(trades, snapshotRows) {
   const appWins = apps.filter(t => t.pnl_pct > 0);
   const ownWins = owns.filter(t => t.pnl_pct > 0);
 
-  const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : 0;
-  const avgWinPnL  = avg(wins, t => t.pnl_dollars).toFixed(2);
-  const avgLossPnL = avg(losses, t => t.pnl_dollars).toFixed(2);
+  // As generateClaudeReport (2026-11-14): avg of an empty set is NULL, not 0; the at-buy columns are averaged over
+  // RECORDED values only, saying how many were skipped. trades_v2 receives the sale writer's nulls for a buy that had
+  // no signal (?? null, the same commit); `|| 0` here would have averaged each one in as a measured zero.
+  const avg = (arr, fn) => arr.length ? (arr.reduce((s,x) => s + fn(x), 0) / arr.length) : null;
+  const fmt = (v, d) => (v == null ? '—' : v.toFixed(d));
+  const avgRecorded = (arr, fn) => { const v = arr.map(fn).filter(x => x != null); return { v: v.length ? v.reduce((s, x) => s + x, 0) / v.length : null, skipped: arr.length - v.length }; };
+  const fmtRecorded = (r, d, unit = '') => `${fmt(r.v, d)}${r.v != null ? unit : ''}${r.skipped ? ` (${r.skipped} not recorded, skipped)` : ''}`;
+  const notBucketed = (k) => { const n = trades.filter(x => x[k] == null).length; return n ? `\n  not recorded (not bucketed): ${n} trade${n === 1 ? '' : 's'}` : ''; };
+  const avgWinPnL  = fmt(avg(wins, t => t.pnl_dollars), 2);
+  const avgLossPnL = fmt(avg(losses, t => t.pnl_dollars), 2);
   const best  = trades.reduce((a,b) => b.pnl_pct > a.pnl_pct ? b : a, trades[0]);
   const worst = trades.reduce((a,b) => b.pnl_pct < a.pnl_pct ? b : a, trades[0]);
 
   const tierStats = (min, max, label) => {
     const t = trades.filter(x => x.sell_price >= min && x.sell_price <= max);
     const tw = t.filter(x => x.pnl_pct > 0);
-    return `${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?fmt(avg(t,x=>x.pnl_pct), 1):'—'}%`;
   };
   const durStats = (dur, label) => {
     const t = trades.filter(x => x.duration_classification === dur);
     const tw = t.filter(x => x.pnl_pct > 0);
-    return `${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?fmt(avg(t,x=>x.pnl_pct), 1):'—'}%`;
   };
   const rsiBucket = (lo, hi, label) => {
-    const t = trades.filter(x => (x.rsi_at_buy||0) >= lo && (x.rsi_at_buy||0) < hi);
+    const t = trades.filter(x => x.rsi_at_buy != null && x.rsi_at_buy >= lo && x.rsi_at_buy < hi);
     const tw = t.filter(x => x.pnl_pct > 0);
-    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,x=>x.pnl_pct), 1):'—'}%`;
   };
   const volBucket = (lo, hi, label) => {
-    const t = trades.filter(x => (x.volume_ratio_at_buy||0) >= lo && (x.volume_ratio_at_buy||0) < hi);
+    const t = trades.filter(x => x.volume_ratio_at_buy != null && x.volume_ratio_at_buy >= lo && x.volume_ratio_at_buy < hi);
     const tw = t.filter(x => x.pnl_pct > 0);
-    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,x=>x.pnl_pct), 1):'—'}%`;
   };
   const macroCondStats = (condition, label) => {
     const t = trades.filter(x => x.macro_condition === condition);
     const tw = t.filter(x => x.pnl_pct > 0);
-    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,x=>x.pnl_pct), 1):'—'}%`;
   };
   const macroSectorWeaknessStats = (label) => {
     const t = trades.filter(x => (x.macro_condition||'').startsWith('SECTOR_WEAKNESS'));
     const tw = t.filter(x => x.pnl_pct > 0);
-    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `  ${label}: ${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,x=>x.pnl_pct), 1):'—'}%`;
   };
   const sessionStats = (session, label) => {
     const t = trades.filter(x => x.buy_session === session);
     const tw = t.filter(x => x.pnl_pct > 0);
-    return `  ${(label+':').padEnd(25)}${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `  ${(label+':').padEnd(25)}${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg ${t.length?fmt(avg(t,x=>x.pnl_pct), 1):'—'}%`;
   };
   const dayOfWeekStats = (day) => {
     const t = trades.filter(x => x.buy_day_of_week === day);
     const tw = t.filter(x => x.pnl_pct > 0);
-    return `  ${(day+':').padEnd(11)}${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `  ${(day+':').padEnd(11)}${t.length} trades | ${t.length?((tw.length/t.length*100).toFixed(0)):'—'}% win rate | avg outcome ${t.length?fmt(avg(t,x=>x.pnl_pct), 1):'—'}%`;
   };
 
   const withSubTen    = trades.filter(x => x.sub10_adjustment != null);
@@ -10333,7 +10379,7 @@ function buildSupabaseArchiveReport(trades, snapshotRows) {
   const subTenNone    = withSubTen.filter(x => x.sub10_adjustment === 0);
   const subTenBucketStats = (arr) => {
     const w = arr.filter(x => x.pnl_pct > 0);
-    return `  Total: ${arr.length} | win rate ${arr.length?((w.length/arr.length*100).toFixed(0)):'—'}% | avg outcome ${arr.length?avg(arr,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `  Total: ${arr.length} | win rate ${arr.length?((w.length/arr.length*100).toFixed(0)):'—'}% | avg outcome ${arr.length?fmt(avg(arr,x=>x.pnl_pct), 1):'—'}%`;
   };
 
   const parseGroqAtBuy = (x) => {
@@ -10344,7 +10390,7 @@ function buildSupabaseArchiveReport(trades, snapshotRows) {
   const groqNotRunTrades = trades.filter(x => !x.groq_at_purchase);
   const groqBucketStats = (arr) => {
     const w = arr.filter(x => x.pnl_pct > 0);
-    return `Win rate: ${arr.length?((w.length/arr.length*100).toFixed(0)):'—'}% | avg outcome ${arr.length?avg(arr,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `Win rate: ${arr.length?((w.length/arr.length*100).toFixed(0)):'—'}% | avg outcome ${arr.length?fmt(avg(arr,x=>x.pnl_pct), 1):'—'}%`;
   };
   let groqSection;
   if (groqRunTrades.length < 5) {
@@ -10364,10 +10410,10 @@ function buildSupabaseArchiveReport(trades, snapshotRows) {
 
   const distBucket = (predicate, label) => {
     const t = trades.filter(x => x.distance_from_target != null && predicate(x.distance_from_target));
-    return `  ${label.padEnd(35)}${t.length} trades | avg outcome ${t.length?avg(t,x=>x.pnl_pct).toFixed(1):'—'}%`;
+    return `  ${label.padEnd(35)}${t.length} trades | avg outcome ${t.length?fmt(avg(t,x=>x.pnl_pct), 1):'—'}%`;
   };
   const withDist = trades.filter(x => x.distance_from_target != null);
-  const avgDist  = withDist.length ? avg(withDist, x => x.distance_from_target).toFixed(1) : null;
+  const avgDist  = withDist.length ? fmt(avg(withDist, x => x.distance_from_target), 1) : null;
 
   const momentumTrades = trades.filter(x => x.momentum_protection);
 
@@ -10401,28 +10447,28 @@ Overall win rate: ${trades.length?((wins.length/trades.length*100).toFixed(0)):0
   - App signal win rate: ${apps.length?((appWins.length/apps.length*100).toFixed(0)):0}%
   - Own decision win rate: ${owns.length?((ownWins.length/owns.length*100).toFixed(0)):0}%
 
-Average profit on wins: +$${avgWinPnL} (${avg(wins,t=>t.pnl_pct).toFixed(1)}%)
-Average loss on losses: $${avgLossPnL} (${avg(losses,t=>t.pnl_pct).toFixed(1)}%)
+Average profit on wins: +$${avgWinPnL} (${fmt(avg(wins,t=>t.pnl_pct), 1)}%)
+Average loss on losses: $${avgLossPnL} (${fmt(avg(losses,t=>t.pnl_pct), 1)}%)
 Best trade: ${best ? `${best.ticker} +$${(best.pnl_dollars??0).toFixed(2)} (+${(best.pnl_pct??0).toFixed(1)}%)` : 'N/A'}
 Worst trade: ${worst ? `${worst.ticker} $${(worst.pnl_dollars??0).toFixed(2)} (${(worst.pnl_pct??0).toFixed(1)}%)` : 'N/A'}
 
 Signal data at purchase — wins vs losses:
-  Avg RSI:          wins ${avg(wins,t=>t.rsi_at_buy||0).toFixed(1)}  | losses ${avg(losses,t=>t.rsi_at_buy||0).toFixed(1)}
-  Avg volume ratio: wins ${avg(wins,t=>t.volume_ratio_at_buy||0).toFixed(2)}x | losses ${avg(losses,t=>t.volume_ratio_at_buy||0).toFixed(2)}x
-  Avg risk score:   wins ${avg(wins,t=>t.risk_score||0).toFixed(1)}  | losses ${avg(losses,t=>t.risk_score||0).toFixed(1)}
-  Avg signal score: wins ${avg(wins,t=>t.signal_score||0).toFixed(1)}  | losses ${avg(losses,t=>t.signal_score||0).toFixed(1)}
+  Avg RSI:          wins ${fmtRecorded(avgRecorded(wins,t=>t.rsi_at_buy), 1)}  | losses ${fmtRecorded(avgRecorded(losses,t=>t.rsi_at_buy), 1)}
+  Avg volume ratio: wins ${fmtRecorded(avgRecorded(wins,t=>t.volume_ratio_at_buy), 2, 'x')} | losses ${fmtRecorded(avgRecorded(losses,t=>t.volume_ratio_at_buy), 2, 'x')}
+  Avg risk score:   wins ${fmtRecorded(avgRecorded(wins,t=>t.risk_score), 1)}  | losses ${fmtRecorded(avgRecorded(losses,t=>t.risk_score), 1)}
+  Avg signal score: wins ${fmtRecorded(avgRecorded(wins,t=>t.signal_score), 1)}  | losses ${fmtRecorded(avgRecorded(losses,t=>t.signal_score), 1)}
 
 RSI at purchase — win rate by bucket:
 ${rsiBucket(0,45,'<45    ')}
 ${rsiBucket(45,55,'45–55  ')}
 ${rsiBucket(55,65,'55–65  ')}
-${rsiBucket(65,999,'65+    ')}
+${rsiBucket(65,999,'65+    ')}${notBucketed('rsi_at_buy')}
 
 Volume ratio at purchase — win rate by bucket:
 ${volBucket(0,1.0,'<1.0x  ')}
 ${volBucket(1.0,2.0,'1.0–2x ')}
 ${volBucket(2.0,3.0,'2–3x   ')}
-${volBucket(3.0,999,'3x+    ')}
+${volBucket(3.0,999,'3x+    ')}${notBucketed('volume_ratio_at_buy')}
 
 Performance by price tier:
   ${tierStats(1,3,'$1–$3')}
@@ -10490,7 +10536,7 @@ Average distance from target at sale across all trades: ${avgDist!=null?`${avgDi
 === MOMENTUM PROTECTION ===
 
 Trades where Momentum Protection activated: ${momentumTrades.length}
-Avg outcome on those trades: ${momentumTrades.length ? avg(momentumTrades, x=>x.pnl_pct).toFixed(1) : '—'}%
+Avg outcome on those trades: ${momentumTrades.length ? fmt(avg(momentumTrades, x=>x.pnl_pct), 1) : '—'}%
 
 === CATALYST SETUP ANALYSIS ===
 
@@ -10503,8 +10549,8 @@ ${(() => {
     const worstF = flagged.reduce((a,b) => b.pnl_pct < a.pnl_pct ? b : a);
     return `  Total flagged trades: ${flagged.length}
   Win rate on flagged trades: ${(flaggedW.length/flagged.length*100).toFixed(0)}%
-  Avg outcome on flagged trades: ${avg(flagged,x=>x.pnl_pct).toFixed(1)}%
-  Avg outcome on non-flagged trades: ${nonFlagged.length?avg(nonFlagged,x=>x.pnl_pct).toFixed(1):'—'}%
+  Avg outcome on flagged trades: ${fmt(avg(flagged,x=>x.pnl_pct), 1)}%
+  Avg outcome on non-flagged trades: ${nonFlagged.length?fmt(avg(nonFlagged,x=>x.pnl_pct), 1):'—'}%
   Best flagged trade: ${bestF.ticker} ${bestF.pnl_pct>=0?'+':''}${bestF.pnl_pct.toFixed(1)}%
   Worst flagged trade: ${worstF.ticker} ${worstF.pnl_pct>=0?'+':''}${worstF.pnl_pct.toFixed(1)}%`;
   })()}
@@ -10535,10 +10581,10 @@ ${snapTickers.length ? snapTickers.map(t => `  ${t.padEnd(8)} ${snapByTicker[t]}
   Shares: ${t.shares} | Held: ${daysHeld == null ? 'N/A' : marketDaysLabel(daysHeld)}
   Result: ${(t.pnl_dollars??0)>=0?'WIN':'LOSS'} $${(t.pnl_dollars??0).toFixed(2)} (${(t.pnl_pct??0).toFixed(1)}%)
   Source: ${t.source || 'N/A'}
-  Signal score at purchase: ${t.signal_score ?? 'N/A'}/100 (${t.signal_label || 'N/A'})
+  Signal score at purchase: ${t.signal_score == null ? 'not recorded' : `${t.signal_score}/100 (${t.signal_label || 'N/A'})`}
   RSI at purchase: ${t.rsi_at_buy!=null?t.rsi_at_buy.toFixed(1):'N/A'}
   Volume ratio at purchase: ${t.volume_ratio_at_buy!=null?t.volume_ratio_at_buy.toFixed(2):'N/A'}x
-  Risk score at purchase: ${t.risk_score ?? 'N/A'}/10
+  Risk score at purchase: ${t.risk_score == null ? 'not recorded' : `${t.risk_score}/10`}
   Duration classification: ${t.duration_classification || 'N/A'}
   Price tier: ${t.price_tier || 'N/A'}
   Macro condition at purchase: ${t.macro_condition || 'N/A'}

@@ -19,17 +19,20 @@ const { run, REPO_ROOT } = require('./_lib');
 // CHANGED 2026-11-12, declared: the loader moved verbatim to tests/_app-vm.js (shared with the macro scan test).
 const { loadApp, bars } = require('./_app-vm');
 
-async function renderModal({ ownedPosition = null, pending = null } = {}) {
+// CHANGED 2026-11-14, declared: two optional overrides (noSignal: no Signals-tab entry for the ticker; daily: the daily
+// bars), for the short-history case. Existing cases pass neither.
+async function renderModal({ ownedPosition = null, pending = null, noSignal = false, daily = null } = {}) {
   const { ctx, byId } = loadApp();
   vm.runInContext(`
     fetchSingleBars = async () => __bars.daily;
     fetchMinuteBars = async () => __bars.minute;
     fetchHourlyBars = async () => __bars.hourly;
     state.settings.alpacaKey = 'k'; state.settings.alpacaSecret = 's';
-    state.signals = [__signal];
+    state.signals = __noSignal ? [] : [__signal];
     state.portfolio = __portfolio;
   `, Object.assign(ctx, {
-    __bars: { daily: bars(260, 86400000), minute: bars(390, 60000, Date.parse('2026-11-11T14:30:00Z')), hourly: bars(70, 3600000, Date.parse('2026-11-01T14:30:00Z')) },
+    __noSignal: noSignal,
+    __bars: { daily: daily || bars(260, 86400000), minute: bars(390, 60000, Date.parse('2026-11-11T14:30:00Z')), hourly: bars(70, 3600000, Date.parse('2026-11-01T14:30:00Z')) },
     __signal: { ticker: 'XYZ', company: 'Xyz Corp', price: 5.12, todayChange: 2.1, score: 74, signal: 'BUY', rsi: 55, volRatio: 1.6, ma20: 4.9,
       target: 5.6, stop: 4.7, entry: 5.12, duration: '3-DAY', risk: 5, signalsFired: [], atr: 0.2, maPct: 4.5, priceRange: 0.4,
       volTrend: 'rising', meanReversion: null, scoringVersion: 2, scannedAt: Date.now() },
@@ -48,6 +51,22 @@ const held = { id: '1762900000000', ticker: 'XYZ', company: 'Xyz Corp', shares: 
 const pendingOrder = { ...held, id: '1762900000001', orderType: 'limit', filledAt: null };
 
 (async () => {
+// 2026-11-14: calcRSI returns null below 15 closes (it said 50). The modal's own fallback (no Signals-tab entry) is the
+// one path where that null meets the core helpers. Handed null, classifyDuration reads null < 50 as true (WEEK, and
+// so the hold window, target and stop) and calcRiskScore reads null < 30 as true (+2 risk). The modal hands them NaN,
+// the scorer's "no RSI". Rendered for real: the RSI is said to be unmeasured, with the reason, and nothing else moves.
+await run('no signal and 5 daily bars: the RSI is "not measured" with its reason, and no null reaches the duration or risk', async () => {
+  const r = await renderModal({ noSignal: true, daily: bars(5, 86400000) });
+  assert.ok(!/Failed to load data/.test(r.body) && r.errors.length === 0, `the modal failed: ${r.errors[0] || r.body.slice(0, 200)}`);
+  const txt = r.body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.ok(txt.includes('RSI (14-day) not measured — 5 daily closes came back, 15 needed'), txt.slice(txt.indexOf('Signal Breakdown'), txt.indexOf('Signal Breakdown') + 120));
+  assert.ok(txt.includes('2–3 MKT DAYS') && !txt.includes('4–5 MKT DAYS'), 'a WEEK window from a null RSI: ' + txt.slice(txt.indexOf('WATCH'), txt.indexOf('WATCH') + 40));
+  assert.ok(txt.includes('Risk 4/10'), 'two risk points from a null RSI: ' + txt.slice(txt.indexOf('Risk'), txt.indexOf('Risk') + 12));
+  // positive control: with history, the RSI is measured and shown as a number
+  const full = (await renderModal({ noSignal: true })).body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.ok(/RSI \(14-day\) \d+\.\d — /.test(full) && !full.includes('not measured'), 'measured with 260 bars');
+});
+
 await run('not held: the modal renders with the Add button, and the capture of what it showed runs', async () => {
   const r = await renderModal();
   assert.ok(!/Failed to load data/.test(r.body), `the modal failed: ${r.body.slice(0, 300)}`);

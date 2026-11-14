@@ -2,8 +2,13 @@
 // Pure technical-indicator functions (RSI, ATR, moving average, volume avg) — no state.
 // Moved from app.js's "── 8. TECHNICAL INDICATORS ───" section (Phase 0 extraction).
 
+// Below 15 closes the RSI is NOT MEASURED: null (2026-11-14, the reviewer). It returned 50, a neutral-looking
+// substitute. Reachable then only from display paths: scoreStock refuses fewer than 15 bars before it calls this (its
+// other calls are guarded at 17 and 18 closes), so no scan score has ever used the 50, and none changes now. The
+// callers that could reach it (the stock modal, the pre-market movers) say "not measured" with the reason. Never
+// hand a null on to a comparison: null < 50 is true in JavaScript.
 function calcRSI(closes) {
-  if (closes.length < 15) return 50;
+  if (closes.length < 15) return null;
   const last15 = closes.slice(-15);
   let gains = 0, losses = 0;
   for (let i = 1; i < 15; i++) {

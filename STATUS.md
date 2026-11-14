@@ -413,6 +413,16 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **`rating_snapshots` holds a different population from (c) on** (measured 2026-11-14 02:43Z). From the first
+  post-(c) scan (2026-11-13T02:35Z) every scored row is written with its tier, below-threshold rows included: 1,821
+  BELOW_THRESHOLD and 1,741 SHOWN rows on 11-13, against 147-298 untiered rows a day before. Rows per scan rose
+  6-15 times. **Any per-day count or rate across 11-13 compares two populations.** Found while closing the RSI-50
+  cluster: 18 of 24 exactly-50 rows fell on 11-13 because that day had 56% of the window's rows. Its exactly-50 rate
+  (0.42%) was among the lowest, and its RSI spread the widest (SD 15.99). Also: `rating_snapshots` has no build
+  column. Since (c) a row reaches its build through `macro_observation_id` -> `macro_observations.code_version`;
+  before (c), nothing records it. The app's scans do not write `scan_runs` (only the scheduled loggers do, with
+  `code_version` since db/028; `build_version` is the retired column), so a join to `scan_runs` cannot attribute an
+  app scan.
 - **Before Portfolio has rendered, the nav badge shows a confident zero** (the reviewer, 2026-11-14, on
   review-rsi-not-measured.diff). This predates that diff. The badge counts the cards' captured verdicts; before
   that, it counted verdicts computed from a cached price that the same render writes. Either way, until a card has
