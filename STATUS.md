@@ -320,6 +320,13 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   where it is; not to be run, re-pointed or run with `--rev`.
 
 ## Being verified
+- **db/044, the sampled peak RSI with provenance (2026-11-14): COMMITTED, NOT APPLIED.** Order for Roman, one paste:
+  RUN-ME-16 (sizes, plus the organisation's total from the dashboard), db/044 run 1, run 2 (whose red "Failed" carries
+  `RESULT: PASS`), then a fresh capture. The app side waits on branch gated-044-app (db/pending-migrations.json
+  [44]); its one failing test, enumerated-values' "the database permits every written value", clears with that
+  capture, by design. **db/045 (NOT NULL) waits for its read-back**, enforced in its own SQL: a sale by the new
+  build in the table with its provenance populated. Proven before sending: the PGlite harness (PostgreSQL 18.6) on
+  the 2026-11-11b capture with the real backup rows, 33 ok, 0 failed; 14 of 14 SQL mutants killed.
 - **The production-write refusal (01284d5): CONFIRMED IN PRODUCTION 2026-11-13** by a scheduled run, not a triggered
   one (a trigger would itself be a production write). Log EDGE signals, run 43477950917, 17:57Z, at 2bf0876 (which
   contains 01284d5):

@@ -219,6 +219,17 @@ const DECLARED = {
   'trades_v2.verdict_provenance': { sale_moment: { reserved: 'verdict B (a verdict computed at the sale moment), not commissioned; if it is still not commissioned at the review, the value comes out of the CHECK', review: '2026-12-31' } },
   'scan_runs.session': { FORCED_TEST: { external: 'db/CORRECTION_2026-10-09_forced_test_scan.sql, one row (scan 3da6957d); no code may write it (the test-override guard refuses --session with --write)' } },
   'signal_log.taken_resolution': { unresolved: { default: 'a signal not yet resolved; fill-outcomes.mjs moves it to the other four' } },
+  // db/044 (2026-11-14, not yet applied). The app side that writes sampled_since / not_sampled is on its gated
+  // branch (gated-044-app); not_established is written by db/044's backfill and db/045's classification, which are
+  // SQL; corrected and every peak_corrections value are written only by the owner's deliberate correction (the door:
+  // the owner role, `set local edge2.correction`, the log row first), by hand, never by the app.
+  'trades_v2.peak_rsi_provenance': {
+    ...each(['sampled_since', 'not_sampled'], { pending: 'the app side of db/044 (branch gated-044-app), behind db/pending-migrations.json' }),
+    not_established: { external: 'db/044 run 1 (the backfill of every existing row) and db/045 (rows an older build wrote in the window)' },
+    corrected: { external: 'a deliberate correction, hand-run by the owner through the door (peak_corrections first; db/044)' },
+  },
+  'peak_corrections.table_name': each(['trades_v2', 'portfolio'], { external: 'a deliberate correction, hand-run by the owner (db/044); the app cannot read or write peak_corrections' }),
+  'peak_corrections.column_name': each(['peak_rsi_during_hold', 'peak_rsi', 'peak_price'], { external: 'a deliberate correction, hand-run by the owner (db/044); the app cannot read or write peak_corrections' }),
   'setup_triggers.engine_source': { EDGE: { reserved: 'the decision whether Warrior continues at all (STATUS.md, the 2026-12-31 Warrior review): db/013 made setup_triggers engine-agnostic, and the engine that writes it has never produced a setup', review: '2026-12-31' } },
 };
 
