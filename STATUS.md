@@ -463,6 +463,12 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **NOT A DEFECT: the open positions' `peak_rsi_sampled_from` is later than their buy date** (db/044's app side). The
+  positions open when it deploys start sampling at their first render on the new build. They are not seeded from
+  the old phone-held peaks, which may carry the buy-RSI fallback (fixed in dd1ba4e) and cannot be told apart. So
+  their sale records say sampled_since <that render>, which understates coverage honestly rather than overstating it
+  (the reviewer, 2026-11-14). Positions bought after the deploy start at their first render too: a render, not the
+  fill, is the first sample.
 - **`rating_snapshots` holds a different population from (c) on** (measured 2026-11-14 02:43Z). From the first
   post-(c) scan (2026-11-13T02:35Z) every scored row is written with its tier, below-threshold rows included: 1,821
   BELOW_THRESHOLD and 1,741 SHOWN rows on 11-13, against 147-298 untiered rows a day before. Rows per scan rose

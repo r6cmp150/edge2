@@ -22,7 +22,9 @@ run('no failed-save text, for any key, suggests freeing space, reloading as a fi
     const t = ctx.__d(k);
     assert.ok(!/free up space|then reload|storage full\?/i.test(t), `${k}: ${t}`);
     assert.ok(t.includes(ctx.__never), `${k}: must carry the never-clear sentence`);
-    assert.ok(/peak RSI of open positions is kept only on this phone/.test(t), k);
+    // CHANGED with db/044, declared: the peak RSI is in the database; what clearing destroys now is a queued write
+    assert.ok(/a queued write is kept only on this phone until it reaches the database, and clearing it loses it/.test(t), k);
+    assert.ok(!/peak RSI/.test(ctx.__never), 'the never-clear sentence no longer claims the peak RSI is on this phone');
     // (the reviewer, from s1) the one instruction that matters is its own paragraph, never after "no action is needed"
     assert.ok(t.endsWith(`<br><br>${ctx.__never}`), `${k}: the never-clear sentence opens its own paragraph, last`);
     // (the reviewer) a tier-2 body names the thing in Roman's words; the key stays in the banner's title

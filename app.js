@@ -939,7 +939,8 @@ let state = {
   ownedScores: {},        // ticker → {score, label, scoringVersion, scannedAt, signal} snapshotted at each screener run (the full signal since 2026-10-28; read through currentSignalForHolding), for owned positions that no longer clear the display threshold — persisted, so read ONLY through currentOwnedScore() (a stored score from another formula is not evaluated, never used)
   displayedVerdicts: {},  // position id → what its card last showed (Verdict A). Session only, never persisted.
   ownedPrevRSI: {},       // ticker → RSI from the previous portfolio render, for detecting "declining from peak" in calcPeakRiskScore — persisted
-  ownedPeakRSI: {},       // ticker → highest RSI seen across the current hold, for peakRsiDuringHold on the sold record — persisted
+  ownedPeakRSI: {},       // RETIRED by db/044 (2026-11-14): no longer written or read for a sale; the peak RSI is the position's own, in the database. Kept only so an older phone's stored value is not mistaken for an unknown key.
+  peakRsiSaved: {},       // position id → the sampled peak RSI the database has confirmed this session (db/044). Session only, never persisted: on load it is what the database returned.
   preMarketGroqCache: {}, // ticker → {pairs}|{raw} Groq pre-market read — session only, tap-triggered
   deletedPositionIds: new Set(), // position IDs deleted this session — guards renderPortfolioTab()'s fire-and-forget saves from resurrecting a just-sold row; session only, not persisted
   warrior: { status: 'loading' }, // { status: 'loading'|'loaded'|'unavailable', error?, lastScanError? } — set by the dynamic import in runDataLoadAndInit(). Session only, not persisted: re-derived fresh on every boot since it reflects whether THIS load of engines/warrior/index.js succeeded, not a fact about the user's data.
@@ -1157,10 +1158,13 @@ function renderLiveBand() {
 // unsaved: the failure record is a single slot, and a same-tier failure replaces it, so a queue's failure can be
 // replaced and then cleared by another queue's later save while the first stays unsaved (measured 2026-11-13; STATUS).
 // The never-clear sentence is its own paragraph, after the rest: never buried behind "no action is needed".
-const NEVER_CLEAR = "Do not clear this site's data while any position is open: the peak RSI of open positions is kept only on this phone, and clearing it writes a wrong peak RSI into their sale records.";
+// CHANGED with db/044 (2026-11-14): the peak RSI of open positions is in the database now (the position's own row), so
+// it is no longer what clearing destroys. What is kept ONLY on this phone: a write queued for Retry (a sale that has not
+// reached the database: clearing loses it) and Warrior's pre-market volume observations.
+const NEVER_CLEAR = "Do not clear this site's data while any write is waiting for Retry: a queued write is kept only on this phone until it reaches the database, and clearing it loses it. Warrior's pre-market volume observations are also kept only here.";
 // Tier-2 keys in Roman's words; the key itself stays in the banner's title, which is what makes a screenshot diagnosable.
 const MEASURED_STATE_NAMES = {
-  ownedPeakRSI: 'the peak RSI of your open positions',
+  ownedPeakRSI: 'the old phone-held peak RSI (retired by db/044; the peak is in the database now)',
   ownedPrevRSI: 'the previous RSI reading of your open positions',
   warriorPreMarketRvolObservations: "Warrior's pre-market volume observations",
 };
@@ -1329,7 +1333,9 @@ function updateMarketBanner() {
 // error mean "not saved, still real" and must never hide it. Every failure
 // reaches the banner, not just the console.
 function backgroundSavePosition(p) {
+  const sentPeakRsi = p.peakRsi ?? null; // the value this write carries; confirmed only once the write lands
   savePositionToSupabase(p).then(() => {
+    if (sentPeakRsi != null && !((state.peakRsiSaved[p.id] ?? -Infinity) >= sentPeakRsi)) state.peakRsiSaved[p.id] = sentPeakRsi;
     const prior = state.positionSaveFailures[p.id];
     if (prior && prior.code !== 'POSITION_MISSING') {
       delete state.positionSaveFailures[p.id];
@@ -5590,10 +5596,22 @@ async function renderPortfolioTab() {
     if (rsi != null) {
       state.ownedPrevRSI[p.ticker] = rsi;
       persist('ownedPrevRSI');
-      // Running max across the hold — feeds peakRsiDuringHold on the sold
-      // record at confirmMarkSold() time (Change 5).
-      state.ownedPeakRSI[p.ticker] = Math.max(state.ownedPeakRSI[p.ticker] ?? -Infinity, rsi);
-      persist('ownedPeakRSI');
+      // The SAMPLED peak RSI (db/044, 2026-11-14): per POSITION, in the database, not per ticker on this phone. It is
+      // the max over the moments this tab rendered the position, from its first sample (peakRsiSampledFrom), and it
+      // reaches the sale record as peak_rsi_during_hold with provenance sampled_since. Only a MEASURED RSI enters it.
+      // The old phone-held map (state.ownedPeakRSI) is no longer written: a cleared site, a new device or a second lot
+      // of the same ticker no longer touches it.
+      if (p.peakRsi == null || rsi > p.peakRsi) {
+        const at = new Date().toISOString();
+        p.peakRsi = rsi;
+        p.peakRsiAt = at;
+        if (!p.peakRsiSampledFrom) p.peakRsiSampledFrom = at;
+      }
+    }
+    // Sent when it rose, and re-sent on any later render until the database has confirmed it (a write that failed
+    // with no later rise would otherwise never be re-sent). The database keeps the GREATEST, so re-sending is safe.
+    if (p.peakRsi != null && !((state.peakRsiSaved[p.id] ?? -Infinity) >= p.peakRsi) && !state.deletedPositionIds.has(p.id)) {
+      backgroundSavePosition(p);
     }
 
     // Live recalculated target (display-only — sell warnings keep using p.target)
@@ -7147,6 +7165,12 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       lock_in_profits_fired: saleVerdictProvenance(record) === 'not_recorded' ? null : record.lockInProfitsFired,
       peak_risk_score_at_sale: record.peakRiskScoreAtSale,
       peak_rsi_during_hold: record.peakRsiDuringHold,
+      // db/044. A record computed by this build carries its provenance (sampled_since + when, or not_sampled). A
+      // record computed by an OLDER build and queued (Retry) carries none: its peak came from the phone-held map,
+      // possibly contaminated, and no one can tell now. That is not_established, the same rule db/044's backfill and
+      // db/045 apply, never a guess at sampled_since.
+      peak_rsi_provenance: record.peakRsiProvenance ?? 'not_established',
+      peak_rsi_sampled_from: record.peakRsiProvenance === 'sampled_since' ? (record.peakRsiSampledFrom ?? null) : null,
       top_peak_risk_factors_at_sale: record.topPeakRiskFactorsAtSale,
       // db/035: where the verdict above came from (every new sale:
       // not_recorded, the verdict fields all null), and the last signal
@@ -7192,7 +7216,16 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       // sale_code_version = the code running this sale, which produced
       // every sale-time field in this row.
       code_version: pos.codeVersion ?? null,
-      sale_code_version: currentCodeVersion(),
+      // The build that COMPUTED this record's sale-time fields (stamped on the record when the sale was entered), not
+      // the build that happens to be writing it: a Retry runs later, on whatever build is loaded then (the reviewer,
+      // 2026-11-14). A record queued by a build that did not stamp it (GRNT and VG, if still queued) writes NULL: the
+      // computing build was not recorded. trades_v2_sale_code_version_shape_chk admits only a full {app, scoring}
+      // or NULL, so NULL is that third state; a stamp naming the retrying build would be refused by it.
+      // NOT AN OVERSIGHT, AND THE CHECK IS NOT TO BE WIDENED (the reviewer, 2026-11-14): the retrying build is
+      // recoverable anyway (the row's created_at, against the deploy history), so nothing is lost that cannot be
+      // reconstructed; and a shape guard loosened once stays loosened, for every later writer, to record a fact about
+      // two legacy rows.
+      sale_code_version: record.saleCodeVersion !== undefined ? record.saleCodeVersion : null,
       // db/033: the join key to signal_snapshot_at_buy (the portfolio row
       // is deleted at the sale). Unique on non-NULL: a second sale of the
       // same position is refused by the database. NULL only if the
@@ -7414,10 +7447,14 @@ function computeSaleVerdictFields(pos, saleDate, saleAt = null) {
     topPeakRiskFactorsAtSale: null,
     fullUreFactorsAtSale: null,
     fullPeakRiskFactorsAtSale: null,
-    // The highest RSI the Portfolio renders saw (render-dependent, §7.6
-    // step 2.5), or null when none did. It used to fall back to rsiAtBuy,
-    // which reported the buy's RSI as the peak of a hold nobody observed.
-    peakRsiDuringHold: state.ownedPeakRSI[pos.ticker] ?? null,
+    // The SAMPLED peak RSI of THIS position (db/044): the max over the Portfolio renders that saw it, from its first
+    // sample, or null when none did. It used to be the per-ticker map on this phone. Its provenance travels with it:
+    // sampled_since (with when sampling began) or not_sampled (no render saw it, so no peak). These are exactly the
+    // values db/044's CHECKs pair together, and the only ones this build writes; not_established and corrected are
+    // the backfill's and a correction's.
+    peakRsiDuringHold: pos.peakRsi ?? null,
+    peakRsiProvenance: pos.peakRsi != null ? 'sampled_since' : 'not_sampled',
+    peakRsiSampledFrom: pos.peakRsi != null ? (pos.peakRsiSampledFrom ?? null) : null,
     signalBeforeSale: signalBeforeSale(pos, saleDate, saleAt),
   };
 }
@@ -7499,6 +7536,8 @@ async function confirmMarkSold(posId, btn) {
 
   const record = {
     id: Date.now().toString(),
+    // the build computing every sale-time field below; a Retry writes THIS, never its own (db/044's note)
+    saleCodeVersion: currentCodeVersion(),
     ticker: pos.ticker,
     // Carried from the position, not re-derived (2026-09-06) -- `|| null`
     // covers any position opened before this field existed rather than
@@ -7563,15 +7602,12 @@ async function confirmMarkSold(posId, btn) {
   state.sold.unshift(record);
   state.portfolio = state.portfolio.filter(p => p.id !== posId);
   persist('sold');
-  // Clear this ticker's RSI-hold tracking now that it's sold, so a future
-  // re-buy of the same ticker starts a fresh hold rather than inheriting
-  // stale prev/peak RSI from this position — unless another open position
-  // on the same ticker still exists.
+  // Clear this ticker's previous-RSI tracking now that it's sold, so a future re-buy of the same ticker starts fresh
+  // -- unless another open position on the same ticker still exists. (The peak RSI is the position's own since db/044
+  // and leaves with its row: nothing per ticker to clear.)
   if (!getHoldings().some(p => p.ticker === pos.ticker)) {
     delete state.ownedPrevRSI[pos.ticker];
-    delete state.ownedPeakRSI[pos.ticker];
     persist('ownedPrevRSI');
-    persist('ownedPeakRSI');
   }
   recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pnlDollar, pnlPct);
   closeModal();
@@ -11038,7 +11074,7 @@ async function testPremarketGap() {
 // reads the database (settings, positions, trades_v2), never this phone's storage, so it holds none of the state kept
 // only on the phone, and nothing imports it back; it works on a full store for the same reason. No import path is to
 // be built: a restored value's provenance would be "from a file", a state no column records.
-const EXPORT_SCOPE_TEXT = 'Downloads a copy of the database records: settings (keys redacted), positions and trades. It is not a backup of this phone: it does not include the peak RSI of open positions or any queued write, and nothing can be loaded back from it.';
+const EXPORT_SCOPE_TEXT = 'Downloads a copy of the database records: settings (keys redacted), positions and trades. It is not a backup of this phone: it does not include any queued write, and nothing can be loaded back from it.';
 async function exportAllData(btn) {
   if (btn) btn.disabled = true;
   try {
@@ -11081,7 +11117,7 @@ function clearAllDataText() {
   // (the reviewer, 2026-11-13) what it costs comes first, the identifiers last: a phone-width confirm is read in order.
   return `This removes ${CLEAR_ALL_KEYS.length} copies kept on this phone. `
     + 'Your positions, trades and settings in the database are not touched; the app loads them again from the database when it next starts. '
-    + 'It does not remove the peak RSI of open positions or any queued write: those stay. '
+    + "It does not remove any queued write or Warrior's pre-market observations: those stay. "
     + `The ${CLEAR_ALL_KEYS.length}, as listed under Storage on this phone: ${CLEAR_ALL_KEYS.map(k => 'edge_' + k).join(', ')}.`;
 }
 function clearAllData() {
@@ -11902,6 +11938,8 @@ async function loadPortfolioAndSettingsFromSupabase() {
     loadSettingsFromSupabase(),
   ]);
   state.portfolio = portfolio;
+  // what the database holds is, by definition, confirmed (db/044): the render re-sends only a peak above it
+  state.peakRsiSaved = Object.fromEntries(portfolio.filter(p => p.peakRsi != null).map(p => [p.id, p.peakRsi]));
   for (const [k, v] of Object.entries(settings)) { state.settings[k] = v; state.settingsSource[k] = 'supabase'; }
 }
 

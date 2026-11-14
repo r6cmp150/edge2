@@ -211,7 +211,7 @@ async function renderIn(ctx, mode, alter = () => {}) {
   const els = { 'tab-content': { innerHTML: '', insertAdjacentHTML() {} }, 'pf-list': { innerHTML: '' }, 'pf-summary': { innerHTML: '' } };
   Object.assign(ctx, {
     state: { settings: { alpacaKey: 'k' }, portfolio: tracked, ownedScores: fx.ownedScores, signals: [], lastScanTime: null,
-      ownedPrevRSI: fx.ownedPrevRSI, ownedPeakRSI: {}, portfolioPrices: {}, displayedVerdicts: {}, deletedPositionIds: new Set(), aiCache: {},
+      ownedPrevRSI: fx.ownedPrevRSI, ownedPeakRSI: {}, peakRsiSaved: fx.peakRsiSaved || {}, portfolioPrices: {}, displayedVerdicts: {}, deletedPositionIds: new Set(), aiCache: {},
       portfolioEngineFilter: 'ALL', portfolioSort: mode, sold: [], macroContext: null },
     document: { getElementById: id => els[id] || null },
     localStorage: { getItem: () => null, setItem() {} },
@@ -238,7 +238,9 @@ async function renderIn(ctx, mode, alter = () => {}) {
   await ctx.renderPortfolioTab();
   const list = els['pf-list'].innerHTML;
   return {
-    writes, saves, persists, verdicts, rsiSeen, captures, peak: { ...ctx.state.ownedPeakRSI }, prev: { ...ctx.state.ownedPrevRSI }, list, summary: els['pf-summary'].innerHTML,
+    writes, saves, persists, verdicts, rsiSeen, captures, // CHANGED with db/044, declared: the sampled peak RSI is each POSITION's own (p.peakRsi), not the per-ticker
+    // phone map; read from the positions the render wrote, keyed by ticker as before.
+    peak: Object.fromEntries(fx.portfolio.filter(p => p.peakRsi != null).map(p => [p.ticker, p.peakRsi])), prev: { ...ctx.state.ownedPrevRSI }, list, summary: els['pf-summary'].innerHTML,
     order: [...list.matchAll(/<div class="pf-ticker">([A-Z]+) /g)].map(m => m[1]).join(' '),
     maps: JSON.stringify([ctx.state.ownedPrevRSI, ctx.state.ownedPeakRSI, ctx.state.portfolioPrices]),
     finalPositions: JSON.stringify(fx.portfolio),
@@ -635,6 +637,39 @@ run('one symbol short of 15 closes: only it is unmeasured; the rest are measured
   assert.ok(!('AAA' in r.peak), 'no peak for AAA');
   assert.strictEqual(r.prev.AAA, 55, "AAA's previous RSI is kept, not replaced by its buy RSI");
   assert.ok(typeof r.rsiSeen.BBB.rsi === 'number' && r.rsiSeen.BBB.rsi !== 97 && r.peak.BBB === r.rsiSeen.BBB.rsi, 'BBB measured and written');
+});
+
+// db/044 (2026-11-14): the sampled peak RSI is the POSITION's own, saved to its portfolio row. The real render:
+// a first sample sets the peak, when it was sampled, and when sampling began, and is saved; a higher stored peak is
+// never lowered and its start is kept; a peak the database has not confirmed is re-sent on the next render (a write
+// that failed with no later rise would otherwise never be re-sent), and a confirmed one is not.
+run('db/044: the sampled peak RSI, per position: set from a measurement, never lowered, saved until confirmed', async () => {
+  const ctx = renderCtx();
+  const NOW_ISO = new Date(NOW).toISOString();
+  // BBB has no peak; EEE holds one above anything its bars give, sampled from an earlier time
+  const setup = fx => {
+    Object.assign(fx.portfolio.find(p => p.ticker === 'EEE'), { peakRsi: 99, peakRsiAt: '2026-10-30T15:00:00.000Z', peakRsiSampledFrom: '2026-10-29T16:30:00.000Z' });
+    // HHH holds a LOW peak: this render rises above it, and sampling's start must be kept, not reset to now
+    Object.assign(fx.portfolio.find(p => p.ticker === 'HHH'), { peakRsi: 1, peakRsiAt: '2026-10-30T19:00:00.000Z', peakRsiSampledFrom: '2026-10-30T18:30:00.000Z' });
+  };
+  const r = await renderIn(ctx, 'TIME_LIMIT', setup);
+  const B = JSON.parse(r.finalPositions).find(p => p.ticker === 'BBB'), E = JSON.parse(r.finalPositions).find(p => p.ticker === 'EEE');
+  assert.ok(typeof B.peakRsi === 'number' && B.peakRsi === r.rsiSeen.BBB.rsi, `BBB's first sample is its measured RSI: ${B.peakRsi}`);
+  assert.deepStrictEqual([B.peakRsiAt, B.peakRsiSampledFrom], [NOW_ISO, NOW_ISO], 'sampled now, and sampling began now');
+  const Hh = JSON.parse(r.finalPositions).find(p => p.ticker === 'HHH');
+  assert.ok(Hh.peakRsi > 1 && Hh.peakRsiAt === NOW_ISO && Hh.peakRsiSampledFrom === '2026-10-30T18:30:00.000Z', `a rise moves the peak and its time, never the start: ${JSON.stringify([Hh.peakRsi, Hh.peakRsiAt, Hh.peakRsiSampledFrom])}`);
+  assert.deepStrictEqual([E.peakRsi, E.peakRsiAt, E.peakRsiSampledFrom], [99, '2026-10-30T15:00:00.000Z', '2026-10-29T16:30:00.000Z'], 'a higher stored peak is untouched, and so is its start');
+  const savedPeak = id => r.saves.filter(([sid, json]) => sid === id && JSON.parse(json).peakRsi != null).length;
+  assert.ok(savedPeak('1001') >= 1, 'BBB\'s new peak is sent');
+  assert.ok(savedPeak('1004') >= 1, 'EEE\'s peak, never confirmed this session, is re-sent');
+  // the same render with EEE's 99 confirmed by the database: no peak-driven save for EEE
+  const r2 = await renderIn(ctx, 'TIME_LIMIT', fx => { setup(fx); fx.peakRsiSaved = { 1004: 99 }; });
+  // (EEE is also saved for an unrelated reason, its peakPrice set this render: so exactly ONE save fewer, not zero)
+  const n = rr => rr.saves.filter(([sid]) => sid === '1004').length;
+  assert.strictEqual(n(r2), n(r) - 1, `a confirmed peak is not re-sent (${n(r)} saves unconfirmed, ${n(r2)} confirmed)`);
+  // a measured RSI never enters the peak as a substitute: AAA unmeasured (5 bars), its peak stays unset
+  const r3 = await renderIn(ctx, 'TIME_LIMIT', fx => { fx.bars = { AAA: dailyBars(10.5).slice(-5) }; });
+  assert.ok(JSON.parse(r3.finalPositions).find(p => p.ticker === 'AAA').peakRsi == null, 'no peak from an unmeasured RSI');
 });
 
 // 2026-11-13 (the reviewer: "a count and the thing it counts must come from one computation"). The badge computed

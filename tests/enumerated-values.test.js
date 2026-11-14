@@ -230,9 +230,9 @@ const DECLARED = {
   // branch (gated-044-app); not_established is written by db/044's backfill and db/045's classification, which are
   // SQL; corrected and every peak_corrections value are written only by the owner's deliberate correction (the door:
   // the owner role, `set local edge2.correction`, the log row first), by hand, never by the app.
+  // CHANGED on the app side of db/044, declared: sampled_since and not_sampled are written by the sale now, and
+  // not_established by the sale too (a record an older build computed, retried), so their declarations are gone.
   'trades_v2.peak_rsi_provenance': {
-    ...each(['sampled_since', 'not_sampled'], { pending: 'the app side of db/044 (branch gated-044-app), behind db/pending-migrations.json' }),
-    not_established: { external: 'db/044 run 1 (the backfill of every existing row) and db/045 (rows an older build wrote in the window)' },
     corrected: { external: 'a deliberate correction, hand-run by the owner through the door (peak_corrections first; db/044)' },
   },
   'peak_corrections.table_name': each(['trades_v2', 'portfolio'], { external: 'a deliberate correction, hand-run by the owner (db/044); the app cannot read or write peak_corrections' }),

@@ -53,7 +53,11 @@ run('renderPortfolioTab: known render-time writes only (ratchet; spec §7.7 open
   const KNOWN = [
     'p.prevRSI',                    // read by calcPeakRiskScore's "RSI declining from peak" (-30)
     'state.ownedPrevRSI[p.ticker]', // the previous render's RSI, which becomes prevRSI
-    'state.ownedPeakRSI[p.ticker]', // max over renders -> peakRsiDuringHold on the sale
+    // CHANGED with db/044, declared: the sampled peak moved from the per-ticker phone map to the position itself,
+    // saved to its portfolio row (rising only there). Same write, same reader (the sale), now per position.
+    'p.peakRsi',                    // max over renders -> peak_rsi_during_hold on the sale (sampled_since)
+    'p.peakRsiAt',
+    'p.peakRsiSampledFrom',         // the first sample -> peak_rsi_sampled_from on the sale
     'p.liveTarget',                 // -> targetDriftPct on the sale
     'p.peakPrice',                  // max over renders -> exit engine pullback, trailing stop, peak_price
     'p.peakPriceDate',

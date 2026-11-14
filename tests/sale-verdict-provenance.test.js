@@ -57,8 +57,15 @@ run('the sale computes NO verdict: provenance not_recorded, every verdict field 
       assert.strictEqual(f[k], null, `${pos.ticker}: ${k} is null, never a default (lockInProfitsFired false would be a claim)`);
     }
     assert.strictEqual(f.peakRsiDuringHold, null, `${pos.ticker}: no render saw it -> null, NOT rsiAtBuy (${pos.rsiAtBuy})`);
+    // db/044: and it says so, with the value db/044's CHECK pairs with a missing peak
+    assert.deepStrictEqual([f.peakRsiProvenance, f.peakRsiSampledFrom], ['not_sampled', null], pos.ticker);
   }
-  assert.strictEqual(saleCtx({ ownedPeakRSI: { A: 71.5 } }).__f({ ticker: 'A', engineSource: 'EDGE', rsiAtBuy: 55 }, '2026-11-02').peakRsiDuringHold, 71.5, 'an observed peak is kept');
+  // CHANGED with db/044, declared: the observed peak is the POSITION's own (pos.peakRsi), not the per-ticker phone map.
+  // The phone map is ignored even when it holds a value: a second lot of the ticker no longer inherits the first's.
+  const kept = saleCtx({ ownedPeakRSI: { A: 99 } }).__f({ ticker: 'A', engineSource: 'EDGE', rsiAtBuy: 55, peakRsi: 71.5, peakRsiSampledFrom: '2026-11-14T15:00:00.000Z' }, '2026-11-02');
+  assert.strictEqual(kept.peakRsiDuringHold, 71.5, 'the position\'s sampled peak is kept (and the per-ticker 99 ignored)');
+  assert.deepStrictEqual([kept.peakRsiProvenance, kept.peakRsiSampledFrom], ['sampled_since', '2026-11-14T15:00:00.000Z'], 'sampled_since, from its first sample');
+  assert.strictEqual(saleCtx({ ownedPeakRSI: { A: 99 } }).__f({ ticker: 'A', engineSource: 'EDGE', rsiAtBuy: 55 }, '2026-11-02').peakRsiDuringHold, null, 'the phone map alone is not a peak');
   // The provenance set the app knows matches db/035's CHECK, exactly.
   assert.deepStrictEqual([...saleCtx().VERDICT_PROVENANCE ?? vm.runInContext('VERDICT_PROVENANCE', saleCtx())], ['sale_moment', 'mixed_moment', 'not_recorded']);
   const sql = readSource('db/035_trades_v2_verdict_provenance.sql');

@@ -49,7 +49,10 @@ run('the confirm says what is true: copies on this phone, the database untouched
   const t = h.confirms[0].msg;
   assert.ok(!/delete your portfolio and trade history|cannot be undone/i.test(t), 'the old false claim is gone: ' + t);
   assert.ok(/copies kept on this phone/.test(t) && /in the database are not touched/.test(t), t);
-  assert.ok(/does not remove the peak RSI of open positions or any queued write/.test(t), t);
+  // CHANGED with db/044, declared: the peak RSI is in the database now (nothing here touches it); what stays on the
+  // phone and is never cleared by this: the queued writes and Warrior's pre-market observations
+  assert.ok(/does not remove any queued write or Warrior's pre-market observations: those stay/.test(t), t);
+  assert.ok(!/peak RSI/.test(t), 'no claim that the peak RSI is on this phone');
   assert.ok(/as listed under Storage on this phone/.test(t), 'it points at the readout, so the two describe one world');
   // (the reviewer) the cost first, the identifiers last
   assert.ok(t.indexOf('those stay') < t.indexOf('edge_'), 'the reassurance arrives before the first key name: ' + t);
@@ -63,7 +66,8 @@ run('the export is named for what it does, and says what it does not include', (
   const i = app.indexOf('const EXPORT_SCOPE_TEXT = ');
   const scope = app.slice(i, app.indexOf('\n', i));
   assert.ok(/copy of the database records/.test(scope) && /not a backup of this phone/.test(scope), scope);
-  assert.ok(/does not include the peak RSI of open positions or any queued write/.test(scope) && /nothing can be loaded back/.test(scope), scope);
+  // CHANGED with db/044, declared: the positions it reads now carry their sampled peak RSI
+  assert.ok(/does not include any queued write/.test(scope) && /nothing can be loaded back/.test(scope) && !/peak RSI/.test(scope), scope);
   assert.ok(app.includes('<div class="settings-hint" id="export-scope" style="padding:0 16px 12px">${EXPORT_SCOPE_TEXT}</div>'), 'shown under the button');
   // The scope line is true only while the export reads the database alone. If it ever starts reading this phone's
   // storage, the line (and this test) must be revisited, not left to go stale.

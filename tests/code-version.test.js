@@ -38,7 +38,11 @@ run('currentCodeVersion reads the loaded app.js stamp, never a constant', () => 
 run('trades_v2: the buy version is copied, the sale writes its own, and the label uses the buy thresholds', () => {
   const w = code(fn('app.js', 'writeTradeToSupabase'));
   assert.ok(/code_version: pos\.codeVersion \?\? null/.test(w), 'code_version copied from the position (NULL for pre-writer positions, never guessed)');
-  assert.ok(/sale_code_version: currentCodeVersion\(\)/.test(w), 'sale_code_version is the running code');
+  // CHANGED with db/044, declared (the reviewer's retry build-stamp note): sale_code_version is the build that COMPUTED
+  // the sale (stamped on the record when the sale is entered), not the running code: a Retry writes later, on another
+  // build. A record from a build that did not stamp it writes NULL ("not recorded"; the shape CHECK admits only that).
+  assert.ok(/sale_code_version: record\.saleCodeVersion !== undefined \? record\.saleCodeVersion : null/.test(w), 'sale_code_version is the computing build');
+  assert.ok(/saleCodeVersion: currentCodeVersion\(\),/.test(code(fn('app.js', 'confirmMarkSold'))), 'stamped when the sale is entered');
   assert.ok(/scoreLabel\(pos\.scoreAtBuy, buyScoringVersion\)/.test(w), 'signal_label comes from the buy scoring version');
   assert.ok(!/>= ?116|>= ?73/.test(w), 'no literal thresholds left in the sale path');
 });

@@ -239,6 +239,11 @@ function mapSupabasePortfolioRowToPosition(row) {
     catalystSetup: !!row.catalyst_setup,
     peakPrice: row.peak_price,
     peakPriceDate: row.peak_price_date ? row.peak_price_date.split('T')[0] : row.peak_price_date,
+    // db/044: the SAMPLED peak RSI of this position (the max over the Portfolio tab's renders), kept in the database,
+    // rising only there (a trigger). All three null together, or all set.
+    peakRsi: row.peak_rsi ?? null,
+    peakRsiAt: row.peak_rsi_at ?? null,
+    peakRsiSampledFrom: row.peak_rsi_sampled_from ?? null,
     momentumProtectionActivated: !!row.momentum_protection_activated,
     rsiSuspendedAtGainPct: row.rsi_suspended_at_gain_pct,
     buyTime: row.buy_time,
@@ -342,6 +347,11 @@ function mapPositionToSupabaseRow(position) {
     catalyst_setup: !!position.catalystSetup,
     peak_price: position.peakPrice,
     peak_price_date: position.peakPriceDate,
+    // db/044 (sent only once it is applied: this code is gated on it, db/pending-migrations.json). The database keeps
+    // the GREATEST of what is stored and what is sent, so a stale session can never lower it.
+    peak_rsi: position.peakRsi ?? null,
+    peak_rsi_at: position.peakRsiAt ?? null,
+    peak_rsi_sampled_from: position.peakRsiSampledFrom ?? null,
     momentum_protection_activated: !!position.momentumProtectionActivated,
     rsi_suspended_at_gain_pct: position.rsiSuspendedAtGainPct,
     buy_time: position.buyTime,
