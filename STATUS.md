@@ -520,6 +520,15 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - The default-ACL fix itself (scoped in the spec, not built).
 
 ## Closed recently, so they don't come back
+- **WITHDRAWN 2026-11-14: "`scan_runs.build_version` is null on every run, an unwritten provenance column."** It is
+  not unwritten. db/028 replaced it with `code_version`, and both column comments say so ("Replaces build_version,
+  which is uninformative after 2026-09-15"). All 191 rows carry one or the other: 46 `build_version` (before
+  db/028), 145 `code_version`. And the app never writes `scan_runs`: only the scheduled loggers do. The finding came
+  from joining Roman's app scans (rating_snapshots) to a table that does not contain them, on the retired column.
+  The rule proposed with it ("a provenance column that is never written is worse than no column") did NOT ship: no
+  real instance was found, and a rule is not shipped on a fabricated one. Whoever next notices
+  `scan_runs.build_version` being null: it is retired, not missing. (One of three withdrawals that week, with the
+  retired-cache theory and the runner timeout.)
 - **Closed by the record (2026-11-12 gate audit), each satisfied before it was crossed off:**
   - step 4 after db/037 (a real buy and a real sale landing): 105 buys and 99 sales on 11-09/10, all landed;
   - the RUN-ME-8 capture: `live-schema-2026-11-06.json`, with live-columns regenerated since from 11-11 and 11-11b;

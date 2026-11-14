@@ -66,6 +66,18 @@ function await_run(name, make) {
     assert.ok(/^\s*Avg RSI:\s+wins —\s/.test(line(text, /^\s*Avg RSI:/)), line(text, /^\s*Avg RSI:/));
     assert.ok(!/NaN/.test(text), 'no NaN');
   });
+  // (the reviewer, 2026-11-14) the other direction: a REAL zero is a measurement. avg([0, 0]) is 0.0, never the dash
+  // that means "nothing", and a zero is never counted as skipped.
+  run(`${name}: genuine zeros print 0.0 and are not skipped`, async () => {
+    const t = JSON.parse(JSON.stringify([...WINS, ...LOSSES]));
+    for (const r of t) { r.rsi_at_buy = 0; r.risk_score = 0; }
+    const text = await make(t);
+    assert.ok(/^\s*Avg RSI:\s+wins 0\.0\s+\| losses 0\.0\s*$/.test(line(text, /^\s*Avg RSI:/)), line(text, /^\s*Avg RSI:/));
+    assert.ok(/^\s*Avg risk score:\s+wins 0\.0\s+\| losses 0\.0\s*$/.test(line(text, /^\s*Avg risk score:/)), line(text, /^\s*Avg risk score:/));
+    assert.ok(!/not recorded, skipped|not bucketed/.test(text), 'a zero is never skipped');
+    const ls = text.split('\n'); const i = ls.findIndex(x => /^RSI at purchase — win rate by bucket:/.test(x.trim()));
+    assert.ok(/:\s*6 trades/.test(ls[i + 1]), `all six zeros in the lowest RSI bucket: ${ls[i + 1]}`);
+  });
   run(`${name}: control, nothing unrecorded, nothing said about skipping`, async () => {
     const text = await make(JSON.parse(JSON.stringify([...WINS, ...LOSSES])));
     assert.ok(!/not recorded, skipped|not bucketed/.test(text));
