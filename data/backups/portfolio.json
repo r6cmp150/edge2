@@ -70,7 +70,10 @@
     "bars_as_of_at_buy": "2026-11-02",
     "macro_path_at_buy": "unknown",
     "execution_mode": "not_known",
-    "execution_mode_source": null
+    "execution_mode_source": null,
+    "peak_rsi": null,
+    "peak_rsi_at": null,
+    "peak_rsi_sampled_from": null
   },
   {
     "id": 1005,
@@ -143,7 +146,10 @@
     "bars_as_of_at_buy": "2026-11-02",
     "macro_path_at_buy": "unknown",
     "execution_mode": "not_known",
-    "execution_mode_source": null
+    "execution_mode_source": null,
+    "peak_rsi": null,
+    "peak_rsi_at": null,
+    "peak_rsi_sampled_from": null
   },
   {
     "id": 1007,
@@ -217,7 +223,10 @@
     "bars_as_of_at_buy": "2026-11-02",
     "macro_path_at_buy": "unknown",
     "execution_mode": "not_known",
-    "execution_mode_source": null
+    "execution_mode_source": null,
+    "peak_rsi": null,
+    "peak_rsi_at": null,
+    "peak_rsi_sampled_from": null
   },
   {
     "id": 1008,
@@ -293,7 +302,10 @@
     "bars_as_of_at_buy": "2026-11-02",
     "macro_path_at_buy": "unknown",
     "execution_mode": "not_known",
-    "execution_mode_source": null
+    "execution_mode_source": null,
+    "peak_rsi": null,
+    "peak_rsi_at": null,
+    "peak_rsi_sampled_from": null
   },
   {
     "id": 1027,
@@ -367,7 +379,10 @@
     "bars_as_of_at_buy": "2026-11-02",
     "macro_path_at_buy": "unknown",
     "execution_mode": "not_known",
-    "execution_mode_source": null
+    "execution_mode_source": null,
+    "peak_rsi": null,
+    "peak_rsi_at": null,
+    "peak_rsi_sampled_from": null
   },
   {
     "id": 1044,
@@ -441,6 +456,9 @@
     "bars_as_of_at_buy": "2026-11-02",
     "macro_path_at_buy": "unknown",
     "execution_mode": "not_known",
-    "execution_mode_source": null
+    "execution_mode_source": null,
+    "peak_rsi": null,
+    "peak_rsi_at": null,
+    "peak_rsi_sampled_from": null
   }
 ]
