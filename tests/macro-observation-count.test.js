@@ -91,6 +91,36 @@ await run('the sign-test bar: both halves printed, labelled days and the split b
   assert.ok(!/1\.23|0\.4|2\.0\b|outcome/i.test(r.out.split('sign-test bar')[1]), 'no outcome printed: ' + r.out);
 });
 
+// 2026-11-17: the DECLARED ENDING (STATUS). From 20 labelled days: extended until 5 away or 40 days; at 40 with fewer
+// than 5 away, cannot conclude and closed; judged on the first 40 days in date order, so a later day cannot reopen it.
+// `conds` is one condition per labelled day, in date order.
+async function bar(conds) {
+  const day = i => new Date(Date.UTC(2026, 11, 1) + i * 86400e3).toISOString().slice(0, 10);
+  const observations = conds.map((c, i) => lab(`o${i}`, day(i), c));
+  const signals = conds.map((c, i) => sig(`s${i}`, day(i), '15:00', 0.001 * (i % 7)));
+  return count({ scans: conds.map((_, i) => scan(i + 1, 'groq', `o${i}`)), observations, signals });
+}
+const rep = (c, n) => Array(n).fill(c);
+await run('the declared ending: not printed below 20 labelled days', async () => {
+  const r = await bar(rep('RISK_OFF', 19));
+  assert.ok(r.out.includes('labelled days 19 of 20') && !/declared ending/.test(r.out), r.out);
+});
+await run('the declared ending: 20 days, 4 away -> EXTENDED, with how far to each end', async () => {
+  const r = await bar([...rep('RISK_OFF', 16), ...rep('BROAD_RALLY', 4)]);
+  assert.ok(r.out.includes('declared ending (2026-11-17): EXTENDED: 20 of at most 40 labelled days, 4 of 5 away; it ends at 5 away or at 40 days.'), r.out);
+  assert.strictEqual(r.code, 0, 'a state, never red');
+});
+await run('the declared ending: met inside the extension (27 days, 5 away; CHOPPY counts as away) -> BAR MET', async () => {
+  const r = await bar([...rep('RISK_OFF', 22), ...rep('CHOPPY', 2), ...rep('BROAD_RALLY', 3)]);
+  assert.ok(r.out.includes('declared ending (2026-11-17): BAR MET (27 labelled days, 5 away): the test may be run.'), r.out);
+});
+await run('the declared ending: 40 days, 4 away -> CANNOT CONCLUDE and closed; a 5th away on day 41 does not reopen it', async () => {
+  const r = await bar([...rep('RISK_OFF', 36), ...rep('BROAD_RALLY', 4), 'BROAD_RALLY']);
+  assert.ok(r.out.includes('declared ending (2026-11-17): CANNOT CONCLUDE -- the reading did not vary enough to be tested: 40 labelled days, 4 of 5 away (+ 4, - 36, 0 0); the sign-test is closed.'), r.out);
+  assert.ok(r.out.includes('labelled days 41 of 20'), 'the plain count still reports all 41');
+  assert.ok(!/outcome|0\.00[1-6]/i.test(r.out.split('sign-test bar')[1]), 'still no outcome');
+});
+
 await run('the bar\'s signal_log read DENIED (200, empty): COULD NOT READ and red, never "0 labelled days"', async () => {
   const r = await count({ scans: [scan(1, 'groq', 'a')], observations: [lab('a', '2026-11-13', 'RISK_OFF')], signals: [] });
   assert.strictEqual(r.code, 1, r.out);

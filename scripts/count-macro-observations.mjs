@@ -29,6 +29,9 @@ import { assertReadable } from './lib/readable.mjs';
 // outcomes before the bar is met is the look the registration exists to prevent). It never changes the exit code on
 // its own: a bar not yet met is a state, not a defect. A read that fails or is denied is.
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// The declared ending's cap (STATUS, "Declared 2026-11-17, before the bar was met"). Part of the registration as
+// declared that day, not a parameter: changing it is an amendment, and an amendment is dated in STATUS first.
+const ENDING_CAP = 40;
 function macroAdjustments() {
   const edge = readFileSync(path.join(ROOT, 'core/edge-scoring.js'), 'utf8');
   const at = edge.indexOf('const MACRO_ADJUSTMENTS = {');
@@ -110,6 +113,18 @@ export async function main({ fetchImpl = fetch, log = console.log, now = new Dat
     log(`  sign-test bar (scripts/lib/macro-sign-test.mjs, the registration, unchanged): labelled days ${b.n} of ${MIN_DAYS}; ` +
         `by predicted sign + ${b.plus}, - ${b.minus}, 0 ${b.zero}; away from the most common sign ${b.awayFromCommon} of ${MIN_DAYS_AWAY_FROM_COMMON_SIGN}; ${b.met ? 'BAR MET' : 'not met'}.`);
     log(`  not labelled: ${dropped.length ? dropped.map(d => `${d.date} (${d.reason})`).join('; ') : 'none'}.`);
+    // THE DECLARED ENDING (STATUS, "Declared 2026-11-17, before the bar was met"): from 20 labelled days, the window
+    // extends until 5 are away from the most common sign or 40 labelled days, whichever comes first; at 40 with fewer
+    // than 5 away, cannot conclude, and the test is closed. Judged on the first 40 labelled days in date order, so a
+    // day after the close cannot reopen it. Counts only, as above.
+    if (b.n >= MIN_DAYS) {
+      const firstCap = days.slice().sort((x, y) => String(x.date).localeCompare(String(y.date))).slice(0, ENDING_CAP);
+      const c = barState(firstCap);
+      const state = c.met ? `BAR MET (${c.n} labelled days, ${c.awayFromCommon} away): the test may be run`
+        : c.n >= ENDING_CAP ? `CANNOT CONCLUDE -- the reading did not vary enough to be tested: ${ENDING_CAP} labelled days, ${c.awayFromCommon} of ${MIN_DAYS_AWAY_FROM_COMMON_SIGN} away (+ ${c.plus}, - ${c.minus}, 0 ${c.zero}); the sign-test is closed`
+        : `EXTENDED: ${c.n} of at most ${ENDING_CAP} labelled days, ${c.awayFromCommon} of ${MIN_DAYS_AWAY_FROM_COMMON_SIGN} away; it ends at 5 away or at ${ENDING_CAP} days`;
+      log(`  declared ending (2026-11-17): ${state}.`);
+    }
   }
   return bad ? 1 : 0;
 }

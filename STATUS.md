@@ -288,6 +288,16 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - **Declared 2026-11-13, before the first observation was written (part of the registration, not an amendment):** any
   day on which the deployed build's macro-overlay constant changed is excluded from the sign-test, decided by the
   build stamps on that day's rows (`macro_observations.code_version`), not by the rows' contents.
+- **Declared 2026-11-17, before the bar was met (part of the registration, not an amendment): the ending.** If 20
+  labelled days are reached with fewer than 5 away from the most common sign, the window extends until 5 are away
+  **or** until 40 labelled days, whichever comes first. At 40 labelled days with fewer than 5 away, the result is
+  reported as **cannot conclude -- the reading did not vary enough to be tested**, with the split, and the sign-test
+  is closed rather than extended again. "Labelled days" and "away from the most common sign" are exactly what the
+  registration's code counts (barState: away = labelled days minus the largest of the +, - and 0 counts), so a
+  CHOPPY day (sign 0) counts as away, as a + day does. The bar can be met with no + day at all, contrasting - with 0.
+  That is the registration as written and it stands; it is stated here so nobody discovers it later. Decided at 2
+  labelled days (+ 0, - 2, 0 0), while the data could not influence it. The cap of 40 is not dated: the rate at
+  which scan days label had been measured for five days.
 - **Before (c), the macro reading was NOT observe-only: it raised the display line (established from code and data,
   2026-11-13).** On main before (c), `getDisplayThreshold` (app.js 1791-1796) returned the elevated cut for RISK_OFF
   and GEOPOLITICAL (every category) and for a weak sector's universe. It never consulted `disableMacroOverlay`, and the
@@ -312,7 +322,11 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   so the before and after is not reconstructed later.
 - **BOTH HALVES OF THE BAR ARE PRINTED DAILY (2026-11-17), instrumentation of the registration, not an amendment to
   it.** The same script now prints the labelled days AND the split by predicted sign against the 5-away threshold,
-  counted by the registration's own buildDays and barState (no outcome is printed). On the record, before it can be
+  counted by the registration's own buildDays and barState. From 20 labelled days it also prints the declared
+  ending's state (extended, met, or cannot conclude). **THE LINE NEVER PRINTS A DAY'S OUTCOME, AND NOTHING IS TO BE
+  ADDED TO IT "FOR CONTEXT"** (the reviewer, 2026-11-17): the outcomes are the test's input, and reading them before
+  the bar is met is the look the registration exists to prevent. This is the instrument's most important property,
+  and a test holds it (tests/macro-observation-count.test.js). On the record, before it can be
   read as a result (live 2026-11-17T20:02Z): **2 labelled days of 20, by predicted sign + 0, - 2, 0 0; away from
   the most common sign 0 of 5.** 11-13 (SECTOR_WEAKNESS_TECH) and 11-16 (RISK_OFF). 11-17 is not yet labelled (no
   shown signal with a close return: the returns fill after the close). 11-12 drops (all its signals predate the
