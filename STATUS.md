@@ -346,7 +346,20 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   where it is; not to be run, re-pointed or run with `--rev`.
 
 ## Being verified
-- **db/044, the sampled peak RSI with provenance (2026-11-14): COMMITTED, NOT APPLIED.** Order for Roman, one paste:
+- **db/044: APPLIED 2026-11-14; run 2 INCOMPLETE, not failed (three states).** Verified from the capture
+  (live-schema-2026-11-14.json, decoded by the reviewer): +1 table, +16 columns, all five CHECKs, all four triggers,
+  and run 2's own backfill line, 819 not_established / 0 other / 0 null. Run 2's write-once probe got 42501
+  `permission denied for table trades_v2`. It ran as outcome_filler, which holds SELECT and UPDATE on only 7 columns
+  (live-grants-2026-11-06.json), so the column grant refused it before the trigger was reached. The harness had
+  modelled outcome_filler with full UPDATE. With the grants now modelled from db/037's applied text and the 11-06
+  baseline, the harness reproduces the live failure character for character. **RUN-ME-18b**
+  (db/044-run-2b-behaviour.sql) probes write-once as the owner, the only role that can reach a peak column, and
+  asserts both grant refusals (anon; outcome_filler on a peak column), with outcome_filler's own column as the
+  positive control. It prints the live grants it depends on in its RESULT line. **Harness grants are MODELLED, NOT
+  CAPTURED** until the schema capture carries grants (batched with db/046), so the harness pass on 18b shows it works
+  against the model, not against the live grants; 18b's own printed grants are the live reading. db/045 waits for
+  its read-back; the app side waits for a capture regenerated into live-columns.json.
+- (as committed, for the record) **db/044, the sampled peak RSI with provenance (2026-11-14): COMMITTED, NOT APPLIED.** Order for Roman, one paste:
   RUN-ME-16 (sizes, plus the organisation's total from the dashboard), db/044 run 1, run 2 (whose red "Failed" carries
   `RESULT: PASS`), then a fresh capture. The app side waits on branch gated-044-app (db/pending-migrations.json
   [44]); its one failing test, enumerated-values' "the database permits every written value", clears with that

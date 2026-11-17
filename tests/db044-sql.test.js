@@ -16,12 +16,15 @@ const run1 = norm('db/044_peak_rsi_sampled.sql');
 const run2 = norm('db/044-run-2-behaviour.sql');
 const undo = norm('db/044-rollback.sql');
 const s045 = norm('db/045_peak_rsi_provenance_not_null.sql');
+const run2b = norm('db/044-run-2b-behaviour.sql');
 // Changing a file the harness proved means proving it again: move a pin only after test-044 passes on the new text.
 const PINS = {
   'db/044_peak_rsi_sampled.sql': 'bbdf91daf59492b04aaafff0831e6b0b2bb077d33618c13949b3aea751bce73a',
   'db/044-run-2-behaviour.sql': 'c3faee9fcf28ddb268875e2f7238723d24d3a849424c545f310b5340411362c3',
   'db/044-rollback.sql': 'f5df1cc397105e9403b6256c622340817a6fccec2022176c85de9ce4e78b57ce',
   'db/045_peak_rsi_provenance_not_null.sql': '8645b87bd596bd0cefc80bd26dd6661a6ac7efc8dc5cba02ceab769aded2fa76',
+  // 2026-11-17: run 2 again, corrected (its write-once probe ran as a role the grants refuse first). Prints its grants.
+  'db/044-run-2b-behaviour.sql': '5af086ecdfce294c56ff7a644ff2d360f55257d217ca6eac865961508a2ff3e3',
 };
 const VALUES = ['sampled_since', 'not_sampled', 'not_established', 'corrected'];
 const valuesIn = (text, anchor) => {
@@ -92,6 +95,19 @@ await run('the correction log\'s time and author are FORCED by a trigger, never 
 await run('the fill exemption is exactly the NULL -> value transition, and the peak_price asymmetry is written down', () => {
   assert.ok(run1.includes('  if old.filled_at is null and new.filled_at is not null then return new; end if;'));
   assert.ok(/peak_price has no provenance column, so a reset here leaves no\s+-- trace in the row/.test(run1));
+});
+
+await run('run 2b prints the grants it depends on, and probes write-once where a role can reach it (the owner)', () => {
+  // A probe that depends on a precondition prints that precondition (the reviewer, 2026-11-17).
+  assert.ok(/aclexplode\(c\.relacl\)/.test(run2b) && /aclexplode\(att\.attacl\)/.test(run2b), 'table and column grants, from the catalog');
+  assert.ok(run2b.includes('and a.grantee <> c.relowner'), 'every grantee but the owner, not a list of expected roles');
+  assert.ok(/GRANTS \(read from the catalog, this transaction\): %/.test(run2b) && /, grants;\s*\nend \$\$;/.test(run2b), 'in the RESULT line');
+  // the owner, undeclared, is the only role that can reach a peak column; outcome_filler and anon are refused at the grant
+  const wo = run2b.slice(run2b.indexOf('-- write-once, where it can reach'), run2b.indexOf('-- the grant layer'));
+  assert.ok(!/set local role/.test(wo), 'the write-once probe runs as the owner');
+  assert.ok((run2b.match(/when insufficient_privilege then ngrant := ngrant \+ 1;/g) || []).length === 2, 'two grant refusals asserted');
+  assert.ok(run2b.includes("update trades_v2 set sell_timing_resolved = sell_timing_resolved"), 'outcome_filler\'s own column, the positive control');
+  assert.ok(!/outcome_filler \(a real role with UPDATE on trades_v2\)/.test(run2b), 'the false assumption is gone');
 });
 
 await run('the rollback drops exactly what run 1 creates, and refuses once anything was recorded', () => {
