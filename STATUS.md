@@ -295,7 +295,11 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   is closed rather than extended again. "Labelled days" and "away from the most common sign" are exactly what the
   registration's code counts (barState: away = labelled days minus the largest of the +, - and 0 counts), so a
   CHOPPY day (sign 0) counts as away, as a + day does. The bar can be met with no + day at all, contrasting - with 0.
-  That is the registration as written and it stands; it is stated here so nobody discovers it later. Decided at 2
+  That is the registration as written and it stands; it is stated here so nobody discovers it later.
+  **Declared 2026-11-17.** The result states which contrast carried the minority. A bar met with CHOPPY days as the
+  minority is reported as a test of *whether a move occurred*, not of *its direction*, and the two are never pooled
+  into a single claim. (- against + tests direction, the claim the overlay was built on; - against 0 tests the
+  presence of a move, a real and weaker result.) Decided at 2
   labelled days (+ 0, - 2, 0 0), while the data could not influence it. The cap of 40 is not dated: the rate at
   which scan days label had been measured for five days.
 - **Before (c), the macro reading was NOT observe-only: it raised the display line (established from code and data,
