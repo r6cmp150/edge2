@@ -201,6 +201,15 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   and price cannot be separated in this data: which of them the pattern tracks is **unknown**, not "both".
 
 ## Decision points (a date by which something is decided, not a reminder)
+- **DECIDED 2026-11-17 (the reviewer): the stored daily bars stay where they are, in all three homes.** The held-score
+  cache (`edge_ownedScores`) is bounded by PRUNING to open positions and pending orders (P1, shape A); its records keep
+  their bars, so `trades_v2.signal_before_sale` (which copies the record at a sale) is unchanged. Measured: one record
+  ~13,200 characters, 92-93% bars; 132 of 132 PREDATES_SALE rows carry bars, 88% of their size; `signal_log`'s
+  snapshots 87.3% bars, the buy snapshots 85.8%. Database 46.2 MB of 500 MB (9.2%, read 2026-11-14). **Revisit if
+  either holds:** (1) the database passes ~40% of the free quota, or its measured growth puts it there inside two
+  years; (2) something starts reading `signal_before_sale` and establishes what it needs from it. **When revisited,
+  all three are reasoned about together** (the phone record, `signal_before_sale`, the buy snapshot): one field,
+  three homes. A record's contents are not changed as a side effect of an unrelated fix.
 - **THE SCHEDULE, IN ONE LINE (2026-11-13): three measurements restarted at (c) from zero (the macro sign-test, the
   scoring-v2 forward test, the S1 forward test), and all three advance only when Roman uses the app. Two of them also
   need him to record buys, and for those there is no engineering fix: they need trades. The logger-observes proposal
@@ -463,6 +472,19 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **The held-score prune (P1, build 20261117233000) runs only on an ESTABLISHED portfolio.** A read that returned rows
+  is established; an empty one only once the trades_v2 control reads non-empty; otherwise nothing is pruned and
+  Settings > Storage says "Held-score cache not pruned this scan: <reason>". **After Roman reloads, re-measure his
+  store** (the readout now counts entries: `edge_ownedScores` should fall from ~247 to his open positions plus
+  pending orders at the first scan), then rule on P3 (same-tier eviction), deferred until then.
+- **Roman's quota failure, REPRODUCED 2026-11-17** (by accident, seeding a 390px render): headless Chromium refused
+  `localStorage.setItem('edge_ownedScores', ...)` with QuotaExceededError once ~3.3 MB of seeded caches were in
+  place. Until then we had only his screenshot of "Save failed -- Storage full?". The seed was illustrative (padded
+  records), not his data; the condition, a tier-4 write refused on a full store, is the same.
+- **The fabricated neutral, logged (spec 7.7: a value nobody measured shown or stored as if it were one).** Eight
+  instances in six days, in two files, by six routes (the reviewer's count, 2026-11-17), among them RSI 50, risk 5,
+  score 0 and the at-buy fields 0; #7 `deriveVolumeTrend`'s 'flat' for under 3 bars (FIXED with P1 2026-11-17), and **#8, OPEN: app.js `(stock.volTrend || 'normal')` in the stock modal shows "Normal"
+  for a stock with no volume trend.** Not reachable through P1, so not in its commit; next batch.
 - **NOT A DEFECT: the open positions' `peak_rsi_sampled_from` is later than their buy date** (db/044's app side). The
   positions open when it deploys start sampling at their first render on the new build. They are not seeded from
   the old phone-held peaks, which may carry the buy-RSI fallback (fixed in dd1ba4e) and cannot be told apart. So

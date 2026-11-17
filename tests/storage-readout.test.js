@@ -16,7 +16,7 @@ const grab = n => { const i = app.search(new RegExp(`^function ${n}\\(`, 'm')); 
 const constBlock = n => { const i = app.indexOf(`const ${n} = {`); assert.ok(i >= 0, n); return app.slice(i, app.indexOf('\n};\n', i) + 4); };
 const tiers = store.slice(store.indexOf('const PERSIST_TIER = {'), store.indexOf('\n};\n', store.indexOf('const PERSIST_TIER = {')) + 4);
 
-function harness(entries) {
+function harness(entries, state = {}) {
   const m = new Map(Object.entries(entries));
   const writes = [];
   const localStorage = {
@@ -28,7 +28,7 @@ function harness(entries) {
     clear: () => { writes.push(['clear']); throw new Error('the readout must not clear'); },
   };
   const el = { innerHTML: '' };
-  const c = { localStorage, document: { getElementById: id => (id === 'storage-readout' ? el : null) }, navigator: {}, String, Math, Object, console };
+  const c = { localStorage, document: { getElementById: id => (id === 'storage-readout' ? el : null) }, navigator: {}, String, Math, Object, console, JSON, Array, state };
   vm.createContext(c);
   vm.runInContext([tiers, constBlock('STORAGE_KEYS_OUTSIDE_PERSIST'), grab('storageKeyLabel'), grab('storageReadoutRows'), grab('renderStorageReadout'),
     ';globalThis.__rows = storageReadoutRows; globalThis.__render = renderStorageReadout;'].join('\n'), c);
@@ -82,4 +82,28 @@ run('the outside-persist table names only keys the code really uses', () => {
 run('Settings shows it, in App Info', () => {
   assert.ok(app.includes('<span class="settings-label">Storage on this phone (read-only)</span>') && app.includes('id="storage-readout"'));
   assert.ok(/\n  loadDatabaseUsage\(\);\n  renderStorageReadout\(\);\n/.test(app), 'rendered with Settings');
+});
+
+// P1 (2026-11-17): the reviewer: "the readout gains an entry count, so 247 becomes a reading rather than my arithmetic".
+run('entries: an object-valued key shows how many it holds, an array its length, anything else no count; and the last prune is shown', () => {
+  const owned = {}; for (let i = 0; i < 247; i++) owned['T' + i] = { score: 1 };
+  const h = harness({ edge_ownedScores: JSON.stringify(owned), edge_sold: JSON.stringify([1, 2, 3]), edge_lastScanTime: '123', edge2_pin_hash: 'h' },
+    { heldScorePrune: { pruned: ['OLD1', 'OLD2'], kept: 6 } });
+  const rows = Object.fromEntries(JSON.parse(JSON.stringify(h.c.__rows())).map(r => [r.key, r.entries]));
+  assert.deepStrictEqual(rows, { edge_ownedScores: 247, edge_sold: 3, edge_lastScanTime: null, edge2_pin_hash: null });
+  h.c.__render();
+  assert.ok(h.el.innerHTML.includes('tier 4 (a cache) · 247 entries'), h.el.innerHTML.slice(0, 600));
+  assert.ok(h.el.innerHTML.includes('Last scan this session pruned 2 held-score entries (OLD1, OLD2); 6 kept (open positions and pending orders).'));
+  assert.deepStrictEqual(h.writes, [], 'still writes nothing');
+  const none = harness({ edge_signals: '[]' }); none.c.__render();
+  assert.ok(!/pruned/.test(none.el.innerHTML), 'no scan this session: no prune line');
+});
+
+// The reviewer, 2026-11-17: "a skipped prune that looks identical to a prune with nothing to do is how this stays
+// invisible for a month". A scan that could not establish the portfolio says so, and names no deletion.
+run('a skipped prune is shown as skipped, with its reason, never as "nothing to prune"', () => {
+  const h = harness({ edge_signals: '[]' }, { heldScorePrune: { notPruned: 'the portfolio read back empty and so did trades_v2, which never is: a denied read cannot be ruled out' } });
+  h.c.__render();
+  assert.ok(h.el.innerHTML.includes('Held-score cache not pruned this scan: the portfolio read back empty and so did trades_v2, which never is: a denied read cannot be ruled out.'), h.el.innerHTML.slice(-600));
+  assert.ok(!/Last scan this session pruned/.test(h.el.innerHTML), 'no prune line for a prune that did not run');
 });

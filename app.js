@@ -937,6 +937,8 @@ let state = {
   selectedUniverse: 'OTHER',
   notifications: {},     // push notification state — persisted
   ownedScores: {},        // ticker → {score, label, scoringVersion, scannedAt, signal} snapshotted at each screener run (the full signal since 2026-10-28; read through currentSignalForHolding), for owned positions that no longer clear the display threshold — persisted, so read ONLY through currentOwnedScore() (a stored score from another formula is not evaluated, never used)
+  heldScorePrune: null,   // P1 (2026-11-17): { pruned: [tickers], kept } or { notPruned: reason } from the last scan this session, for the Storage readout. Not persisted.
+  portfolioLoad: null,    // { at, rows } once this session's portfolio read answered; null until then. Session only, never persisted.
   displayedVerdicts: {},  // position id → what its card last showed (Verdict A). Session only, never persisted.
   ownedPrevRSI: {},       // ticker → RSI from the previous portfolio render, for detecting "declining from peak" in calcPeakRiskScore — persisted
   ownedPeakRSI: {},       // RETIRED by db/044 (2026-11-14): no longer written or read for a sale; the peak RSI is the position's own, in the database. Kept only so an older phone's stored value is not mistaken for an unknown key.
@@ -1946,6 +1948,39 @@ function currentSignalForHolding(ticker) {
   return sig ? { ...sig, scannedAt: state.lastScanTime ?? null, scoreSource: 'scan' } : null;
 }
 
+// The held-score cache's bound (P1, 2026-11-17; shape A: prune only, the records keep their bars, so the sale's
+// signal_before_sale is unchanged). Keeps an entry only for a ticker in `keep` (open positions and pending orders);
+// every other entry is deleted, and named in the result, never silently. Its readers, enumerated: currentOwnedScore /
+// currentSignalForHolding (held tickers), signalBeforeSale (at the sale, while the position exists; a Retry replays
+// the stored record), and the stock modal's score, which for an UNHELD ticker used to show the weeks-old record of
+// an earlier holding and now computes a fresh breakdown (an improvement, not collateral). -> { pruned: [tickers,
+// sorted], kept: n }
+// The keep-set must be ESTABLISHED, not merely read (the reviewer, 2026-11-17: "an empty list that might mean nothing
+// and might mean could-not-tell is not a keep-set"). Three states:
+//   the portfolio read answered with rows  -> established (a denied read returns no rows): keep open + pending;
+//   it answered with NO rows                -> established only if the CONTROL reads trades_v2 (never empty) as
+//                                              non-empty, then keep nothing; the control's limit is readNotKnownCount's:
+//                                              it catches a blanket denial, not a policy filtering some rows;
+//   it has not answered this session, or the control fails or reads 0 -> NOT established: no prune, and the reason.
+// Changes made in this session after the read (an add, a sale) are this phone's own, so they count as known.
+// -> { keep: [tickers] } | { notEstablished: reason }
+async function heldScoreKeepSet(load, holdings, controlCount) {
+  if (!load) return { notEstablished: 'the portfolio has not been read this session' };
+  if (load.rows === 0) {
+    let n;
+    try { n = await controlCount(); } catch (e) { return { notEstablished: `the portfolio read back empty and the control read failed (${e && e.message || e})` }; }
+    if (!(n > 0)) return { notEstablished: 'the portfolio read back empty and so did trades_v2, which never is: a denied read cannot be ruled out' };
+  }
+  return { keep: holdings.map(p => p.ticker) };
+}
+
+function pruneHeldScores(ownedScores, keep) {
+  const keepSet = new Set(keep);
+  const pruned = Object.keys(ownedScores).filter(t => !keepSet.has(t)).sort();
+  for (const t of pruned) delete ownedScores[t];
+  return { pruned, kept: Object.keys(ownedScores).length };
+}
+
 function currentOwnedScore(ticker) {
   const e = state.ownedScores[ticker];
   if (!e) return null;
@@ -2132,8 +2167,11 @@ function getSectorETFForCategory(category) {
 // bars — used by buildAIPrompt's "Volume trend" line. stock.bars is always
 // present (both the real scoreStock() result and openStockModal's fallback
 // object populate it), so this doesn't need its own guard beyond length.
+// DEFECT FIXED 2026-11-17 (the seventh instance of the fabricated neutral, spec 7.7), found while building the
+// held-score prune, not part of it: with fewer than 3 daily bars this answered 'flat', a volume direction nobody
+// measured, into the AI prompt (e.g. a ticker with under three days of bars). Now it says "not measured" and why.
 function deriveVolumeTrend(bars) {
-  if (!bars || bars.length < 3) return 'flat';
+  if (!bars || bars.length < 3) return `not measured (${bars ? bars.length : 0} daily bar${bars && bars.length === 1 ? '' : 's'}, 3 needed)`;
   const vols = bars.slice(-3).map(b => b.v);
   if (vols[2] > vols[1] && vols[1] > vols[0]) return 'rising';
   if (vols[2] < vols[1] && vols[1] < vols[0]) return 'falling';
@@ -2595,6 +2633,19 @@ async function runScreener() {
       }
     }
 
+    // P1 (2026-11-17): the held-score cache keeps only tickers with an open position or a pending order. Pruned HERE,
+    // at scan time, after this scan's writes: a ticker sold since the last scan already had its signalBeforeSale
+    // computed at the sale, while its position existed (a Retry replays that stored record), so nothing reads its entry
+    // now. The prune is recorded, never silent (state.heldScorePrune, shown under Storage on this phone).
+    // And it runs only on an ESTABLISHED keep-set (heldScoreKeepSet): an unread or denied portfolio prunes nothing, and says so.
+    const keepSet = await heldScoreKeepSet(state.portfolioLoad, [...getHoldings(), ...getPendingOrders()], async () => {
+      const r = await supabaseClient.from('trades_v2').select('id', { count: 'exact', head: true });
+      if (r.error) throw r.error;
+      return r.count;
+    });
+    state.heldScorePrune = keepSet.keep ? pruneHeldScores(state.ownedScores, keepSet.keep) : { notPruned: keepSet.notEstablished };
+    if (state.heldScorePrune.notPruned) console.warn(`held-score cache: not pruned this scan: ${state.heldScorePrune.notPruned}`);
+    else if (state.heldScorePrune.pruned.length) console.info(`held-score cache: pruned ${state.heldScorePrune.pruned.length} entr${state.heldScorePrune.pruned.length === 1 ? 'y' : 'ies'} (${state.heldScorePrune.pruned.join(', ')}); ${state.heldScorePrune.kept} kept`);
     persist('signals'); persist('lastScanTime'); persist('ownedScores');
     state.news = newsItems;
     persist('news');
@@ -3932,8 +3983,8 @@ async function openStockModal(ticker) {
     //    recompute from this modal's own bars fetch, which runs at a
     //    different time and would just reintroduce the same
     //    card-vs-modal mismatch one level down.
-    // 3. Neither — a ticker with no signal and no ownedScores history at
-    //    all. Only here does a best-effort fresh computeScoreBreakdown()
+    // 3. Neither — a ticker with no signal and no ownedScores entry (since
+    //    the P1 prune, 2026-11-17, every ticker not held or on order). Only here does a best-effort fresh computeScoreBreakdown()
     //    total apply, since there's nothing authoritative to defer to.
     const ownedScoreEntry = currentOwnedScore(ticker);
     let modalScoreTotal, modalScoreSignal;
@@ -10277,7 +10328,11 @@ function storageReadoutRows() {
     const k = localStorage.key(i);
     if (k == null) continue;
     const v = localStorage.getItem(k) || '';
-    rows.push({ key: k, chars: k.length + v.length, label: storageKeyLabel(k) });
+    // Entries (P1, 2026-11-17): for a value that is a JSON object or array, how many it holds, so a cache's growth is a
+    // reading, not a total divided by a guessed record size. null when it is neither (or not JSON).
+    let entries = null;
+    try { const p = JSON.parse(v); if (Array.isArray(p)) entries = p.length; else if (p && typeof p === 'object') entries = Object.keys(p).length; } catch (e) { /* not JSON: no count */ }
+    rows.push({ key: k, chars: k.length + v.length, entries, label: storageKeyLabel(k) });
   }
   return rows.sort((a, b) => b.chars - a.chars || a.key.localeCompare(b.key));
 }
@@ -10293,7 +10348,9 @@ function renderStorageReadout() {
   const total = rows.reduce((n, r) => n + r.chars, 0);
   const fmt = n => n.toLocaleString('en-US');
   el.innerHTML = `<div>${rows.length} key${rows.length === 1 ? '' : 's'}, ${fmt(total)} characters in all (about ${fmt(Math.round(total * 2 / 1024))} KB as stored). Largest first; nothing here can be deleted from the app.</div>`
-    + `<div style="margin-top:6px">${rows.map(r => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="word-break:break-all"><span class="mono">${esc(r.key)}</span><br><span style="color:${/not named/.test(r.label) ? 'var(--yellow)' : 'var(--muted)'}">${esc(r.label)}</span></span><span class="mono" style="white-space:nowrap">${fmt(r.chars)}</span></div>`).join('')}</div>`
+    + `<div style="margin-top:6px">${rows.map(r => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="word-break:break-all"><span class="mono">${esc(r.key)}</span><br><span style="color:${/not named/.test(r.label) ? 'var(--yellow)' : 'var(--muted)'}">${esc(r.label)}${r.entries != null ? ` · ${fmt(r.entries)} entr${r.entries === 1 ? 'y' : 'ies'}` : ''}</span></span><span class="mono" style="white-space:nowrap">${fmt(r.chars)}</span></div>`).join('')}</div>`
+    + (state.heldScorePrune && state.heldScorePrune.notPruned ? `<div style="margin-top:6px;color:var(--yellow)">Held-score cache not pruned this scan: ${esc(state.heldScorePrune.notPruned)}.</div>` : '')
+    + (state.heldScorePrune && !state.heldScorePrune.notPruned ? `<div style="margin-top:6px">Last scan this session pruned ${state.heldScorePrune.pruned.length} held-score entr${state.heldScorePrune.pruned.length === 1 ? 'y' : 'ies'}${state.heldScorePrune.pruned.length ? ` (${esc(state.heldScorePrune.pruned.join(', '))})` : ''}; ${state.heldScorePrune.kept} kept (open positions and pending orders).</div>` : '')
     + '<div id="storage-quota" style="margin-top:6px"></div>';
   // The browser's own estimate, if it gives one. It covers this site's other storage too and may not count
   // localStorage at all, so it is labelled as the browser's figure, never as this site's localStorage limit.
@@ -11938,6 +11995,9 @@ async function loadPortfolioAndSettingsFromSupabase() {
     loadSettingsFromSupabase(),
   ]);
   state.portfolio = portfolio;
+  // The held-score prune's premise (2026-11-17): this session's portfolio read ANSWERED, and with how many rows. A
+  // denied read answers [] with no error, so 0 rows is not yet "holds nothing" (heldScoreKeepSet decides that).
+  state.portfolioLoad = { at: Date.now(), rows: portfolio.length };
   // what the database holds is, by definition, confirmed (db/044): the render re-sends only a peak above it
   state.peakRsiSaved = Object.fromEntries(portfolio.filter(p => p.peakRsi != null).map(p => [p.id, p.peakRsi]));
   for (const [k, v] of Object.entries(settings)) { state.settings[k] = v; state.settingsSource[k] = 'supabase'; }

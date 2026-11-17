@@ -46,6 +46,7 @@ const REGISTRY = {
     { verdict: S, empty: 'quota panel count = 0', denied: 'shows 0 trades' },
     { verdict: S, empty: 'archive: "No trades in Supabase to archive yet."', denied: 'says no trades exist' },
     { verdict: S, empty: 'export: writes a file with sold = []', denied: 'a backup file with no trades, downloaded as if complete' },
+    { verdict: OK, empty: 'heldScoreKeepSet CONTROL (2026-11-17): run only when the portfolio read back empty; trades_v2 is never empty, so a head count of 0 = cannot tell, and the held-score cache is NOT pruned', denied: 'not pruned; the Storage readout says the portfolio read back empty and so did trades_v2' },
     { verdict: OK, empty: 'loadNotKnownCount CONTROL (2026-11-12): trades_v2 is never empty, so a head count of 0 = cannot tell, never "no defects"', denied: 'red: "whether any was recorded without Live/Paper is unknown"' },
     { verdict: OK, empty: 'loadNotKnownCount, the not_known sales: paged, count checked; empty after the control passed = genuinely none', denied: 'the control above has already refused a denied table' }],
   'app.js|portfolio': [
