@@ -148,6 +148,10 @@ declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 
   test (spec: first 5 buy days of overlap; any disagreement voids it).
 
 ## After realistic costs: pre-registered, answered 2026-11-11
+**"Costs" in the 2026-11-08 analysis means SPREAD, measured, not commission; Robinhood's zero commission does not
+reduce it** (the reviewer, 2026-11-17, after Roman said his trades are free). The bid-ask gap is paid on both sides
+of every round trip whoever executes it. Paper trades, recorded at quotes, pay none of it, which is why the
+frictionless simulation hides the cost that decided the result.
 **Costs do not change the exit-rule comparison:** a rule changes where a round trip ends, not how many there are,
 so the per-trade drag below is the same under every rule the 2026-11-06 replay tested, and "no rule clears the bar"
 stands (also stated in the spec beside the replay).

@@ -111,6 +111,13 @@ const FOREIGN = {
 // CHECKs that constrain something other than a text vocabulary (a JSON shape, a number, a relation between columns),
 // each pinned to the capture's text: if the live text changes, this fails until the entry is looked at again.
 const EXCLUDED = {
+  // db/044 (applied 2026-11-14, captured live-schema-2026-11-14.json): pinned to the live text
+  'peak_corrections.peak_corrections_reason_check': { sha256: 'c2c795d17b3577883cb292a3b271d6cbda9d30f4b6067b692bff234d3fcaf470', why: 'a non-empty text length, not a vocabulary (db/044: a correction states its reason)' },
+  'portfolio.portfolio_peak_rsi_chk': { sha256: 'deae8a861fc24bf9195db5ff20de43db785a9820bf36d8237f522174577a949f', why: 'a cross-column tie, not a vocabulary (db/044: the three sampled-peak columns are set together or not at all, sampled_from <= peak_rsi_at)' },
+  'trades_v2.trades_v2_peak_rsi_correction_chk': { sha256: '6b16ef41d0ed0c1ea0d8a6cb7d7150da2656aae0a7a388e5afa71ecca9f78caf', why: 'a cross-column tie, not a vocabulary (db/044: the correction id exactly in the corrected state); the value list itself is trades_v2_peak_rsi_provenance_chk, parsed' },
+  'trades_v2.trades_v2_peak_rsi_not_sampled_chk': { sha256: 'd56062da7ba4853ed30ca41b73c7ec89f4ff5da43cd1d043dbff919af9426af5', why: 'a cross-column tie, not a vocabulary (db/044: not_sampled carries no peak)' },
+  'trades_v2.trades_v2_peak_rsi_sampled_from_chk': { sha256: '4f2752a935f1a50ba634d3d976532a59ba231e32ecfea46e6303abcbeef6c169', why: 'a cross-column tie, not a vocabulary (db/044: the sampling timestamp exactly in the sampled_since state)' },
+  'trades_v2.trades_v2_peak_rsi_sampled_has_peak_chk': { sha256: 'fbd14641de51e073ac67d579d638e985f44b06bc29392b41060857705e8a8663', why: 'a cross-column tie, not a vocabulary (db/044: sampled_since carries a peak)' },
   'analysis_periods.analysis_periods_change_description_check': { sha256: 'bfe4cadd226ee836bca512eba6e73b38f3184e3a37b6198493fcf15912644aac', why: 'a non-empty text length, not a vocabulary' },
   'analysis_periods.analysis_periods_name_check': { sha256: '1e9c14ebb67a1eac1a4db848b9677cb2acb6b876933573c6f21941d2db46d135', why: 'a non-empty text length, not a vocabulary' },
   'incidents.incidents_confidence_score_check': { sha256: 'e6f01ac6cf01fa4aebffd84068474d09881bf6a19d35688c9160472c3fa6d4e4', why: 'a numeric range (Shark Analytics table)' },

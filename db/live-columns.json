@@ -3,21 +3,21 @@
   "_source": {
     "query": "db/inspect-public-schema-v2-read-only.sql",
     "query_sha256": "faeab84f748b425397bdca747db02414ecb0270bfbcbc58199a63683f5f58ed0",
-    "captured": "2026-11-11",
-    "captured_by": "Roman, Supabase SQL editor (RUN-ME-8 after db/043, decoded by the reviewer)",
-    "capture_file": "live-schema-2026-11-11b.json",
-    "capture_sha256": "07776999f20d643c97cde13890527a51ac3a43008a5b7719a87609cfdf47136d",
-    "tables": 20,
-    "columns": 449,
-    "tables_sha256": "d6442a3f21dbd2a2e053255adf8c2cc064e93a8aa12b0fa447eed26d6fd4dec2",
-    "functions_sha256": "d07c94affb8bfd6e6b74a0a35588706e6c6b1125cc1d0a16cc2b1114f64e766c",
-    "checks": 66,
-    "checks_sha256": "e4c7f2e350997a924478d90b07fb8ba2e2d4e904474ac77b462afe757abf5f43",
+    "captured": "2026-11-14",
+    "captured_by": "Roman, Supabase SQL editor (RUN-ME-8 after db/044, decoded and validated by the reviewer 2026-11-17)",
+    "capture_file": "live-schema-2026-11-14.json",
+    "capture_sha256": "49427603ed6269148afbe67889d927c34eb691eae8a1d8c10f40e8d677b5e18c",
+    "tables": 21,
+    "columns": 465,
+    "tables_sha256": "bb66b7d1e61e1c7c727e3fe4933563a10396d5a04d497556e2102000ac2a5b19",
+    "functions_sha256": "2166a524abe5fed085b1e87728febe64fca661781e1b9981657bc8094db64d33",
+    "checks": 75,
+    "checks_sha256": "94cd1a421cad05284e49a3d83c0237f257fe6e8b89e461a348838226352acf46",
     "defaults": 73,
     "defaults_sha256": "22831976250bc9762dba5e87a04517800fd8c4be12c44b4eaf0f799298e87e11"
   },
   "_migrations": {
-    "highest_applied": 43,
+    "highest_applied": 44,
     "applied": [
       1,
       2,
@@ -57,19 +57,23 @@
       38,
       40,
       42,
-      43
+      43,
+      44
     ],
     "not_applied": [
       36,
       39,
       41,
-      44,
       45
     ]
   },
   "functions": [
+    "peak_correction_door",
+    "peak_corrections_stamp",
+    "portfolio_peaks_rising_only",
     "reject_code_version_change",
     "rls_auto_enable",
+    "trades_v2_peak_rsi_write_once",
     "trades_v2_reject_provenance_change",
     "update_updated_at_column"
   ],
@@ -175,6 +179,18 @@
       "safety_notes",
       "total_attacks"
     ],
+    "peak_corrections": [
+      "column_name",
+      "corrected_at",
+      "corrected_by",
+      "id",
+      "new_value",
+      "old_value",
+      "provenance_written",
+      "reason",
+      "row_key",
+      "table_name"
+    ],
     "pipeline_state": [
       "key",
       "updated_at",
@@ -218,6 +234,9 @@
       "order_type",
       "peak_price",
       "peak_price_date",
+      "peak_rsi",
+      "peak_rsi_at",
+      "peak_rsi_sampled_from",
       "position_id",
       "price_momentum_pts",
       "raw_atr_at_buy",
@@ -495,7 +514,10 @@
       "peak_price",
       "peak_price_date",
       "peak_risk_score_at_sale",
+      "peak_rsi_correction_id",
       "peak_rsi_during_hold",
+      "peak_rsi_provenance",
+      "peak_rsi_sampled_from",
       "pnl_dollars",
       "pnl_pct",
       "position_id",
@@ -592,13 +614,19 @@
       "macro_observations_path_check": "CHECK ((path = ANY (ARRAY['pattern'::text, 'groq'::text, 'pattern_groq_failed'::text, 'unclassified'::text, 'not_fetched'::text])))",
       "macro_observations_source_check": "CHECK ((source = ANY (ARRAY['browser'::text, 'logger'::text])))"
     },
+    "peak_corrections": {
+      "peak_corrections_column_name_check": "CHECK ((column_name = ANY (ARRAY['peak_rsi_during_hold'::text, 'peak_rsi'::text, 'peak_price'::text])))",
+      "peak_corrections_reason_check": "CHECK ((length(btrim(reason)) > 0))",
+      "peak_corrections_table_name_check": "CHECK ((table_name = ANY (ARRAY['trades_v2'::text, 'portfolio'::text])))"
+    },
     "portfolio": {
       "portfolio_code_version_shape_chk": "CHECK (((code_version IS NULL) OR ((COALESCE(jsonb_typeof((code_version -> 'app'::text)), ''::text) = 'string'::text) AND (COALESCE(jsonb_typeof((code_version -> 'scoring'::text)), ''::text) = 'number'::text) AND ((NOT (code_version ? 'scoring_hash'::text)) OR (COALESCE(jsonb_typeof((code_version -> 'scoring_hash'::text)), ''::text) = 'string'::text)))))",
       "portfolio_engine_source_check": "CHECK ((engine_source = ANY (ARRAY['EDGE'::text, 'WARRIOR'::text])))",
       "portfolio_execution_mode_chk": "CHECK (((execution_mode = ANY (ARRAY['live'::text, 'paper'::text, 'not_known'::text])) AND ((execution_mode = 'not_known'::text) OR (execution_mode_source IS NOT NULL)) AND ((execution_mode_source IS NULL) OR (execution_mode_source = 'recorded_at_trade'::text) OR (execution_mode_source ~ '^derived_from_robinhood_export_[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text) OR (execution_mode_source ~ '^declared_by_roman_[0-9]{4}-[0-9]{2}-[0-9]{2}$'::text))))",
       "portfolio_exit_rule_id_check": "CHECK (((exit_rule_id IS NULL) OR (exit_rule_id = ANY (ARRAY['edge.atr.multiday'::text, 'warrior.sameday.tightstop'::text]))))",
       "portfolio_macro_path_at_buy_check": "CHECK ((macro_path_at_buy = ANY (ARRAY['pattern'::text, 'groq'::text, 'pattern_groq_failed'::text, 'unclassified'::text, 'not_fetched'::text, 'unknown'::text])))",
-      "portfolio_order_type_chk": "CHECK (((order_type IS NULL) OR (order_type = ANY (ARRAY['market'::text, 'limit'::text, 'stop'::text, 'stop_limit'::text, 'trailing_stop'::text]))))"
+      "portfolio_order_type_chk": "CHECK (((order_type IS NULL) OR (order_type = ANY (ARRAY['market'::text, 'limit'::text, 'stop'::text, 'stop_limit'::text, 'trailing_stop'::text]))))",
+      "portfolio_peak_rsi_chk": "CHECK ((((peak_rsi IS NULL) AND (peak_rsi_at IS NULL) AND (peak_rsi_sampled_from IS NULL)) OR ((peak_rsi IS NOT NULL) AND (peak_rsi_at IS NOT NULL) AND (peak_rsi_sampled_from IS NOT NULL) AND (peak_rsi_sampled_from <= peak_rsi_at))))"
     },
     "rating_snapshots": {
       "rating_snapshots_macro_path_check": "CHECK ((macro_path = ANY (ARRAY['pattern'::text, 'groq'::text, 'pattern_groq_failed'::text, 'unclassified'::text, 'not_fetched'::text, 'unknown'::text])))",
@@ -652,6 +680,11 @@
       "trades_v2_exit_rule_id_check": "CHECK (((exit_rule_id IS NULL) OR (exit_rule_id = ANY (ARRAY['edge.atr.multiday'::text, 'warrior.sameday.tightstop'::text]))))",
       "trades_v2_macro_path_check": "CHECK ((macro_path = ANY (ARRAY['pattern'::text, 'groq'::text, 'pattern_groq_failed'::text, 'unclassified'::text, 'not_fetched'::text, 'unknown'::text])))",
       "trades_v2_order_type_chk": "CHECK (((order_type IS NULL) OR (order_type = ANY (ARRAY['market'::text, 'limit'::text, 'stop'::text, 'stop_limit'::text, 'trailing_stop'::text]))))",
+      "trades_v2_peak_rsi_correction_chk": "CHECK (((peak_rsi_correction_id IS NOT NULL) = (NOT (peak_rsi_provenance IS DISTINCT FROM 'corrected'::text))))",
+      "trades_v2_peak_rsi_not_sampled_chk": "CHECK (((peak_rsi_provenance IS DISTINCT FROM 'not_sampled'::text) OR (peak_rsi_during_hold IS NULL)))",
+      "trades_v2_peak_rsi_provenance_chk": "CHECK (((peak_rsi_provenance IS NULL) OR (peak_rsi_provenance = ANY (ARRAY['sampled_since'::text, 'not_sampled'::text, 'not_established'::text, 'corrected'::text]))))",
+      "trades_v2_peak_rsi_sampled_from_chk": "CHECK (((peak_rsi_sampled_from IS NOT NULL) = (NOT (peak_rsi_provenance IS DISTINCT FROM 'sampled_since'::text))))",
+      "trades_v2_peak_rsi_sampled_has_peak_chk": "CHECK (((peak_rsi_provenance IS DISTINCT FROM 'sampled_since'::text) OR (peak_rsi_during_hold IS NOT NULL)))",
       "trades_v2_sale_code_version_shape_chk": "CHECK (((sale_code_version IS NULL) OR ((COALESCE(jsonb_typeof((sale_code_version -> 'app'::text)), ''::text) = 'string'::text) AND (COALESCE(jsonb_typeof((sale_code_version -> 'scoring'::text)), ''::text) = 'number'::text) AND ((NOT (sale_code_version ? 'scoring_hash'::text)) OR (COALESCE(jsonb_typeof((sale_code_version -> 'scoring_hash'::text)), ''::text) = 'string'::text)))))",
       "trades_v2_sell_filled_at_consistent": "CHECK ((((sell_filled_at_source IS NULL) AND (sell_filled_at IS NULL)) OR ((COALESCE(sell_filled_at_source, ''::text) = 'not_known'::text) AND (sell_filled_at IS NULL)) OR ((COALESCE(sell_filled_at_source, ''::text) = ANY (ARRAY['entered'::text, 'default'::text])) AND (sell_filled_at IS NOT NULL))))",
       "trades_v2_sell_filled_at_source_check": "CHECK (((sell_filled_at_source IS NULL) OR (sell_filled_at_source = ANY (ARRAY['entered'::text, 'default'::text, 'not_known'::text]))))",
