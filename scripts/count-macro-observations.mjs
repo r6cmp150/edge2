@@ -13,7 +13,30 @@
 // Exit 0: counted and consistent, or no scan by an observing build yet (said as NOT STARTED, never as zero).
 // Exit 1: a read failed or came back incomplete; scans by an observing build exist but an observation they point to
 //         cannot be read; or decided readings were recorded with no observation. The reason is printed above.
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { buildDays, barState, MIN_DAYS, MIN_DAYS_AWAY_FROM_COMMON_SIGN } from './lib/macro-sign-test.mjs';
+import { assertReadable } from './lib/readable.mjs';
+
+// 2026-11-17, INSTRUMENTATION OF THE REGISTERED BAR, NOT AN AMENDMENT TO IT (the reviewer). The bar is two conditions,
+// 20 labelled days AND at least 5 away from the most common sign; a counter of the first alone says "on track" until
+// the day it says "inconclusive". So both are printed, each counted by the registration's own code: buildDays (a day's
+// label is its first Groq answer given the moves; a day counts only with shown EDGE signals first shown at or after
+// it, with a close return) and barState, on core/edge-scoring.js's MACRO_ADJUSTMENTS, exactly as
+// scripts/run-macro-sign-test.mjs runs the test. Counts and reasons only: no day's outcome is printed (reading the
+// outcomes before the bar is met is the look the registration exists to prevent). It never changes the exit code on
+// its own: a bar not yet met is a state, not a defect. A read that fails or is denied is.
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+function macroAdjustments() {
+  const edge = readFileSync(path.join(ROOT, 'core/edge-scoring.js'), 'utf8');
+  const at = edge.indexOf('const MACRO_ADJUSTMENTS = {');
+  const c = {};
+  vm.createContext(c);
+  vm.runInContext(edge.slice(at, edge.indexOf('\n};\n', at) + 4) + ';globalThis.T = MACRO_ADJUSTMENTS;', c);
+  return c.T;
+}
 
 const SUPABASE_URL = 'https://kbjqxaukyawcmcyjoiey.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_JXOwCMF_a5ylZL8V5mwfzw_MRivRMpl';
@@ -42,7 +65,8 @@ export async function main({ fetchImpl = fetch, log = console.log, now = new Dat
   let scans, observations;
   try {
     scans = await readAll('rating_snapshots', 'id,captured_at,macro_path,macro_observation_id', '&macro_path=neq.unknown', fetchImpl);
-    observations = await readAll('macro_observations', 'id,fetched_at,trading_date,applied', '', fetchImpl);
+    // + the columns the bar's label rule reads (firstLabel)
+    observations = await readAll('macro_observations', 'id,fetched_at,trading_date,applied,pattern_condition,pattern_incomplete,groq_condition', '', fetchImpl);
   } catch (e) {
     log(`macro_observations count: COULD NOT READ (${e.message}) -- whether the macro reading is being recorded is unknown.`);
     return 1;
@@ -66,6 +90,27 @@ export async function main({ fetchImpl = fetch, log = console.log, now = new Dat
   if (unreadable.length) { log(`  DEFECT ${unreadable.length} observation(s) the scans point to cannot be read here (denied, or lost): ${unreadable.slice(0, 5).join(', ')}${unreadable.length > 5 ? ', ...' : ''}`); bad = true; }
   if (decidedNoId.length) { log(`  DEFECT ${decidedNoId.length} scan row(s) recorded a decided macro reading with no observation: the observation write failed (the banner said so on the phone).`); bad = true; }
   if (!observations.length && scans.some(s => DECIDED.includes(s.macro_path))) { log('  DEFECT scans by an observing build recorded decided readings, and macro_observations reads back empty: not written, or not readable.'); bad = true; }
+
+  // Both halves of the bar.
+  if (observations.length) {
+    let signals;
+    try {
+      // signal_log can't be empty (tests/empty-read-controls.test.js): a denied read would otherwise drop every day as
+      // "no shown signal" and report 0 labelled days as if counted.
+      await assertReadable(SUPABASE_URL, { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }, 'signal_log', fetchImpl);
+      signals = await readAll('signal_log', 'id,signal_date,engine_source,tier,first_shown_at,ret_close,ret_close_split_in_window',
+        // from (c)'s first observation day: no observation, so no label, exists before it (a constant the column walker can read)
+        '&engine_source=eq.EDGE&tier=eq.SHOWN&signal_date=gte.2026-11-12', fetchImpl);
+    } catch (e) {
+      log(`  sign-test bar: COULD NOT READ signal_log (${e.message}) -- neither half of the bar can be counted.`);
+      return 1;
+    }
+    const { days, dropped } = buildDays(observations, signals, macroAdjustments());
+    const b = barState(days);
+    log(`  sign-test bar (scripts/lib/macro-sign-test.mjs, the registration, unchanged): labelled days ${b.n} of ${MIN_DAYS}; ` +
+        `by predicted sign + ${b.plus}, - ${b.minus}, 0 ${b.zero}; away from the most common sign ${b.awayFromCommon} of ${MIN_DAYS_AWAY_FROM_COMMON_SIGN}; ${b.met ? 'BAR MET' : 'not met'}.`);
+    log(`  not labelled: ${dropped.length ? dropped.map(d => `${d.date} (${d.reason})`).join('; ') : 'none'}.`);
+  }
   return bad ? 1 : 0;
 }
 

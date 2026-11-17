@@ -310,6 +310,14 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - **The first post-(c) scan of the unraised line** (Roman's screenshot, 2026-11-12 18:35 PT): 239 stocks scanned
   [OTHER], 0 strong buy, 5 soft buy, with the display line no longer moved by the macro reading. Recorded from day one
   so the before and after is not reconstructed later.
+- **BOTH HALVES OF THE BAR ARE PRINTED DAILY (2026-11-17), instrumentation of the registration, not an amendment to
+  it.** The same script now prints the labelled days AND the split by predicted sign against the 5-away threshold,
+  counted by the registration's own buildDays and barState (no outcome is printed). On the record, before it can be
+  read as a result (live 2026-11-17T20:02Z): **2 labelled days of 20, by predicted sign + 0, - 2, 0 0; away from
+  the most common sign 0 of 5.** 11-13 (SECTOR_WEAKNESS_TECH) and 11-16 (RISK_OFF). 11-17 is not yet labelled (no
+  shown signal with a close return: the returns fill after the close). 11-12 drops (all its signals predate the
+  label). NOTE: the "3 of 20" quoted on 11-17 counted observation dates in the session, which is not the registered
+  count. A day labels only with a Groq answer given the moves and logger signals shown at or after it.
 - The writer is counted every day by `scripts/count-macro-observations.mjs` in backup-tables.yml. The run goes red
   when scans by an observing build point to observations that can't be read, or a decided reading has no
   observation. Before the first scan by (c) it says NOT STARTED.

@@ -10,11 +10,15 @@ const { run, REPO_ROOT } = require('./_lib');
 
 const scan = (id, macro_path, macro_observation_id = null) => ({ id, captured_at: `2026-11-13T15:${String(id).padStart(2, '0')}:00Z`, macro_path, macro_observation_id });
 const obs = (id, day = '2026-11-13') => ({ id, fetched_at: `${day}T14:30:00Z`, trading_date: day, applied: false });
-function fakeFetch({ scans = [], observations = [], status = {}, short = null }) {
+// CHANGED 2026-11-17, declared: signal_log is read too (both halves of the sign-test bar). Its default is one shown
+// signal, so the readability control passes and no labelled day exists unless a case builds one.
+const SIG = { id: 's0', signal_date: '2026-11-13', engine_source: 'EDGE', tier: 'SHOWN', first_shown_at: '2026-11-13T15:00:00Z', ret_close: 0.01, ret_close_split_in_window: false };
+function fakeFetch({ scans = [], observations = [], signals = [SIG], status = {}, short = null }) {
   return async url => {
     const table = url.split('/rest/v1/')[1].split('?')[0];
     if (status[table]) return { ok: false, status: status[table], text: async () => 'boom', headers: { get: () => null }, json: async () => [] };
-    const rows = table === 'rating_snapshots' ? scans : observations;
+    let rows = table === 'rating_snapshots' ? scans : table === 'signal_log' ? signals : observations;
+    if (/limit=1(&|$)/.test(url)) rows = rows.slice(0, 1); // the positive-control read
     const total = short === table ? rows.length + 1 : rows.length;
     return { ok: true, status: 200, text: async () => '', headers: { get: k => (k === 'content-range' ? `0-${Math.max(0, rows.length - 1)}/${total}` : null) }, json: async () => rows };
   };
@@ -69,5 +73,27 @@ await run('a failed or short read is COULD NOT READ, and red, never a count', as
     assert.strictEqual(r.code, 1, JSON.stringify(opts));
     assert.ok(/COULD NOT READ/.test(r.out), r.out);
   }
+});
+
+// 2026-11-17: BOTH halves of the registered bar, counted by the registration's own code (buildDays, barState). Three
+// labelled days, two signs: RISK_OFF (-1), SECTOR_WEAKNESS_TECH (-1), BROAD_RALLY (+1). Plus a day with only a pattern
+// reading (no Groq answer given the moves: labels nothing) and a day whose signals all predate the label.
+const lab = (id, day, condition, at = '14:30') => ({ id, fetched_at: `${day}T${at}:00Z`, trading_date: day, applied: false, pattern_condition: 'CHOPPY', pattern_incomplete: false, groq_condition: condition });
+const sig = (id, day, at, ret) => ({ id, signal_date: day, engine_source: 'EDGE', tier: 'SHOWN', first_shown_at: `${day}T${at}:00Z`, ret_close: ret, ret_close_split_in_window: false });
+await run('the sign-test bar: both halves printed, labelled days and the split by sign, and no outcome', async () => {
+  const observations = [lab('a', '2026-11-13', 'RISK_OFF'), lab('b', '2026-11-16', 'SECTOR_WEAKNESS_TECH'), lab('c', '2026-11-17', 'BROAD_RALLY'),
+    { ...lab('d', '2026-11-18', null), groq_condition: null }, lab('e', '2026-11-19', 'RISK_OFF', '16:00')];
+  const signals = [sig('1', '2026-11-13', '15:00', 0.0123), sig('2', '2026-11-16', '15:00', -0.004), sig('3', '2026-11-17', '15:00', 0.02), sig('4', '2026-11-19', '15:00', 0.01)];
+  const r = await count({ scans: ['a', 'b', 'c', 'd', 'e'].map((o, i) => scan(i + 1, 'groq', o)), observations, signals });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.ok(r.out.includes('labelled days 3 of 20; by predicted sign + 1, - 2, 0 0; away from the most common sign 1 of 5; not met.'), r.out);
+  assert.ok(/not labelled: 2026-11-18 \(no Groq answer given the moves\); 2026-11-19 \(all 1 signal\(s\) were first shown before the label\)\./.test(r.out), r.out);
+  assert.ok(!/1\.23|0\.4|2\.0\b|outcome/i.test(r.out.split('sign-test bar')[1]), 'no outcome printed: ' + r.out);
+});
+
+await run('the bar\'s signal_log read DENIED (200, empty): COULD NOT READ and red, never "0 labelled days"', async () => {
+  const r = await count({ scans: [scan(1, 'groq', 'a')], observations: [lab('a', '2026-11-13', 'RISK_OFF')], signals: [] });
+  assert.strictEqual(r.code, 1, r.out);
+  assert.ok(/sign-test bar: COULD NOT READ signal_log/.test(r.out) && !/labelled days/.test(r.out), r.out);
 });
 })();
