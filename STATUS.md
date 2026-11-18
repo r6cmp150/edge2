@@ -525,6 +525,35 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   session's own adds and sales; the phone's storage plays no part, so "storage full hid it" is ruled out. Every one
   of the 7 lots added 07:00-07:07 PT on 11-17 is still open. Nothing records which session or device wrote a row.
   Roman's answers (open-positions-2026-11-18.md) come before any cleanup, his first and the reviewer's second.
+  **ESTABLISHED 2026-11-18: TWO SESSIONS, ON TWO DEVICES.**
+  - **From the data:** a single session is ruled out in the code, with every path closed (each session always holds
+    its own adds; no local removal fits; every hidden lot has its snapshot; all 16 screens were rendered 5-14 s
+    before the tap and after the earlier lot existed). Two sessions were in use within the same minute: one added
+    CLNE 09:46:34 and PUMP 09:46:45, and the other rendered FUBO 38 s later and tapped Add at 09:47:31. Each
+    re-adding session started before the lot it could not see (before 07:03 for AVAH, 09:02 for NUAI, 09:46 for
+    CLNE/PUMP).
+  - **From Roman (2026-11-18):** EDGE was open on his **laptop and his phone** on 11-17: two devices, not two
+    windows on one. "Which device" was listed above as not established; it now is, by his answer. Which device made
+    which add remains unrecorded. He is closing the laptop copy.
+  **RULED OUT HERE, AND STILL A LATENT DEFECT: the empty-read hypothesis.** `loadPortfolioFromSupabase` returns `[]`
+  for an empty result with no check (classified SILENT in tests/empty-read-sites.test.js). It cannot have fired on
+  11-17: portfolio RLS is off (capture of 2026-11-14), the service worker skips cross-origin requests, and 46-48 rows
+  is far under the row cap. Those are three facts that could each change unnoticed, so the guard ships with the Add
+  check (below).
+  **WHAT THE MECHANISM EXPLAINS, AND WHAT IT DOES NOT (both halves, 2026-11-18).** 46 open = 6 from 11-02 + 40 from
+  11-16/17. The 16 are re-add TAPS, and 12 of those re-added lots were later sold. In the open book the two sessions
+  touch **13 rows**: the 9 earlier lots a later re-add could not see (AVAH, LOFF, FISN, BRSP, BLMN, FUBO, NUAI, CLNE,
+  PUMP) and the 4 re-added lots still open (LOFF, BRSP, FISN, AVAH). **27 of the 40 recent open rows are untouched by
+  it**: single, deliberate taps on distinct tickers, 22 of them bought once and never sold. (The reviewer's draft had
+  "16 of 36, leaves 20". It counted re-add taps, not open rows; corrected here by the read at 16:20:19Z.) Even the 13
+  are not shown to be wrong: the 9 were deliberate adds in the other session, so the two sessions explain why lots
+  were invisible and doubled, not why there are so many. Roman expects about 10. **The two-session finding does not
+  close the question.** Only his answers do.
+  **SEEN, NOT CHASED (logged 2026-11-18): remove-then-write at a sale.** `confirmMarkSold` drops the position from
+  the session's list (app.js ~7661) before `recordSaleThenRemovePosition` writes the sale and deletes the row. If the
+  delete then fails, the screen and the database disagree (the "still shows as open" banner is session memory, not
+  persisted), and the position comes back at the next load: the same user-visible symptom as the two-session case,
+  by a different route. Ruled out for 11-17 (no open row has a sale; no SALE_FAILED was queued).
 - **EDGE's paper book sizes Warrior's real setups at 0 shares (raised 2026-11-18; nothing changed).** Mechanism: one
   shared number. `getAvailableBudget()` = settings.budget ($1,500) minus every holding at cost minus open orders, both
   engines and both execution modes alike. Warrior's `computeSuggestedShares` (engines/warrior/setups.js) takes
