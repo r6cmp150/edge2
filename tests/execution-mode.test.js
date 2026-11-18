@@ -83,6 +83,11 @@ await run('the add path: agrees -> recorded, no prompt; asks -> the tapped answe
     global.readExecutionMode = async () => { if (reread instanceof Error) throw reread; return { mode: reread, setAt: 'READ-AT' }; };
     global.writeExecutionMode = async (to, from) => { seen.writes.push([to, from]); return { at: writeResult.settings ? null : 'WRITTEN-AT', ...writeResult }; };
     global.showChoice = (msg, opts, cb) => seen.choices.push({ msg, opts, cb });
+    // CHANGED 2026-11-18, declared: an Add first asks the database for open lots of the ticker; here it answers NOT_FOUND
+    // (no rows; the trades_v2 control has rows), so the mode flow is reached as before.
+    global.supabaseClient = { from: t => ({ select: () => (t === 'portfolio'
+      ? { eq: () => ({ abortSignal: async () => ({ data: [], error: null }) }) }
+      : { abortSignal: async () => ({ count: 906, error: null }) }) }) };
     global.renderSettingsTab = () => {};
     global.state = { settings: { executionMode: 'paper' }, activeTab: 'portfolio' };
     // CHANGED 2026-11-12, declared: the banner and the mode re-read now redraw the LIVE band; stubbed here, held by tests/live-band.test.js.

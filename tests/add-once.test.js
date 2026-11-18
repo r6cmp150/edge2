@@ -11,6 +11,12 @@ const app = readSource('app.js');
 // CHANGED 2026-11-12, declared (db/042's app side): confirm re-reads Live/Paper before the listing check, and the
 // listing check moved into addWithMode. The slice runs to addWithMode's end; the mode read is faked to agree with
 // the button ('paper' both), so these tests still exercise exactly the double-tap and listing paths.
+// A database for the Add's open-lot check: portfolio rows for the ticker (default none) and the trades_v2 control.
+function openLotsDb({ lots = [], control = 906 } = {}) {
+  return { from: t => ({ select: () => (t === 'portfolio'
+    ? { eq: () => ({ abortSignal: async () => ({ data: lots, error: null }) }) }
+    : { abortSignal: async () => ({ count: control, error: null }) }) }) };
+}
 function load({ listingResult = { X: 'listed' }, shares = '10', price = '5' } = {}) {
   const i = app.indexOf('let _addInFlight = false;');
   const j = app.indexOf('async function addWithMode(');
@@ -26,6 +32,10 @@ function load({ listingResult = { X: 'listed' }, shares = '10', price = '5' } = 
   global.renderLiveBand = () => {};
   global.readExecutionMode = async () => ({ mode: 'paper', setAt: null });
   global.showChoice = () => { throw new Error('no prompt expected: the mode read agrees with the button'); };
+  // CHANGED 2026-11-18, declared: an Add first asks the database for open lots of the ticker (checkOpenLotsInDatabase).
+  // Here it answers NOT_FOUND (no rows, and the trades_v2 control has rows), so these tests see the add as before; the
+  // check itself is held below and by tests/add-open-lot-check.test.js.
+  global.supabaseClient = openLotsDb();
   let release; const gate = new Promise(r => { release = r; });
   global.fetchHeldListing = async () => { await gate; return listingResult; };
   const finals = []; global.finalizeAddPortfolio = async (...a) => { finals.push(a); };

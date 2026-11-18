@@ -47,9 +47,11 @@ const REGISTRY = {
     { verdict: S, empty: 'archive: "No trades in Supabase to archive yet."', denied: 'says no trades exist' },
     { verdict: S, empty: 'export: writes a file with sold = []', denied: 'a backup file with no trades, downloaded as if complete' },
     { verdict: OK, empty: 'heldScoreKeepSet CONTROL (2026-11-17): run only when the portfolio read back empty; trades_v2 is never empty, so a head count of 0 = cannot tell, and the held-score cache is NOT pruned', denied: 'not pruned; the Storage readout says the portfolio read back empty and so did trades_v2' },
+    { verdict: OK, empty: 'checkOpenLotsInDatabase CONTROL (2026-11-18): run only when the ticker\'s lots read back empty; trades_v2 is never empty, so a count of 0 = cannot tell', denied: 'COULD_NOT_CHECK: the Add says so and asks' },
     { verdict: OK, empty: 'loadNotKnownCount CONTROL (2026-11-12): trades_v2 is never empty, so a head count of 0 = cannot tell, never "no defects"', denied: 'red: "whether any was recorded without Live/Paper is unknown"' },
     { verdict: OK, empty: 'loadNotKnownCount, the not_known sales: paged, count checked; empty after the control passed = genuinely none', denied: 'the control above has already refused a denied table' }],
   'app.js|portfolio': [
+    { verdict: OK, empty: 'checkOpenLotsInDatabase (the Add-time check, 2026-11-18): no rows for the ticker = NOT_FOUND only after the trades_v2 control reads rows', denied: 'COULD_NOT_CHECK: the Add says it could not check and asks; never treated as not found' },
     { verdict: S, empty: 'loadNotKnownCount, the not_known positions (2026-11-12): paged, count checked; empty = none open as not_known, which is also what no open positions reads as', denied: 'shows 0 positions in each line; the app\'s own portfolio load (core/store.js) fails visibly first if portfolio is denied' }],
   'app.js|analysis_periods': [
     { verdict: OK, empty: 'load: empty with periods already on this phone = cannot tell', denied: 'keeps the phone\'s periods, banner says so (fixed 2026-11-02; was WRITES_FROM_EMPTY)' },
@@ -59,8 +61,11 @@ const REGISTRY = {
     { verdict: OK, empty: 'observeMacro: insert().select(\'id\') returns no row = id not read back', denied: 'observationError "saved, but its id could not be read back", shown on the macro banner; snapshot rows carry a NULL observation id, never a guessed one' }],
   'app.js|workflow_runs': [
     { verdict: OK, empty: 'health panel: every job red, "no run recorded"', denied: 'loud false alarm, misleads nobody into acting as if healthy' }],
+  'core/store.js|trades_v2': [
+    { verdict: OK, empty: 'loadPortfolioFromSupabase CONTROL (2026-11-18): run only when the portfolio reads back empty; trades_v2 is never empty, so a count of 0 = cannot tell', denied: 'the load throws: "Couldn\'t load your data" with Retry' }],
   'core/store.js|portfolio': [
-    { verdict: S, empty: 'loadPortfolioFromSupabase: no positions', denied: 'portfolio shown empty; the add form and sale flow carry on as if he holds nothing' },
+    // CHANGED 2026-11-18, declared: guarded (was SILENT). The rows must equal the exact count, and an empty answer stands only after the control.
+    { verdict: OK, empty: 'loadPortfolioFromSupabase (guarded 2026-11-18): no positions, only after the trades_v2 control reads rows; rows must equal the exact count', denied: 'the load throws, and the boot shows "Couldn\'t load your data" with Retry, never an empty portfolio' },
     { verdict: OK, empty: 'savePositionToSupabase: update().select() matched no row -> existence check', denied: 'goes to the existence check (next entry)' },
     { verdict: S, empty: 'existence check: no row = POSITION_MISSING, "closed in another session"', denied: 'refuses safely, but names the wrong cause' },
     { verdict: OK, empty: 'deletePositionFromSupabase: delete().select() removed no row -> existence check (2026-11-08; was "no error = deleted")', denied: 'goes to the existence check (next entry)' },

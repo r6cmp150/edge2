@@ -4763,6 +4763,52 @@ function applyModeAnswer(mode, at) {
 }
 
 let _addAwaitingAnswer = false; // a Live/Paper choice for an add is queued or showing: no second add from the form
+
+// The database's open lots of a ticker, before an add (2026-11-18). Three states, never two:
+//   FOUND            { lots }: rows are open (holdings and pending orders) for this ticker;
+//   NOT_FOUND        the read answered with none, AND the control (trades_v2, which is never empty) answered with rows,
+//                    so an empty answer is not a denied read (RLS answers a denied read with an empty list, no error);
+//   COULD_NOT_CHECK  { reason }: an error, no answer within OPEN_LOT_CHECK_TIMEOUT_MS (aborted: a hang is a failure,
+//                    not a wait), or an empty read the control could not vouch for.
+const OPEN_LOT_CHECK_TIMEOUT_MS = 8000;
+async function checkOpenLotsInDatabase(ticker) {
+  const couldNot = reason => ({ state: 'COULD_NOT_CHECK', reason });
+  const abort = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; abort.abort(); }, OPEN_LOT_CHECK_TIMEOUT_MS);
+  try {
+    const { data, error } = await Promise.resolve(supabaseClient.from('portfolio')
+      .select('position_id, shares, buy_price, buy_date, buy_time, order_type, filled_at').eq('ticker', ticker).abortSignal(abort.signal));
+    if (timedOut) return couldNot(`no answer within ${OPEN_LOT_CHECK_TIMEOUT_MS / 1000} s`);
+    if (error) return couldNot(error.message || String(error));
+    if (Array.isArray(data) && data.length) return { state: 'FOUND', lots: data };
+    const control = await Promise.resolve(supabaseClient.from('trades_v2').select('id', { count: 'exact', head: true }).abortSignal(abort.signal));
+    if (timedOut) return couldNot(`no answer within ${OPEN_LOT_CHECK_TIMEOUT_MS / 1000} s`);
+    if (control.error) return couldNot(`the portfolio read back empty, and the check that it was not denied failed (${control.error.message || control.error})`);
+    if (!(control.count > 0)) return couldNot('the portfolio read back empty and so did trades_v2, which never is: a denied read cannot be ruled out');
+    return { state: 'NOT_FOUND' };
+  } catch (e) {
+    return couldNot(timedOut ? `no answer within ${OPEN_LOT_CHECK_TIMEOUT_MS / 1000} s` : (e?.message || String(e)));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+const OPEN_LOT_CHOICES = {
+  FOUND: [{ label: 'Record another buy', value: 'record' }, { label: "Don't record it", value: 'cancel' }],
+  COULD_NOT_CHECK: [{ label: 'Record it anyway', value: 'record' }, { label: "Don't record it", value: 'cancel' }],
+};
+// One paragraph, no line breaks: the dialog collapses them (rendered at 390px, 2026-11-18: a bulleted list ran together),
+// so the lots are separated by semicolons and the question is its own sentence.
+function openLotsMessage(ticker, r) {
+  if (r.state === 'FOUND') {
+    const lines = r.lots.map(l => {
+      const pending = l.order_type != null && l.filled_at == null;
+      return `${l.shares} shares @ $${Number(l.buy_price).toFixed(2)}, ${pending ? 'order placed' : 'bought'} ${String(l.buy_date).slice(0, 10)}${l.buy_time ? ' ' + l.buy_time : ''}${pending ? ' (still pending)' : ''}`;
+    });
+    return `You already hold ${ticker}: ${r.lots.length === 1 ? 'one open position' : r.lots.length + ' open positions'} in the database, possibly added on another device: ${lines.join('; ')}. Record another buy of ${ticker}?`;
+  }
+  return `EDGE could not check the database for an open ${ticker} position (${r.reason}). If you might already hold it, for example added on another device, check the Portfolio tab first. Record this buy of ${ticker} anyway?`;
+}
 async function confirmAddPortfolio(ticker, btn, shown) {
   if (_addInFlight || _addAwaitingAnswer) return;
   const shares = parseFloat(document.getElementById('pf-shares').value);
@@ -4777,6 +4823,36 @@ async function confirmAddPortfolio(ticker, btn, shown) {
   const order = readOrderEntry('pf', date);
   if (order.error) { showAlert(order.error); return; }
 
+  // THE DATABASE IS ASKED FIRST (2026-11-18). On 11-17 Roman's laptop and phone each held their own list from their own
+  // start, and 16 adds were made over an open lot of the same ticker that the tapping device could not see. This
+  // session's own list is what the "You already hold" note reads; the database is what both devices share. So before
+  // recording, the database's open lots of this ticker are read: FOUND -> say what is held and ask (a second lot is a
+  // legitimate thing to want, so it warns and never refuses); NOT_FOUND -> on; COULD_NOT_CHECK -> say so and let him
+  // proceed deliberately. "Could not check" is never treated as "not found".
+  _addInFlight = true;
+  if (btn) btn.disabled = true;
+  let lots;
+  try { lots = await checkOpenLotsInDatabase(ticker); }
+  catch (e) { lots = { state: 'COULD_NOT_CHECK', reason: e?.message || String(e) }; }
+  finally { _addInFlight = false; }
+  if (lots.state === 'NOT_FOUND') return confirmAddPortfolioChecked(ticker, btn, shown, shares, price, date, order);
+  // Waiting on Roman: the same guard as the Live/Paper choice, so a second tap cannot queue a second add.
+  _addAwaitingAnswer = true;
+  const release = () => { _addAwaitingAnswer = false; if (btn) btn.disabled = false; };
+  try {
+    showChoice(openLotsMessage(ticker, lots), OPEN_LOT_CHOICES[lots.state], v => {
+      if (v === 'record') { _addAwaitingAnswer = false; confirmAddPortfolioChecked(ticker, btn, shown, shares, price, date, order); }
+      else release();
+    }, release);
+  } catch (e) {
+    release();
+    showGlobalErrorToast(`The check for an open ${ticker} could not be shown (${e?.message || e}), so nothing was recorded. Reload the app and add again.`);
+  }
+}
+
+// The rest of the add, unchanged from before the database check (2026-11-18).
+async function confirmAddPortfolioChecked(ticker, btn, shown, shares, price, date, order) {
+  if (_addInFlight) return;
   _addInFlight = true;
   if (btn) btn.disabled = true;
   try {

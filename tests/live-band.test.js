@@ -72,7 +72,8 @@ await run('before the app shell exists (PIN, loading): nothing, and no throw', (
 
 await run('redrawn wherever the mode this phone holds can change, and on every banner update (startup, the clock tick)', () => {
   assert.ok(fn('updateMarketBanner').startsWith('function updateMarketBanner() {\n  renderLiveBand();'), 'every banner update, first');
-  assert.ok(fn('confirmAddPortfolio').includes('state.settings.executionModeSetAt = reread.setAt; renderLiveBand(); }'), 'the Add\'s re-read');
+  // CHANGED 2026-11-18, declared: the re-read is in confirmAddPortfolioChecked, which runs after the Add's open-lot check.
+  assert.ok(fn('confirmAddPortfolioChecked').includes('state.settings.executionModeSetAt = reread.setAt; renderLiveBand(); }'), 'the Add\'s re-read');
   assert.ok(fn('applyModeAnswer').includes('state.settings.executionModeSetAt = r.at;\n    renderLiveBand();'), 'the prompt\'s answer');
   assert.ok(fn('changeExecutionMode').includes('  renderLiveBand();\n  renderSettingsTab();'), 'Settings');
   assert.ok(!/fetch|supabaseClient|readExecutionMode/.test(fn('renderLiveBand')), 'drawing never reads: it shows the mode last read');

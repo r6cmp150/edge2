@@ -412,10 +412,24 @@ async function readAllRows(query) {
   }
 }
 
+// GUARDED (2026-11-18). It returned [] for an empty answer with no check: "you hold nothing" whether the read was
+// empty, denied (RLS answers a denied read with an empty list, not an error) or cut short. It could not fire on 11-17
+// only because three facts held (portfolio RLS off, the service worker skipping cross-origin, 48 rows under any cap),
+// each of which could change unnoticed. Now: the rows read must equal the exact count the database reports, and an
+// empty answer stands only if the control (trades_v2, never empty) answers with rows. Otherwise it throws, and the
+// boot shows "Couldn't load your data" with Retry instead of an empty portfolio.
 async function loadPortfolioFromSupabase() {
-  const { data, error } = await supabaseClient.from('portfolio').select('*').order('buy_date', { ascending: true });
+  const { data, error, count } = await supabaseClient.from('portfolio').select('*', { count: 'exact' }).order('buy_date', { ascending: true });
   if (error) throw error;
-  return (data || []).map(mapSupabasePortfolioRowToPosition);
+  const rows = data || [];
+  if (count == null) throw new Error('the portfolio read gave no row count, so whether it is complete is not known');
+  if (rows.length !== count) throw new Error(`the portfolio read ${rows.length} of ${count} rows: not complete`);
+  if (!rows.length) {
+    const control = await supabaseClient.from('trades_v2').select('id', { count: 'exact', head: true });
+    if (control.error) throw new Error(`the portfolio read back empty, and the check that it was not denied failed (${control.error.message || control.error})`);
+    if (!(control.count > 0)) throw new Error('the portfolio read back empty and so did trades_v2, which never is: a denied read cannot be ruled out');
+  }
+  return rows.map(mapSupabasePortfolioRowToPosition);
 }
 
 // Only the add forms create portfolio rows. Every other save is an update of

@@ -18,7 +18,8 @@ const { readSource, run, REPO_ROOT } = require('./_lib');
 // Unpaged by design. Each says why it stays well under 1,000 rows.
 const BOUNDED = {
   'app.js|analysis_periods': 'periods Roman starts by hand: 1 row at f66fe02',
-  'core/store.js|portfolio': 'open positions and pending orders only, and every sale deletes its row: 11 live on 2026-11-05',
+  'core/store.js|portfolio': 'open positions and pending orders only, and every sale deletes its row: 11 live on 2026-11-05 (46 on 2026-11-18); since 2026-11-18 the load also checks its rows against the exact count, so a cut read throws',
+  'app.js|portfolio': 'the open lots of ONE ticker (checkOpenLotsInDatabase, the Add-time check): at most 2 per ticker on 2026-11-18',
   'scripts/analyze-model-b-winners.mjs|trades_v2': 'one trade, by ticker, buy date and sell date',
   'scripts/fill-outcomes.mjs|trades_v2': 'one symbol, from a signal date across a 9-day window',
   'scripts/fill-outcomes.mjs|signal_log': 'later signals for one symbol and engine: at most a row per tier per day',
