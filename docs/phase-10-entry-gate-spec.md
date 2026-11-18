@@ -2804,6 +2804,14 @@ it records that the screen, rendered 5-14 s before the tap and after the earlier
 ticker as held. Without it, "he forgot" and "his session could not see it" would be indistinguishable. Capture what
 the screen showed, as shown, even where no question is yet asked of it.
 
+**A RULING PINNED IN A TEST IS WHAT CATCHES THE CHANGE NOBODY ANTICIPATED (2026-11-18, the reviewer).** The first time
+this project collected on one. The ruling of 2026-11-08: a later attempt at a sale never overwrites the record of an
+earlier one (noteSaleWrite; held by `tests/sale-write-outcome.test.js`, "a later attempt never overwrites the record of
+an earlier one: Retry refused as a duplicate keeps the first failure"). Ten days later the write-first sale's first
+draft made Retry CLEAR an entry when its re-sent sale compared MATCH. That erased the record that the first attempt
+landed. Nobody reviewing the draft had that ruling in mind; the test did, and failed, and the draft was reverted
+before it was shown. Pin a ruling in a test when it is made, not when it is next at risk.
+
 **GATING IS BY DEPENDENCY, NOT BY BRANCH; A GATE'S LIST IS RE-READ WHEN WHAT IT WAITED FOR HAPPENS; AND A GATE AUDIT
 ASKS WHAT FEEDS EACH HELD ITEM (2026-11-12, the reviewer's rules).** A gate shared by unrelated work blocks the work
 that does not need it: before a stack is gated, each item is asked what it actually requires, and anything that

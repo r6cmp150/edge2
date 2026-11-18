@@ -38,7 +38,9 @@ run('the sale is inserted BEFORE the portfolio row is deleted', async () => {
   assert.ok(!global.state.positionsStillOpen || !global.state.positionsStillOpen['7'], 'a clean delete leaves no line');
 });
 
-for (const [sale, code] of [['WRITTEN', 'POSITION_NOT_REMOVED'], ['SALE_DUPLICATE', 'POSITION_UNKNOWN'], ['SALE_FAILED', '08006']]) {
+// CHANGED 2026-11-18, declared (the reviewer's (b)): the row is deleted only when a sale IS recorded (WRITTEN,
+// SALE_DUPLICATE). The SALE_FAILED case moved below: the row is kept, so there is no delete to fail.
+for (const [sale, code] of [['WRITTEN', 'POSITION_NOT_REMOVED'], ['SALE_DUPLICATE', 'POSITION_UNKNOWN']]) {
   run(`insert ${sale}, delete throws ${code}: a "still open" entry naming the sale's state; the sale is not touched`, async () => {
     const { recordSaleThenRemovePosition, log } = load({ insert: async () => sale, del: fail(code) });
     await recordSaleThenRemovePosition(pos, {}, '2026-11-06', 1, 0, 0);
@@ -50,11 +52,34 @@ for (const [sale, code] of [['WRITTEN', 'POSITION_NOT_REMOVED'], ['SALE_DUPLICAT
   });
 }
 
-run('an insert that throws unexpectedly still lets the delete run; the line says the sale is not known to be recorded', async () => {
-  const { recordSaleThenRemovePosition, log } = load({ insert: async () => { throw new Error('boom'); }, del: fail('POSITION_NOT_REMOVED') });
-  await recordSaleThenRemovePosition(pos, {}, '2026-11-06', 1, 0, 0);
-  assert.ok(log.includes('delete 7'));
-  assert.strictEqual(global.state.positionsStillOpen['7'].sale, 'SALE_FAILED');
+// CHANGED 2026-11-18, declared (the reviewer's (b)), REVERSING the 11-08 expectation that the delete runs whatever the
+// sale's outcome. A sale not recorded (SALE_FAILED), not known (SALE_PENDING: a timeout), or whose write threw outside
+// its own handling, KEEPS the position row: deleting it left no position, no trade and one queue entry on one phone.
+// The 11-08 ruling's own direction (a failed delete never blocks or loses the sale) is untouched.
+for (const [label, insert] of [['SALE_FAILED', async () => 'SALE_FAILED'], ['SALE_PENDING (no answer in time)', async () => 'SALE_PENDING'],
+  ['an unexpected throw', async () => { throw new Error('boom'); }]]) {
+  run(`insert ${label}: the position row is KEPT (no delete), and the outcome is returned`, async () => {
+    const { recordSaleThenRemovePosition, log } = load({ insert });
+    const out = await recordSaleThenRemovePosition(pos, {}, '2026-11-06', 1, 0, 0);
+    assert.ok(!log.some(x => x.startsWith('delete')), 'no delete: the row is the database\'s own record until the sale lands');
+    assert.ok(out === 'SALE_FAILED' || out === 'SALE_PENDING', out);
+    if (label === 'an unexpected throw') assert.strictEqual(out, 'SALE_PENDING', 'a throw is "not known", never "failed"');
+    assert.ok(!global.state.positionsStillOpen || !global.state.positionsStillOpen['7'], 'not "still shows as open": nothing to remove again');
+  });
+}
+
+// (the reviewer's (a)) the queue's own save, three states, and the card is told which.
+run('the queue cannot be saved: the in-flight card is told NOT_QUEUED (keep the app open); a throw is UNKNOWN', async () => {
+  for (const [persistImpl, want] of [[() => false, 'NOT_QUEUED'], [() => { throw new Error('quota'); }, 'UNKNOWN'], [() => true, 'QUEUED']]) {
+    const { recordSaleThenRemovePosition } = load({ insert: () => new Promise(() => {}) });
+    global.persist = persistImpl;
+    global.state.saleInFlight = { 7: 'QUEUING' };
+    recordSaleThenRemovePosition(pos, {}, '2026-11-06', 1, 0, 0);
+    await new Promise(r => setImmediate(r));
+    assert.strictEqual(global.state.saleInFlight['7'], want);
+  }
+  // the card says it, on its own warning line above a short "Recording sale…" (rendered at 390px, 2026-11-18)
+  assert.ok(app.includes("⚠ Keep the app open until this sale finishes: ${state.saleInFlight[p.id] === 'NOT_QUEUED' ? 'it could not be saved on this phone' : 'it is not known whether it was saved on this phone'}, so nothing will remember it if the app closes now."), 'the card says it');
 });
 
 run('confirmMarkSold: nothing between disabling the button and saving the record can stop the sale', () => {
@@ -70,10 +95,12 @@ run('confirmMarkSold: nothing between disabling the button and saving the record
   const after = src.slice(b);
   assert.ok(/persist\('sold'\)/.test(after) && after.indexOf("persist('sold')") < after.indexOf('recordSaleThenRemovePosition('), 'saved on the phone, then sent');
   // CHANGED 2026-11-18, declared (write first, then remove): the card stays, marked in flight, until the write returns.
-  const inFlight = after.indexOf('state.saleInFlight[posId] = true;');
+  const inFlight = after.indexOf("state.saleInFlight[posId] = 'QUEUING';");
   const awaited = after.indexOf('await recordSaleThenRemovePosition(');
   const removed = after.indexOf('state.portfolio = state.portfolio.filter(p => p.id !== posId);');
   assert.ok(inFlight > 0 && awaited > inFlight && removed > awaited, 'in flight, then the write AWAITED, then removed from the list');
+  // (b) only a RECORDED sale leaves the list; not recorded or not known, the card stays with Retry
+  assert.ok(after.includes("if (outcome === 'WRITTEN' || outcome === 'SALE_DUPLICATE') state.portfolio = state.portfolio.filter(p => p.id !== posId);"), 'the removal is conditional on a recorded sale');
   assert.ok(!src.slice(0, src.indexOf('await recordSaleThenRemovePosition(')).includes('state.portfolio = state.portfolio.filter'), 'nothing removes the card before the write');
 });
 
@@ -90,7 +117,9 @@ run('the app dies mid-write: the sale is already queued, SALE_PENDING, with ever
 });
 
 run('the in-flight card reads "Recording sale…" with no Sell button; the banner leaves an in-flight sale to its card', () => {
-  assert.ok(app.includes(`? '<button class="btn btn-ghost" disabled>Recording sale…</button>'`), 'the card');
+  assert.ok(app.includes(`'<button class="btn btn-ghost" disabled>Recording sale…</button>'`), 'the card');
+  // CHANGED 2026-11-18 (b): a card whose sale is not recorded, or not known, stays, with Retry in place of Sell
+  assert.ok(app.includes("'Sale NOT recorded: Retry' : 'Sale not known to be recorded: Retry'"), 'the kept card offers Retry');
   assert.ok(app.includes('.filter(([id]) => !state.saleInFlight?.[id])'), 'the banner skips a sale in flight');
   assert.ok(app.includes("if (f.code === 'SALE_PENDING') {") && app.includes('sale: not known whether it was recorded'), 'an unresolved pending sale is its own red line');
 });
@@ -111,7 +140,9 @@ run('on load: an open row whose sale is in trades_v2, or queued on this phone, g
   await checkPositionsStillOpen();
   assert.deepStrictEqual(c.calls, ['7', '8', '9'].map(id => `trades_v2.position_id.position_id=${id}.limit(1)`), 'one bounded read per open position');
   const s = global.state.positionsStillOpen;
-  assert.strictEqual(s['7'].sale, 'WRITTEN'); assert.strictEqual(s['8'].sale, 'SALE_FAILED'); assert.ok(!s['9']);
+  // CHANGED 2026-11-18, declared (b): a queued SALE_FAILED keeps its row ON PURPOSE, so it gets no "still shows as open"
+  // line (its "Remove again" would delete the position before the sale is recorded); its sale line covers it.
+  assert.strictEqual(s['7'].sale, 'WRITTEN'); assert.ok(!s['8'], 'a queued, unrecorded sale is not "still open"'); assert.ok(!s['9']);
   assert.ok(log.includes('clearRead trades_v2 (open positions)') && !log.some(x => x.startsWith('persist')));
 });
 

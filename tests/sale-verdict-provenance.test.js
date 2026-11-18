@@ -119,7 +119,10 @@ run('the sale write sends verdict_provenance and signal_before_sale, and the ver
     // CHANGED 2026-11-12, declared: the scan price history adds hooks these functions now call; stubbed here, held by tests/scan-history.test.js.
     invalidateSessionRead() {},
     noteSaleWrite: (p, outcome) => outcome,
-    supabaseClient: { from: () => ({ insert: rows => { inserted = rows[0]; return { select: async () => ({ data: [{ id: 1 }], error: null }) }; } }) },
+    // CHANGED 2026-11-18, declared: the sale insert has a bounded wait (SALE_WRITE_TIMEOUT_MS, an AbortController, .abortSignal on
+    // the query); the mock answers .abortSignal and the context carries the timer and AbortController.
+    AbortController, setTimeout, clearTimeout, SALE_WRITE_TIMEOUT_MS: 20000,
+    supabaseClient: { from: () => ({ insert: rows => { inserted = rows[0]; return { select: () => ({ abortSignal: async () => ({ data: [{ id: 1 }], error: null }) }) }; } }) },
   };
   vm.createContext(ctx);
   // CHANGED 2026-11-12, declared: the sale row also carries db/042's mode, through saleModeColumns.

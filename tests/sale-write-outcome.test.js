@@ -18,6 +18,7 @@ const grab = name => { const i = app.search(new RegExp(`(async )?function ${name
 // (`stored`: the row it returns, an Error, or null for an empty read), and the eval carries the
 // two constants noteSaleWrite and compareRecordedSale use.
 const constLine = n => { const m = app.match(new RegExp('^const ' + n + ' = .*$', 'm')); assert.ok(m, n); return m[0]; };
+const HANG = Symbol('no answer');
 function load(insertResult, stored = { sell_price: 10.1, shares: 10, sell_date: '2026-10-29' }) {
   const persisted = [];
   const el = { style: {}, innerHTML: '' };
@@ -39,12 +40,20 @@ function load(insertResult, stored = { sell_price: 10.1, shares: 10, sell_date: 
   global.getMarketStatus = () => ({ color: 'x', label: 'OPEN', countdown: '' });
   global.__reads = [];
   global.supabaseClient = { from: () => ({
-    insert: () => ({ select: async () => { const r = typeof insertResult === 'function' ? insertResult() : insertResult; if (r instanceof Error) throw r; return r; } }),
+    // CHANGED 2026-11-18, declared: the sale insert has a bounded wait (SALE_WRITE_TIMEOUT_MS, an AbortController, .abortSignal on
+    // the query); the mock answers .abortSignal and the context carries the timer and AbortController.
+    insert: () => ({ select: () => ({ abortSignal: async sig => {
+      const r = typeof insertResult === 'function' ? insertResult() : insertResult;
+      // HANG: no answer, ever, unless the signal aborts it (then the client's own AbortError, as fetch throws)
+      if (r === HANG) return new Promise((res, rej) => sig.addEventListener('abort', () => global.__abortShape === 'throw'
+        ? rej(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' }))
+        : res({ data: null, error: { message: 'AbortError: The operation was aborted.', details: '', hint: '', code: '' } })));
+      if (r instanceof Error) throw r; return r; } }) }),
     select: cols => ({ eq: (c, v) => ({ limit: async n => { global.__reads.push([cols, c, v, n]); if (stored instanceof Error) return { data: null, error: { message: stored.message } }; return { data: stored ? [stored] : [], error: null }; } }) }),
   }) };
   // eslint-disable-next-line no-eval
   // CHANGED 2026-11-12, declared (carve of (c)): the writers call core/store.js's column validators; loaded here for real (tests/_lib.js columnValidatorsSrc), never stubbed.
-  eval(columnValidatorsSrc() + '\n' + settingLabelsSrc() + '\n' + [constLine('MAX_SALE_ATTEMPTS'), constLine('SALE_COMPARED_FIELDS')].join('\n') + '\n' + ['saleVerdictProvenance', 'saleModeColumns', 'writeTradeToSupabase', 'noteSaleWrite', 'compareRecordedSale', 'retrySaleWrite', 'dismissSaleNotice', 'settingsBannerLine', 'updateMarketBanner'].map(grab).join('\n') +
+  eval(columnValidatorsSrc() + '\n' + settingLabelsSrc() + '\n' + [constLine('MAX_SALE_ATTEMPTS'), constLine('SALE_WRITE_TIMEOUT_MS'), constLine('SALE_COMPARED_FIELDS')].join('\n') + '\n' + ['saleVerdictProvenance', 'saleModeColumns', 'writeTradeToSupabase', 'noteSaleWrite', 'compareRecordedSale', 'retrySaleWrite', 'dismissSaleNotice', 'settingsBannerLine', 'updateMarketBanner'].map(grab).join('\n') +
     '\nglobal.__w = writeTradeToSupabase; global.__retry = retrySaleWrite; global.__dismiss = dismissSaleNotice; global.__banner = updateMarketBanner;');
   return { persisted, el };
 }
@@ -249,4 +258,40 @@ run('Retry against a DIFFERENT recorded sale (the other device): DIFFER, kept fo
   assert.strictEqual(global.state.saleWriteFailures[pos.id].code, 'SALE_FAILED');
   assert.deepStrictEqual(global.__deleted, [], 'not recorded: the row and the card stay');
   assert.strictEqual(global.state.portfolio.length, 1);
+}));
+
+// 2026-11-18 (the reviewer's (c): "a hang is a failure, not a wait"). The card now waits for this write, so a request
+// that never answers must end. After SALE_WRITE_TIMEOUT_MS it is aborted and the outcome is SALE_PENDING (an aborted
+// request may have landed: not known), with the sale kept for Retry and the reason named. Both shapes an abort can
+// take: supabase-js RESOLVES with an error for an aborted fetch (the real path), and a thrown AbortError.
+// The run is raced against a REAL 3 s timer: a write that never settles leaves nothing on node's event loop, so the
+// process would exit 0 with no FAIL printed -- a hang read as a pass (found by a mutant, 2026-11-18).
+const settles = (p, what) => { const real = HANG_TIMER; let t; return Promise.race([p, new Promise((_, rej) => { t = real(() => rej(new Error(`${what}: no outcome within 3 s -- it hung`)), 3000); })]).finally(() => clearTimeout(t)); };
+const HANG_TIMER = global.setTimeout;
+for (const shape of ['resolves with an AbortError (supabase-js)', 'throws an AbortError']) {
+  run(`no answer, then the abort ${shape}: SALE_PENDING (not FAILED), the reason named, the sale kept for Retry`, quiet(async () => {
+    load(() => HANG);
+    global.__abortShape = shape.startsWith('resolves') ? 'resolve' : 'throw';
+    global.setTimeout = fn => { setImmediate(fn); return 0; }; // the bounded wait elapses at once
+    let outcome;
+    try { outcome = await settles(global.__w(...args), 'the sale write'); } finally { global.setTimeout = HANG_TIMER; }
+    assert.strictEqual(outcome, 'SALE_PENDING');
+    const f = global.state.saleWriteFailures[pos.id];
+    assert.strictEqual(f.code, 'SALE_PENDING');
+    assert.ok(/no answer within 20 s: not known whether it was recorded/.test(f.message), f.message);
+    assert.deepStrictEqual(f.args, args, 'kept for Retry');
+  }));
+}
+
+run('a Retry that gets no answer: SALE_PENDING again, and the position row and card are KEPT', quiet(async () => {
+  load(() => HANG);
+  global.__abortShape = 'resolve';
+  global.state.saleWriteFailures[pos.id] = { ticker: 'HUN', code: 'SALE_FAILED', message: 'x', at: 't0', attempts: [], attemptsDropped: 0, args };
+  global.state.portfolio = [{ id: pos.id, ticker: 'HUN' }];
+  global.setTimeout = fn => { setImmediate(fn); return 0; };
+  try { await settles(global.__retry(pos.id), 'the retry'); } finally { global.setTimeout = HANG_TIMER; }
+  assert.strictEqual(global.state.saleWriteFailures[pos.id].code, 'SALE_PENDING');
+  assert.deepStrictEqual(global.__deleted, [], 'not known to be recorded: the row stays');
+  assert.strictEqual(global.state.portfolio.length, 1, 'and the card');
+  assert.ok(/const SALE_WRITE_TIMEOUT_MS = 20000;/.test(app), 'the bound is 20 s');
 }));

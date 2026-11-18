@@ -571,7 +571,10 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   (sorted by "closest to time limit", not by ticker or recency), "Mark as sold" (price pre-filled), Confirm Sale: 3
   taps plus a search. The taps are equal; the search is the asymmetry, and it grows with every unsold position.
   Fifteen adds in three minutes and none sold fits that better than any bug. If it is the explanation, the remedy is
-  making a position as easy to close as it was to open, not a guard.
+  making a position as easy to close as it was to open, not a guard. **The cost of selling rises with the number of
+  positions not sold: a feedback loop, not a constant** (the reviewer). The cheapest intervention is probably not a
+  feature: it is the sort order, or a filter, on the Portfolio tab where he goes to sell (today's default is "closest
+  to time limit"). No task yet.
   **SEEN, NOT CHASED (logged 2026-11-18): remove-then-write at a sale.** (Fixed by a08972f, local: write first, then
   remove.) `confirmMarkSold` drops the position from
   the session's list (app.js ~7661) before `recordSaleThenRemovePosition` writes the sale and deletes the row. If the

@@ -15,8 +15,10 @@ const grab = n => { const i = app.search(new RegExp(`^(async )?function ${n}\\(`
 
 async function write(record) {
   let row = null, status = null;
-  const ctx = { Math, Object, String, Number, Array, JSON, Date, console, isFinite, isNaN,
-    supabaseClient: { from: () => ({ insert: rows => { row = rows[0]; return { select: async () => ({ data: [{ id: 'x' }], error: null }) }; } }) },
+// CHANGED 2026-11-18, declared: the sale insert has a bounded wait (SALE_WRITE_TIMEOUT_MS, an AbortController, .abortSignal on
+// the query); the mock answers .abortSignal and the context carries the timer and AbortController.
+  const ctx = { Math, Object, String, Number, Array, JSON, Date, console, isFinite, isNaN, AbortController, setTimeout, clearTimeout, SALE_WRITE_TIMEOUT_MS: 20000,
+    supabaseClient: { from: () => ({ insert: rows => { row = rows[0]; return { select: () => ({ abortSignal: async () => ({ data: [{ id: 'x' }], error: null }) }) }; } }) },
     noteSaleWrite: (pos, s, message) => { status = s === 'WRITTEN' ? s : `${s}: ${message}`; return s; },
     persist: () => {}, invalidateSessionRead: () => {}, state: { sold: [] } };
   vm.createContext(ctx);

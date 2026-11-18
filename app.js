@@ -5997,9 +5997,14 @@ async function renderPortfolioTab() {
       ${aiReadHtml}
       ${durationBlockHtml}
       ${momentumBadge}
+      ${state.saleInFlight?.[p.id] === 'NOT_QUEUED' || state.saleInFlight?.[p.id] === 'UNKNOWN'
+        ? `<div class="pf-sale-unqueued" style="color:var(--yellow);font-size:13px;line-height:18px;margin:8px 0">⚠ Keep the app open until this sale finishes: ${state.saleInFlight[p.id] === 'NOT_QUEUED' ? 'it could not be saved on this phone' : 'it is not known whether it was saved on this phone'}, so nothing will remember it if the app closes now.</div>`
+        : ''}
       <div class="pf-actions">
         ${state.saleInFlight?.[p.id]
           ? '<button class="btn btn-ghost" disabled>Recording sale…</button>'
+          : state.saleWriteFailures?.[p.id]?.code === 'SALE_FAILED' || state.saleWriteFailures?.[p.id]?.code === 'SALE_PENDING'
+          ? `<button class="btn btn-danger" onclick="retrySaleWrite('${p.id}')">${state.saleWriteFailures[p.id].code === 'SALE_FAILED' ? 'Sale NOT recorded: Retry' : 'Sale not known to be recorded: Retry'}</button>`
           : `<button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf}'` : 'null'})">Mark as sold</button>`}
         <button class="btn btn-ghost" onclick="openPositionSnapshotModal('${p.ticker}')">View signal</button>
       </div>
@@ -7160,7 +7165,14 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
     // so its score is a version-1 score.
     const buyScoringVersion = pos.codeVersion?.scoring ?? 1;
     const signalLabel = scoreLabel(pos.scoreAtBuy, buyScoringVersion);
-    const { data, error } = await supabaseClient.from('trades_v2').insert([{
+    // A BOUNDED WAIT (2026-11-18, the reviewer: "a hang is a failure, not a wait"). The card now waits for this write,
+    // so a request that never answers would hold it at "Recording sale…" with no Sell button, for good. After
+    // SALE_WRITE_TIMEOUT_MS the request is aborted and the outcome is SALE_PENDING, NOT SALE_FAILED: an aborted request
+    // may still have landed, so it is "not known", and Retry settles it (a landed copy compares MATCH).
+    const abort = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; abort.abort(); }, SALE_WRITE_TIMEOUT_MS);
+    const { data, error } = await Promise.resolve(supabaseClient.from('trades_v2').insert([{
       ticker: pos.ticker,
       company: pos.company,
       buy_date: pos.buyDate,
@@ -7300,7 +7312,8 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
       // position has no id, which is a defect a query will find.
       position_id: pos.id ?? null,
       ...saleModeColumns(pos),
-    }]).select('id');
+    }]).select('id').abortSignal(abort.signal)).finally(() => clearTimeout(timer));
+    if (timedOut) return noteSaleWrite(pos, 'SALE_PENDING', `no answer within ${SALE_WRITE_TIMEOUT_MS / 1000} s: not known whether it was recorded`, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
     if (error) {
       // 23505 on trades_v2_position_id_once: this position's sale is
       // already in trades_v2 (db/033). That's the intended refusal of a
@@ -7331,6 +7344,7 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
     invalidateSessionRead('notKnown'); // a trade was recorded: the count may have changed
     return noteSaleWrite(pos, 'WRITTEN', null, null);
   } catch(e) {
+    if (e && e.name === 'AbortError') return noteSaleWrite(pos, 'SALE_PENDING', `no answer within ${SALE_WRITE_TIMEOUT_MS / 1000} s: not known whether it was recorded`, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
     return noteSaleWrite(pos, 'SALE_FAILED', e.message, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
   }
 }
@@ -7352,6 +7366,7 @@ async function writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar,
 // MAX_SALE_ATTEMPTS - 1, and the count of any dropped between them. WRITTEN resolves the
 // entry (removes it): the sale is recorded.
 const MAX_SALE_ATTEMPTS = 6;
+const SALE_WRITE_TIMEOUT_MS = 20000; // the sale insert's bounded wait (2026-11-18): far longer than a normal write, short enough not to strand a card
 function noteSaleWrite(pos, status, message, args, comparison = null) {
   if (!state.saleWriteFailures) state.saleWriteFailures = {};
   if (status === 'WRITTEN') delete state.saleWriteFailures[pos.id];
@@ -7368,7 +7383,7 @@ function noteSaleWrite(pos, status, message, args, comparison = null) {
       ticker: pos.ticker, code: status, message, at, attempts, attemptsDropped: dropped,
       // A failed sale keeps its args (the only copy until Retry lands it). A duplicate
       // needs none: its sale is in trades_v2.
-      args: status === 'SALE_FAILED' ? args : null,
+      args: status === 'SALE_FAILED' || status === 'SALE_PENDING' ? args : null,
     };
   }
   persist('saleWriteFailures');
@@ -7414,13 +7429,17 @@ async function compareRecordedSale(positionId, submitted) {
 async function retrySaleWrite(posId) {
   const f = state.saleWriteFailures?.[posId];
   if (!f || !f.args) return;
-  const outcome = await writeTradeToSupabase(...f.args);
-  if (outcome !== 'SALE_FAILED') {
+  if (!state.saleInFlight) state.saleInFlight = {};
+  state.saleInFlight[posId] = 'QUEUED';
+  if (typeof renderPortfolioTab === 'function') renderPortfolioTab();
+  let outcome = 'SALE_PENDING';
+  try { outcome = await writeTradeToSupabase(...f.args); } finally { delete state.saleInFlight[posId]; }
+  if (outcome === 'WRITTEN' || outcome === 'SALE_DUPLICATE') {
     try { await deletePositionFromSupabase(posId); }
     catch (err) { notePositionStillOpen(posId, f.ticker, outcome, err.message); }
     state.portfolio = (state.portfolio || []).filter(p => p.id !== posId);
-    if (typeof renderPortfolioTab === 'function') renderPortfolioTab();
   }
+  if (typeof renderPortfolioTab === 'function') renderPortfolioTab();
   if (typeof renderSoldTab === 'function' && state.activeTab === 'sold') renderSoldTab();
 }
 
@@ -7436,6 +7455,9 @@ async function retrySaleWrite(posId) {
 // it (noteSaleWrite); SALE_FAILED and SALE_DUPLICATE append their attempt. An entry still SALE_PENDING at the next load
 // means the outcome was never seen, and the banner offers Retry (retrySaleWrite: deliberate about a sale that landed).
 // If this save itself fails, persist() names it on the banner and the sale proceeds: no worse than before.
+// -> 'QUEUED' | 'NOT_QUEUED' (the save failed; persist() names it on the banner) | 'UNKNOWN' (the save threw outside
+// persist's own handling). The card says which (2026-11-18, the reviewer's (a)): a sale that could not be queued has
+// nothing to remember it if the app closes, so Roman is told to keep the app open until it finishes.
 function queueSaleBeforeWrite(pos, args) {
   if (!state.saleWriteFailures) state.saleWriteFailures = {};
   const prev = state.saleWriteFailures[pos.id];
@@ -7444,14 +7466,22 @@ function queueSaleBeforeWrite(pos, args) {
     ticker: pos.ticker, code: 'SALE_PENDING', message: 'recording: this phone has not seen the outcome yet', at: new Date().toISOString(),
     args,
   };
-  persist('saleWriteFailures');
+  try { return persist('saleWriteFailures') ? 'QUEUED' : 'NOT_QUEUED'; } catch (e) { return 'UNKNOWN'; }
 }
 
+// THE ROW IS KEPT UNLESS THE SALE IS IN THE DATABASE (2026-11-18, the reviewer's (b)). It used to be deleted whatever
+// the sale's outcome, so a failed first write left no position, no trade, and one queue entry on one phone: worse than
+// either alone. The 11-08 ruling it came from is about the other direction (a failed DELETE must never block or lose a
+// SALE), and that still holds: the insert comes first, and the delete never undoes it. Now: WRITTEN or SALE_DUPLICATE
+// (a sale is recorded) -> the row goes. SALE_FAILED or SALE_PENDING (not recorded, or not known) -> the row stays, the
+// card stays with Retry, and the failure is recoverable from the database alone.
 async function recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
-  queueSaleBeforeWrite(pos, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
-  let sale = 'SALE_FAILED';
+  const queued = queueSaleBeforeWrite(pos, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
+  if (state.saleInFlight && state.saleInFlight[pos.id]) { state.saleInFlight[pos.id] = queued; if (typeof renderPortfolioTab === 'function') renderPortfolioTab(); }
+  let sale = 'SALE_PENDING';
   try { sale = await writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct); }
   catch (e) { console.error(`Sale write for ${pos.ticker} (${pos.id}) threw outside its own handling: ${e.message}`); }
+  if (sale !== 'WRITTEN' && sale !== 'SALE_DUPLICATE') return sale;
   try {
     const removed = await deletePositionFromSupabase(pos.id);
     if (removed === 'ALREADY_GONE') console.warn(`Sale of ${pos.ticker} (${pos.id}): the portfolio row was already gone (closed in another session).`);
@@ -7477,7 +7507,10 @@ async function checkPositionsStillOpen() {
   const found = {};
   for (const p of open) {
     const q = state.saleWriteFailures?.[p.id];
-    if (q) found[p.id] = { ticker: p.ticker, sale: q.code, message: 'found on load: open in portfolio, with its sale queued on this phone' };
+    // CHANGED 2026-11-18: a SALE_FAILED / SALE_PENDING keeps its row on purpose (the row is the database's own record
+    // until the sale lands), so it is NOT "still shows as open": "Remove again" there would delete the position before
+    // its sale is recorded. Its sale line and its card's Retry cover it. A queued DUPLICATE (sale recorded) does.
+    if (q && q.code === 'SALE_DUPLICATE') found[p.id] = { ticker: p.ticker, sale: q.code, message: 'found on load: open in portfolio, with its sale queued on this phone' };
   }
   if (open.length) {
     // One read per open position, each .eq + .limit(1): no in-list (tests/
@@ -7709,15 +7742,18 @@ async function confirmMarkSold(posId, btn) {
   // in that window lost it without trace. Now the card stays, reading "Recording sale…" with no Sell button, until
   // recordSaleThenRemovePosition returns (the sale queued first, then inserted, then the row deleted, whatever the
   // outcome, as since 11-08). Only then does it leave the list.
+  // CHANGED 2026-11-18 (the reviewer's (b)): it leaves only when the sale IS recorded (WRITTEN or SALE_DUPLICATE). Not
+  // recorded, or not known, the card stays with Retry, as the row does.
   if (!state.saleInFlight) state.saleInFlight = {};
-  state.saleInFlight[posId] = true;
+  state.saleInFlight[posId] = 'QUEUING';
   closeModal();
   renderPortfolioTab();
+  let outcome = 'SALE_PENDING';
   try {
-    await recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pnlDollar, pnlPct);
+    outcome = await recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pnlDollar, pnlPct);
   } finally {
     delete state.saleInFlight[posId];
-    state.portfolio = state.portfolio.filter(p => p.id !== posId);
+    if (outcome === 'WRITTEN' || outcome === 'SALE_DUPLICATE') state.portfolio = state.portfolio.filter(p => p.id !== posId);
     // Clear this ticker's previous-RSI tracking now that it's sold, so a future re-buy of the same ticker starts fresh
     // -- unless another open position on the same ticker still exists. (The peak RSI is the position's own since db/044
     // and leaves with its row: nothing per ticker to clear.)
