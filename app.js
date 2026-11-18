@@ -10336,6 +10336,13 @@ function storageReadoutRows() {
   }
   return rows.sort((a, b) => b.chars - a.chars || a.key.localeCompare(b.key));
 }
+// The pruned tickers, bounded IN DISPLAY ONLY (2026-11-18; "truncation belongs in display, never in capture"): the first
+// ten, then "and N more". state.heldScorePrune.pruned and the console line keep every ticker; the count stays exact.
+const PRUNED_SHOWN_MAX = 10;
+function prunedListForDisplay(pruned) {
+  if (pruned.length <= PRUNED_SHOWN_MAX) return pruned.join(', ');
+  return `${pruned.slice(0, PRUNED_SHOWN_MAX).join(', ')} and ${(pruned.length - PRUNED_SHOWN_MAX).toLocaleString('en-US')} more`;
+}
 function renderStorageReadout() {
   const el = document.getElementById('storage-readout');
   if (!el) return;
@@ -10350,7 +10357,7 @@ function renderStorageReadout() {
   el.innerHTML = `<div>${rows.length} key${rows.length === 1 ? '' : 's'}, ${fmt(total)} characters in all (about ${fmt(Math.round(total * 2 / 1024))} KB as stored). Largest first; nothing here can be deleted from the app.</div>`
     + `<div style="margin-top:6px">${rows.map(r => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="word-break:break-all"><span class="mono">${esc(r.key)}</span><br><span style="color:${/not named/.test(r.label) ? 'var(--yellow)' : 'var(--muted)'}">${esc(r.label)}${r.entries != null ? ` · ${fmt(r.entries)} entr${r.entries === 1 ? 'y' : 'ies'}` : ''}</span></span><span class="mono" style="white-space:nowrap">${fmt(r.chars)}</span></div>`).join('')}</div>`
     + (state.heldScorePrune && state.heldScorePrune.notPruned ? `<div style="margin-top:6px;color:var(--yellow)">Held-score cache not pruned this scan: ${esc(state.heldScorePrune.notPruned)}.</div>` : '')
-    + (state.heldScorePrune && !state.heldScorePrune.notPruned ? `<div style="margin-top:6px">Last scan this session pruned ${state.heldScorePrune.pruned.length} held-score entr${state.heldScorePrune.pruned.length === 1 ? 'y' : 'ies'}${state.heldScorePrune.pruned.length ? ` (${esc(state.heldScorePrune.pruned.join(', '))})` : ''}; ${state.heldScorePrune.kept} kept (open positions and pending orders).</div>` : '')
+    + (state.heldScorePrune && !state.heldScorePrune.notPruned ? `<div style="margin-top:6px">Last scan this session pruned ${state.heldScorePrune.pruned.length} held-score entr${state.heldScorePrune.pruned.length === 1 ? 'y' : 'ies'}${state.heldScorePrune.pruned.length ? ` (${esc(prunedListForDisplay(state.heldScorePrune.pruned))})` : ''}; ${state.heldScorePrune.kept} kept (open positions and pending orders).</div>` : '')
     + '<div id="storage-quota" style="margin-top:6px"></div>';
   // The browser's own estimate, if it gives one. It covers this site's other storage too and may not count
   // localStorage at all, so it is labelled as the browser's figure, never as this site's localStorage limit.

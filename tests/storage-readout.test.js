@@ -13,6 +13,7 @@ const { readSource, run } = require('./_lib');
 const app = readSource('app.js');
 const store = readSource('core/store.js');
 const grab = n => { const i = app.search(new RegExp(`^function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
+const line = p => { const i = app.indexOf(p); assert.ok(i >= 0, p); return app.slice(i, app.indexOf('\n', i) + 1); };
 const constBlock = n => { const i = app.indexOf(`const ${n} = {`); assert.ok(i >= 0, n); return app.slice(i, app.indexOf('\n};\n', i) + 4); };
 const tiers = store.slice(store.indexOf('const PERSIST_TIER = {'), store.indexOf('\n};\n', store.indexOf('const PERSIST_TIER = {')) + 4);
 
@@ -30,7 +31,7 @@ function harness(entries, state = {}) {
   const el = { innerHTML: '' };
   const c = { localStorage, document: { getElementById: id => (id === 'storage-readout' ? el : null) }, navigator: {}, String, Math, Object, console, JSON, Array, state };
   vm.createContext(c);
-  vm.runInContext([tiers, constBlock('STORAGE_KEYS_OUTSIDE_PERSIST'), grab('storageKeyLabel'), grab('storageReadoutRows'), grab('renderStorageReadout'),
+  vm.runInContext([tiers, constBlock('STORAGE_KEYS_OUTSIDE_PERSIST'), grab('storageKeyLabel'), grab('storageReadoutRows'), line('const PRUNED_SHOWN_MAX = '), grab('prunedListForDisplay'), grab('renderStorageReadout'),
     ';globalThis.__rows = storageReadoutRows; globalThis.__render = renderStorageReadout;'].join('\n'), c);
   return { c, el, writes };
 }
@@ -106,4 +107,20 @@ run('a skipped prune is shown as skipped, with its reason, never as "nothing to 
   h.c.__render();
   assert.ok(h.el.innerHTML.includes('Held-score cache not pruned this scan: the portfolio read back empty and so did trades_v2, which never is: a denied read cannot be ruled out.'), h.el.innerHTML.slice(-600));
   assert.ok(!/Last scan this session pruned/.test(h.el.innerHTML), 'no prune line for a prune that did not run');
+});
+
+// 2026-11-18 (the reviewer): Roman's first scan prunes ~241 tickers. "Truncation belongs in display, never in capture."
+run('the pruned list is bounded in display (first ten, "and N more"), the count exact, the capture whole', () => {
+  const pruned = Array.from({ length: 241 }, (_, i) => 'T' + String(i).padStart(3, '0'));
+  const prune = { pruned, kept: 44 };
+  const h = harness({ edge_signals: '[]' }, { heldScorePrune: prune });
+  h.c.__render();
+  const want = 'Last scan this session pruned 241 held-score entries (' + pruned.slice(0, 10).join(', ') + ' and 231 more); 44 kept';
+  assert.ok(h.el.innerHTML.includes(want), h.el.innerHTML.slice(-500));
+  assert.ok(!h.el.innerHTML.includes('T010'), 'the eleventh is not displayed');
+  assert.strictEqual(prune.pruned.length, 241, 'the capture is untouched');
+  const ten = harness({ edge_signals: '[]' }, { heldScorePrune: { pruned: pruned.slice(0, 10), kept: 6 } }); ten.c.__render();
+  assert.ok(ten.el.innerHTML.includes('(' + pruned.slice(0, 10).join(', ') + '); 6 kept'), 'ten or fewer: all shown, no "more"');
+  const i = app.indexOf('state.heldScorePrune = keepSet.keep ?');
+  assert.ok(app.slice(i, i + 900).includes("state.heldScorePrune.pruned.join(', ')"), 'the console line keeps every ticker');
 });
