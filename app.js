@@ -897,7 +897,7 @@ let state = {
   newsTruncatedSymbols: [], // tickers whose news may be incomplete because their batch hit the 50-item page cap — distinct from "confirmed zero news"
   newsFailedSymbols: [], // tickers whose news batch request failed outright (2026-09-04) — distinct from both truncated and "confirmed zero news"; gate.js's Pillar 4 renders these as fetch-failed, not fail
   newsLookbackHours: 72, // actual fetch window used by the last news request (core/news.js) — card-render visibility gate matches this exactly, not a duplicated literal
-  universeAssetCache: null, // { fetchedAt, assets: [{symbol,exchange,name,isCommonStock}] } — core/universe.js, 24h cache — persisted
+  universeAssetCache: null, // { fetchedAt, assets: [{symbol,isEligibleInstrument}] (P2, 2026-11-18), outsideIndex } — core/universe.js, 24h cache — persisted
   universePriorCloseCache: null, // { date, closes: {symbol: price} } — core/universe.js, daily cache — persisted
   warrior30DayVolumeCache: null, // { date, avgVolumes: {symbol: avgDailyVolume} } — core/universe.js, Phase 3 Pillar 3 (RVOL), daily cache — persisted
   warriorPreMarketVolumeCache: null, // { date, historyBySymbol: {symbol: [{date,volume}]} } — core/universe.js, pre-market-specific RVOL baseline (2026-09-04), daily cache — persisted

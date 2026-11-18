@@ -168,7 +168,11 @@ async function _getAssetIndex(client = _coreClient) {
   const isIndexed = a => a.tradable && ALLOWED_EXCHANGES.has(a.exchange);
   const assets = (raw || [])
     .filter(isIndexed)
-    .map(a => ({ symbol: a.symbol, exchange: a.exchange, name: a.name, isEligibleInstrument: _isEligibleInstrument(a) }));
+    // P2 (2026-11-18): symbol and eligibility only. name and exchange were stored too and never read from the cache
+    // (tests/asset-index-fields.test.js runs every consumer against an index whose name and exchange throw); the name
+    // is still read HERE, from the raw asset, to judge eligibility. An estimated 50-59% of Roman's ~1.1M-character
+    // cached copy. A cache written before this keeps its extra fields until its 24-hour refresh; nothing reads them.
+    .map(a => ({ symbol: a.symbol, isEligibleInstrument: _isEligibleInstrument(a) }));
   // Every OTHER active asset, symbol -> tradable (2026-10-22): an ETF held on
   // ARCA or BATS is listed even though Warrior's index leaves it out, and an
   // active-but-untradable asset is a different fact from a delisted one.
