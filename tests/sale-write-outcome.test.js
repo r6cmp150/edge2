@@ -28,6 +28,12 @@ function load(insertResult, stored = { sell_price: 10.1, shares: 10, sell_date: 
   global.invalidateSessionRead = () => {};
   // CHANGED 2026-11-12, declared: the banner and the mode re-read now redraw the LIVE band; stubbed here, held by tests/live-band.test.js.
   global.renderLiveBand = () => {};
+  // CHANGED 2026-11-18, declared: Retry now also deletes the position row when the sale is in the database (an app
+  // closed mid-sale may have left it). Stubbed and recorded here; its order is held by tests/sale-write-order.test.js.
+  global.__deleted = [];
+  global.deletePositionFromSupabase = async id => { global.__deleted.push(id); return 'REMOVED'; };
+  global.notePositionStillOpen = () => {};
+  global.renderPortfolioTab = () => {};
   global.scoreLabel = () => 'WATCH';
   global.currentCodeVersion = () => ({ app: 't', scoring: 2, scoring_hash: 'h' });
   global.getMarketStatus = () => ({ color: 'x', label: 'OPEN', countdown: '' });
@@ -213,3 +219,34 @@ run('bounded: the first attempt always kept, then the latest, with the count of 
 }));
 
 (async () => { for (const [n, f] of queue) await runNow(n, f); })();
+
+// 2026-11-18 (the reviewer: "what the retry does when the sale is already in the database ... must be deliberate").
+// A retry re-sends this phone's STORED sale. Against an earlier attempt that landed, it compares identical (MATCH):
+// the muted "already recorded" notice, never DIFFER. Only a DIFFERENT recorded sale (the other device's) is DIFFER.
+// Either way the sale is in the database, so the position row goes; a SALE_FAILED retry leaves it.
+run('Retry of a pending sale that had landed: MATCH, never DIFFER; and the position row is removed', quiet(async () => {
+  load(dup); // the database already holds THIS sale: 10.1 x 10 on 2026-10-29, as submitted
+  global.state.saleWriteFailures[pos.id] = { ticker: 'HUN', code: 'SALE_PENDING', message: 'recording', at: 't0', attempts: [], attemptsDropped: 0, args };
+  global.state.portfolio = [{ id: pos.id, ticker: 'HUN' }];
+  await global.__retry(pos.id);
+  const f = global.state.saleWriteFailures[pos.id];
+  assert.strictEqual(f.code, 'SALE_DUPLICATE');
+  assert.strictEqual(f.attempts[f.attempts.length - 1].comparison.verdict, 'MATCH', 'its own stored numbers compare identical');
+  assert.deepStrictEqual(global.__deleted, [pos.id], 'the sale is recorded: the row goes');
+  assert.deepStrictEqual(global.state.portfolio, [], 'and the card');
+}));
+
+run('Retry against a DIFFERENT recorded sale (the other device): DIFFER, kept for Roman; a failed retry keeps the row', quiet(async () => {
+  load(dup, { sell_price: '9.80', shares: 10, sell_date: '2026-10-28' });
+  global.state.saleWriteFailures[pos.id] = { ticker: 'HUN', code: 'SALE_PENDING', message: 'recording', at: 't0', attempts: [], attemptsDropped: 0, args };
+  await global.__retry(pos.id);
+  const f = global.state.saleWriteFailures[pos.id];
+  assert.strictEqual(f.attempts[f.attempts.length - 1].comparison.verdict, 'DIFFER');
+  load({ data: null, error: { code: '08006', message: 'connection failure' } });
+  global.state.saleWriteFailures[pos.id] = { ticker: 'HUN', code: 'SALE_PENDING', message: 'recording', at: 't0', attempts: [], attemptsDropped: 0, args };
+  global.state.portfolio = [{ id: pos.id, ticker: 'HUN' }];
+  await global.__retry(pos.id);
+  assert.strictEqual(global.state.saleWriteFailures[pos.id].code, 'SALE_FAILED');
+  assert.deepStrictEqual(global.__deleted, [], 'not recorded: the row and the card stay');
+  assert.strictEqual(global.state.portfolio.length, 1);
+}));

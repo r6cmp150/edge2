@@ -905,7 +905,8 @@ let state = {
   persistFailures: {}, // { [key]: { key, tier, message, at, evicted } } — core/store.js persist(): one entry per key whose localStorage write failed (quota exhaustion, etc), never displaced, removed only when that key saves — surfaced via updateMarketBanner, most important tier first (2026-11-13; it was one slot)
   snapshotWriteFailures: {}, // { [positionId]: { ticker, message, at, row } } -- a buy's signal_snapshot_at_buy row that failed to write; PERSISTED so Retry can land it (2026-11-02: a failure only counted in Settings is how 72 snapshots were lost)
   ratingWriteFailures: [], // [{ at, message, rows }] -- rating_snapshots batches that failed to write; PERSISTED, capped at RATING_FAILURES_KEPT, Retry re-inserts after checking they didn't land
-  saleWriteFailures: {}, // { [positionId]: { ticker, code: 'SALE_FAILED'|'SALE_DUPLICATE', message, at, args } } -- writeTradeToSupabase; PERSISTED, because the portfolio row is already deleted when the sale write runs: this is the only copy of an unrecorded sale until Retry lands it
+  saleWriteFailures: {}, // { [positionId]: { ticker, code: 'SALE_PENDING'|'SALE_FAILED'|'SALE_DUPLICATE', message, at, args } } -- queued before the write (SALE_PENDING), resolved by writeTradeToSupabase; PERSIST
+  saleInFlight: {},       // { [positionId]: true } while its sale is being recorded (the card reads "Recording sale…"). Session only, never persisted.ED, because the portfolio row is already deleted when the sale write runs: this is the only copy of an unrecorded sale until Retry lands it
   positionSaveFailures: {}, // { [positionId]: { ticker, code, message, at } } — backgroundSavePosition(), keyed by core/store.js's three zero-row codes; surfaced via updateMarketBanner. MISSING stays until reload; UNWRITABLE/UNKNOWN clear on that position's next successful save — session only, not persisted
   // warriorEdgarCikMapCache/warriorFloatCache RETIRED 2026-09-04: they backed
   // core/edgar.js's live client-side EDGAR fetch, which a real boot check
@@ -1201,11 +1202,12 @@ function updateMarketBanner() {
   // one that couldn't be read back, then the rest: the collapsed line shows the first, and a
   // difference in the trade record must not sit behind a routine refusal.
   const saleRank = f => {
-    if (f.code === 'SALE_FAILED') return 0;
+    if (f.code === 'SALE_FAILED' || f.code === 'SALE_PENDING') return 0;
     const v = Array.isArray(f.attempts) ? f.attempts[f.attempts.length - 1]?.comparison?.verdict : null;
     return v === 'DIFFER' ? 1 : v === 'COULD_NOT_READ' ? 2 : 3;
   };
-  const saleFails = Object.entries(state.saleWriteFailures || {}).map(([id, f]) => ({ id, ...f }))
+  // A sale being recorded right now is shown on its card ("Recording sale…"), not as a problem (2026-11-18).
+  const saleFails = Object.entries(state.saleWriteFailures || {}).filter(([id]) => !state.saleInFlight?.[id]).map(([id, f]) => ({ id, ...f }))
     .sort((a, b) => saleRank(a) - saleRank(b));
   // What the entry itself holds, shown as stored (2026-11-08): its position_id (the
   // key), its `at`, and the database's message. Read-only: nothing is computed,
@@ -1223,6 +1225,12 @@ function updateMarketBanner() {
   const money = v => (v == null ? 'not recorded' : `$${escFact(Number(v))}`);
   const saleVals = v => (v ? `${money(v.sell_price)} × ${v.shares == null ? 'not recorded' : escFact(v.shares)} on ${v.sell_date ? escFact(v.sell_date) : 'not recorded'}` : 'not read');
   for (const f of saleFails) {
+    // Queued before the call and never resolved (2026-11-18): the app closed while recording it. Not known either way.
+    if (f.code === 'SALE_PENDING') {
+      add('var(--red)', `${f.ticker} sale: not known whether it was recorded`, "The app closed while this sale was being recorded, so this phone never saw the outcome. Don't re-enter it by hand: tap Retry. If it was recorded, Retry confirms it (the line becomes \"already recorded ... Nothing is lost\"); if it wasn't, Retry records it." + facts(f),
+        `<button class="btn btn-sm btn-danger" onclick="retrySaleWrite('${f.id}')">Retry</button>`);
+      continue;
+    }
     if (f.code === 'SALE_FAILED') {
       add('var(--red)', `${f.ticker} sale NOT recorded`, "The sale isn't in the database. Don't re-submit it by hand: tap Retry (safe — a second copy is refused), then check the Sold tab after a refresh." + facts(f),
         `<button class="btn btn-sm btn-danger" onclick="retrySaleWrite('${f.id}')">Retry</button>`);
@@ -1245,7 +1253,7 @@ function updateMarketBanner() {
   // A sold position whose portfolio row is still there (recordSaleThenRemovePosition,
   // checkPositionsStillOpen). Its own line, never a sale failure: the sale is recorded
   // or queued; the portfolio is what's wrong.
-  const SALE_STATE = { WRITTEN: 'Its sale is recorded.', SALE_DUPLICATE: 'Its sale was already recorded.', SALE_FAILED: 'Its sale is queued on this phone, not yet recorded (see its "sale NOT recorded" line).' };
+  const SALE_STATE = { WRITTEN: 'Its sale is recorded.', SALE_DUPLICATE: 'Its sale was already recorded.', SALE_FAILED: 'Its sale is queued on this phone, not yet recorded (see its "sale NOT recorded" line).', SALE_PENDING: 'Its sale was being recorded when the app closed, so whether it was recorded is not known (see its "not known" line).' };
   for (const [id, g] of Object.entries(state.positionsStillOpen || {})) {
     add('var(--red)', `${g.ticker} still shows as open`, `${SALE_STATE[g.sale] || 'Whether its sale is recorded is not known.'} The portfolio row wasn't removed, so it can come back after a reload and portfolio figures count it. Tap Remove again.<div class="banner-facts">position ${escFact(id)} · ${g.message ? escFact(g.message) : 'no message recorded'}</div>`,
       `<button class="btn btn-sm btn-danger" onclick="removePositionAgain('${id}')">Remove again</button>`);
@@ -5990,7 +5998,9 @@ async function renderPortfolioTab() {
       ${durationBlockHtml}
       ${momentumBadge}
       <div class="pf-actions">
-        <button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf}'` : 'null'})">Mark as sold</button>
+        ${state.saleInFlight?.[p.id]
+          ? '<button class="btn btn-ghost" disabled>Recording sale…</button>'
+          : `<button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf}'` : 'null'})">Mark as sold</button>`}
         <button class="btn btn-ghost" onclick="openPositionSnapshotModal('${p.ticker}')">View signal</button>
       </div>
     </div>`;
@@ -7392,10 +7402,25 @@ async function compareRecordedSale(positionId, submitted) {
   }
 }
 
+// Retry (2026-11-18, the reviewer asked that its handling of a sale that already landed be deliberate). It re-sends
+// THIS phone's stored sale, with the numbers it was first sent with. If an earlier attempt landed (an app closed
+// mid-sale leaves SALE_PENDING; a lost response leaves SALE_FAILED), the database refuses the copy (23505) and
+// compareRecordedSale finds the recorded row identical: MATCH. That keeps the entry as the muted, dismissable "already
+// recorded ... Nothing is lost" notice, so the record that the first attempt landed survives (the 11-08 rule: a later
+// attempt never overwrites an earlier one). A retry of the phone's own stored sale CANNOT read DIFFER: DIFFER means a
+// DIFFERENT sale of the position is recorded (the other device's), and that is the red line Roman must look at.
+// Whatever the outcome except SALE_FAILED, the sale is in the database, so the position row goes too: an app closed
+// mid-sale may have left it (ALREADY_GONE is fine).
 async function retrySaleWrite(posId) {
   const f = state.saleWriteFailures?.[posId];
   if (!f || !f.args) return;
-  await writeTradeToSupabase(...f.args);
+  const outcome = await writeTradeToSupabase(...f.args);
+  if (outcome !== 'SALE_FAILED') {
+    try { await deletePositionFromSupabase(posId); }
+    catch (err) { notePositionStillOpen(posId, f.ticker, outcome, err.message); }
+    state.portfolio = (state.portfolio || []).filter(p => p.id !== posId);
+    if (typeof renderPortfolioTab === 'function') renderPortfolioTab();
+  }
   if (typeof renderSoldTab === 'function' && state.activeTab === 'sold') renderSoldTab();
 }
 
@@ -7404,7 +7429,26 @@ async function retrySaleWrite(posId) {
 // then the portfolio row. A delete that removes nothing while the row is still
 // there, can't tell, or errors is a separate line: the position still shows as
 // open, and the sale is recorded or queued. Never reported as a sale failure.
+// QUEUED BEFORE THE NETWORK CALL (2026-11-18, the reviewer). The queue entry used to be written only after the insert
+// returned, so an app closed or killed inside that round trip lost the sale without trace: no trades_v2 row, no queue
+// entry, and the phone's Sold list (its only copy) is replaced by the database's at the next load ("path 5"). Now the
+// sale is queued, with its arguments, as SALE_PENDING before the call. The outcome then overwrites it: WRITTEN removes
+// it (noteSaleWrite); SALE_FAILED and SALE_DUPLICATE append their attempt. An entry still SALE_PENDING at the next load
+// means the outcome was never seen, and the banner offers Retry (retrySaleWrite: deliberate about a sale that landed).
+// If this save itself fails, persist() names it on the banner and the sale proceeds: no worse than before.
+function queueSaleBeforeWrite(pos, args) {
+  if (!state.saleWriteFailures) state.saleWriteFailures = {};
+  const prev = state.saleWriteFailures[pos.id];
+  state.saleWriteFailures[pos.id] = {
+    ...(prev || { attempts: [], attemptsDropped: 0 }),
+    ticker: pos.ticker, code: 'SALE_PENDING', message: 'recording: this phone has not seen the outcome yet', at: new Date().toISOString(),
+    args,
+  };
+  persist('saleWriteFailures');
+}
+
 async function recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pnlDollar, pnlPct) {
+  queueSaleBeforeWrite(pos, [pos, record, saleDate, salePrice, pnlDollar, pnlPct]);
   let sale = 'SALE_FAILED';
   try { sale = await writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct); }
   catch (e) { console.error(`Sale write for ${pos.ticker} (${pos.id}) threw outside its own handling: ${e.message}`); }
@@ -7414,6 +7458,7 @@ async function recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pn
   } catch (e) {
     notePositionStillOpen(pos.id, pos.ticker, sale, e.message);
   }
+  return sale;
 }
 
 // Positions still open whose sale is recorded or queued. DERIVED, NEVER PERSISTED:
@@ -7658,19 +7703,31 @@ async function confirmMarkSold(posId, btn) {
   };
 
   state.sold.unshift(record);
-  state.portfolio = state.portfolio.filter(p => p.id !== posId);
   persist('sold');
-  // Clear this ticker's previous-RSI tracking now that it's sold, so a future re-buy of the same ticker starts fresh
-  // -- unless another open position on the same ticker still exists. (The peak RSI is the position's own since db/044
-  // and leaves with its row: nothing per ticker to clear.)
-  if (!getHoldings().some(p => p.ticker === pos.ticker)) {
-    delete state.ownedPrevRSI[pos.ticker];
-    persist('ownedPrevRSI');
-  }
-  recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pnlDollar, pnlPct);
+  // WRITE FIRST, THEN REMOVE (2026-11-18, the reviewer). The card used to vanish here, before any database call, and
+  // the write ran unawaited behind it: a sale that never reached the database still looked done, and an app closed
+  // in that window lost it without trace. Now the card stays, reading "Recording sale…" with no Sell button, until
+  // recordSaleThenRemovePosition returns (the sale queued first, then inserted, then the row deleted, whatever the
+  // outcome, as since 11-08). Only then does it leave the list.
+  if (!state.saleInFlight) state.saleInFlight = {};
+  state.saleInFlight[posId] = true;
   closeModal();
-  updateNavBadges();
   renderPortfolioTab();
+  try {
+    await recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pnlDollar, pnlPct);
+  } finally {
+    delete state.saleInFlight[posId];
+    state.portfolio = state.portfolio.filter(p => p.id !== posId);
+    // Clear this ticker's previous-RSI tracking now that it's sold, so a future re-buy of the same ticker starts fresh
+    // -- unless another open position on the same ticker still exists. (The peak RSI is the position's own since db/044
+    // and leaves with its row: nothing per ticker to clear.)
+    if (!getHoldings().some(p => p.ticker === pos.ticker)) {
+      delete state.ownedPrevRSI[pos.ticker];
+      persist('ownedPrevRSI');
+    }
+    updateNavBadges();
+    renderPortfolioTab();
+  }
 }
 
 // ── 18. SOLD TAB ──────────────────────────────────────────────────

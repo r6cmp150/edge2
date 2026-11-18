@@ -23,7 +23,8 @@ function load({ insert = async () => 'WRITTEN', del = async () => 'REMOVED', cli
   global.renderPortfolioTab = () => {}; global.updateNavBadges = () => {};
   global.supabaseClient = client;
   // eslint-disable-next-line no-eval
-  eval(['recordSaleThenRemovePosition', 'notePositionStillOpen', 'checkPositionsStillOpen', 'removePositionAgain'].map(grab).join('\n') +
+  // CHANGED 2026-11-18, declared: the sale is queued (SALE_PENDING, with its args) BEFORE the insert (queueSaleBeforeWrite).
+  eval(['queueSaleBeforeWrite', 'recordSaleThenRemovePosition', 'notePositionStillOpen', 'checkPositionsStillOpen', 'removePositionAgain'].map(grab).join('\n') +
     '\nglobal.__f = { recordSaleThenRemovePosition, checkPositionsStillOpen, removePositionAgain };');
   return { ...global.__f, log };
 }
@@ -33,7 +34,7 @@ const pos = { id: '7', ticker: 'UEC' };
 run('the sale is inserted BEFORE the portfolio row is deleted', async () => {
   const { recordSaleThenRemovePosition, log } = load();
   await recordSaleThenRemovePosition(pos, {}, '2026-11-06', 1, 0, 0);
-  assert.deepStrictEqual(log.filter(x => x === 'insert' || x.startsWith('delete')), ['insert', 'delete 7']);
+  assert.deepStrictEqual(log.filter(x => x === 'insert' || x.startsWith('delete') || x === 'persist saleWriteFailures'), ['persist saleWriteFailures', 'insert', 'delete 7'], 'queued, then inserted, then the row deleted');
   assert.ok(!global.state.positionsStillOpen || !global.state.positionsStillOpen['7'], 'a clean delete leaves no line');
 });
 
@@ -42,8 +43,10 @@ for (const [sale, code] of [['WRITTEN', 'POSITION_NOT_REMOVED'], ['SALE_DUPLICAT
     const { recordSaleThenRemovePosition, log } = load({ insert: async () => sale, del: fail(code) });
     await recordSaleThenRemovePosition(pos, {}, '2026-11-06', 1, 0, 0);
     assert.deepStrictEqual(global.state.positionsStillOpen['7'], { ticker: 'UEC', sale, message: `position 7: ${code}` });
-    assert.deepStrictEqual(global.state.saleWriteFailures, {}, 'the delete never writes the sale queue');
-    assert.ok(!log.some(x => x.startsWith('persist')), 'derived: never persisted');
+    // CHANGED 2026-11-18, declared: the queue is written ONCE, before the insert (the insert is mocked here, so its
+    // outcome never overwrites the pending entry); the delete still never writes it.
+    assert.deepStrictEqual(log.filter(x => x.startsWith('persist')), ['persist saleWriteFailures'], 'one queue write, before the insert; the delete writes nothing');
+    assert.ok(log.indexOf('persist saleWriteFailures') < log.indexOf('insert'));
   });
 }
 
@@ -66,6 +69,30 @@ run('confirmMarkSold: nothing between disabling the button and saving the record
   assert.ok(!/deletePositionFromSupabase/.test(src), 'the delete is not in confirmMarkSold at all');
   const after = src.slice(b);
   assert.ok(/persist\('sold'\)/.test(after) && after.indexOf("persist('sold')") < after.indexOf('recordSaleThenRemovePosition('), 'saved on the phone, then sent');
+  // CHANGED 2026-11-18, declared (write first, then remove): the card stays, marked in flight, until the write returns.
+  const inFlight = after.indexOf('state.saleInFlight[posId] = true;');
+  const awaited = after.indexOf('await recordSaleThenRemovePosition(');
+  const removed = after.indexOf('state.portfolio = state.portfolio.filter(p => p.id !== posId);');
+  assert.ok(inFlight > 0 && awaited > inFlight && removed > awaited, 'in flight, then the write AWAITED, then removed from the list');
+  assert.ok(!src.slice(0, src.indexOf('await recordSaleThenRemovePosition(')).includes('state.portfolio = state.portfolio.filter'), 'nothing removes the card before the write');
+});
+
+// 2026-11-18 (the reviewer): a queue written only after the call is not a queue. An app closed inside the write's
+// round trip used to lose the sale without trace ("path 5").
+run('the app dies mid-write: the sale is already queued, SALE_PENDING, with everything Retry needs', async () => {
+  const { recordSaleThenRemovePosition, log } = load({ insert: () => new Promise(() => {}) }); // the response never comes
+  recordSaleThenRemovePosition(pos, { r: 1 }, '2026-11-06', 1.5, 2, 3); // not awaited: the app is gone
+  await new Promise(r => setImmediate(r));
+  const q = global.state.saleWriteFailures['7'];
+  assert.strictEqual(q.code, 'SALE_PENDING');
+  assert.deepStrictEqual(q.args, [pos, { r: 1 }, '2026-11-06', 1.5, 2, 3], 'the full sale, for Retry');
+  assert.ok(log.includes('persist saleWriteFailures') && !log.some(x => x.startsWith('delete')), 'persisted; the row not touched');
+});
+
+run('the in-flight card reads "Recording sale…" with no Sell button; the banner leaves an in-flight sale to its card', () => {
+  assert.ok(app.includes(`? '<button class="btn btn-ghost" disabled>Recording sale…</button>'`), 'the card');
+  assert.ok(app.includes('.filter(([id]) => !state.saleInFlight?.[id])'), 'the banner skips a sale in flight');
+  assert.ok(app.includes("if (f.code === 'SALE_PENDING') {") && app.includes('sale: not known whether it was recorded'), 'an unresolved pending sale is its own red line');
 });
 
 // The load check: a fake client for trades_v2.select('position_id').eq('position_id', id).limit(1),
