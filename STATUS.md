@@ -771,6 +771,14 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - The default-ACL fix itself (scoped in the spec, not built).
 
 ## Closed recently, so they don't come back
+- **The sale's row delete hung the card, and an inventory found it, not a test (2026-11-18, fixed in 0842f74).** The
+  write-first sale (cca5ab0) made the card wait for the sale insert (bounded, 20 s) and then for the portfolio-row
+  delete (unbounded): a delete that never answered held the card at "Recording sale…" for good, though the sale was
+  recorded. Found by enumerating every request in core/store.js and asking what a hang would do to each (14 requests,
+  10 functions, none bounded), not by any test: an inventory of a class of thing finds the members nobody thought to
+  test, which is most of why inventories are worth their cost. The rest of the enumeration's list
+  (review-store-request-enumeration.md) is being bounded in the order there, reads failing as "could not read", writes
+  never as "failed" when the answer did not come.
 - **The empty-read registry now identifies every read it classifies (2026-11-18, 6b8cb68): 55 reads under 24 keys, each
   pinned to the function that holds it.** It used to match reads to their classifications by how many there were per
   table, so a swapped read did not merely lose coverage: it **inherited the judgement made for the read it replaced**,
