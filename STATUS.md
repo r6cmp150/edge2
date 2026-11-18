@@ -152,6 +152,24 @@ declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 
 reduce it** (the reviewer, 2026-11-17, after Roman said his trades are free). The bid-ask gap is paid on both sides
 of every round trip whoever executes it. Paper trades, recorded at quotes, pay none of it, which is why the
 frictionless simulation hides the cost that decided the result.
+**BEFORE COSTS THE BOOK WAS FLAT; COSTS ARE THE ENTIRE LOSS (stated 2026-11-18).** On the 513 trades where costs
+could be measured:
+
+| | total | per trade |
+|---|---|---|
+| before costs (frictionless) | -$62.93 | **-$0.12** |
+| cost drag (spread, base case) | $744.75 | $1.45 |
+| after costs | -$807.67 | **-$1.57** |
+
+(-62.93 - 744.75 = -807.68: matches to a cent.) So the record does NOT say "the signals made money and costs ate
+it". It says **no measurable edge before costs, plus costs**. That points at the prior question (is there edge?),
+and makes a cost filter worth trying only if the cheap subset also has edge, which is what S1 tests; S1's interval
+spans zero.
+**RETRACTION, recorded where the wrong version was said:** "+$444 gross" / "costs 1.7x gross profit" was the
+586-trade net plus the 513-trade drag (-300.43 + 744.75 = +444.32), two populations added; no measurement produces
+it. It was stated in the reviewer's notes CC-storage-and-ship-the-app-side.md (2026-11-17) and
+CC-what-the-budget-finding-does-and-does-not-void.md (2026-11-18), and **twice to Roman**. The reviewer is
+correcting it with Roman. The version to quote is the table above.
 **Costs do not change the exit-rule comparison:** a rule changes where a round trip ends, not how many there are,
 so the per-trade drag below is the same under every rule the 2026-11-06 replay tested, and "no rule clears the bar"
 stands (also stated in the spec beside the replay).
@@ -223,6 +241,12 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   scoring-v2 forward test, the S1 forward test), and all three advance only when Roman uses the app. Two of them also
   need him to record buys, and for those there is no engineering fix: they need trades. The logger-observes proposal
   fixes only the sign-test's dependence on his scanning.**
+- **WHAT THE THREE RESTARTED MEASUREMENTS ANSWER (declared 2026-11-18, before their results):** the macro
+  sign-test, the scoring-v2 forward test and the S1 forward test are per-trade and per-day measures, so the budget
+  finding (Open, "Deployed capital far above the $1,500 budget") leaves them standing, with its same two exceptions:
+  no dollar return on Roman's capital, and no claim that the trade set was executable at $1,500. **They answer "is a
+  trade worth taking", not "would this have made money on $1,500".** The second question is the one Roman asked, and
+  nothing currently running answers it. (Roman recorded 40 buys on 11-17; 48 positions open that night.)
 - **S1 forward test (RESTARTED at (c), confirmed by the reviewer 2026-11-13; see the RE-REGISTERED line below):** trades bought from 2026-11-12, at 20 S1 buy days (P&L after costs) and
   20 days with both S1 and S2-S4 trades (win rate, frictionless, reported separately). Roman changes nothing about
   what he trades: narrowing to S1 would act on an unestablished result and destroy the comparison group.
@@ -490,6 +514,31 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   review-budget-deployed.md. Day-end deployed at cost exceeded $1,500 on 27 of 67 trading days since 08-17, peak $25,682
   (48 open) on 11-17; inside the 11-08 sample window, 20 of 60 days, peak $19,082 (36 open) on 10-05. Nothing in
   the app refuses a buy for want of budget (EDGE displays it; Warrior caps suggested shares with it).
+  **What it voids and what it does not (the reviewer, 2026-11-18), in three parts:**
+  1. **Survives: every per-trade ratio.** -$300.43 over 586 trades is -$0.51 a trade (frictionless). On the 513
+     trades charged costs: -$62.93 frictionless became -$807.67 after costs, a drag of $744.75 ($1.45 a trade, about
+     twelve times the frictionless loss). The win rate; the win/loss ratio (0.720 against 0.785 to break even,
+     frictionless; 0.636 against 0.833 after costs); the spread buckets. Sized to fit $1,500, every trade still
+     happens, the dollars divide, the ratios don't change. "Costs are larger than the result" is not a claim about
+     book size. (Figures from the two sections above. The reviewer's draft had "+$444 gross" and "costs 1.7x gross
+     profit": no measurement on record produces either, and the frictionless result of the charged trades was a
+     loss, so there was no gross profit to divide by. Held out, 2026-11-18.)
+  2. **Does not survive: (a) any dollar return on Roman's capital.** -$300 is the P&L of a book that on a third of
+     its days held about 12x his stated money, not what $1,500 would have made or lost. **(b) Executability.** At
+     $1,500 he could not have held 36 or 48 positions at the sizes taken: either the positions shrink or the trade
+     set does, and a shrunk set is chosen by arrival order, which is not a strategy.
+  3. **Second order: it does not make it better, and it does not make it worse.** The reviewer's draft said the cost
+     ratio would be HIGHER at $1,500 because the spread does not scale down with size. Corrected 2026-11-18: the spread
+     cost is a share of price (a one-cent spread on a $7 stock is 0.14% whether 70 shares or 7), and P&L scales with
+     shares exactly as the cost does, so their ratio is the same at any size. Only rounding to whole shares (at a few
+     shares a position) or a minimum order size could move it, and neither has been measured. So the cost conclusion
+     carries to $1,500 unchanged, not more strongly.
+  **What the $1,500 was built to be (code and specs, 2026-11-18):** real capital. Its setting is "My Trading Budget:
+  Total capital allocated for trading" (default 500; Roman set 1500). Phase 10's step 2 sized the candidate pool on
+  "a $1,500 budget and about five slots" (~$300 a position), and measured ~9x deployed against it on 10-28. Warrior
+  sizes from it: suggested shares = min(2% of budget / risk, available / entry), and **with Available negative,
+  every Warrior setup is sized at 0 shares (constraint 'budget') -- EDGE's paper book has been consuming Warrior's
+  budget.** The settings row's updated_at (2026-11-12) is for the whole row, so the budget's own history is unknown.
 - **The held-score prune (P1, build 20261117233000) runs only on an ESTABLISHED portfolio.** A read that returned rows
   is established; an empty one only once the trades_v2 control reads non-empty; otherwise nothing is pruned and
   Settings > Storage says "Held-score cache not pruned this scan: <reason>". **After Roman reloads, re-measure his
