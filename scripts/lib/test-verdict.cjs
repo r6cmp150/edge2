@@ -9,7 +9,7 @@
 //   SILENT   exit 0 and no PASS/FAIL line: it ran nothing it reported
 //   TIMEOUT  killed after the time limit
 //   LOST     it said it ran N tests and N result lines didn't arrive
-// { out, status, timedOut } -> { verdict, passes, detail, firstFail }
+// { out, status, timedOut } -> { verdict, passes, detail, firstFail, failNames }
 function testVerdict({ out, status, timedOut }) {
   const passes = (out.match(/^PASS: /gm) || []).length;
   // The line after FAIL is the assertion's message: its numbers. Keep it. A failure
@@ -31,6 +31,9 @@ function testVerdict({ out, status, timedOut }) {
     : verdict === 'FAIL' ? (fails.join(' | ') || (bareFails && `${bareFails} FAIL line(s)`) || `exit ${status} after ${passes} PASS line(s)`)
     : (out.trim().split('\n').filter(Boolean).slice(0, 3).join(' / ') || '(no output at all)');
   const first = out.match(/^FAIL: ([^\r\n]*)/m);
-  return { verdict, passes, detail, firstFail: first ? first[1] : null };
+  // the failing tests by name, for a caller that weighs WHICH test failed (mutate-portfolio-sort's behavioural / lint
+  // split): it reads them here instead of parsing the output itself
+  const failNames = [...out.matchAll(/^FAIL: ([^\r\n]*)$/gm)].map(m => m[1]);
+  return { verdict, passes, detail, firstFail: first ? first[1] : null, failNames };
 }
 module.exports = { testVerdict };

@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { run, REPO_ROOT } = require('./_lib');
+const { testVerdict } = require('../scripts/lib/test-verdict.cjs');
 
 const LIB = JSON.stringify(path.join(REPO_ROOT, 'tests', '_lib.js'));
 function runner(files) {
@@ -107,7 +108,10 @@ await run('a file that touches the variables CI sets for real passes with them s
   assert.ok(names.includes('workflow-instrumentation.test.js'), 'the enumeration sees the file that leaked');
   for (const f of names) {
     const r = spawnSync(process.execPath, [path.join(dir, f)], { cwd: REPO_ROOT, encoding: 'utf8', env, timeout: 120000 });
-    assert.strictEqual(r.status, 0, `${f} fails with CI's variables set:\n${(r.stdout + r.stderr).split('\n').filter(l => /FAIL|left global/.test(l)).join('\n')}`);
+    // CHANGED 2026-11-18, declared: judged by the runner's own verdict (one definition of pass), not exit code alone,
+    // so a file that is LOST or SILENT under CI's variables fails here too
+    const v = testVerdict({ out: (r.stdout || '') + (r.stderr || ''), status: r.status, timedOut: !!(r.error && r.error.code === 'ETIMEDOUT') });
+    assert.strictEqual(v.verdict, 'PASS', `${f} is ${v.verdict} with CI's variables set: ${v.detail}`);
   }
 });
 

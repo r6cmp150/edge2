@@ -3031,6 +3031,15 @@ complete-baseline rule above, in the hands of whoever is checking. Two instances
   unsupported. The capture stores them as `name`, `using`, `check`. Printing the structure, not matching a pattern
   against it, caught it. That is the more useful instance: an error made while auditing, by the auditor.
 
+**ONE DEFINITION OF PASS (2026-11-18, the reviewer's principle).** Anything that judges whether a test passed calls the
+same code: `scripts/lib/test-verdict.cjs`. Two independent definitions means a mutant can be killed by one and alive by
+the other, and the one you happen to be running decides what you believe. Four definitions existed on 2026-11-18: the
+runner's (the one kept), the mutation harness's (exit code alone), `scripts/mutate-portfolio-sort.js`'s (exit code and
+its own FAIL-line parse) and `tests/global-state-leaks.test.js`'s re-run under CI's variables (exit code alone). All
+four now call testVerdict. **Enforced, not remembered:** `tests/one-definition-of-pass.test.js` fails on any second
+parse of result lines, and on any file that runs test files without being declared (a runner, which must call
+testVerdict, or one that judges nothing, with the reason). The two rules below are its consequences.
+
 **MUTATION RUNS GO THROUGH `scripts/lib/mutants.cjs` (2026-11-18, the reviewer's rule; structural, because a rule to
 remember did not hold).** It runs the baseline first, judges by the runner's own verdict, and restores the tree. A
 throwaway harness that does any of those differently is not a faster way to the same answer: it is an unreviewed

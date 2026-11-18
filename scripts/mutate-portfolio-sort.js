@@ -25,6 +25,10 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync, execSync } = require('child_process');
+// ONE DEFINITION OF PASS (2026-11-18): whether a test passed is scripts/lib/test-verdict.cjs's call, the runner's own,
+// never this file's. It judged by exit code and its own FAIL-line parse, blind to LOST and SILENT.
+const { testVerdict } = require('./lib/test-verdict.cjs');
+const verdictOf = r => testVerdict({ out: (r.stdout || '') + (r.stderr || ''), status: r.status, timedOut: !!(r.error && r.error.code === 'ETIMEDOUT') });
 
 const ROOT = path.resolve(__dirname, '..');
 const LINT_TESTS = [/three NAMED states/, /^wiring:/];
@@ -148,7 +152,8 @@ process.on('SIGINT', () => process.exit(130));
 // Baseline: every test passes unmutated, or a "kill" proves nothing.
 for (const t of new Set(M.map(m => m[1]))) {
   const r = spawnSync(process.execPath, [TESTS[t]], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
-  if (r.status !== 0 || /^FAIL/m.test(r.stdout + r.stderr)) { console.error(`baseline FAILS: ${TESTS[t]}`); process.exit(2); }
+  const v = verdictOf(r);
+  if (v.verdict !== 'PASS') { console.error(`baseline FAILS: ${TESTS[t]} (${v.verdict}: ${v.detail})`); process.exit(2); }
 }
 
 let survived = 0;
@@ -157,15 +162,17 @@ for (const [file, test, name, from, to, opts = {}] of M) {
   if (n !== 1) { console.log(`ANCHOR x${n}  ${name}`); survived++; continue; }
   fs.writeFileSync(path.join(ROOT, file), orig[file].replace(from, to));
   const r = spawnSync(process.execPath, [TESTS[test]], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
-  const failed = [...(r.stdout + r.stderr).matchAll(/^FAIL: (.*)$/gm)].map(m => m[1]);
+  const v = verdictOf(r);
+  const failed = v.failNames;
   const behaviourFails = failed.filter(t => !LINT_TESTS.some(re => re.test(t)));
-  const crashed = r.status !== 0 && !failed.length;
+  // not PASS and no FAIL line: DEAD, SILENT, LOST or TIMEOUT, each a kill the old exit-code test could miss
+  const crashed = v.verdict !== 'PASS' && !failed.length;
   const lintFails = failed.length - behaviourFails.length;
   const killed = opts.behavioural ? (behaviourFails.length > 0 || crashed)
     : opts.lint ? lintFails > 0
     : (failed.length > 0 || crashed);
   if (!killed) survived++;
-  const by = crashed ? 'crash' : `${behaviourFails.length} behavioural, ${failed.length - behaviourFails.length} lint`;
+  const by = crashed ? v.verdict : `${behaviourFails.length} behavioural, ${failed.length - behaviourFails.length} lint`;
   console.log(`${killed ? 'killed  ' : 'SURVIVED'}  ${name}${opts.behavioural ? ' [behavioural required]' : opts.lint ? ' [lint required]' : ''}  (${by})`);
   restoreAll();
 }
