@@ -227,7 +227,6 @@ run('bounded: the first attempt always kept, then the latest, with the count of 
   assert.ok(!('row' in f) && JSON.stringify(f.attempts).length < 4000, 'small: no row is ever stored in an attempt');
 }));
 
-(async () => { for (const [n, f] of queue) await runNow(n, f); })();
 
 // 2026-11-18 (the reviewer: "what the retry does when the sale is already in the database ... must be deliberate").
 // A retry re-sends this phone's STORED sale. Against an earlier attempt that landed, it compares identical (MATCH):
@@ -295,3 +294,7 @@ run('a Retry that gets no answer: SALE_PENDING again, and the position row and c
   assert.strictEqual(global.state.portfolio.length, 1, 'and the card');
   assert.ok(/const SALE_WRITE_TIMEOUT_MS = 20000;/.test(app), 'the bound is 20 s');
 }));
+
+// 2026-11-18: the total is declared, so a case that never settles (or never starts) is a FAIL, not a silent early exit.
+require('./_lib').expectTests(queue.length);
+(async () => { for (const [n, f] of queue) await runNow(n, f); })();

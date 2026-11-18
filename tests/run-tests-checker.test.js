@@ -102,3 +102,24 @@ run('CI runs this runner on every push, and nothing else decides the suite', () 
   assert.ok(/fetch-depth:\s*0/.test(wf), 'full history: several tests read pinned backups with git show');
   assert.ok(!/continue-on-error:\s*true/.test(wf), 'a failure is never swallowed');
 });
+
+// 2026-11-18 (the reviewer): "a test that does not run cannot fail, and an empty run looks exactly like a clean one."
+// A case whose promise never settles leaves node with nothing to do: it exits 0, early, the rest unrun, no FAIL line.
+// tests/_lib.js now counts every case registered (or declared with expectTests) against every case settled, and a
+// shortfall is a FAIL line and a failing exit. These fixtures load the REAL _lib by absolute path.
+run('a test that never settles is a FAIL, through run() and through an own queue with a declared total', () => {
+  const lib = JSON.stringify(path.join(REPO_ROOT, 'tests', '_lib.js'));
+  const d = dirWith({
+    'a-never-settles.test.js': `const { run } = require(${lib});\nrun('one', () => {});\nrun('two hangs', () => new Promise(() => {}));\nrun('three never starts', () => {});\n`,
+    'b-own-queue-never-settles.test.js': `const { run: runNow, expectTests } = require(${lib});\nconst queue = []; const run = (n, f) => queue.push([n, f]);\nrun('one', () => {}); run('two hangs', () => new Promise(() => {})); run('three', () => {});\nexpectTests(queue.length);\n(async () => { for (const [n, f] of queue) await runNow(n, f); })();\n`,
+    'c-all-settle.test.js': `const { run } = require(${lib});\nrun('one', () => {});\nrun('two', async () => { await new Promise(r => setTimeout(r, 5)); });\n`,
+  });
+  const { exit, report } = runner(d);
+  assert.strictEqual(exit, 1);
+  assert.deepStrictEqual(verdicts(report), { 'a-never-settles.test.js': 'FAIL', 'b-own-queue-never-settles.test.js': 'FAIL', 'c-all-settle.test.js': 'PASS' });
+  for (const f of ['a-never-settles.test.js', 'b-own-queue-never-settles.test.js']) {
+    const out = report.results.find(r => r.file === f).output;
+    assert.ok(/FAIL: 2 of 3 test\(s\) never settled \(1 started and never finished, 1 never started\)/.test(out), `${f}: ${out}`);
+    assert.notStrictEqual(report.results.find(r => r.file === f).exit, 0, `${f}: a check that reads only the exit code must see it too`);
+  }
+});

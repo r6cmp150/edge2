@@ -117,6 +117,13 @@ const restoring = fn => async () => {
 };
 let tail = Promise.resolve();
 let ran = 0;
+// A TEST THAT DOES NOT RUN CANNOT FAIL, AND AN EMPTY RUN LOOKS EXACTLY LIKE A CLEAN ONE (2026-11-18, the reviewer).
+// A test whose assertions sit behind a promise that never settles leaves node with nothing to do: it exits 0, early,
+// with those assertions (and every test queued after them) unrun, and no FAIL line. So every test is counted when it
+// is REGISTERED and when it SETTLES, and at exit a shortfall is a FAIL line and a failing exit code. A file that keeps
+// its own queue and hands tests to run() one at a time declares its total up front with expectTests(n).
+let registered = 0, settled = 0, expected = 0;
+function expectTests(n) { expected = Math.max(expected, n); }
 async function runOne(name, fn) {
   ran++;
   const before = snapshotGlobals();
@@ -134,12 +141,21 @@ async function runOne(name, fn) {
   } else {
     realOut(`\nPASS: ${name}\n`);
   }
+  settled++;
 }
 function run(name, fn) {
+  registered++;
   tail = tail.then(() => runOne(name, fn));
   return tail;
 }
-process.on('exit', () => { if (ran) realOut(`\nTESTS RUN: ${ran}\n`); });
+process.on('exit', () => {
+  if (ran) realOut(`\nTESTS RUN: ${ran}\n`);
+  const planned = Math.max(registered, expected);
+  if (planned > settled) {
+    realErr(`\nFAIL: ${planned - settled} of ${planned} test(s) never settled (${ran - settled} started and never finished, ${planned - ran} never started): a promise that never resolved left node with nothing to do, and it exited with their assertions unrun\n`);
+    process.exitCode = 1;
+  }
+});
 
 // app.js's SETTING_LABELS table, as source: updateMarketBanner calls
 // settingsBannerLine (2026-11-02), which reads it, so a test that evals the
@@ -173,4 +189,4 @@ function persistFailureDetailSrc() {
 }
 
 module.exports = {
-  virtualClock, readSource, evalModule, run, restoring, REPO_ROOT, settingLabelsSrc, columnValidatorsSrc, persistFailureDetailSrc };
+  virtualClock, readSource, evalModule, run, expectTests, restoring, REPO_ROOT, settingLabelsSrc, columnValidatorsSrc, persistFailureDetailSrc };

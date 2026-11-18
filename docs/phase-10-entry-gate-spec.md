@@ -2804,6 +2804,19 @@ it records that the screen, rendered 5-14 s before the tap and after the earlier
 ticker as held. Without it, "he forgot" and "his session could not see it" would be indistinguishable. Capture what
 the screen showed, as shown, even where no question is yet asked of it.
 
+**A TEST THAT DOES NOT RUN CANNOT FAIL, AND AN EMPTY RUN LOOKS EXACTLY LIKE A CLEAN ONE (2026-11-18, the reviewer's
+rule).** A test whose assertions sit behind a promise that never settles passes: node runs out of work and exits 0,
+early, with those assertions and every test queued after them unrun, and no FAIL line. The per-file timeout never
+fires, because nothing is running. The instance: the write-first sale's hang test, against a mutant with no bounded
+wait, exited 0 with 15 PASS lines and `TESTS RUN: 16`. The runner's LOST rule (started > PASS lines) would have caught
+it, but the scratch mutant harness judged by exit code and FAIL lines alone, and two cases registered after the hang
+never started and were counted nowhere. The fix is a count, not a timeout: `tests/_lib.js` counts every case when it
+is REGISTERED (or declared up front with `expectTests(n)`, for the 7 files that keep their own queue) and when it
+SETTLES, and at exit a shortfall is a FAIL line ("N of M test(s) never settled: X started and never finished, Y never
+started") and a failing exit code, visible to a check that reads either. `tests/run-tests-checker.test.js` holds it
+on fixtures that load the real `_lib` (4 of 4 mutants killed). **Re-validated, 2026-11-18: all 136 files go through
+`run()`; 932 cases registered, 932 settled, none short.**
+
 **A RULING PINNED IN A TEST IS WHAT CATCHES THE CHANGE NOBODY ANTICIPATED (2026-11-18, the reviewer).** The first time
 this project collected on one. The ruling of 2026-11-08: a later attempt at a sale never overwrites the record of an
 earlier one (noteSaleWrite; held by `tests/sale-write-outcome.test.js`, "a later attempt never overwrites the record of

@@ -106,4 +106,6 @@ run('finalize disables the button at its very start (the spread fetch is a netwo
   assert.ok(app.slice(i, i + 200).includes('  if (btn) btn.disabled = true; // at the very start'));
 });
 
+// 2026-11-18: the total is declared, so a case that never settles (or never starts) is a FAIL, not a silent early exit.
+require('./_lib').expectTests(queue.length);
 (async () => { for (const [n, f] of queue) await runNow(n, f); })();

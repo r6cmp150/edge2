@@ -170,4 +170,6 @@ run('ENUMERATED: every use of the cached index is classified, and every classifi
   assert.deepStrictEqual(problems, [], 'classify the new consumer (does it read name or exchange from the CACHE?) and update REGISTRY:\n  ' + problems.join('\n  '));
 });
 
+// 2026-11-18: the total is declared, so a case that never settles (or never starts) is a FAIL, not a silent early exit.
+require('./_lib').expectTests(queue.length);
 (async () => { for (const [n, f] of queue) await runNow(n, f); })();
