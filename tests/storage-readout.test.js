@@ -31,7 +31,7 @@ function harness(entries, state = {}) {
   const el = { innerHTML: '' };
   const c = { localStorage, document: { getElementById: id => (id === 'storage-readout' ? el : null) }, navigator: {}, String, Math, Object, console, JSON, Array, state };
   vm.createContext(c);
-  vm.runInContext([tiers, constBlock('STORAGE_KEYS_OUTSIDE_PERSIST'), grab('storageKeyLabel'), grab('storageReadoutRows'), line('const PRUNED_SHOWN_MAX = '), grab('prunedListForDisplay'), grab('renderStorageReadout'),
+  vm.runInContext([tiers, constBlock('STORAGE_KEYS_OUTSIDE_PERSIST'), constBlock('RETIRED_STORAGE_KEYS'), grab('storageKeyLabel'), grab('storageReadoutRows'), line('const PRUNED_SHOWN_MAX = '), grab('prunedListForDisplay'), grab('renderStorageReadout'),
     ';globalThis.__rows = storageReadoutRows; globalThis.__render = renderStorageReadout;'].join('\n'), c);
   return { c, el, writes };
 }
@@ -43,7 +43,8 @@ run('every key, largest first, with the total; labelled by tier, by its outside-
   assert.deepStrictEqual(rows.map(r => r.key), ['edge_warriorFloatCache', 'edge_oldThing', 'edge_signals', 'edge_ownedPeakRSI', 'zz_someoneElse', 'edge2_pin_hash'], 'all six, largest first');
   const label = Object.fromEntries(rows.map(r => [r.key, r.label]));
   assert.strictEqual(label.edge_warriorFloatCache, 'tier 4 (a cache)');
-  assert.strictEqual(label.edge_ownedPeakRSI, 'tier 2 (measured state)');
+  // CHANGED 2026-11-18, declared: ownedPeakRSI is retired (db/044), so it is labelled retired, not measured state
+  assert.strictEqual(label.edge_ownedPeakRSI, "retired 2026-11-17, not read by this build (db/044: the peak RSI is the position's own, in the database)");
   assert.strictEqual(label.edge2_pin_hash, 'the PIN (written outside persist)');
   assert.strictEqual(label.edge_oldThing, 'not named by this build');
   assert.strictEqual(label.zz_someoneElse, 'not named by this build');
@@ -123,4 +124,18 @@ run('the pruned list is bounded in display (first ten, "and N more"), the count 
   assert.ok(ten.el.innerHTML.includes('(' + pruned.slice(0, 10).join(', ') + '); 6 kept'), 'ten or fewer: all shown, no "more"');
   const i = app.indexOf('state.heldScorePrune = keepSet.keep ?');
   assert.ok(app.slice(i, i + 900).includes("state.heldScorePrune.pruned.join(', ')"), 'the console line keeps every ticker');
+});
+
+// 2026-11-18 (the reviewer): a retired key is labelled retired, and the label is true: nothing in this build reads it.
+run('retired keys are labelled retired, never as measured state, and no code reads them', () => {
+  const h = harness({ edge_ownedPeakRSI: '{"A":70}', edge_ownedPrevRSI: '{"A":60}' });
+  const label = Object.fromEntries(JSON.parse(JSON.stringify(h.c.__rows())).map(r => [r.key, r.label]));
+  assert.ok(/^retired 2026-11-17, not read by this build/.test(label.edge_ownedPeakRSI), label.edge_ownedPeakRSI);
+  assert.strictEqual(label.edge_ownedPrevRSI, 'tier 2 (measured state)', 'ownedPrevRSI is not retired: only the peak moved');
+  const code = [readSource('app.js'), readSource('core/store.js')].join('\n').split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+  for (const k of Object.keys(vm.runInContext('RETIRED_STORAGE_KEYS', h.c))) {
+    const name = k.replace(/^edge_/, '');
+    const uses = code.match(new RegExp(`state\\.${name}\\b`, 'g')) || [];
+    assert.deepStrictEqual(uses, [], `${k} is read or written by this build`);
+  }
 });

@@ -10315,7 +10315,15 @@ const STORAGE_KEYS_OUTSIDE_PERSIST = {
   edge_localOnlySettings: 'old phone-only settings: read by this build, never written',
   edge_settings: 'legacy settings: read once by this build, never written',
 };
+// Keys this build no longer reads or writes (2026-11-18, the reviewer): labelled as retired, so dead data never reads
+// as "tier 2 (measured state)", i.e. as the only copy of something. Their bytes are LEFT: no one-off delete. This is
+// also the list a boot cleanup will read, once that is decided (proposed, deferred). tests/storage-readout.test.js
+// holds each to "not read by this build".
+const RETIRED_STORAGE_KEYS = {
+  edge_ownedPeakRSI: "retired 2026-11-17, not read by this build (db/044: the peak RSI is the position's own, in the database)",
+};
 function storageKeyLabel(k) {
+  if (RETIRED_STORAGE_KEYS[k]) return RETIRED_STORAGE_KEYS[k];
   if (k.startsWith('edge_') && typeof PERSIST_TIER !== 'undefined' && PERSIST_TIER[k.slice(5)] != null) {
     const t = PERSIST_TIER[k.slice(5)];
     return `tier ${t} (${{ 1: 'a queued write', 2: 'measured state', 3: 'settings or session state', 4: 'a cache' }[t]})`;

@@ -210,6 +210,15 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   years; (2) something starts reading `signal_before_sale` and establishes what it needs from it. **When revisited,
   all three are reasoned about together** (the phone record, `signal_before_sale`, the buy snapshot): one field,
   three homes. A record's contents are not changed as a side effect of an unrelated fix.
+  **ADDED 2026-11-18: a fourth home, `edge_signals`** (the last scan's SHOWN signals, replaced each scan: median
+  27-31, max 86 shown per scan since (c), ~14 KB each). Its bars are load-bearing: the buy snapshot copies the cached
+  signal whole into `signal_snapshot_at_buy`, so stripping them would silently break re-scoring of any buy made
+  after a reload. Left as is; a revisit covers all four.
+- **CLOSED 2026-11-18 (the reviewer): P3, the same-tier eviction policy, is not built.** It was deferred on the chance
+  that bounding the cache would remove the question, and it did: every large key on the phone now has a bound
+  (`ownedScores` by the prune, `signals` by the scan, `universeAssetCache` by its 24-hour replace). Measured on
+  Roman's phone 2026-11-17 19:12 PT after P1: 5,211,036 -> 2,955,400 characters, 99.4% -> 56.4% of 5,242,880.
+  Reopen if a new unbounded key appears (the readout's entry counts are where it would show).
 - **THE SCHEDULE, IN ONE LINE (2026-11-13): three measurements restarted at (c) from zero (the macro sign-test, the
   scoring-v2 forward test, the S1 forward test), and all three advance only when Roman uses the app. Two of them also
   need him to record buys, and for those there is no engineering fix: they need trades. The logger-observes proposal
@@ -472,6 +481,15 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **A wrong recorded sale can be detected and cannot be corrected** (logged 2026-11-18). The sale comparison
+  (2026-11-08) reports "recorded with different numbers" when a refused second copy differs from the recorded row,
+  but `trades_v2` sale rows are write-once and the app has no path to correct one. Roman's only instruction is
+  "bring it to us". **Instance: the nine queued entries on Roman's phone, 2026-11-17** (all refused copies of
+  recorded sales; none lost, read from the banner's ordering). Awaiting his expanded banner list to classify each.
+- **Deployed capital far above the $1,500 budget (MEASURED 2026-11-18, no fix proposed yet):** see
+  review-budget-deployed.md. Day-end deployed at cost exceeded $1,500 on 27 of 67 trading days since 08-17, peak $25,682
+  (48 open) on 11-17; inside the 11-08 sample window, 20 of 60 days, peak $19,082 (36 open) on 10-05. Nothing in
+  the app refuses a buy for want of budget (EDGE displays it; Warrior caps suggested shares with it).
 - **The held-score prune (P1, build 20261117233000) runs only on an ESTABLISHED portfolio.** A read that returned rows
   is established; an empty one only once the trades_v2 control reads non-empty; otherwise nothing is pruned and
   Settings > Storage says "Held-score cache not pruned this scan: <reason>". **After Roman reloads, re-measure his
