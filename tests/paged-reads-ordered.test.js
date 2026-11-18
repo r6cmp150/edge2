@@ -116,7 +116,8 @@ await run('a mutation run refuses a failing baseline, and its report states the 
   const { runMutants } = require('../scripts/lib/mutants.cjs');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edge2-mut-'));
   fs.writeFileSync(path.join(dir, 'x.js'), 'module.exports = 1;\n');
-  fs.writeFileSync(path.join(dir, 'good.test.js'), "process.exit(require('./x.js') === 1 ? 0 : 1);\n");
+  // CHANGED 2026-11-18, declared: the harness reads the runner's verdict, so the fixture reports like a real test.
+  fs.writeFileSync(path.join(dir, 'good.test.js'), "if (require('./x.js') === 1) console.log('\\nPASS: x is 1'); else { console.error('\\nFAIL: x changed'); process.exitCode = 1; }\n");
   fs.writeFileSync(path.join(dir, 'bad.test.js'), 'process.exit(1);\n');
   // committed: the harness refuses a dirty tree (2026-11-05)
   const git = (...a) => require('child_process').execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: dir, stdio: 'ignore' });

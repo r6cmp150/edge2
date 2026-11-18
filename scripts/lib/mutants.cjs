@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { treeState } = require('./tree-state.cjs');
+const { testVerdict } = require('./test-verdict.cjs');
 
 const JOURNAL = '.mutant-journal.json';
 
@@ -39,15 +40,26 @@ async function runMutants(test, mutants, { cwd = process.cwd(), print = console.
     return none({ refused: true });
   }
   let child = null;
+  // THE RUNNER'S VERDICT, NOT THE EXIT CODE (2026-11-18). A mutant used to count as killed on any non-zero exit and as
+  // surviving on exit 0, so a file the runner calls LOST or SILENT (a case that never ran) read as a survivor's pass
+  // or a kill it was not. Now the test's whole output is classified by scripts/lib/test-verdict.cjs, the runner's own
+  // classification: only PASS survives; anything else kills, and the report says which verdict and which test.
   const runTest = () => new Promise(resolve => {
-    child = spawn(process.execPath, [test], { cwd, stdio: 'ignore' });
+    child = spawn(process.execPath, [test], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', b => { out += b; }); child.stderr.on('data', b => { out += b; });
     let timedOutNow = false;
     const timer = setTimeout(() => { timedOutNow = true; child.kill('SIGKILL'); }, timeoutMs);
-    child.on('exit', code => { clearTimeout(timer); child = null; resolve(timedOutNow ? 'timeout' : code === 0 ? 'pass' : 'fail'); });
+    child.on('close', code => {
+      clearTimeout(timer); child = null;
+      if (timedOutNow) return resolve({ result: 'timeout' });
+      const v = testVerdict({ out, status: code, timedOut: false });
+      resolve({ result: v.verdict === 'PASS' ? 'pass' : 'fail', verdict: v.verdict, why: v.firstFail || v.detail });
+    });
   });
-  const baseline = await runTest();
+  const baselineRun = await runTest(), baseline = baselineRun.result;
   if (baseline !== 'pass') {
-    print(`BASELINE: FAILED (${test})${baseline === 'timeout' ? `, timed out after ${timeoutMs} ms` : ''}. No mutants run: a failing test "kills" everything.`);
+    print(`BASELINE: FAILED (${test})${baseline === 'timeout' ? `, timed out after ${timeoutMs} ms` : `, ${baselineRun.verdict}: ${baselineRun.why}`}. No mutants run: a failing test "kills" everything.`);
     return none();
   }
   print(`BASELINE: passed (${test}).`);
@@ -71,10 +83,12 @@ async function runMutants(test, mutants, { cwd = process.cwd(), print = console.
       fs.writeFileSync(journal, JSON.stringify({ file, path: p, orig, name }));
       current = { path: p, orig };
       fs.writeFileSync(p, orig.replace(from, () => b));
-      let result;
-      try { result = await runTest(); } finally { restore(); }
+      let r;
+      try { r = await runTest(); } finally { restore(); }
+      const result = r.result;
       if (result === 'timeout') { timedOut.push(name); print(`TIMED OUT ${name} (no result in ${timeoutMs} ms: the mutated code has no termination guard)`); }
-      else print(`${result === 'fail' ? 'killed  ' : 'SURVIVED'} ${name}`);
+      // a kill names its verdict and the first failing test, so it can be read for the INTENDED test
+      else print(result === 'fail' ? `killed   ${name} | ${r.verdict}: ${String(r.why).slice(0, 160)}` : `SURVIVED ${name}`);
       if (result === 'pass') survived.push(name);
     }
   } finally {

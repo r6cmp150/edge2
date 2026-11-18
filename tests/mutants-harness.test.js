@@ -18,9 +18,11 @@ function repo() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'edge2-mutants-'));
   const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: d, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   fs.writeFileSync(path.join(d, 'x.js'), ORIG);
-  fs.writeFileSync(path.join(d, 'ok.test.js'), "process.exit(require('./x.js') === 1 ? 0 : 1);\n");
-  fs.writeFileSync(path.join(d, 'slow.test.js'), "if (require('./x.js') === 1) process.exit(0); setTimeout(() => process.exit(1), 60000);\n");
-  fs.writeFileSync(path.join(d, 'loop.test.js'), "if (require('./x.js') === 1) process.exit(0); for (;;) {}\n");
+  // CHANGED 2026-11-18, declared: the harness judges by the runner's verdict (scripts/lib/test-verdict.cjs), not the exit
+  // code, so a fixture reports like a real test (a PASS line), or the runner would call it SILENT.
+  fs.writeFileSync(path.join(d, 'ok.test.js'), "if (require('./x.js') === 1) console.log('\\nPASS: x is 1'); else { console.error('\\nFAIL: x changed'); process.exitCode = 1; }\n");
+  fs.writeFileSync(path.join(d, 'slow.test.js'), "if (require('./x.js') === 1) console.log('\\nPASS: x is 1'); else setTimeout(() => process.exit(1), 60000);\n");
+  fs.writeFileSync(path.join(d, 'loop.test.js'), "if (require('./x.js') === 1) console.log('\\nPASS: x is 1'); else for (;;) {}\n");
   git('init', '-q'); git('add', '.'); git('commit', '-qm', 'x');
   return { d, x: path.join(d, 'x.js'), journal: path.join(d, JOURNAL), clean: () => git('status', '--porcelain') === '' };
 }
@@ -95,6 +97,36 @@ await run('a kill no handler sees leaves the journal, and the next run restores 
   assert.ok(r.clean());
   const again = [];
   assert.strictEqual((await runMutants('ok.test.js', MUT, { cwd: r.d, ...quiet(again) })).killed, 1, 'and then it runs');
+});
+
+// 2026-11-18: the harness judges by the runner's verdict. A mutant whose test exits 0 having lost a case (LOST) or
+// run nothing it reported (SILENT) used to count as a SURVIVOR's pass under exit-code judging; now it is a kill, and
+// the report names the verdict and what failed, so each kill can be read for its intended test.
+await run('a test that exits 0 but is LOST or SILENT counts as a kill, named by its verdict; a FAIL names its test', async () => {
+  const r = repo();
+  fs.writeFileSync(path.join(r.d, 'verdicts.test.js'), [
+    "const v = require('./x.js');",
+    "if (v === 1) console.log('\\nPASS: x is 1\\nTESTS RUN: 1');",
+    "else if (v === 2) console.log('\\nPASS: one\\nTESTS RUN: 2');        // LOST: two said, one result",
+    "else if (v === 3) console.log('ran nothing it reported');       // SILENT",
+    "else { console.error('\\nFAIL: x is wrong'); process.exitCode = 1; }",
+  ].join('\n') + '\n');
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.'], { cwd: r.d });
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'v'], { cwd: r.d });
+  const M3 = [['x.js', 'module.exports = 1;', 'module.exports = 2;', 'loses a case'],
+    ['x.js', 'module.exports = 1;', 'module.exports = 3;', 'runs nothing'],
+    ['x.js', 'module.exports = 1;', 'module.exports = 4;', 'fails']];
+  const lines = [];
+  const res = await runMutants('verdicts.test.js', M3, { cwd: r.d, ...quiet(lines) });
+  assert.strictEqual(res.killed, 3, lines.join('\n'));
+  assert.ok(lines.includes('killed   loses a case | LOST: ran 2 test(s), 1 result line(s)'), lines.join('\n'));
+  assert.ok(lines.some(l => /^killed {3}runs nothing \| SILENT: /.test(l)), lines.join('\n'));
+  assert.ok(lines.includes('killed   fails | FAIL: x is wrong'), lines.join('\n'));
+  assert.strictEqual(fs.readFileSync(r.x, 'utf8'), ORIG);
+  assert.ok(r.clean());
+  // and the verdict IS the runner's: both call the one module
+  assert.ok(fs.readFileSync(HARNESS, 'utf8').includes("require('./test-verdict.cjs')"));
+  assert.ok(fs.readFileSync(path.join(REPO_ROOT, 'scripts/run-tests.mjs'), 'utf8').includes("('./lib/test-verdict.cjs')"));
 });
 
 await run('the rule and its finding are in §7.7', () => {

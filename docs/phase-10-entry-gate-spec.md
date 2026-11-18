@@ -3031,6 +3031,25 @@ complete-baseline rule above, in the hands of whoever is checking. Two instances
   unsupported. The capture stores them as `name`, `using`, `check`. Printing the structure, not matching a pattern
   against it, caught it. That is the more useful instance: an error made while auditing, by the auditor.
 
+**MUTATION RUNS GO THROUGH `scripts/lib/mutants.cjs` (2026-11-18, the reviewer's rule; structural, because a rule to
+remember did not hold).** It runs the baseline first, judges by the runner's own verdict, and restores the tree. A
+throwaway harness that does any of those differently is not a faster way to the same answer: it is an unreviewed
+reimplementation of the thing being trusted. If the committed harness cannot do what a run needs (an anchor it cannot
+express, a file it cannot reach), **extend it in a commit, with the reason**; if extending it is genuinely too heavy for
+a one-off, say so and the reviewer rules, instead of whichever is quicker deciding. Three recurrences in six days, all
+in throwaway tooling, each re-deriving badly what the committed path already did right:
+1. a scratch mutant harness's `execSync('node ' + t, { timeout })` left PID 9472 running for three days (see "A process
+   spawned by a scratch harness");
+2. `run-tests.mjs | tail -1 && git commit` let a TIMEOUT commit b337c16 (see "A rule that constrains committed code
+   constrains the commands we type");
+3. a scratch mutant harness judged by exit code and FAIL lines, could not see a LOST file, and let a real survivor
+   pass as killed (see "A test that does not run cannot fail").
+**Extended the same day, so the committed harness does what the throwaways were written for:** the runner's
+classification moved to `scripts/lib/test-verdict.cjs`, and `scripts/run-tests.mjs` and `mutants.cjs` both call it
+(one verdict: only PASS survives; LOST, SILENT, DEAD, FAIL kill). Each kill is reported with its verdict and its first
+failing test, so it can be read for the intended test without a second tool. `tests/mutants-harness.test.js` holds
+LOST, SILENT and FAIL as kills, each named.
+
 **THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
 mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which
 is luck next to "cannot happen". `scripts/lib/mutants.cjs` now refuses a dirty tree (a leftover mutant shows as a

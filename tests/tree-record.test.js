@@ -67,7 +67,8 @@ await run('the runner states the tree before any result, in both output forms', 
 
 await run('a mutation report opens with the tree, then the baseline', async () => {
   const { d, head } = repo();
-  fs.writeFileSync(path.join(d, 'ok.test.js'), 'process.exit(0);\n');
+  // CHANGED 2026-11-18, declared: the harness reads the runner's verdict, so the fixture reports like a real test.
+  fs.writeFileSync(path.join(d, 'ok.test.js'), "console.log('\\nPASS: ok');\n");
   const lines = [];
   await runMutants('ok.test.js', [], { cwd: d, print: l => lines.push(l) });
   assert.match(lines[0], new RegExp(`^TREE: ${head} dirty `));

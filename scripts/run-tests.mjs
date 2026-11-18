@@ -49,6 +49,7 @@ export function ciEnvironment(base, tmpdir) {
 }
 
 const { treeState } = createRequire(import.meta.url)('./lib/tree-state.cjs');
+const { testVerdict } = createRequire(import.meta.url)('./lib/test-verdict.cjs');
 // Before any test runs: a test can't change what this says it ran against.
 const tree = treeState(path.dirname(dir));
 if (!json) console.log(`TREE: ${tree}`);
@@ -66,25 +67,8 @@ if (!json) console.log(`ENV: ${localEnv ? 'LOCAL (--local-env), so a pass here s
 const results = files.map(f => {
   const r = spawnSync(process.execPath, [path.join(dir, f)], { cwd: path.dirname(dir), env: childEnv, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 1e8 });
   const out = `${r.stdout || ''}${r.stderr || ''}`;
-  const passes = (out.match(/^PASS: /gm) || []).length;
-  // The line after FAIL is the assertion's message: its numbers. Keep it. A failure
-  // reported by name alone can't be explained later (2026-11-03: queue-pacing).
-  const fails = [...out.matchAll(/^FAIL: (.*)\r?\n(?:\s*\n)*(?!FAIL: |PASS: )([^\r\n]*)/gm)].map(m => (m[2] ? `${m[1]} :: ${m[2].slice(0, 400)}` : m[1]));
-  const bareFails = (out.match(/^FAIL: /gm) || []).length;
-  // tests/_lib.js says how many tests it ran. A file whose result lines don't add up
-  // lost one (2026-11-04: a muted console swallowed a PASS line, and the file still passed).
-  const declaredMatch = out.match(/^TESTS RUN: (\d+)$/m);
-  const declared = declaredMatch ? Number(declaredMatch[1]) : null;
-  let verdict;
-  if (r.error && r.error.code === 'ETIMEDOUT') verdict = 'TIMEOUT';
-  else if (fails.length || bareFails) verdict = 'FAIL';
-  else if (declared != null && declared !== passes) verdict = 'LOST';
-  else if (passes === 0) verdict = r.status === 0 ? 'SILENT' : 'DEAD';
-  else verdict = r.status === 0 ? 'PASS' : 'FAIL'; // PASS lines but a non-zero exit: something failed unreported
-  const detail = verdict === 'PASS' ? null
-    : verdict === 'LOST' ? `ran ${declared} test(s), ${passes} result line(s)`
-    : verdict === 'FAIL' ? (fails.join(' | ') || (bareFails && `${bareFails} FAIL line(s)`) || `exit ${r.status} after ${passes} PASS line(s)`)
-    : (out.trim().split('\n').filter(Boolean).slice(0, 3).join(' / ') || '(no output at all)');
+  // The classification is scripts/lib/test-verdict.cjs (2026-11-18), shared with the mutation harness: one verdict.
+  const { verdict, passes, detail } = testVerdict({ out, status: r.status, timedOut: !!(r.error && r.error.code === 'ETIMEDOUT') });
   return { file: f, verdict, passes, exit: r.status, detail, output: verdict === 'PASS' ? null : out };
 });
 
