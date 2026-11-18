@@ -2769,6 +2769,32 @@ was itself written while fixing this).
   the first `tail` replaced the gate's exit status with its own, and the second cut the pre-push hook's output, so
   whether the hook ran on 13ccc81 is NOT ESTABLISHED. A command whose output is the record of what happened is capture.
   See "A check's verdict names what it checked".
+- b337c16 (2026-11-18), a scratch command: `node scripts/run-tests.mjs tests | tail -1 && git add STATUS.md && git
+  commit ...`. The same construct, the same two losses: the suite reported `136 files: 135 PASS, 1 TIMEOUT`, the commit
+  went ahead on tail's status, and `tail -1` cut the complete output the runner prints for a non-passing file, so
+  **which test timed out is NOT ESTABLISHED**. A rerun on the same tree, its output captured whole to a file and read,
+  passed 136/136, and no node process was left running afterwards (checked, unlike PID 9472). The commit was held
+  unpushed until then.
+
+**A RULE THAT CONSTRAINS COMMITTED CODE CONSTRAINS THE COMMANDS WE TYPE (2026-11-18, the reviewer's rule).** Where a
+rule exists because a mechanism is dangerous, the mechanism is dangerous in a one-off command too, and that is where
+it will recur, because nothing there is reviewed. Two instances in one week, each fixed in committed code first and
+then repeated in scratch:
+- **the execSync orphan:** the committed guard (`tests/spawn-timeouts.test.js`) bans a shell-spawned node without a
+  timeout in tests/ and scripts/. A scratch mutant harness's `execSync('node ' + t, { timeout })` left PID 9472
+  running for three days (see "A process spawned by a scratch harness", below);
+- **the pipe:** `check-push` reads its gate's status directly since 13ccc81. The scratch command of b337c16 gated a
+  commit on `tail`'s status (above).
+In practice: a gate is never followed by `| tail`, `| head`, `| grep` or `| cut` when its status decides what runs
+next. Its output goes whole to a file, and its status is read from the command itself.
+
+**A RECORD OF WHAT THE SCREEN SHOWED ANSWERS QUESTIONS NOBODY ASKED IT (2026-11-18, the reviewer).** `appShowedAtBuy`
+was built on 2026-11-08 to record the entry verdict Roman was shown at a buy, so that "what the app advised" could
+never be recomputed after the fact. Ten days later it was the only evidence of why Roman's portfolio held lots he
+didn't think he held. At all 16 adds made on 11-17 while an earlier lot of the same ticker was open in the database,
+it records that the screen, rendered 5-14 s before the tap and after the earlier lot existed, did NOT show the
+ticker as held. Without it, "he forgot" and "his session could not see it" would be indistinguishable. Capture what
+the screen showed, as shown, even where no question is yet asked of it.
 
 **GATING IS BY DEPENDENCY, NOT BY BRANCH; A GATE'S LIST IS RE-READ WHEN WHAT IT WAITED FOR HAPPENS; AND A GATE AUDIT
 ASKS WHAT FEEDS EACH HELD ITEM (2026-11-12, the reviewer's rules).** A gate shared by unrelated work blocks the work
