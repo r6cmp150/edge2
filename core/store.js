@@ -530,24 +530,55 @@ async function savePositionToSupabase(position) {
   throw fail('POSITION_UNWRITABLE', `${position.ticker}: position ${position.id} exists but the update changed no row -- not saved`);
 }
 
-// A delete is confirmed by the rows it returns, never by the absence of an
-// error (2026-11-08): with RLS off on portfolio, a delete that matches no row
-// is a silent success. Zero rows is followed up, as savePositionToSupabase does:
-//   'REMOVED'               -- the delete returned the row
-//   'ALREADY_GONE'          -- nothing deleted, and a select confirms no row:
-//                              closed in another session (resolves, not throws;
-//                              the caller decides what that means for it)
-//   throws POSITION_NOT_REMOVED -- nothing deleted and the row is still there
-//   throws POSITION_UNKNOWN     -- nothing deleted and the check failed
+// A BOUNDED WAIT, WHOSE RESULT CANNOT BE MISTAKEN FOR SUCCESS OR FOR FAILURE (2026-11-18, the reviewer). No request had a
+// timeout, so a hang held whatever awaited it for good. This bounds one request and NEVER THROWS: it returns an outcome
+// the caller must read, because a thrown timeout lands in the same catch as a network error and becomes "failed", the
+// collapse the three states exist to prevent.
+//   { outcome: 'OK', data, count }     the database answered, without an error
+//   { outcome: 'FAILED', reason }      it answered with an error (a server error: the statement did not apply); or a
+//                                      READ got no answer (a read has no side effect: "could not read" is true)
+//   { outcome: 'UNKNOWN', reason }     a WRITE got no answer: aborted at `ms`, or the request itself did not complete
+//                                      (a transport error carries no server code). It may have landed: never "failed".
+// supabase-js resolves an aborted request with an error rather than throwing, so the timeout is checked first.
+async function boundedRequest(builder, { ms, kind, what }) {
+  const abort = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; abort.abort(); }, ms);
+  let r;
+  try { r = await Promise.resolve(builder.abortSignal(abort.signal)); }
+  catch (e) { r = { thrown: e }; }
+  finally { clearTimeout(timer); }
+  const noAnswer = timedOut ? `no answer within ${ms / 1000} s`
+    : r.thrown ? `the request did not complete (${r.thrown?.message || r.thrown})`
+    : (r.error && !r.error.code) ? `the request did not complete (${r.error.message || 'no message'})`
+    : null;
+  if (noAnswer) return kind === 'write'
+    ? { outcome: 'UNKNOWN', reason: `${what}: ${noAnswer}, so whether it was applied is not known` }
+    : { outcome: 'FAILED', reason: `${what}: ${noAnswer}` };
+  if (r.error) return { outcome: 'FAILED', reason: `${what}: ${r.error.message || r.error.code}` };
+  return { outcome: 'OK', data: r.data, count: r.count };
+}
+const WRITE_TIMEOUT_MS = 20000, READ_TIMEOUT_MS = 8000;
+
+// A delete is confirmed by the rows it returns, never by the absence of an error (2026-11-08): with RLS off on
+// portfolio, a delete that matches no row is a silent success. Zero rows is followed up with an existence check.
+// CHANGED 2026-11-18: bounded, and it returns an OUTCOME (never throws), which every caller reads:
+//   { outcome: 'OK', removed: 'REMOVED' }        the delete returned the row
+//   { outcome: 'OK', removed: 'ALREADY_GONE' }   nothing deleted, and the check confirms no row (closed elsewhere)
+//   { outcome: 'FAILED', reason }                the database refused the delete, or it removed no row and the row is
+//                                                still there: the position is certainly still open
+//   { outcome: 'UNKNOWN', reason }               the delete got no answer, or it removed no row and the check could
+//                                                not answer: whether the row is gone is not known
 async function deletePositionFromSupabase(positionId) {
-  const { data, error } = await supabaseClient.from('portfolio').delete().eq('position_id', positionId).select('position_id');
-  if (error) throw error;
-  if (data && data.length > 0) return 'REMOVED';
-  const fail = (code, message) => { const e = new Error(message); e.code = code; e.positionId = positionId; return e; };
-  const check = await supabaseClient.from('portfolio').select('position_id').eq('position_id', positionId).limit(1);
-  if (check.error) throw fail('POSITION_UNKNOWN', `position ${positionId}: the delete removed no row and the existence check failed (${check.error.message}) -- can't tell whether it is still open`);
-  if (check.data && check.data.length > 0) throw fail('POSITION_NOT_REMOVED', `position ${positionId}: the delete removed no row and the row is still there`);
-  return 'ALREADY_GONE';
+  const del = await boundedRequest(supabaseClient.from('portfolio').delete().eq('position_id', positionId).select('position_id'),
+    { ms: WRITE_TIMEOUT_MS, kind: 'write', what: `position ${positionId}: the delete` });
+  if (del.outcome !== 'OK') return del;
+  if (del.data && del.data.length > 0) return { outcome: 'OK', removed: 'REMOVED' };
+  const check = await boundedRequest(supabaseClient.from('portfolio').select('position_id').eq('position_id', positionId).limit(1),
+    { ms: READ_TIMEOUT_MS, kind: 'read', what: `position ${positionId}: the existence check` });
+  if (check.outcome !== 'OK') return { outcome: 'UNKNOWN', reason: `position ${positionId}: the delete removed no row, and ${check.reason.replace(/^position \S+: /, '')}: whether it is still open is not known` };
+  if (check.data && check.data.length > 0) return { outcome: 'FAILED', reason: `position ${positionId}: the delete removed no row and the row is still there` };
+  return { outcome: 'OK', removed: 'ALREADY_GONE' };
 }
 
 // settings is a single-row table (Roman's row, id 3, since 2026-08-17). The

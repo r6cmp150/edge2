@@ -1257,7 +1257,7 @@ function updateMarketBanner() {
   // or queued; the portfolio is what's wrong.
   const SALE_STATE = { WRITTEN: 'Its sale is recorded.', SALE_DUPLICATE: 'Its sale was already recorded.', SALE_FAILED: 'Its sale is queued on this phone, not yet recorded (see its "sale NOT recorded" line).', SALE_PENDING: 'Its sale was being recorded when the app closed, so whether it was recorded is not known (see its "not known" line).' };
   for (const [id, g] of Object.entries(state.positionsStillOpen || {})) {
-    add('var(--red)', `${g.ticker} still shows as open`, `${SALE_STATE[g.sale] || 'Whether its sale is recorded is not known.'} The portfolio row wasn't removed, so it can come back after a reload and portfolio figures count it. Tap Remove again.<div class="banner-facts">position ${escFact(id)} · ${g.message ? escFact(g.message) : 'no message recorded'}</div>`,
+    add('var(--red)', g.row === 'UNKNOWN' ? `${g.ticker}: not known whether it was removed` : `${g.ticker} still shows as open`, `${SALE_STATE[g.sale] || 'Whether its sale is recorded is not known.'} ${g.row === 'UNKNOWN' ? "Whether the portfolio row was removed is not known (no answer in time). If it wasn't, it can come back after a reload and portfolio figures count it. Tap Remove again: safe either way." : "The portfolio row wasn't removed, so it can come back after a reload and portfolio figures count it. Tap Remove again."}<div class="banner-facts">position ${escFact(id)} · ${g.message ? escFact(g.message) : 'no message recorded'}</div>`,
       `<button class="btn btn-sm btn-danger" onclick="removePositionAgain('${id}')">Remove again</button>`);
   }
   // Position saves (core/store.js savePositionToSupabase): this tab is showing something
@@ -5329,11 +5329,12 @@ function cancelPendingOrder(posId, btn) {
   if (!p || !isPendingOrder(p)) return;
   showConfirm(`Cancel the pending ${(ORDER_TYPE_LABEL[p.orderType] || '').toLowerCase()} order for ${p.shares} ${p.ticker}? It's removed from Portfolio; no trade is recorded.`, async () => {
     state.deletedPositionIds.add(p.id);
-    try {
-      await deletePositionFromSupabase(p.id);
-    } catch (e) {
+    const del = await deletePositionFromSupabase(p.id); // an outcome, never a throw (2026-11-18)
+    if (del.outcome !== 'OK') {
       state.deletedPositionIds.delete(p.id);
-      showAlert('Could not remove the order from Supabase: ' + e.message);
+      showAlert(del.outcome === 'UNKNOWN'
+        ? `Not known whether the order was removed (${del.reason}). Tap ↻ on Portfolio to see whether it is still there.`
+        : 'Could not remove the order from Supabase: ' + del.reason);
       return;
     }
     state.portfolio = state.portfolio.filter(x => x.id !== posId);
@@ -7591,8 +7592,8 @@ async function retrySaleWrite(posId) {
   let outcome = 'SALE_PENDING';
   try { outcome = await writeTradeToSupabase(...f.args); } finally { delete state.saleInFlight[posId]; }
   if (outcome === 'WRITTEN' || outcome === 'SALE_DUPLICATE') {
-    try { await deletePositionFromSupabase(posId); }
-    catch (err) { notePositionStillOpen(posId, f.ticker, outcome, err.message); }
+    const del = await deletePositionFromSupabase(posId); // an outcome, never a throw (2026-11-18)
+    if (del.outcome !== 'OK') notePositionStillOpen(posId, f.ticker, outcome, del.reason, del.outcome === 'UNKNOWN' ? 'UNKNOWN' : 'STILL_THERE');
     state.portfolio = (state.portfolio || []).filter(p => p.id !== posId);
   }
   if (typeof renderPortfolioTab === 'function') renderPortfolioTab();
@@ -7638,12 +7639,10 @@ async function recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pn
   try { sale = await writeTradeToSupabase(pos, record, saleDate, salePrice, pnlDollar, pnlPct); }
   catch (e) { console.error(`Sale write for ${pos.ticker} (${pos.id}) threw outside its own handling: ${e.message}`); }
   if (sale !== 'WRITTEN' && sale !== 'SALE_DUPLICATE') return sale;
-  try {
-    const removed = await deletePositionFromSupabase(pos.id);
-    if (removed === 'ALREADY_GONE') console.warn(`Sale of ${pos.ticker} (${pos.id}): the portfolio row was already gone (closed in another session).`);
-  } catch (e) {
-    notePositionStillOpen(pos.id, pos.ticker, sale, e.message);
-  }
+  // The delete returns an outcome, never throws (2026-11-18): bounded, and UNKNOWN (no answer) kept apart from FAILED.
+  const del = await deletePositionFromSupabase(pos.id);
+  if (del.outcome === 'OK') { if (del.removed === 'ALREADY_GONE') console.warn(`Sale of ${pos.ticker} (${pos.id}): the portfolio row was already gone (closed in another session).`); }
+  else notePositionStillOpen(pos.id, pos.ticker, sale, del.reason, del.outcome === 'UNKNOWN' ? 'UNKNOWN' : 'STILL_THERE');
   return sale;
 }
 
@@ -7651,8 +7650,10 @@ async function recordSaleThenRemovePosition(pos, record, saleDate, salePrice, pn
 // a stored copy could disagree with the rows it describes, with nothing to say
 // which is wrong. Set by the sale flow above for this session, and rebuilt on every
 // load by checkPositionsStillOpen() from the facts themselves.
-function notePositionStillOpen(posId, ticker, sale, message) {
-  (state.positionsStillOpen = state.positionsStillOpen || {})[posId] = { ticker, sale, message };
+// row: 'STILL_THERE' (known: the row is in the database) or 'UNKNOWN' (the delete got no answer, or the check could not
+// tell). The line says only what is known (2026-11-18).
+function notePositionStillOpen(posId, ticker, sale, message, row = 'STILL_THERE') {
+  (state.positionsStillOpen = state.positionsStillOpen || {})[posId] = { ticker, sale, message, row };
   updateMarketBanner();
 }
 
@@ -7690,15 +7691,16 @@ async function checkPositionsStillOpen() {
 async function removePositionAgain(posId) {
   const g = state.positionsStillOpen?.[posId];
   if (!g) return;
-  try {
-    await deletePositionFromSupabase(posId);
+  const del = await deletePositionFromSupabase(posId); // an outcome, never a throw (2026-11-18)
+  if (del.outcome === 'OK') {
     delete state.positionsStillOpen[posId];
     state.deletedPositionIds.add(posId);
     state.portfolio = state.portfolio.filter(p => p.id !== posId);
     if (typeof renderPortfolioTab === 'function') renderPortfolioTab();
     if (typeof updateNavBadges === 'function') updateNavBadges();
-  } catch (e) {
-    g.message = e.message;
+  } else {
+    g.message = del.reason;
+    g.row = del.outcome === 'UNKNOWN' ? 'UNKNOWN' : 'STILL_THERE';
   }
   updateMarketBanner();
 }

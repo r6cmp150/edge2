@@ -10,7 +10,8 @@ const { readSource, run } = require('./_lib');
 const app = readSource('app.js');
 const grab = n => { const i = app.search(new RegExp('^(async )?function ' + n + '[(]', 'm')); assert.ok(i >= 0, n); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
 
-function load({ insert = async () => 'WRITTEN', del = async () => 'REMOVED', client, initial = {} } = {}) {
+// CHANGED 2026-11-18, declared: the delete returns an OUTCOME and never throws (bounded; core/store.js boundedRequest).
+function load({ insert = async () => 'WRITTEN', del = async () => ({ outcome: 'OK', removed: 'REMOVED' }), client, initial = {} } = {}) {
   const log = [];
   global.state = { saleWriteFailures: {}, deletedPositionIds: new Set(), portfolio: [], ...initial };
   global.__log = log;
@@ -28,7 +29,8 @@ function load({ insert = async () => 'WRITTEN', del = async () => 'REMOVED', cli
     '\nglobal.__f = { recordSaleThenRemovePosition, checkPositionsStillOpen, removePositionAgain };');
   return { ...global.__f, log };
 }
-const fail = code => async () => { const e = new Error(`position 7: ${code}`); e.code = code; throw e; };
+// a non-OK delete outcome: FAILED (the row is known to be there) or UNKNOWN (no answer: not known whether it went)
+const fail = (code, outcome = 'FAILED') => async () => ({ outcome, reason: `position 7: ${code}` });
 const pos = { id: '7', ticker: 'UEC' };
 
 run('the sale is inserted BEFORE the portfolio row is deleted', async () => {
@@ -40,11 +42,11 @@ run('the sale is inserted BEFORE the portfolio row is deleted', async () => {
 
 // CHANGED 2026-11-18, declared (the reviewer's (b)): the row is deleted only when a sale IS recorded (WRITTEN,
 // SALE_DUPLICATE). The SALE_FAILED case moved below: the row is kept, so there is no delete to fail.
-for (const [sale, code] of [['WRITTEN', 'POSITION_NOT_REMOVED'], ['SALE_DUPLICATE', 'POSITION_UNKNOWN']]) {
+for (const [sale, code, outcome, row] of [['WRITTEN', 'POSITION_NOT_REMOVED', 'FAILED', 'STILL_THERE'], ['SALE_DUPLICATE', 'POSITION_UNKNOWN', 'UNKNOWN', 'UNKNOWN']]) {
   run(`insert ${sale}, delete throws ${code}: a "still open" entry naming the sale's state; the sale is not touched`, async () => {
-    const { recordSaleThenRemovePosition, log } = load({ insert: async () => sale, del: fail(code) });
+    const { recordSaleThenRemovePosition, log } = load({ insert: async () => sale, del: fail(code, outcome) });
     await recordSaleThenRemovePosition(pos, {}, '2026-11-06', 1, 0, 0);
-    assert.deepStrictEqual(global.state.positionsStillOpen['7'], { ticker: 'UEC', sale, message: `position 7: ${code}` });
+    assert.deepStrictEqual(global.state.positionsStillOpen['7'], { ticker: 'UEC', sale, message: `position 7: ${code}`, row });
     // CHANGED 2026-11-18, declared: the queue is written ONCE, before the insert (the insert is mocked here, so its
     // outcome never overwrites the pending entry); the delete still never writes it.
     assert.deepStrictEqual(log.filter(x => x.startsWith('persist')), ['persist saleWriteFailures'], 'one queue write, before the insert; the delete writes nothing');
@@ -164,7 +166,7 @@ run('Remove again: success clears the line and the position; failure keeps the l
   let r = load({ initial: { portfolio: [{ id: '7', ticker: 'UEC' }], positionsStillOpen: { 7: { ticker: 'UEC', sale: 'WRITTEN', message: 'x' } } } });
   await r.removePositionAgain('7');
   assert.ok(!global.state.positionsStillOpen['7'] && global.state.portfolio.length === 0 && global.state.deletedPositionIds.has('7'));
-  r = load({ del: fail('POSITION_NOT_REMOVED'), initial: { portfolio: [{ id: '7', ticker: 'UEC' }], positionsStillOpen: { 7: { ticker: 'UEC', sale: 'WRITTEN', message: 'x' } } } });
+  r = load({ del: fail('POSITION_NOT_REMOVED', 'FAILED'), initial: { portfolio: [{ id: '7', ticker: 'UEC' }], positionsStillOpen: { 7: { ticker: 'UEC', sale: 'WRITTEN', message: 'x' } } } });
   await r.removePositionAgain('7');
   assert.strictEqual(global.state.positionsStillOpen['7'].message, 'position 7: POSITION_NOT_REMOVED');
   assert.strictEqual(global.state.portfolio.length, 1);
@@ -175,4 +177,22 @@ run('the check runs after the app shell renders, not during the loading screen',
   const shell = init.indexOf('document.body.innerHTML = APP_SHELL_HTML'), chk = init.indexOf('checkPositionsStillOpen()');
   assert.ok(shell > 0 && chk > shell, 'checkPositionsStillOpen after the shell');
   assert.ok(!/positionsStillOpen/.test(app.slice(app.indexOf("['sold','analysisPeriods'"), app.indexOf('.forEach(k =>', app.indexOf("['sold','analysisPeriods'")))), 'not a persisted key');
+});
+
+// 2026-11-18 (the reviewer): "a test that a timed-out write is never reported to Roman as 'failed'". The sale's row
+// delete, when it got no answer: the line says it is NOT KNOWN whether the row was removed, never that it wasn't, and
+// never "failed"; "Remove again" is offered as safe either way. A row KNOWN to be there keeps the old wording.
+run('a delete with no answer is shown as not known, never as failed or as "wasn\'t removed"', () => {
+  const i = app.indexOf('function updateMarketBanner(');
+  const banner = app.slice(i, app.indexOf('\n}\n', i));
+  const k = banner.indexOf("for (const [id, g] of Object.entries(state.positionsStillOpen || {})) {");
+  const line = banner.slice(k, banner.indexOf('\n  }\n', k));
+  assert.ok(line.includes("g.row === 'UNKNOWN' ? `${g.ticker}: not known whether it was removed` : `${g.ticker} still shows as open`"), 'the title');
+  const unknownText = line.match(/g\.row === 'UNKNOWN' \? "([^"]+)"/)[1];
+  assert.ok(/not known/.test(unknownText) && /safe either way/.test(unknownText), unknownText);
+  assert.ok(!/fail|wasn't removed|was not removed/i.test(unknownText.replace("If it wasn't, ", '')), 'never "failed", never "wasn\'t removed": ' + unknownText);
+  // every caller of the delete reads its outcome; none wraps it in a catch that would turn UNKNOWN into "failed"
+  const calls = [...app.matchAll(/(.{0,60})deletePositionFromSupabase\(/g)].map(m => m[1]);
+  assert.ok(calls.length >= 4 && calls.every(c => /const del = await $/.test(c)), 'each call is read as an outcome: ' + JSON.stringify(calls));
+  assert.ok(!/try \{ await deletePositionFromSupabase/.test(app) && !/catch \(e\) \{\s*notePositionStillOpen/.test(app), 'no catch around the delete');
 });
