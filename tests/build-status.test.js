@@ -3,7 +3,7 @@
 // unknown (with why). Never "current" when the check didn't run or failed.
 'use strict';
 const assert = require('assert');
-const { readSource, run: harnessRun, restoring } = require('./_lib');
+const { readSource, run: harnessRun, restoring, enclosingFunctions } = require('./_lib');
 const run = (name, fn) => harnessRun(name, restoring(fn));
 
 const app = readSource('app.js');
@@ -78,7 +78,8 @@ await run('VERSION is the loaded stamp, not a literal; reports state provenance 
   assert.ok(/^const VERSION = currentCodeVersion\(\)\.app;$/m.test(app), 'VERSION is read from the loaded app.js tag');
   assert.ok(!/const VERSION = '/.test(app), 'no hand-maintained version string');
   assert.ok(!/App Version: \$\{VERSION\}/.test(app), 'report headers use buildProvenanceLine(), not a bare VERSION');
-  assert.strictEqual((app.match(/\$\{buildProvenanceLine\(\)\}/g) || []).length, 3, 'both report headers and the configuration line');
+  // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): which, not only how many.
+  assert.deepStrictEqual(enclosingFunctions(app, /\$\{buildProvenanceLine\(\)\}/g), ['generateClaudeReport', 'generateClaudeReport', 'buildSupabaseArchiveReport'], 'both report headers (the Claude report and the archive) and the Claude report\'s configuration line');
   for (const f of ['scripts/log-signals-edge.mjs', 'scripts/log-signals-warrior.mjs']) {
     assert.ok(!/refusing to log/.test(readSource(f)), `${f} never refuses to log over a version`);
   }

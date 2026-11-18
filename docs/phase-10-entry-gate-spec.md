@@ -3064,6 +3064,27 @@ classification moved to `scripts/lib/test-verdict.cjs`, and `scripts/run-tests.m
 failing test, so it can be read for the intended test without a second tool. `tests/mutants-harness.test.js` holds
 LOST, SILENT and FAIL as kills, each named.
 
+**A TEST THAT COUNTS CAN BE SATISFIED BY AN IMPOSTOR (2026-11-18, the reviewer's rule).** A count asserts how many, not
+which. Where the counted things can move or be replaced (and a refactor does exactly that), the count survives the
+substitution and reports coverage it no longer has. Assert the identity of each item, and let the count be a
+consequence. It is the inverse of the pinning rule, and the failure mode pinning invites. **The instance:**
+`tests/entry-gate.test.js` counted the add path's choices in `confirmAddPortfolio` alone, "one choice: Live or
+Paper". When the open-lot check split that function, the Live/Paper choice moved to `confirmAddPortfolioChecked`,
+which the test did not read, and the open-lot choice arrived to be counted in its place. The guard on the one thing
+Roman's record depends on (paper told from real) was unprotected from the split, and green. **The audit (same day):**
+every count assertion over source or output in the suite (17 `match(/…/g).length` pins), and every registry that matched
+by count per key (2), were read and classified. Identified already: the banner's facts lines (each entry's text
+asserted), db/038's SQL (hash-pinned), the coverage cross-check (each consumer named, mapped to a named test), the
+storage tier table, the enumerated values, every mutant set (each mutant named). Counted only, and now identified:
+the empty-read registry (each read now pinned to the function that holds it, 55 reads), the asset-index registry (each
+use now its exact line, 31), the per-signal gate's three call sites, the provenance line's three, the loggers'
+code_version rows (by the row each sits in), their re-read checks (by label), the one current-signal call, the one
+portfolio insert, the earlier-close markers (by the element holding each), the report's not-bucketed notes (by the
+bucket set each closes), db/041's probes (by table, value and kind), and the stock modal's footer branches.
+`tests/_lib.js` `enclosingFunctions` names the function holding each match (it had two blind spots, caught by reading
+its first answers: code between functions, and `export`ed functions). Not covered by this audit: count assertions
+over a test's own computed data, where the items are the test's own inputs.
+
 **A PERMANENTLY SURVIVING MUTANT IS A DISABLED ALARM (2026-11-18, the reviewer's rule).** It trains whoever reads the
 number to expect a non-zero survivor count, and the day a real survivor appears it is indistinguishable from the
 furniture. An anchor that does not match is not a result about the code: it is a broken instrument, a third state.

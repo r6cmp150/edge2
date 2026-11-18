@@ -93,8 +93,10 @@ run('every post-write re-read is asserted, never just printed', () => {
     const asserted = (src.match(/assertReReadComplete\(/g) || []).length;
     assert.ok(reads > 0 && asserted >= reads, `${f}: ${reads} re-read(s), ${asserted} asserted`);
   }
-  assert.strictEqual((readSource('scripts/log-signals-edge.mjs').match(/assertReReadComplete\(/g) || []).length, 1);
-  assert.strictEqual((readSource('scripts/log-signals-warrior.mjs').match(/assertReReadComplete\(/g) || []).length, 2);
+  // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): which, not only how many. Each re-read check names its table in its label.
+  const labels = f => [...readSource(f).matchAll(/assertReReadComplete\('([^']+)'/g)].map(m => m[1]);
+  assert.deepStrictEqual(labels('scripts/log-signals-edge.mjs'), ['log-signals-edge signal_log']);
+  assert.deepStrictEqual(labels('scripts/log-signals-warrior.mjs'), ['log-signals-warrior signal_log', 'log-signals-warrior setup_triggers']);
   const g = readSource('scripts/test-db019-db021-grants.mjs');
   assert.ok(!/cannot run this check|Skipped\.'\); return;/.test(g), 'the grant test no longer skips to a pass');
   assert.ok(!/console\.log\(`re-select \(anon key\)[^`]*-- expect/.test(g), 'no "expect X" that is only printed');

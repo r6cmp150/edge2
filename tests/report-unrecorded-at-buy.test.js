@@ -49,7 +49,10 @@ function await_run(name, make) {
     assert.ok(line(text, /^\s*Avg volume ratio:/).includes(`wins ${meanOf(w, 'volume_ratio_at_buy').toFixed(2)}x (1 not recorded, skipped)`), line(text, /^\s*Avg volume ratio:/));
     assert.ok(line(text, /^\s*Avg signal score:/).includes(`wins ${meanOf(w, 'signal_score').toFixed(1)} (1 not recorded, skipped)`));
     assert.ok(line(text, /^\s*Avg risk score:/).includes(`wins ${meanOf(w, 'risk_score').toFixed(1)} (1 not recorded, skipped)`));
-    assert.strictEqual((text.match(/not recorded \(not bucketed\): 2 trades/g) || []).length, 2, 'the RSI and the volume buckets each say 2 left out');
+    // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): each note by the bucket set it closes.
+    const closes = [...text.matchAll(/not recorded \(not bucketed\): 2 trades/g)]
+      .map(m => text.slice(0, m.index).split('\n').filter(l => l.trim()).pop().trim().split(/\s/)[0]);
+    assert.deepStrictEqual(closes, ['65+', '3x+'], 'the RSI buckets (after 65+) and the volume buckets (after 3x+) each say 2 left out');
     // ...and really leave them out: each bucket set counts the 4 recorded trades, never a null read as 0 in the lowest.
     for (const head of [/^RSI at purchase — win rate by bucket:/, /^Volume ratio at purchase — win rate by bucket:/]) {
       const ls = text.split('\n'); const i = ls.findIndex(x => head.test(x.trim()));

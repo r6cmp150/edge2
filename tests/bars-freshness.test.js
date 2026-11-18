@@ -6,7 +6,7 @@
 const assert = require('assert');
 const vm = require('vm');
 const { execSync } = require('child_process');
-const { readSource, run, REPO_ROOT } = require('./_lib');
+const { readSource, run, REPO_ROOT, enclosingFunctions } = require('./_lib');
 
 const ctx = { Date, Math, JSON, Set, Intl, console, state: { settings: {} } };
 vm.createContext(ctx);
@@ -52,7 +52,8 @@ run('entryGateForSignal: a history older than one trading day is not buyable, an
 run('wiring: stamped in both scans, gated at all three advice sites, carried buy -> sale, logged', () => {
   const app = readSource('app.js');
   assert.ok(/Object\.assign\(s, barsFreshness\(bars, ptDateStr\(getPT\(\)\)\)\);/.test(app), 'app scan stamps the signal');
-  assert.strictEqual((app.match(/entryGateForSignal\(s\)/g) || []).length, 3, 'card overlay, action banner and modal use the per-signal gate');
+  // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): which, not only how many.
+  assert.deepStrictEqual(enclosingFunctions(app, /entryGateForSignal\(s\)/g), ['renderStockCard', 'buildSignalActionBanner', 'openStockModal'], 'card overlay, action banner and modal use the per-signal gate');
   assert.ok(!/entryGateNow\(\)/.test(app.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n')), 'no advice site uses the time-only gate any more');
   assert.ok(/barsAsOfAtBuy: sig\?\.barsAsOf \?\? null/.test(app) && /bars_as_of_at_buy: pos\.barsAsOfAtBuy \?\? null/.test(app), 'buy -> position -> trades_v2');
   const store = readSource('core/store.js');

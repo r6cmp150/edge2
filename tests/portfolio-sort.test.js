@@ -309,7 +309,10 @@ run('markers: the earlier close on every P/L it prices, the scan date, the unran
   const ddd = card(profit, 'DDD');
   // Header P/L, the "Now" label, and the intraday "% today" line: three
   // displays of one P/L, one marker, one source.
-  assert.strictEqual((ddd.match(/class="pf-earlier-close-tag"[^>]*>2026-10-30 close</g) || []).length, 3, ddd);
+  // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): each marker by the element that holds it.
+  const holders = [...ddd.matchAll(/class="pf-earlier-close-tag"[^>]*>2026-10-30 close</g)]
+    .map(m => [...ddd.slice(0, m.index).matchAll(/class="([^"]+)"/g)].map(x => x[1]).pop());
+  assert.deepStrictEqual(holders, ['pf-pnl-pct', 'pf-price-label', 'pf-intraday'], ddd);
   assert.ok(ddd.includes('Not ranked by “Most profit”: price is the 2026-10-30 close'));
   assert.ok(/\$11\.00/.test(ddd), 'the price is still shown (display, not priceUnavailable)');
   assert.ok(!card(profit, 'AAA').includes('pf-earlier-close-tag'), "today's price is unmarked");

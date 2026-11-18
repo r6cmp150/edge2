@@ -7,7 +7,7 @@
 // fallback carries every field the recommendation uses.
 'use strict';
 const assert = require('assert');
-const { readSource, run } = require('./_lib');
+const { readSource, run, enclosingFunctions } = require('./_lib');
 
 const app = readSource('app.js');
 const grab = name => { const i = app.indexOf(`function ${name}(`); return app.slice(i, app.indexOf('\n}\n', i) + 2); };
@@ -57,7 +57,8 @@ run('every reader goes through the resolver: card, modal, recommendations, badge
   // record the last signal that predates the sale.
   // CHANGED 2026-11-13, declared: 2 -> 1. The nav badge no longer computes a verdict; it counts the card's captured
   // one (state.displayedVerdicts), so the card's read of the resolver is the badge's too.
-  assert.strictEqual((app.match(/const currentSignal = currentSignalForHolding\(/g) || []).length, 1, 'portfolio card verdict (the badge counts its captured verdicts)');
+  // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): which, not only how many.
+  assert.deepStrictEqual(enclosingFunctions(app, /const currentSignal = currentSignalForHolding\(/g), ['renderPortfolioTab'], 'portfolio card verdict (the badge counts its captured verdicts)');
   assert.ok(app.includes('  const sig = currentSignalForHolding(pos.ticker);\n  if (!sig) return none('), 'the sale record reads the resolver (signalBeforeSale)');
   assert.ok(app.includes('          currentSignalForHolding(ticker),\n          state.macroContext'), 'stock modal verdict');
   assert.ok(app.includes('const nowSig = currentSignalForHolding(p.ticker);'), 'portfolio card score');

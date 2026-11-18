@@ -51,7 +51,11 @@ run('loggers write code_version from scripts/lib/code-version.mjs and no longer 
   for (const f of ['scripts/log-signals-edge.mjs', 'scripts/log-signals-warrior.mjs']) {
     const src = code(readSource(f));
     assert.ok(/import \{[^}]*\bcodeVersionForRun\b[^}]*\} from '\.\/lib\/code-version\.mjs'/.test(src), `${f} imports codeVersionForRun (the never-throwing wrapper)`);
-    assert.strictEqual((src.match(/code_version: CODE_VERSION/g) || []).length, 2, `${f} writes code_version on the scan_runs row and on every signal_log row`);
+    // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): which, not only how many.
+    assert.strictEqual((src.match(/code_version: CODE_VERSION/g) || []).length, 2, `${f}: two writes of code_version`);
+    assert.ok(/code_version: CODE_VERSION,[^\n]*\n\s*trigger_type: triggerTypeForRun\(\)/.test(src), `${f}: one is the scan_runs row (beside its trigger_type)`);
+    const rows = src.slice(src.indexOf('const signalRows = '), src.indexOf('}));', src.indexOf('const signalRows = ')));
+    assert.ok(src.includes('const signalRows = ') && rows.includes('code_version: CODE_VERSION'), `${f}: the other is in every signal_log row`);
     assert.ok(!/build_version:/.test(src), `${f} no longer writes the stale build_version`);
     assert.ok(/resolution=ignore-duplicates/.test(src), `${f}: the signal_log upsert must stay ignore-duplicates; a merge would UPDATE and hit the write-once trigger after any mid-day deploy (§7.7 trip-wire)`);
   }

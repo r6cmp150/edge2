@@ -87,7 +87,10 @@ run('entry gate: the footer is the ordinary Add inside a gate window; the banner
   assert.ok(!/addBlockReason|Record a trade already placed|addPortfolioDespiteAdvice/.test(src), 'the gated relabel and its confirm are gone');
   assert.ok(footer.includes(`<button class="btn btn-success" style="flex:1" onclick="openAddPortfolioModal('\${ticker}')">+ Add to Portfolio</button>`), 'normal styling, normal behaviour');
   // The footer offers exactly three branches: held, pending, and the ordinary Add.
-  assert.strictEqual((footer.match(/\? `/g) || []).length, 2, 'held ? ... : pending ? ... : ordinary Add');
+  // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): the three branches by their conditions, in order.
+  const branches = footer.match(/= ownedPos \? `([\s\S]*?)` : pendingOrder \? `([\s\S]*?)` : `([\s\S]*?)`;/);
+  assert.ok(branches, 'held ? ... : pending ? ... : ordinary Add, in that order: ' + footer.slice(0, 200));
+  assert.ok(branches[1].includes('✓ In Portfolio · + Record another buy') && branches[3].includes('+ Add to Portfolio'), 'held is the second-lot button; the last is the ordinary Add');
   // The advice itself is untouched.
   assert.ok(src.includes('⛔ Entry gate: ${modalGate.label}') && src.includes('⚠ DAY trade — entry window has closed for today'), 'the modal banners stay');
 });
@@ -98,7 +101,10 @@ run('entry gate: the footer is the ordinary Add inside a gate window; the banner
 run('recording: "In Portfolio" and "Order pending" open the add form directly, with the reason as a note', () => {
   const src = readSource('app.js');
   const footer = src.match(/getElementById\('stock-modal-footer'\)\.innerHTML = [\s\S]*?`;\n/)[0];
-  assert.strictEqual((footer.match(/onclick="openAddPortfolioModal\('\$\{ticker\}', \$\{JSON\.stringify\(lotReason\)/g) || []).length, 2, 'held and pending pass their reason to the form');
+  // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): one reason-passing button in each of held and pending.
+  const branches = footer.match(/= ownedPos \? `([\s\S]*?)` : pendingOrder \? `([\s\S]*?)` : `([\s\S]*?)`;/);
+  const passes = s => (s.match(/onclick="openAddPortfolioModal\('\$\{ticker\}', \$\{JSON\.stringify\(lotReason\)/g) || []).length;
+  assert.deepStrictEqual(branches && [passes(branches[1]), passes(branches[2]), passes(branches[3])], [1, 1, 0], 'held and pending pass their reason to the form; the ordinary Add does not');
   assert.ok(!/recordAnotherLot/.test(src));
   assert.ok(src.includes('function openAddPortfolioModal(ticker, note = null) {'));
   assert.ok(src.includes('${note ? `<div class="add-form-note">${note}</div>` : \'\'}'), 'the reason is shown in the form');

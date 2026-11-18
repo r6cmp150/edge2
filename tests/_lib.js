@@ -157,6 +157,27 @@ process.on('exit', () => {
   }
 });
 
+// A COUNT CAN BE SATISFIED BY AN IMPOSTOR (2026-11-18, the reviewer's rule). A count asserts how many, not which: where
+// the counted things can move or be replaced, the count survives the substitution. So a test identifies what it counts,
+// and the count follows. This names, for each match of `re` (a /g RegExp) in `src`, the top-level function that holds
+// it: a `function name(`, `async function name(` or either `export`ed, at the start of a line, up to its own closing "\n}\n". A match
+// outside every such function is '(top level)' (a const, a table, code between functions).
+function enclosingFunctions(src, re) {
+  // a function ends at its own "\n}\n", or before the next top-level function starts, whichever is first: a one-line
+  // function has no closing line of its own, and its end must not run on into the next one's
+  const starts = [...src.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+([\w$]+)\s*\(/gm)];
+  const heads = starts.map((m, i) => {
+    const close = src.indexOf('\n}\n', m.index), next = i + 1 < starts.length ? starts[i + 1].index : src.length;
+    const oneLine = src.indexOf('\n', m.index);
+    const end = /\}\s*$/.test(src.slice(m.index, oneLine < 0 ? src.length : oneLine)) ? oneLine : Math.min(close < 0 ? src.length : close, next);
+    return { name: m[1], at: m.index, end };
+  });
+  return [...src.matchAll(re)].map(m => {
+    const h = heads.find(x => x.at <= m.index && m.index <= x.end);
+    return h ? h.name : '(top level)';
+  });
+}
+
 // app.js's SETTING_LABELS table, as source: updateMarketBanner calls
 // settingsBannerLine (2026-11-02), which reads it, so a test that evals the
 // banner in isolation needs both.
@@ -189,4 +210,4 @@ function persistFailureDetailSrc() {
 }
 
 module.exports = {
-  virtualClock, readSource, evalModule, run, expectTests, restoring, REPO_ROOT, settingLabelsSrc, columnValidatorsSrc, persistFailureDetailSrc };
+  virtualClock, readSource, evalModule, run, expectTests, restoring, REPO_ROOT, enclosingFunctions, settingLabelsSrc, columnValidatorsSrc, persistFailureDetailSrc };

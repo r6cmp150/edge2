@@ -11,7 +11,7 @@
 // failures must reach the market banner, not just the console.
 'use strict';
 const assert = require('assert');
-const { readSource, run, settingLabelsSrc, persistFailureDetailSrc } = require('./_lib');
+const { readSource, run, settingLabelsSrc, persistFailureDetailSrc, enclosingFunctions } = require('./_lib');
 
 const fnSrc = (file, name) => {
   const m = readSource(file).match(new RegExp(`(async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`));
@@ -195,7 +195,8 @@ await run('only the two add forms create portfolio rows; nothing upserts portfol
     assert.ok(!/from\('portfolio'\)[\s\S]{0,120}?\.upsert\(/.test(src), `${f}: no upsert into portfolio`);
     assert.ok(!/function savePortfolioToSupabase/.test(src), `${f}: the bulk-upsert helper stays deleted`);
   }
-  assert.strictEqual((readSource('core/store.js').match(/from\('portfolio'\)\.insert\(/g) || []).length, 1, 'one insert site: insertPositionToSupabase');
+  // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor): which, not only how many.
+  assert.deepStrictEqual(enclosingFunctions(readSource('core/store.js'), /from\('portfolio'\)\.insert\(/g), ['insertPositionToSupabase'], 'one insert site: insertPositionToSupabase');
   const calls = f => (readSource(f).match(/await insertPositionToSupabase\(/g) || []).length;
   assert.strictEqual(calls('app.js'), 1, 'EDGE add form');
   assert.strictEqual(calls('engines/warrior/index.js'), 1, 'WARRIOR add form');

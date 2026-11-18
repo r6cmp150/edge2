@@ -135,39 +135,77 @@ run('SCRIPTS: every line that touches a cached index entry accesses only symbol 
 });
 
 // 3. ENUMERATED, both ways.
-const REGISTRY = {
-  // file: number of uses (calls of _getAssetIndex / _assetIndexBySymbol, mentions of universeAssetCache), outside comments
-  'app.js': 2, // the state declaration and the persisted-keys load list
-  'core/universe.js': 14, // _getAssetIndex, its six consumers (EXECUTED above), _assetIndexBySymbol, getAssetListing
-  'core/store.js': 1, // its persist tier
-  'scripts/build-exit-model-dataset.mjs': 3, // eval export, one call (SCRIPTS above)
-  'scripts/build-float-table.mjs': 4,
-  'scripts/probe-survivorship-bias.mjs': 3,
-  'scripts/probe-topn-window.mjs': 3,
-  'scripts/log-signals-edge.mjs': 2, // its state stub and loadReal list: reaches the index only via getAssetListing (EXECUTED)
-  'scripts/log-signals-warrior.mjs': 4, // loadReal list, one call, _assetIndexBySymbol (SCRIPTS above)
+// IDENTIFIED, NOT COUNTED (2026-11-18, the reviewer: "a count can be satisfied by an impostor"). This was a per-file
+// COUNT of uses: a consumer removed and a new one added in the same file kept the count, and the new one, unexecuted
+// above, could read name or exchange from the cache unseen. Now each use is the exact line (trimmed, outside comments)
+// that touches the index; a changed or new line fails until it is classified here, and the count follows.
+const USES = {
+  "app.js": [
+    "universeAssetCache: null, // { fetchedAt, assets: [{symbol,isEligibleInstrument}] (P2, 2026-11-18), outsideIndex } — core/universe.js, 24h cache — persisted",
+    "['sold','analysisPeriods','signals','lastScanTime','news','signalToggles','lastPassedCount','lastScanDroppedCount','selectedUniverse','notifications','ownedScores','ownedPrevRSI','ownedPeakRSI','universeAssetCache','universePriorCloseCache','warrior30DayVolumeCache','warriorPreMarketVolumeCache','warriorPreMarketRvolObservations','saleWriteFailures','snapshotWriteFailures','ratingWriteFailures','macroGroqLast'].forEach(k => {",
+  ],
+  "core/store.js": [
+    "sold: 4, analysisPeriods: 4, signals: 4, news: 4, ownedScores: 4, universeAssetCache: 4, universePriorCloseCache: 4,",
+  ],
+  "core/universe.js": [
+    "async function _getAssetIndex(client = _coreClient) {",
+    "const cache = state.universeAssetCache;",
+    "state.universeAssetCache = { fetchedAt: new Date().toISOString(), assets, outsideIndex };",
+    "persist('universeAssetCache');",
+    "const assets = await _getAssetIndex(client);",
+    "const outsideIndex = state.universeAssetCache?.outsideIndex;",
+    "state.universeAssetCache = null;",
+    "function _assetIndexBySymbol(assets) {",
+    "_getAssetIndex(client),",
+    "const assetsBySymbol = _assetIndexBySymbol(assetIndex);",
+    "const assetIndex = await _getAssetIndex(client);",
+    "const assetIndex = await _getAssetIndex(client);",
+    "const assetIndex = await _getAssetIndex();",
+    "const assetIndex = await _getAssetIndex(client);",
+  ],
+  "scripts/build-exit-model-dataset.mjs": [
+    "eval(universeSrc + '\\nglobal._getAssetIndex = _getAssetIndex; global._fetchHistoricalDailyBars = _fetchHistoricalDailyBars; global._isEligibleInstrument = _isEligibleInstrument; global.ALLOWED_EXCHANGES = ALLOWED_EXCHANGES; global._shiftDateStr = _shiftDateStr;');",
+    "const assetIndex = await global._getAssetIndex(client);",
+  ],
+  "scripts/build-float-table.mjs": [
+    "global.state = { settings: { alpacaKey: alpacaKeyId, alpacaSecret: alpacaSecretKey }, warriorEdgarCikMapCache: null, warriorFloatCache: null, universeAssetCache: null };",
+    "eval(universeSrc + '\\nglobal._fetchHistoricalDailyBars = _fetchHistoricalDailyBars; global._getAssetIndex = _getAssetIndex;');",
+    "const assetIndex = await global._getAssetIndex(global._coreClient);",
+  ],
+  "scripts/log-signals-edge.mjs": [
+    "universeAssetCache: null, // core/universe.js asset list, fetched once per run",
+    "loadReal('core/universe.js', ['runEdgePrefilter', 'edgePrefilterFailures', 'getEdgeLiquidity', 'getAssetListing', '_getAssetIndex', '_fetchSipDailyBars']);",
+  ],
+  "scripts/log-signals-warrior.mjs": [
+    "'_getAssetIndex', '_assetIndexBySymbol', '_inPriceRange', 'getUniverse',",
+    "const [assetIndex] = await Promise.all([global._getAssetIndex(global._coreClient)]);",
+    "const assetsBySymbol = global._assetIndexBySymbol(assetIndex);",
+  ],
+  "scripts/probe-survivorship-bias.mjs": [
+    "eval(universeSrc + '\\nglobal._getAssetIndex = _getAssetIndex; global._fetchHistoricalDailyBars = _fetchHistoricalDailyBars; global._rankTopMovers = _rankTopMovers; global._shiftDateStr = _shiftDateStr; global._isEligibleInstrument = _isEligibleInstrument; global.ALLOWED_EXCHANGES = ALLOWED_EXCHANGES;');",
+    "const assetIndex = await global._getAssetIndex(global._coreClient);",
+  ],
+  "scripts/probe-topn-window.mjs": [
+    "eval(universeSrc + '\\nglobal._getAssetIndex = _getAssetIndex; global._fetchHistoricalDailyBars = _fetchHistoricalDailyBars; global._rankTopMovers = _rankTopMovers; global._shiftDateStr = _shiftDateStr;');",
+    "const assetIndex = await global._getAssetIndex(global._coreClient);",
+  ],
 };
 function uses() {
-  const files = ['app.js', ...['core', 'engines', 'shell', 'scripts', 'scripts/lib'].flatMap(d => {
+  const files = ['app.js', ...['core', 'engines', 'shell', 'scripts'].flatMap(d => {
     const dir = path.join(REPO_ROOT, d);
     if (!fs.existsSync(dir)) return [];
-    const walk = p => fs.statSync(p).isDirectory() ? fs.readdirSync(p).flatMap(x => walk(path.join(p, x))) : [p];
-    return walk(dir).filter(p => /\.(m?js)$/.test(p)).map(p => path.relative(REPO_ROOT, p).replace(/\\/g, '/'));
+    const walk = q => fs.statSync(q).isDirectory() ? fs.readdirSync(q).flatMap(x => walk(path.join(q, x))) : [q];
+    return walk(dir).filter(q => /\.(m?js)$/.test(q)).map(q => path.relative(REPO_ROOT, q).replace(/\\/g, '/'));
   })];
   const out = {};
   for (const f of [...new Set(files)]) {
-    const n = readSource(f).split('\n').filter(l => !/^\s*\/\//.test(l))
-      .reduce((a, l) => a + (l.match(/_getAssetIndex\b|_assetIndexBySymbol\b|universeAssetCache\b/g) || []).length, 0);
-    if (n) out[f] = n;
+    const lines = readSource(f).split('\n').filter(l => !/^\s*\/\//.test(l) && /_getAssetIndex\b|_assetIndexBySymbol\b|universeAssetCache\b/.test(l)).map(l => l.trim());
+    if (lines.length) out[f] = lines;
   }
   return out;
 }
-run('ENUMERATED: every use of the cached index is classified, and every classification still has its uses', () => {
-  const found = uses();
-  const problems = [];
-  for (const [f, n] of Object.entries(found)) if (REGISTRY[f] !== n) problems.push(`${f}: ${n} use(s) in code, ${REGISTRY[f] || 0} classified`);
-  for (const f of Object.keys(REGISTRY)) if (!found[f]) problems.push(`${f}: classified, no use in code any more`);
-  assert.deepStrictEqual(problems, [], 'classify the new consumer (does it read name or exchange from the CACHE?) and update REGISTRY:\n  ' + problems.join('\n  '));
+run('ENUMERATED: every line that touches the cached index is identified, and every identified line still exists', () => {
+  assert.deepStrictEqual(uses(), USES, 'a use of the cached index changed or is new: classify it (does it read name or exchange from the CACHE?) and identify its line here');
 });
 
 // 2026-11-18: the total is declared, so a case that never settles (or never starts) is a FAIL, not a silent early exit.

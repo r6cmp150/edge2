@@ -71,7 +71,10 @@ await run('db/041: guarded on exactly the two rows, both tables NOT NULL, and ru
   assert.ok(/from portfolio where engine_source is null;\s*if \(n > 0\) is not false then raise exception/.test(sql), 'no NULL position');
   assert.ok(sql.includes('alter table trades_v2 alter column engine_source set not null;') && sql.includes('alter table portfolio alter column engine_source set not null;'));
   assert.ok(sql.indexOf("update trades_v2 set engine_source = 'EDGE'") > sql.indexOf('end $$;'), 'the backfill runs after the guard');
-  assert.strictEqual((r2.match(/, 'not_null', '|, 'check', '/g) || []).length, 4); assert.strictEqual((r2.match(/, 'key', '/g) || []).length, 2);
+  // IDENTIFIED, 2026-11-18 (a count can be satisfied by an impostor; this file is not hash-pinned): each probe by its
+  // table, value and kind, not only 4 and 2 of them.
+  const probes = [...r2.matchAll(/jsonb_build_array\('(\w+)', (null|'\w+'), '(not_null|check|key)'/g)].map(m => `${m[1]}|${m[2]}|${m[3]}`);
+  assert.deepStrictEqual(probes, ['trades_v2|null|not_null', 'portfolio|null|not_null', "trades_v2|'BOGUS'|check", "portfolio|'BOGUS'|check", "trades_v2|'EDGE'|key", "portfolio|'WARRIOR'|key"]);
   assert.ok(r2.includes('nr = 4 and np = 2 and left_over = 0'));
   assert.ok(/insert into %I select \(jsonb_populate_record\(null::%I, \$1\)\)\.\*/.test(r2), 'copies a real row');
 });

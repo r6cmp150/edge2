@@ -23,7 +23,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { readSource, run, REPO_ROOT } = require('./_lib');
+const { readSource, run, REPO_ROOT, enclosingFunctions } = require('./_lib');
 
 const W = 'WRITES_FROM_EMPTY', S = 'SILENT', P = 'PASS_ON_EMPTY', OK = 'OK';
 const REGISTRY = {
@@ -164,6 +164,63 @@ run('enumeration finds the known reads (a blind enumerator would pass everything
   const found = new Set([...appReads(), ...scriptReads()]);
   for (const k of ['core/store.js|settings', 'core/store.js|portfolio', 'app.js|trades_v2', 'scripts/fill-outcomes.mjs|trades_v2', 'scripts/lib/scan-gate.mjs|scan_runs'])
     assert.ok(found.has(k), `enumerator did not find ${k}`);
+});
+
+// A COUNT CAN BE SATISFIED BY AN IMPOSTOR (2026-11-18): the classification above matches reads to entries by how many
+// there are per file|table, not which. A read removed and another added on the same key left the count, and the entries
+// then described a read that was gone. So each key's reads are also IDENTIFIED, by the top-level function that holds
+// each one, pinned here: a read that moves to another function, or is replaced by one in a different function, fails
+// until it is classified. (A replacement inside the same function is not caught by this; its entry text names it.)
+function readSites() {
+  const out = {};
+  const add = (k, fn) => (out[k] = out[k] || []).push(fn);
+  const files = ['app.js', ...list('core', /\.js$/), ...list('shell', /\.js$/),
+    ...fs.readdirSync(path.join(REPO_ROOT, 'engines')).flatMap(d => list(`engines/${d}`, /\.js$/))];
+  for (const f of files) {
+    const src = strip(readSource(f)), re = /\.from\('([a-z_0-9]+)'\)/g;
+    const ms = [...src.matchAll(re)], fns = enclosingFunctions(src, re);
+    ms.forEach((m, i) => { const tail = src.slice(m.index + m[0].length, m.index + m[0].length + 20000).split(';')[0]; if (/\.select\(/.test(tail)) add(`${f}|${m[1]}`, fns[i]); });
+  }
+  for (const f of workflowScripts()) {
+    const src = strip(readSource(f)), re = /fetch(?:Impl|AllRows)?\(\s*`[^`]*\/rest\/v1\/(\$\{[a-zA-Z]+\}|[a-z_0-9]+)/g;
+    const ms = [...src.matchAll(re)], fns = enclosingFunctions(src, re);
+    ms.forEach((m, i) => { const call = src.slice(m.index, m.index + 600); const end = call.indexOf(');'); if (/method:\s*'(POST|PATCH|DELETE)'/.test(end > 0 ? call.slice(0, end) : call)) return; add(`${f}|${m[1]}`, fns[i]); });
+  }
+  for (const k of Object.keys(out)) out[k].sort();
+  return out;
+}
+// Pinned 2026-11-18 from the code at that date, read and checked against the classifications above (55 reads).
+const READ_SITES = {
+  'app.js|macro_observations': ['fetchMacroObservationsForReport', 'observeMacro'],
+  'app.js|settings': ['testSupabaseConnection'],
+  'app.js|trades_v2': ['checkOpenLotsInDatabase', 'checkPositionsStillOpen', 'compareRecordedSale', 'exportAllData', 'exportAndArchiveDatabase', 'generateClaudeReport', 'loadDatabaseUsage', 'loadSoldFromSupabase', 'readNotKnownCount', 'readNotKnownCount', 'runScreener', 'writeTradeToSupabase'],
+  'app.js|rating_snapshots': ['buildRatingSnapshotHistorySection', 'exportAndArchiveDatabase', 'loadDatabaseUsage', 'macroObservationsControl', 'macroObservationsControl', 'retryRatingWrites', 'retryRatingWrites'],
+  'app.js|portfolio': ['checkOpenLotsInDatabase', 'readNotKnownCount'],
+  'app.js|analysis_periods': ['analyticsConfirmStartPeriod', 'loadAnalysisPeriodsFromSupabase'],
+  'app.js|workflow_runs': ['loadWorkflowHealth'],
+  'core/store.js|portfolio': ['deletePositionFromSupabase', 'deletePositionFromSupabase', 'loadPortfolioFromSupabase', 'savePositionToSupabase', 'savePositionToSupabase'],
+  'core/store.js|trades_v2': ['loadPortfolioFromSupabase'],
+  'core/store.js|rating_snapshots': ['selectRatingSnapshotsByTickers'],
+  'core/store.js|settings': ['loadSettingsFromSupabase', 'readExecutionMode', 'saveSettingsToSupabase', 'writeExecutionMode'],
+  'scripts/backup-tables.mjs|${table}': ['(top level)', 'fetchTable'],
+  'scripts/count-macro-observations.mjs|${table}': ['readAll'],
+  'scripts/count-not-known.mjs|${table}': ['liveRows'],
+  'scripts/count-not-known.mjs|trades_v2': ['main'],
+  'scripts/fill-outcomes.mjs|signal_log': ['main', 'main', 'main'],
+  'scripts/fill-outcomes.mjs|trades_v2': ['main', 'main'],
+  'scripts/lib/readable.mjs|${table}': ['assertReadable'],
+  'scripts/lib/scan-gate.mjs|scan_runs': ['scheduledScanGate'],
+  'scripts/lib/schema-check.mjs|${table}': ['assertColumnsExist'],
+  'scripts/lib/select-by-ids.mjs|${table}': ['selectByIds'],
+  'scripts/log-signals-edge.mjs|signal_log': ['main'],
+  'scripts/log-signals-warrior.mjs|signal_log': ['main'],
+  'scripts/log-signals-warrior.mjs|setup_triggers': ['main'],
+};
+run('every read is identified by the function that holds it, not only counted', () => {
+  const found = readSites();
+  assert.deepStrictEqual(found, READ_SITES, 'a read moved or was replaced: classify it, then pin its function here:\n' + JSON.stringify(found, null, 1));
+  // and the identities agree with the classifications' count, so the two cannot drift apart
+  for (const [k, fns] of Object.entries(found)) assert.strictEqual(fns.length, (REGISTRY[k] || []).length, `${k}: ${fns.length} identified, ${(REGISTRY[k] || []).length} classified`);
 });
 
 run('every Supabase read is classified, and every classification still has its read', () => {
