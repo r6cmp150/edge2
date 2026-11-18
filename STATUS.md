@@ -549,7 +549,31 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   are not shown to be wrong: the 9 were deliberate adds in the other session, so the two sessions explain why lots
   were invisible and doubled, not why there are so many. Roman expects about 10. **The two-session finding does not
   close the question.** Only his answers do.
-  **SEEN, NOT CHASED (logged 2026-11-18): remove-then-write at a sale.** `confirmMarkSold` drops the position from
+  **WHICH SESSION ADDED WHAT (measured 2026-11-18, read 16:36:31Z).** Each buy snapshot copies the tapping session's
+  cached signal, whose `scannedAt` is that session's own scan; adds sharing a scan share a session. Session A made only
+  the 9 lots the other could not see, all still open, and sold nothing. Session B made 51 adds (26 sold, 25 open),
+  including all 15 of the 10:15-10:18 cluster, added on one scan (10:15:06) and none ever sold. 20 adds sit on scans
+  neither touches. So the 27 rows the two sessions do not explain were mostly added in the session that did all
+  the selling.
+  **PATH 5, NOT ESTABLISHED IN EITHER DIRECTION (2026-11-18).** A silent path existed: the app closed or killed after
+  the sale card vanished and before the write's outcome was handled left no trades_v2 row and no queue entry, and
+  the phone's Sold list (its only copy) is replaced at every load. **No evidence of it firing can exist, by
+  construction: here "no evidence" and "ruled out" are not the same observation.** Against it as the cause of THIS:
+  it needs the app to die mid-write once per lost sale, 15 or more times for the 10:15 cluster alone, while all 9 of
+  session B's 12:02-12:03 sales landed. Unlikely to be this; not safe. Closed in code by a08972f (local): the sale is
+  queued before the call, and the card stays until the write returns. Paths 1-3 always queued. Path 4 (the queue's
+  own save on a full store) was very unlikely on 11-17 because the tier-1 save evicts tier-4 caches until it fits,
+  and the phone held about 4 MB of them: **the tiering working as designed**, recorded because a fortnight was spent
+  on its failures.
+  **THE EFFORT ASYMMETRY (the reviewer's observation, 2026-11-18; no defect involved).** Adding, from the Signals tab
+  where Roman scans: tap the card, "+ Add to Portfolio", type shares (price pre-filled), Add: 3 taps plus typing (and
+  the Live/Paper choice when asked). Selling: switch to the Portfolio tab, **find the card among 46 by scrolling**
+  (sorted by "closest to time limit", not by ticker or recency), "Mark as sold" (price pre-filled), Confirm Sale: 3
+  taps plus a search. The taps are equal; the search is the asymmetry, and it grows with every unsold position.
+  Fifteen adds in three minutes and none sold fits that better than any bug. If it is the explanation, the remedy is
+  making a position as easy to close as it was to open, not a guard.
+  **SEEN, NOT CHASED (logged 2026-11-18): remove-then-write at a sale.** (Fixed by a08972f, local: write first, then
+  remove.) `confirmMarkSold` drops the position from
   the session's list (app.js ~7661) before `recordSaleThenRemovePosition` writes the sale and deletes the row. If the
   delete then fails, the screen and the database disagree (the "still shows as open" banner is session memory, not
   persisted), and the position comes back at the next load: the same user-visible symptom as the two-session case,
