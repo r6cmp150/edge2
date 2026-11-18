@@ -116,9 +116,14 @@ run('confirms: only the not-listed / not-tradable fact, in-page; after-hours adv
   // the button said. That is not advice and has no default answer, so it is a question with two answers, not a
   // confirm (tests/execution-mode.test.js holds when it is asked).
   const fnText = name => { const i = src.indexOf(`async function ${name}(`); return src.slice(i, src.indexOf('\n}\n', i)); };
-  const confirmFn = fnText('confirmAddPortfolio') + fnText('addWithMode');
+  // CHANGED 2026-11-18, declared: the add path is now three functions (the database's open-lot check sits in
+  // confirmAddPortfolio, the rest moved to confirmAddPortfolioChecked), and it holds TWO choices, each named: the open
+  // lot (2026-11-18) and Live or Paper. Counting confirmAddPortfolio alone had begun to pass by counting the wrong one.
+  const confirmFn = fnText('confirmAddPortfolio') + fnText('confirmAddPortfolioChecked') + fnText('addWithMode');
   assert.strictEqual((confirmFn.match(/showConfirm\(/g) || []).length, 1, 'one confirm on the add path');
-  assert.strictEqual((confirmFn.match(/showChoice\(/g) || []).length, 1, 'one choice on the add path: Live or Paper');
+  assert.strictEqual((confirmFn.match(/showChoice\(/g) || []).length, 2, 'two choices on the add path: the open lot, and Live or Paper');
+  assert.ok(fnText('confirmAddPortfolio').includes('showChoice(openLotsMessage(ticker, lots), OPEN_LOT_CHOICES[lots.state],'), 'the open-lot question, before anything is recorded');
+  assert.ok(fnText('confirmAddPortfolioChecked').includes('showChoice(at.ask, MODE_CHOICES,'), 'Live or Paper, after it');
   assert.ok(confirmFn.includes("showConfirm(listingWarningText(ticker, listing[ticker]), () => finalizeAddPortfolio(ticker, shares, price, date, btn, order, executionMode), 'Add anyway');"), 'it is the listing fact, and Add anyway proceeds');
   assert.ok(!/buildAfterHoursWarningText|classifySession/.test(confirmFn), 'after-hours advice is not a confirm');
   assert.ok(src.includes('${addFormSessionAdviceHtml(today)}'), 'after-hours advice is shown in the add form');
@@ -287,4 +292,19 @@ run('dialogs: an action that throws still closes its dialog and moves the queue 
   global.__alert('next');
   assert.throws(() => global.__ok(), /save failed/);
   assert.strictEqual(ui.shown(), 'next', 'never stuck on a dead dialog');
+});
+
+// 2026-11-18 (the reviewer, after the render): a choice whose second answer already IS the "no" hides the built-in
+// Cancel, so no two buttons read as synonyms; the backdrop still cancels; the next dialog shows its Cancel again.
+run('dialogs: a choice can hide its Cancel; the backdrop still cancels; the next dialog is reset', () => {
+  const ui = loadDialogs();
+  let cancelled = 0;
+  global.__choice('You already hold X.', [{ label: 'Record another buy', value: 'record' }, { label: "Don't record it", value: 'cancel' }], () => {}, () => { cancelled++; }, { hideCancel: true });
+  assert.ok(ui.cancel.classList.has('hidden'), 'no Cancel beside "Don\'t record it"');
+  assert.deepStrictEqual([ui.btn.textContent, ui.btn2.textContent], ['Record another buy', "Don't record it"]);
+  assert.strictEqual(ui.btn.className, ui.btn2.className, 'the two answers look alike: the text does the work');
+  global.__cancel(); // a tap on the backdrop
+  assert.strictEqual(cancelled, 1, 'the backdrop still cancels');
+  global.__choice('Live or Paper?', [{ label: 'LIVE', value: 'live' }, { label: 'PAPER', value: 'paper' }], () => {}, () => {});
+  assert.ok(!ui.cancel.classList.has('hidden'), 'a choice without hideCancel shows its Cancel');
 });

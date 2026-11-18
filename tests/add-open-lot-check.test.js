@@ -36,9 +36,9 @@ function load(dbOpts = {}) {
   global.renderLiveBand = () => {};
   global.readExecutionMode = async () => ({ mode: 'paper', setAt: null });
   const choices = [];
-  global.showChoice = (msg, opts, cb, onCancel) => {
+  global.showChoice = (msg, opts, cb, onCancel, extra) => {
     if (opts && opts.some(o => o.value === 'live')) throw new Error('no Live/Paper prompt expected: the mode read agrees');
-    choices.push({ msg, opts, cb, onCancel });
+    choices.push({ msg, opts, cb, onCancel, extra });
   };
   global.showGlobalErrorToast = m => { throw new Error('toast: ' + m); };
   global.fetchHeldListing = async () => new Proxy({}, { get: () => 'listed' }); // every ticker listed: the listing confirm is not under test
@@ -89,9 +89,12 @@ run('FOUND: the Add says what is held (pending included) and asks; "Record anoth
   assert.strictEqual(h.choices.length, 1, 'it asks');
   assert.deepStrictEqual(h.finals, [], 'nothing recorded before the answer');
   const m = h.choices[0].msg;
-  assert.strictEqual(m, 'You already hold CLNE: 2 open positions in the database, possibly added on another device: 400 shares @ $1.65, bought 2026-11-17 09:46; 50 shares @ $2.00, order placed 2026-11-18 (still pending). Record another buy of CLNE?');
+  // CHANGED 2026-11-18, declared (the reviewer, after the render): dates as a person reads them, not a log line
+  assert.strictEqual(m, 'You already hold CLNE: 2 open positions in the database, possibly added on another device: 400 shares @ $1.65, bought Tue 11/17, 9:46 am; 50 shares @ $2.00, order placed Wed 11/18 (still pending). Record another buy of CLNE?');
   assert.ok(!m.includes('\n'), 'one paragraph: the dialog collapses line breaks (390px render)');
   assert.deepStrictEqual(h.choices[0].opts.map(o => o.label), ['Record another buy', "Don't record it"]);
+  // CHANGED 2026-11-18, declared (the reviewer: "Don't record it" above "Cancel" read as synonyms): no separate Cancel
+  assert.deepStrictEqual(h.choices[0].extra, { hideCancel: true }, 'two answers, no third button meaning the same as the second');
   assert.ok(b.disabled, 'the button stays disabled while it asks');
   await global.__add('CLNE', b); await tick();
   assert.strictEqual(h.choices.length, 1, 'a second tap while it asks queues nothing');
@@ -153,4 +156,19 @@ run('the portfolio load: complete or it throws; empty only after the control; it
     try { await loadFn(opts)(); } catch (e) { thrown = e; }
     assert.ok(thrown && re.test(thrown.message), `${JSON.stringify(opts)}: ${thrown && thrown.message}`);
   }
+});
+
+// 2026-11-18 (the reviewer, after the render): the dialog's dates as a person reads them. Never an invented date.
+run('friendlyBuyWhen: weekday, month/day and a 12-hour time; the date alone without a time; anything else as stored', () => {
+  const i = app.indexOf('function friendlyBuyWhen(');
+  // eslint-disable-next-line no-new-func
+  const f = new Function(app.slice(i, app.indexOf('\n}\n', i) + 3) + '\nreturn friendlyBuyWhen;')();
+  assert.strictEqual(f('2026-11-17', '09:46'), 'Tue 11/17, 9:46 am');
+  assert.strictEqual(f('2026-11-17T00:00:00+00:00', '13:05'), 'Tue 11/17, 1:05 pm', 'a timestamp-shaped buy_date reads by its date');
+  assert.strictEqual(f('2026-11-18', '12:00'), 'Wed 11/18, 12:00 pm');
+  assert.strictEqual(f('2026-11-18', '00:30'), 'Wed 11/18, 12:30 am');
+  assert.strictEqual(f('2026-11-18', null), 'Wed 11/18', 'no time recorded: the date alone');
+  assert.strictEqual(f('2026-11-18', 'not a time'), 'Wed 11/18');
+  assert.strictEqual(f('soon', '09:46'), 'soon', 'not a date: shown as stored');
+  assert.strictEqual(f(null, null), 'date not recorded');
 });

@@ -4502,7 +4502,7 @@ function _showNextDialog() {
     const [a, b] = next.options;
     if (btn) { btn.textContent = a.label; btn.className = 'btn btn-primary'; }
     if (btn2) { btn2.textContent = b.label; btn2.className = 'btn btn-primary'; }
-    if (cancel) cancel.classList.remove('hidden');
+    if (cancel) { if (next.hideCancel) cancel.classList.add('hidden'); else cancel.classList.remove('hidden'); }
     state._confirmCb = () => { next.answered = true; next.cb(a.value); };
     state._confirmCb2 = () => { next.answered = true; next.cb(b.value); };
   } else {
@@ -4524,7 +4524,9 @@ function showConfirm(msg, cb, confirmLabel) { _enqueueDialog({ kind: 'confirm', 
 // Two answers and Cancel (db/042's Live/Paper prompt): options are [{ label, value }, { label, value }]; the tapped
 // one's value goes to cb. Neither answer is the default and neither is styled as the dangerous one.
 // onCancel runs once if the choice closes without an answer (Cancel, the backdrop, or a choice that could not be shown).
-function showChoice(msg, options, cb, onCancel) { _enqueueDialog({ kind: 'choice', msg, options, cb, onCancel, answered: false }); }
+// hideCancel (2026-11-18): for a choice whose second answer already IS the "no", so two buttons are never synonyms (the
+// reviewer, on the Add's open-lot dialog: "Don't record it" above "Cancel"). A tap on the backdrop still cancels.
+function showChoice(msg, options, cb, onCancel, { hideCancel = false } = {}) { _enqueueDialog({ kind: 'choice', msg, options, cb, onCancel, hideCancel, answered: false }); }
 
 // Cancel, a tap on the backdrop, or OK on a notice: close the current one,
 // show the next.
@@ -4799,13 +4801,27 @@ const OPEN_LOT_CHOICES = {
   FOUND: [{ label: 'Record another buy', value: 'record' }, { label: "Don't record it", value: 'cancel' }],
   COULD_NOT_CHECK: [{ label: 'Record it anyway', value: 'record' }, { label: "Don't record it", value: 'cancel' }],
 };
+// "Tue 11/17, 9:46 am" from a buy_date (YYYY-MM-DD, the PT trading date) and buy_time (HH:MM PT), as a person reads
+// it (2026-11-18, the reviewer: "a dialog that reads like a log entry gets skimmed like one"). No time recorded: the
+// date alone. Not a date: shown as stored, never invented.
+function friendlyBuyWhen(date, time) {
+  const d = String(date || '').slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+  if (!m) return d || 'date not recorded';
+  const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()];
+  const day = `${dow} ${+m[2]}/${+m[3]}`;
+  const t = /^(\d{1,2}):(\d{2})/.exec(String(time || ''));
+  if (!t) return day;
+  const h = +t[1];
+  return `${day}, ${((h + 11) % 12) + 1}:${t[2]} ${h < 12 ? 'am' : 'pm'}`;
+}
 // One paragraph, no line breaks: the dialog collapses them (rendered at 390px, 2026-11-18: a bulleted list ran together),
 // so the lots are separated by semicolons and the question is its own sentence.
 function openLotsMessage(ticker, r) {
   if (r.state === 'FOUND') {
     const lines = r.lots.map(l => {
       const pending = l.order_type != null && l.filled_at == null;
-      return `${l.shares} shares @ $${Number(l.buy_price).toFixed(2)}, ${pending ? 'order placed' : 'bought'} ${String(l.buy_date).slice(0, 10)}${l.buy_time ? ' ' + l.buy_time : ''}${pending ? ' (still pending)' : ''}`;
+      return `${l.shares} shares @ $${Number(l.buy_price).toFixed(2)}, ${pending ? 'order placed' : 'bought'} ${friendlyBuyWhen(l.buy_date, l.buy_time)}${pending ? ' (still pending)' : ''}`;
     });
     return `You already hold ${ticker}: ${r.lots.length === 1 ? 'one open position' : r.lots.length + ' open positions'} in the database, possibly added on another device: ${lines.join('; ')}. Record another buy of ${ticker}?`;
   }
@@ -4845,7 +4861,7 @@ async function confirmAddPortfolio(ticker, btn, shown) {
     showChoice(openLotsMessage(ticker, lots), OPEN_LOT_CHOICES[lots.state], v => {
       if (v === 'record') { _addAwaitingAnswer = false; confirmAddPortfolioChecked(ticker, btn, shown, shares, price, date, order); }
       else release();
-    }, release);
+    }, release, { hideCancel: true });
   } catch (e) {
     release();
     showGlobalErrorToast(`The check for an open ${ticker} could not be shown (${e?.message || e}), so nothing was recorded. Reload the app and add again.`);
