@@ -771,6 +771,12 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - The default-ACL fix itself (scoped in the spec, not built).
 
 ## Closed recently, so they don't come back
+- **The empty-read registry now identifies every read it classifies (2026-11-18, 6b8cb68): 55 reads under 24 keys, each
+  pinned to the function that holds it.** It used to match reads to their classifications by how many there were per
+  table, so a swapped read did not merely lose coverage: it **inherited the judgement made for the read it replaced**,
+  and arrived pre-approved, wearing reasoning done for something else. That registry is the record of which reads have
+  been thought about (what an empty answer means, what a denied one would do); every later reader of it believes each
+  classification was looked at. Now a read that moves or is replaced fails until it is classified for itself.
 - **WITHDRAWN 2026-11-14: "`scan_runs.build_version` is null on every run, an unwritten provenance column."** It is
   not unwritten. db/028 replaced it with `code_version`, and both column comments say so ("Replaces build_version,
   which is uninformative after 2026-09-15"). All 191 rows carry one or the other: 46 `build_version` (before

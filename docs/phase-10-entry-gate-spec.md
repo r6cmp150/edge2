@@ -3064,6 +3064,18 @@ classification moved to `scripts/lib/test-verdict.cjs`, and `scripts/run-tests.m
 failing test, so it can be read for the intended test without a second tool. `tests/mutants-harness.test.js` holds
 LOST, SILENT and FAIL as kills, each named.
 
+**A PROBE READS; IT DOES NOT WRITE TO THE WORKING TREE (2026-11-18, the reviewer's rule, and the last of this family).**
+If a probe must change a file to answer its question, it works on a copy, or it goes through the committed harness,
+which refuses a dirty tree and guarantees the restore. The repository is not scratch space, and "I will put it back"
+is a plan, not a mechanism. Four instances in six days, all scratch tooling, each doing what the committed path
+already did safely:
+1. a scratch mutant harness's `execSync` left an orphan (PID 9472) that took the machine for three days;
+2. `run-tests.mjs | tail -1 && git commit` let a TIMEOUT commit b337c16;
+3. a scratch mutant harness, blind to the runner's verdict, let a real survivor pass as killed;
+4. a probe (2026-11-18, the impostor audit) inserted print lines into two test files, failed on the second anchor
+   after writing the first, and its `&&` skipped its own restore. Recovered by restoring from a copy, confirmed
+   clean with `git diff`, and redone on temporary copies of the tests (never the files themselves), deleted after.
+
 **A TEST THAT COUNTS CAN BE SATISFIED BY AN IMPOSTOR (2026-11-18, the reviewer's rule).** A count asserts how many, not
 which. Where the counted things can move or be replaced (and a refactor does exactly that), the count survives the
 substitution and reports coverage it no longer has. Assert the identity of each item, and let the count be a
@@ -3084,6 +3096,14 @@ bucket set each closes), db/041's probes (by table, value and kind), and the sto
 `tests/_lib.js` `enclosingFunctions` names the function holding each match (it had two blind spots, caught by reading
 its first answers: code between functions, and `export`ed functions). Not covered by this audit: count assertions
 over a test's own computed data, where the items are the test's own inputs.
+
+**AN INSTRUMENT'S FIRST OUTPUT IS READ BY HAND BEFORE ANYTHING IS PINNED TO IT (2026-11-18, the reviewer's rule).** A pin
+inherits the instrument's errors and makes them permanent; after that they are no longer mistakes, they are the
+expected values. The instance: `enclosingFunctions`, built for the impostor audit, gave three wrong answers in its
+first run, each caught by reading the output before any pin: code between functions credited to the function before
+it (the app's state table placed inside `findTickerCategory`); a one-line function's end running into the next
+(`_isPlainObject` claiming a match that was not in it); `export`ed functions missed (the scripts' reads all "(top
+level)"). Pinned first, all three would have been frozen into the registries as facts.
 
 **A PERMANENTLY SURVIVING MUTANT IS A DISABLED ALARM (2026-11-18, the reviewer's rule).** It trains whoever reads the
 number to expect a non-zero survivor count, and the day a real survivor appears it is indistinguishable from the
