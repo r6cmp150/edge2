@@ -2788,6 +2788,14 @@ then repeated in scratch:
 In practice: a gate is never followed by `| tail`, `| head`, `| grep` or `| cut` when its status decides what runs
 next. Its output goes whole to a file, and its status is read from the command itself.
 
+**A COUNT OF THE CURRENT STATE IS PRODUCED FROM THE CURRENT STATE, NOT DERIVED FROM COUNTS OF EVENTS (2026-11-18,
+the reviewer's rule).** Events and the state they leave behind are different quantities, and a subtraction between
+them is not a measurement. Both instances were derived from figures in a report rather than from the data:
+- **"+$444 gross"** (2026-11-17/18): the 586-trade net plus the 513-trade cost drag (-300.43 + 744.75), two
+  populations added. No measurement produces it; the 513 charged trades were -$62.93 before costs.
+- **"16 of 36, leaves 20"** (2026-11-18): 16 re-add TAPS subtracted from open ROWS. 12 of the 16 re-added lots had been
+  sold. Counted in the open book (read 16:20:19Z), the two-session mechanism touches 13 open rows and leaves 27.
+
 **A RECORD OF WHAT THE SCREEN SHOWED ANSWERS QUESTIONS NOBODY ASKED IT (2026-11-18, the reviewer).** `appShowedAtBuy`
 was built on 2026-11-08 to record the entry verdict Roman was shown at a buy, so that "what the app advised" could
 never be recomputed after the fact. Ten days later it was the only evidence of why Roman's portfolio held lots he
