@@ -513,6 +513,18 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **Roman's open positions (2026-11-18): NOT PHANTOMS. Every row is a separate tap on Add** (the reviewer's phantom
+  hypothesis, CLOSED 2026-11-18). 46 open (48 at 05:11Z; UEC and CRK sold 06:52 PT): 38 bought 11-17, created at
+  least 9.5 s apart (median 18 s), each a different ticker, share count and price, each with its buy snapshot 1.5-2 s
+  after the tap, all paper/recorded_at_trade from build 20261114024900, through the only insert path (the Add form;
+  no buy is queued or replayed, nothing writes the portfolio whole). No duplicate of either kind.
+  **Open: why the portfolio holds lots Roman doesn't think he holds.** Measured: at all 16 adds made on 11-17 while an
+  earlier lot of the same ticker was open in the database, the buy snapshot records the screen did NOT show the
+  ticker as held (appShowedAtBuy state GATE_OPEN; a held ticker records NOT_SHOWN). So the session that tapped Add
+  did not have the earlier lot in its portfolio. A session's list is the database read at app start plus that
+  session's own adds and sales; the phone's storage plays no part, so "storage full hid it" is ruled out. Every one
+  of the 7 lots added 07:00-07:07 PT on 11-17 is still open. Nothing records which session or device wrote a row.
+  Roman's answers (open-positions-2026-11-18.md) come before any cleanup, his first and the reviewer's second.
 - **EDGE's paper book sizes Warrior's real setups at 0 shares (raised 2026-11-18; nothing changed).** Mechanism: one
   shared number. `getAvailableBudget()` = settings.budget ($1,500) minus every holding at cost minus open orders, both
   engines and both execution modes alike. Warrior's `computeSuggestedShares` (engines/warrior/setups.js) takes
