@@ -2170,6 +2170,17 @@ function getSectorETFForCategory(category) {
 // DEFECT FIXED 2026-11-17 (the seventh instance of the fabricated neutral, spec 7.7), found while building the
 // held-score prune, not part of it: with fewer than 3 daily bars this answered 'flat', a volume direction nobody
 // measured, into the AI prompt (e.g. a ticker with under three days of bars). Now it says "not measured" and why.
+// The stock modal's "Volume Trend" row. DEFECT FIXED 2026-11-18 (the eighth fabricated neutral, spec 7.7): it read
+// `stock.volTrend || 'normal'`, so a stock with NO volume trend showed "Normal", a measurement nobody made. That is
+// every ticker the modal opens without a scan signal (its fallback object has no volTrend): a held ticker below the
+// display line, or any unscored ticker. 'normal' is a value scoreStock computes; absence is not.
+function volTrendLabel(v) {
+  if (v === 'building') return '📈 Building (3 days)';
+  if (v === 'spike') return '⚡ Spike (today only)';
+  if (v === 'normal') return 'Normal';
+  return v == null ? 'Not measured (no scan signal for this ticker)' : `Not measured (unrecognised value: ${String(v)})`;
+}
+
 function deriveVolumeTrend(bars) {
   if (!bars || bars.length < 3) return `not measured (${bars ? bars.length : 0} daily bar${bars && bars.length === 1 ? '' : 's'}, 3 needed)`;
   const vols = bars.slice(-3).map(b => b.v);
@@ -4173,11 +4184,7 @@ async function openStockModal(ticker) {
       </div>
       <div class="signal-row">
         <span class="signal-key">Volume Trend</span>
-        <span class="signal-val">${
-          (stock.volTrend || 'normal') === 'building' ? '📈 Building (3 days)' :
-          (stock.volTrend || 'normal') === 'spike'    ? '⚡ Spike (today only)' :
-                                                         'Normal'
-        }</span>
+        <span class="signal-val">${volTrendLabel(stock.volTrend)}</span>
       </div>
       <div class="signal-row">
         <span class="signal-key">vs Market</span>

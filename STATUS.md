@@ -581,8 +581,15 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   records), not his data; the condition, a tier-4 write refused on a full store, is the same.
 - **The fabricated neutral, logged (spec 7.7: a value nobody measured shown or stored as if it were one).** Eight
   instances in six days, in two files, by six routes (the reviewer's count, 2026-11-17), among them RSI 50, risk 5,
-  score 0 and the at-buy fields 0; #7 `deriveVolumeTrend`'s 'flat' for under 3 bars (FIXED with P1 2026-11-17), and **#8, OPEN: app.js `(stock.volTrend || 'normal')` in the stock modal shows "Normal"
-  for a stock with no volume trend.** Not reachable through P1, so not in its commit; next batch.
+  score 0 and the at-buy fields 0; #7 `deriveVolumeTrend`'s 'flat' for under 3 bars (FIXED with P1 2026-11-17), and #8, the stock modal's `(stock.volTrend || 'normal')`, which showed "Normal" for a
+  stock with no volume trend: every ticker the modal opens without a scan signal (FIXED 2026-11-18: "Not measured (no
+  scan signal for this ticker)"; a computed 'normal' still reads Normal).
+  **SEEN 2026-11-18, NOT CHASED (they need their own ruling):** the same pattern inside the SCORING FORMULA,
+  core/edge-scoring.js:269-270: `volRatio = avgVol10 > 0 ? ... : 1` and `todayChange = prevClose > 0 ? ... : 0`.
+  A stock with no 10-day average volume is scored at volume ratio 1, and one with no previous close as a 0% day.
+  Fixing them changes the formula (a scoring version and hash), so they are not one-line display fixes. The modal's
+  fallback object (app.js ~3901) repeats both and adds `prevClose ... : price` and `score: 0`; whether that score 0
+  is one of the counted instances is not established here.
 - **NOT A DEFECT: the open positions' `peak_rsi_sampled_from` is later than their buy date** (db/044's app side). The
   positions open when it deploys start sampling at their first render on the new build. They are not seeded from
   the old phone-held peaks, which may carry the buy-RSI fallback (fixed in dd1ba4e) and cannot be told apart. So

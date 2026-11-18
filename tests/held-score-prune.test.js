@@ -95,3 +95,19 @@ run('the keep-set must be ESTABLISHED: unread or denied portfolio prunes nothing
   if (k.keep) c.__prune(owned, k.keep);
   assert.deepStrictEqual(Object.keys(owned).sort(), ['AAA', 'OLD'], 'nothing deleted');
 });
+
+// 2026-11-18: the eighth fabricated neutral. The modal's Volume Trend row showed "Normal" for a stock with no
+// volume trend at all (`stock.volTrend || 'normal'`).
+run('DEFECT (eighth fabricated neutral): a missing volume trend is "Not measured", never "Normal"', () => {
+  const c = vm.createContext({ String });
+  vm.runInContext(grab('volTrendLabel') + ';globalThis.__l = volTrendLabel;', c);
+  assert.strictEqual(c.__l(undefined), 'Not measured (no scan signal for this ticker)');
+  assert.strictEqual(c.__l(null), 'Not measured (no scan signal for this ticker)');
+  assert.strictEqual(c.__l('sideways'), 'Not measured (unrecognised value: sideways)');
+  assert.strictEqual(c.__l('normal'), 'Normal', 'a computed normal is still Normal');
+  assert.strictEqual(c.__l('building'), '📈 Building (3 days)');
+  assert.strictEqual(c.__l('spike'), '⚡ Spike (today only)');
+  assert.ok(app.includes('<span class="signal-val">${volTrendLabel(stock.volTrend)}</span>'), 'the modal row uses it');
+  const code = app.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+  assert.ok(!/volTrend \|\| 'normal'/.test(code), 'the defaulting expression is gone from the code');
+});
