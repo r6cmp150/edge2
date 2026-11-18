@@ -129,6 +129,22 @@ await run('a test that exits 0 but is LOST or SILENT counts as a kill, named by 
   assert.ok(fs.readFileSync(path.join(REPO_ROOT, 'scripts/run-tests.mjs'), 'utf8').includes("('./lib/test-verdict.cjs')"));
 });
 
+// 2026-11-18 (the reviewer): "a permanently surviving mutant is a disabled alarm". An anchor that does not match once is a
+// broken instrument, a third state: never counted as a survivor (or a kill), reported apart, and returned so the
+// caller fails its run.
+await run('an anchor that does not match is BROKEN, apart from survivors and kills, and is returned for the caller to fail on', async () => {
+  const r = repo();
+  const lines = [];
+  const res = await runMutants('ok.test.js', [
+    ['x.js', 'module.exports = 1;', 'module.exports = 2;', 'changes it'],
+    ['x.js', 'module.exports = 99;', 'module.exports = 2;', 'its code moved'],
+  ], { cwd: r.d, ...quiet(lines) });
+  assert.deepStrictEqual([res.killed, res.survived, res.broken], [1, [], ['its code moved']], lines.join('\n'));
+  assert.ok(lines.includes('BROKEN   its code moved: its anchor matched 0 time(s), not once'), lines.join('\n'));
+  assert.strictEqual(lines[lines.length - 1], '1/2 killed, 1 BROKEN (an anchor did not match: this run proves nothing about them)');
+  assert.ok(r.clean());
+});
+
 await run('the rule and its finding are in §7.7', () => {
   const spec = fs.readFileSync(path.join(REPO_ROOT, 'docs/phase-10-entry-gate-spec.md'), 'utf8').replace(/\s+/g, ' ');
   assert.ok(spec.includes('THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE'));

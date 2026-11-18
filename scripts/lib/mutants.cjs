@@ -24,7 +24,7 @@ const { testVerdict } = require('./test-verdict.cjs');
 const JOURNAL = '.mutant-journal.json';
 
 async function runMutants(test, mutants, { cwd = process.cwd(), print = console.log, timeoutMs = 120000 } = {}) {
-  const none = extra => ({ baseline: false, killed: 0, total: mutants.length, survived: [], timedOut: [], ...extra });
+  const none = extra => ({ baseline: false, killed: 0, total: mutants.length, survived: [], timedOut: [], broken: [], ...extra });
   const journal = path.join(cwd, JOURNAL);
   if (fs.existsSync(journal)) {
     const j = JSON.parse(fs.readFileSync(journal, 'utf8'));
@@ -73,13 +73,16 @@ async function runMutants(test, mutants, { cwd = process.cwd(), print = console.
   const handlers = [['SIGINT', onSignal('SIGINT', 130)], ['SIGTERM', onSignal('SIGTERM', 143)]];
   for (const [s, h] of handlers) process.on(s, h);
 
-  const survived = [], timedOut = [];
+  const survived = [], timedOut = [], broken = [];
   try {
     for (const [file, a, b, name] of mutants) {
       const p = path.join(cwd, file);
       const orig = fs.readFileSync(p, 'utf8');
       const from = orig.includes('\r\n') ? a.replace(/\n/g, '\r\n') : a;
-      if (orig.split(from).length !== 2) { print(`NO ANCHOR ${name}`); survived.push(name); continue; }
+      // A BROKEN INSTRUMENT, not a survivor (2026-11-18): an anchor that does not match once is not a result about the
+      // code. Reported apart, and `broken` is returned for the caller to fail its run.
+      const hits = orig.split(from).length - 1;
+      if (hits !== 1) { print(`BROKEN   ${name}: its anchor matched ${hits} time(s), not once`); broken.push(name); continue; }
       fs.writeFileSync(journal, JSON.stringify({ file, path: p, orig, name }));
       current = { path: p, orig };
       fs.writeFileSync(p, orig.replace(from, () => b));
@@ -95,8 +98,8 @@ async function runMutants(test, mutants, { cwd = process.cwd(), print = console.
     restore();
     for (const [s, h] of handlers) process.removeListener(s, h);
   }
-  const killed = mutants.length - survived.length - timedOut.length;
-  print(`${killed}/${mutants.length} killed${timedOut.length ? `, ${timedOut.length} timed out` : ''}`);
-  return { baseline: true, killed, total: mutants.length, survived, timedOut };
+  const killed = mutants.length - survived.length - timedOut.length - broken.length;
+  print(`${killed}/${mutants.length} killed${timedOut.length ? `, ${timedOut.length} timed out` : ''}${broken.length ? `, ${broken.length} BROKEN (an anchor did not match: this run proves nothing about them)` : ''}`);
+  return { baseline: true, killed, total: mutants.length, survived, timedOut, broken };
 }
 module.exports = { runMutants, JOURNAL };

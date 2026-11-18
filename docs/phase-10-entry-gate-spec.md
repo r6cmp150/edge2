@@ -2816,6 +2816,11 @@ SETTLES, and at exit a shortfall is a FAIL line ("N of M test(s) never settled: 
 started") and a failing exit code, visible to a check that reads either. `tests/run-tests-checker.test.js` holds it
 on fixtures that load the real `_lib` (4 of 4 mutants killed). **Re-validated, 2026-11-18: all 136 files go through
 `run()`; 932 cases registered, 932 settled, none short.**
+**The value of an instrument is measured in what it catches that nobody was looking for (2026-11-18, the reviewer).**
+Built that morning, the settled count caught a real case that afternoon, in the next thing written: the first draft of
+`tests/add-open-lot-check.test.js` threw inside an unawaited path, and one case hung; the file failed ("3 of 5
+test(s) never settled") instead of exiting 0. The reviewer names a second instrument that paid for itself inside a
+day the same week: the coverage cross-check that found `calcUnifiedRecommendation`.
 
 **A RULING PINNED IN A TEST IS WHAT CATCHES THE CHANGE NOBODY ANTICIPATED (2026-11-18, the reviewer).** The first time
 this project collected on one. The ruling of 2026-11-08: a later attempt at a sale never overwrites the record of an
@@ -3058,6 +3063,16 @@ classification moved to `scripts/lib/test-verdict.cjs`, and `scripts/run-tests.m
 (one verdict: only PASS survives; LOST, SILENT, DEAD, FAIL kill). Each kill is reported with its verdict and its first
 failing test, so it can be read for the intended test without a second tool. `tests/mutants-harness.test.js` holds
 LOST, SILENT and FAIL as kills, each named.
+
+**A PERMANENTLY SURVIVING MUTANT IS A DISABLED ALARM (2026-11-18, the reviewer's rule).** It trains whoever reads the
+number to expect a non-zero survivor count, and the day a real survivor appears it is indistinguishable from the
+furniture. An anchor that does not match is not a result about the code: it is a broken instrument, a third state.
+Both mutation tools now report it as BROKEN, apart from kills and survivors, and fail the run (`mutants.cjs` returns
+`broken` for its caller; `scripts/mutate-portfolio-sort.js` exits 2). The instance: `mutate-portfolio-sort.js` printed
+"78 mutants: 75 killed, 3 survived or unanchored" for days. Its three unanchored mutants (the peak RSI falling back
+to the buy RSI; signal_before_sale accepting a same-day scan, and a scan after the sale) had matched nothing since
+db/044 and the timed sale rewrote those lines. All three were re-anchored to the code that now does the job, with a
+fourth for the timed branch nobody covered: 79 of 79 killed, each by its behavioural test.
 
 **THE MUTATION HARNESS CANNOT LEAVE A MUTANT IN THE SOURCE (2026-11-05).** A run killed by `timeout`
 mid-mutant skipped its restore and left a mutant in the spec; the baseline check and the runner caught it, which

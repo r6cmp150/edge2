@@ -113,9 +113,13 @@ const M = [
   ['app.js', 'verdict', 'provenance claims mixed_moment for a new sale', "    verdictProvenance: 'not_recorded',", "    verdictProvenance: 'mixed_moment',", { behavioural: true }],
   ['app.js', 'verdict', 'lock_in_profits_fired defaults to false (a claim)', '    lockInProfitsFired: null,', '    lockInProfitsFired: false,', { behavioural: true }],
   ['app.js', 'verdict', 'a verdict field omitted (the column default would fill it)', '    topHoldFactorsAtSale: null,\n', '', { behavioural: true }],
-  ['app.js', 'verdict', 'peak RSI falls back to the buy RSI again', '    peakRsiDuringHold: state.ownedPeakRSI[pos.ticker] ?? null,', '    peakRsiDuringHold: state.ownedPeakRSI[pos.ticker] ?? pos.rsiAtBuy ?? null,', { behavioural: true }],
-  ['app.js', 'verdict', 'signal_before_sale accepts a same-day scan', '  if (!(scan.date < saleDate)) {', '  if (!(scan.date <= saleDate)) {', { behavioural: true }],
-  ['app.js', 'verdict', 'signal_before_sale accepts a scan AFTER the sale', '  if (!(scan.date < saleDate)) {', '  if (false) {', { behavioural: true }],
+  // RE-ANCHORED 2026-11-18 (they had matched nothing since db/044 and the timed sale: a disabled alarm, reported as
+  // three permanent survivors). Same defects, the code that does the job now: the peak is the position's own
+  // (pos.peakRsi), and signalBeforeSale's predates-test is one line for a timed sale and an untimed one.
+  ['app.js', 'verdict', 'peak RSI falls back to the buy RSI again', '    peakRsiDuringHold: pos.peakRsi ?? null,', '    peakRsiDuringHold: pos.peakRsi ?? pos.rsiAtBuy ?? null,', { behavioural: true }],
+  ['app.js', 'verdict', 'signal_before_sale accepts a same-day scan (no sale time)', '!(scan.date < saleDate)) {', '!(scan.date <= saleDate)) {', { behavioural: true }],
+  ['app.js', 'verdict', 'signal_before_sale accepts a scan AFTER the sale', '  if (saleAt != null ? !(sig.scannedAt < saleAt) : !(scan.date < saleDate)) {', '  if (false) {', { behavioural: true }],
+  ['app.js', 'verdict', 'signal_before_sale accepts a scan AT the fill (timed sale)', '!(sig.scannedAt < saleAt)', '!(sig.scannedAt <= saleAt)', { behavioural: true }],
   ['app.js', 'verdict', 'signal_before_sale not written', "      signal_before_sale: record.signalBeforeSale ?? { state: 'NOT_RECORDED', reason: 'recorded by a build before db/035' },", '', { behavioural: true }],
   ['app.js', 'verdict', 'old-build retry writes NULL signal (fails once NOT NULL)', "      signal_before_sale: record.signalBeforeSale ?? { state: 'NOT_RECORDED', reason: 'recorded by a build before db/035' },", '      signal_before_sale: record.signalBeforeSale ?? null,', { behavioural: true }],
   ['app.js', 'verdict', 'verdict_provenance not written', '      verdict_provenance: saleVerdictProvenance(record),', '', { behavioural: true }],
@@ -156,10 +160,12 @@ for (const t of new Set(M.map(m => m[1]))) {
   if (v.verdict !== 'PASS') { console.error(`baseline FAILS: ${TESTS[t]} (${v.verdict}: ${v.detail})`); process.exit(2); }
 }
 
-let survived = 0;
+let survived = 0, broken = 0;
 for (const [file, test, name, from, to, opts = {}] of M) {
   const n = orig[file].split(from).length - 1;
-  if (n !== 1) { console.log(`ANCHOR x${n}  ${name}`); survived++; continue; }
+  // A BROKEN INSTRUMENT, not a survivor (2026-11-18, the reviewer): an anchor that does not match once is not a result
+  // about the code. Counted apart, and it fails the run (exit 2), so it cannot become furniture in the survivor count.
+  if (n !== 1) { console.log(`BROKEN   ${name}: its anchor matched ${n} time(s), not once: re-anchor it or retire it with the reason`); broken++; continue; }
   fs.writeFileSync(path.join(ROOT, file), orig[file].replace(from, to));
   const r = spawnSync(process.execPath, [TESTS[test]], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
   const v = verdictOf(r);
@@ -176,5 +182,6 @@ for (const [file, test, name, from, to, opts = {}] of M) {
   console.log(`${killed ? 'killed  ' : 'SURVIVED'}  ${name}${opts.behavioural ? ' [behavioural required]' : opts.lint ? ' [lint required]' : ''}  (${by})`);
   restoreAll();
 }
-console.log(`\n${M.length} mutants: ${M.length - survived} killed, ${survived} survived or unanchored`);
-process.exitCode = survived ? 1 : 0;
+console.log(`\n${M.length} mutants: ${M.length - survived - broken} killed, ${survived} survived, ${broken} broken (an anchor did not match)`);
+if (broken) console.log(`BROKEN INSTRUMENT: ${broken} mutant(s) could not be applied; this run proves nothing about them.`);
+process.exitCode = broken ? 2 : survived ? 1 : 0;
