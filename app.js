@@ -940,6 +940,8 @@ let state = {
   ownedScores: {},        // ticker → {score, label, scoringVersion, scannedAt, signal} snapshotted at each screener run (the full signal since 2026-10-28; read through currentSignalForHolding), for owned positions that no longer clear the display threshold — persisted, so read ONLY through currentOwnedScore() (a stored score from another formula is not evaluated, never used)
   heldScorePrune: null,   // P1 (2026-11-17): { pruned: [tickers], kept } or { notPruned: reason } from the last scan this session, for the Storage readout. Not persisted.
   portfolioLoad: null,    // { at, rows } once this session's portfolio read answered; null until then. Session only, never persisted.
+  portfolioRefresh: null, // { state: 'REFRESHED'|'NOT_REFRESHED'|'NOT_ATTEMPTED', reason, at, trigger, shownSince } of the last re-read (2026-11-18). Session only.
+  portfolioRefreshInFlight: false,
   displayedVerdicts: {},  // position id → what its card last showed (Verdict A). Session only, never persisted.
   ownedPrevRSI: {},       // ticker → RSI from the previous portfolio render, for detecting "declining from peak" in calcPeakRiskScore — persisted
   ownedPeakRSI: {},       // RETIRED by db/044 (2026-11-14): no longer written or read for a sale; the peak RSI is the position's own, in the database. Kept only so an older phone's stored value is not mistaken for an unknown key.
@@ -5459,6 +5461,67 @@ function displayQuoteAge(snap, nowMs) {
   return { state: 'UNJUDGED' };
 }
 
+// RE-READ ON OPEN (2026-11-18, approved by the reviewer). A session's list was the database read once at app start plus
+// its own changes, so another device's adds and sales stayed invisible for as long as the app stayed open: hours, on
+// 11-17, with the laptop and the phone each blind to the other. Now the list is re-read from the database (the guarded
+// load: complete or it throws) when the Portfolio tab opens, when the app regains focus on that tab (the home-screen
+// app resumed: a tab handler never fires there), and on the tab's ↻. Three states, never two: REFRESHED /
+// NOT_REFRESHED (any doubt: the list is left exactly as it was, and the tab says so) / NOT_ATTEMPTED (a dialog was
+// open: cards are never moved under an open Sell form).
+function isModalOpen() {
+  const m = typeof document !== 'undefined' && document.getElementById ? document.getElementById('modal-overlay') : null;
+  return !!(m && !m.classList.contains('hidden')) || !!_dialogShowing;
+}
+// The database's rows are the truth, with three session facts kept: a delete in flight here (deletedPositionIds) is not
+// brought back; a sale in flight here keeps its card until its write returns, even if the other device removed the
+// row; and a peak RSI sampled here above the database's is not lowered (it is re-sent until saved).
+function mergePortfolio(session, reread, { inFlight = {}, deleted = new Set() } = {}) {
+  const byId = new Map(session.map(s => [s.id, s]));
+  const out = reread.filter(r => !deleted.has(r.id)).map(r => {
+    const s = byId.get(r.id);
+    if (s && s.peakRsi != null && (r.peakRsi == null || s.peakRsi > r.peakRsi)) {
+      return { ...r, peakRsi: s.peakRsi, peakRsiAt: s.peakRsiAt ?? r.peakRsiAt ?? null, peakRsiSampledFrom: r.peakRsiSampledFrom ?? s.peakRsiSampledFrom ?? null };
+    }
+    return r;
+  });
+  for (const s of session) if (inFlight[s.id] && !out.some(r => r.id === s.id)) out.push(s);
+  return out;
+}
+async function refreshPortfolio(trigger) {
+  if (state.portfolioRefreshInFlight) return;
+  if (isModalOpen()) { state.portfolioRefresh = { state: 'NOT_ATTEMPTED', reason: 'a dialog was open', at: Date.now(), trigger }; return; }
+  state.portfolioRefreshInFlight = true;
+  try {
+    let rows;
+    try { rows = await loadPortfolioFromSupabase(); } catch (e) { rows = e; }
+    const shownSince = state.portfolioRefresh?.refreshedAt ?? state.portfolioLoad?.at ?? null;
+    if (!Array.isArray(rows)) {
+      state.portfolioRefresh = { state: 'NOT_REFRESHED', reason: rows instanceof Error ? rows.message : 'the read returned no list', at: Date.now(), trigger, shownSince };
+    } else if (isModalOpen()) {
+      // a dialog opened while the read was out: leave the cards where they are under it
+      state.portfolioRefresh = { state: 'NOT_ATTEMPTED', reason: 'a dialog opened during the read', at: Date.now(), trigger, shownSince };
+      return;
+    } else {
+      state.portfolio = mergePortfolio(state.portfolio, rows, { inFlight: state.saleInFlight || {}, deleted: state.deletedPositionIds || new Set() });
+      if (!state.peakRsiSaved) state.peakRsiSaved = {};
+      for (const r of rows) if (r.peakRsi != null) state.peakRsiSaved[r.id] = Math.max(state.peakRsiSaved[r.id] ?? -Infinity, r.peakRsi);
+      state.portfolioRefresh = { state: 'REFRESHED', at: Date.now(), refreshedAt: Date.now(), trigger, rows: rows.length };
+      if (typeof updateNavBadges === 'function') updateNavBadges();
+    }
+    if (state.activeTab === 'portfolio') renderPortfolioTab();
+  } finally {
+    state.portfolioRefreshInFlight = false;
+  }
+}
+// The tab's line when a refresh could not be made: what is shown, and since when. Never shown for REFRESHED.
+function portfolioRefreshLine() {
+  const r = state.portfolioRefresh;
+  if (!r || r.state !== 'NOT_REFRESHED') return '';
+  const since = r.shownSince ? new Date(r.shownSince).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }) + ' PT' : 'this app opened';
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return `<div class="pf-refresh-failed" style="color:var(--yellow);font-size:13px;line-height:18px;margin:6px 16px">⚠ Could not refresh from the database (${esc(r.reason)}). Showing what this device last read, at ${since}; positions added or sold on another device since then are not shown. Tap ↻ to try again.</div>`;
+}
+
 async function renderPortfolioTab() {
   const container = document.getElementById('tab-content');
   updateBudgetBar();
@@ -5491,8 +5554,9 @@ async function renderPortfolioTab() {
   const sortMode = currentPortfolioSort();
   container.innerHTML = `<div class="tab-header">
     <h1 class="tab-title">PORTFOLIO</h1>
-    <button class="btn btn-sm btn-ghost" onclick="renderPortfolioTab()">↻</button>
+    <button class="btn btn-sm btn-ghost" onclick="refreshPortfolio('button')">↻</button>
   </div>
+  ${portfolioRefreshLine()}
   ${buildEngineFilterControl('portfolioEngineFilter', holdings)}
   ${buildPortfolioSortControl(sortMode)}
   ${weekendBanner}
@@ -12073,7 +12137,7 @@ function switchTab(name) {
   switch (name) {
     case 'signals':   renderSignalsTab();   break;
     case 'warrior':   renderWarriorTab();   break;
-    case 'portfolio': renderPortfolioTab(); break;
+    case 'portfolio': renderPortfolioTab(); refreshPortfolio('tab'); break; // what it holds now, then the database's (2026-11-18)
     case 'sold':      renderSoldTab();      break;
     case 'analytics': renderAnalyticsTab(); break;
     case 'settings':  renderSettingsTab();  break;
@@ -12252,6 +12316,8 @@ async function runDataLoadAndInit() {
   // background doesn't reload, so it's exactly where a stale build hides.
   checkBuildStatus({ force: true });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkBuildStatus(); });
+  // The home-screen app resumed on the Portfolio tab: the two-device case a tab handler never sees (2026-11-18).
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.activeTab === 'portfolio') refreshPortfolio('resume'); });
   installLayoutCheck(); // bottom-nav diagnostic (2026-10-27), read-only
   // Fire-and-forget, deliberately after first paint: nothing about the
   // notification permission prompt should be able to block the app's first
