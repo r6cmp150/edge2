@@ -247,6 +247,14 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   no dollar return on Roman's capital, and no claim that the trade set was executable at $1,500. **They answer "is a
   trade worth taking", not "would this have made money on $1,500".** The second question is the one Roman asked, and
   nothing currently running answers it. (Roman recorded 40 buys on 11-17; 48 positions open that night.)
+  **DECLARED 2026-11-18 (Roman: "I have been ignoring the budget"; the reviewer's ruling): the budget is not enforced,
+  deliberately.** While the open question is whether the signals have an edge, the paper book is unconstrained so
+  that every signal can be tested. The consequence is accepted and stated: the paper record is of a book that was not
+  funded, so it answers "is a trade worth taking" and not "would this have made money on $X". Revisit when there is an
+  answer to the first question, the 12-31 review at the latest. **What it does not cost:** deployed capital per day
+  is computable from the database (review-budget-deployed.md, in minutes), so "what would $X have done" stays
+  answerable retrospectively whenever Roman picks a number. It needs a replay with an ordering rule, not new data;
+  the sample is not spoiled.
 - **S1 forward test (RESTARTED at (c), confirmed by the reviewer 2026-11-13; see the RE-REGISTERED line below):** trades bought from 2026-11-12, at 20 S1 buy days (P&L after costs) and
   20 days with both S1 and S2-S4 trades (win rate, frictionless, reported separately). Roman changes nothing about
   what he trades: narrowing to S1 would act on an unestablished result and destroy the comparison group.
@@ -505,6 +513,21 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   of the main checkout (git-excluded; sha256 36318abb…; applies to 002f969).
 
 ## Open
+- **EDGE's paper book sizes Warrior's real setups at 0 shares (raised 2026-11-18; nothing changed).** Mechanism: one
+  shared number. `getAvailableBudget()` = settings.budget ($1,500) minus every holding at cost minus open orders, both
+  engines and both execution modes alike. Warrior's `computeSuggestedShares` (engines/warrior/setups.js) takes
+  min(2% of budget / risk-per-share, available / entry), and with Available at or below 0 that is **0 shares,
+  constraint 'budget'**, shown as "0 (capped by available budget)", which reads as a deliberate limit, not a side
+  effect. With 48 EDGE paper positions open (Available about -$24,000 on 11-17), every Warrior setup is sized 0.
+  **It cannot suppress a setup, only its size** (code read 2026-11-18): `detectSetupsForCandidate` pushes every
+  triggered setup whatever its sizing; `_sortSetups` orders by lateness and priority only; buyability
+  (engines/warrior/index.js:455) keys on QUALIFIED + primarySetup + entryTargetStop, never on shares; the only
+  other use is the add form's placeholder (blank for 0). And the scheduled logger, which produces the "0 setups ever
+  formed" record, passes no budget at all (sizing null, "not sized"). **So the share cap did not contribute to "0
+  setups ever formed"; those setups failed earlier.**
+  **LATENT, NOT HISTORICAL (the reviewer, 2026-11-18): the 0-share cap did not cause the empty Warrior record, and it
+  will make the first setup that ever forms unusable** -- shown on the phone sized at 0 shares, labelled "budget",
+  while EDGE's paper book holds the shared figure below zero. Not closed by the negative above.
 - **A wrong recorded sale can be detected and cannot be corrected** (logged 2026-11-18). The sale comparison
   (2026-11-08) reports "recorded with different numbers" when a refused second copy differs from the recorded row,
   but `trades_v2` sale rows are write-once and the app has no path to correct one. Roman's only instruction is
@@ -539,6 +562,14 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   sizes from it: suggested shares = min(2% of budget / risk, available / entry), and **with Available negative,
   every Warrior setup is sized at 0 shares (constraint 'budget') -- EDGE's paper book has been consuming Warrior's
   budget.** The settings row's updated_at (2026-11-12) is for the whole row, so the budget's own history is unknown.
+  **DECLARED 2026-11-18 (Roman: "I have been ignoring the budget"; the reviewer's ruling): the budget is not enforced,
+  deliberately.** While the open question is whether the signals have an edge, the paper book is unconstrained so
+  that every signal can be tested. The consequence is accepted and stated: the paper record is of a book that was not
+  funded, so it answers "is a trade worth taking" and not "would this have made money on $X". Revisit when there is an
+  answer to the first question, the 12-31 review at the latest. **What it does not cost:** deployed capital per day
+  is computable from the database (review-budget-deployed.md, in minutes), so "what would $X have done" stays
+  answerable retrospectively whenever Roman picks a number. It needs a replay with an ordering rule, not new data;
+  the sample is not spoiled.
 - **The held-score prune (P1, build 20261117233000) runs only on an ESTABLISHED portfolio.** A read that returned rows
   is established; an empty one only once the trades_v2 control reads non-empty; otherwise nothing is pruned and
   Settings > Storage says "Held-score cache not pruned this scan: <reason>". **After Roman reloads, re-measure his
