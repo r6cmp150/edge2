@@ -787,6 +787,23 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 - The error column in the empty-read registry, before the default-ACL fix.
 - The default-ACL fix itself (scoped in the spec, not built).
 
+- **EDGE risk when a symbol's news comes back INCOMPLETE: measured rare (2026-11-19), kept as a BASELINE to compare
+  against.** A 10-symbol news batch that reaches the 3-page cap (150 items) before its 72 h window runs out marks its
+  unseen symbols INCOMPLETE, and risk then misses its +2 for a recent negative headline (calcRiskScore, capped at 10;
+  the screen says "risk may be understated"). It could fire most when there is the most news. **The reading,
+  2026-11-19 15:07 PT, `scripts/measure-news-truncation.mjs` (3bccba7), production's own code:** the full OTHER universe,
+  239 symbols in 24 batches, 131 items over 72 h (cap 150 per batch): 95 retrieved, **0 incomplete**, 0 not retrieved,
+  144 none. 11-18's 63 shown symbols (a candidate-sized set) in 7 batches, 53 items: 35 retrieved, **0 incomplete**, 0
+  not retrieved, 28 none. The zero is structural at this volume: the whole universe's 131 items fit inside one batch's
+  150. **Positive control** (`--control`: the page cap lowered to 1 page, 50 items, on ten heavily covered names): GOOGL
+  INCOMPLETE, and the impact check ran on it, so the instrument can report what it looks for. **Limits of this one
+  reading:** a single run, after the close, over a Monday-to-Wednesday window, the OTHER universe and one day's shown
+  set only (HEALTHCARE and the other selectable universes not measured); a large news event concentrated in one batch
+  could still exceed 150. **The next run is a comparison, not a fresh reading:** set its items-per-72 h beside 131 and
+  its incomplete count beside 0; a drift in volume shows as a difference. Re-run:
+  `node scripts/measure-news-truncation.mjs --env <path to .env.local>` (add `--control` for the control). Reopen ahead
+  of other work if any reading shows an incomplete symbol whose newest item is a negative headline under 24 h.
+
 ## Closed recently, so they don't come back
 - **The sale's row delete hung the card, and an inventory found it, not a test (2026-11-18, fixed in 0842f74).** The
   write-first sale (cca5ab0) made the card wait for the sale insert (bounded, 20 s) and then for the portfolio-row
