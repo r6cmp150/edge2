@@ -127,9 +127,56 @@ await run('every script the walker finds a write in refuses first, by its own na
   }
 });
 
+// CANNOT REACH PRODUCTION BY CONSTRUCTION (2026-11-19, declared; cleared by the reviewer before it landed). A file that
+// carries write markers but whose client points only at a `.invalid` host (RFC 6761: never resolves) and that never
+// names the production URL or key cannot write to production whatever its route does, so it needs no refusal. Each
+// entry is CHECKED, not trusted (cannotReachProduction), and the check is held in both directions below.
+const CANNOT_REACH_PRODUCTION = {
+  'scripts/probe-supabase-abort.mjs': 'the pin\'s abort probe: six builder shapes, every request held in the browser, the client on supabase.probe.invalid',
+};
+function cannotReachProduction(src) {
+  const s = W.strip(src);
+  const why = [];
+  if (/supabase\.co\b|SUPABASE_URL|SUPABASE_ANON_KEY|sb_publishable_|EDGE2_PRODUCTION_WRITE/.test(s)) why.push('it names the production URL, key or write variable');
+  // Its one request of its own is allowed: route.fetch() of the intercepted CDN GET (the library download), directly
+  // under the line that admits only that GET. Any other fetch, or a route.fetch() anywhere else, is a request of its own.
+  const lines = s.split('\n');
+  const cdnGet = /hostname === 'cdn\.jsdelivr\.net' && r\.method\(\) === 'GET'/;
+  lines.forEach((l, i) => {
+    if (!/\bfetch\(|curl\s|https\.request\(/.test(l)) return;
+    const isRouteFetch = /route\.fetch\(\)/.test(l) && !/(^|[^.])\bfetch\(/.test(l.replace(/route\.fetch\(\)/g, ''));
+    if (!(isRouteFetch && (cdnGet.test(l) || cdnGet.test(lines[i - 1] || '')))) why.push(`it makes requests of its own (line ${i + 1})`);
+  });
+  const host = (s.match(/const HOST = '([a-z0-9.-]+)'/) || [])[1];
+  if (!host || !/\.invalid$/.test(host)) why.push('its client host is not a .invalid name');
+  const clients = [...s.matchAll(/createClient\(([^,]+),/g)].map(m => m[1].trim());
+  if (!clients.length || clients.some(a => !/^`https:\/\/\$\{(host|HOST)\}`$/.test(a))) why.push(`a client not on HOST: ${clients.join(' | ') || 'none'}`);
+  return why;
+}
+
+await run('a file exempt as unable to reach production is checked, not trusted (both directions)', () => {
+  for (const [file, reason] of Object.entries(CANNOT_REACH_PRODUCTION)) {
+    assert.ok(reason.length > 20, `${file}: the exemption gives its reason`);
+    assert.ok(WRITE_MARKER.test(W.strip(readSource(file))), `${file}: no longer carries a write marker: drop the exemption`);
+    assert.deepStrictEqual(cannotReachProduction(readSource(file)), [], `${file}`);
+  }
+  const ok = "const HOST = 'x.probe.invalid';\nconst c = window.supabase.createClient(`https://${host}`, 'k');\nc.from('portfolio').delete();\n";
+  assert.deepStrictEqual(cannotReachProduction(ok), []);
+  for (const [bad, what] of [
+    [ok.replace('x.probe.invalid', 'kbjqxaukyawcmcyjoiey.supabase.co'), 'production host'],
+    [ok.replace('x.probe.invalid', 'example.com'), 'a host that resolves'],
+    [ok + "const u = store.match(/const SUPABASE_URL = '([^']+)'/);\n", 'reads the production URL'],
+    [ok.replace('`https://${host}`', 'u'), 'a client on another host'],
+    [ok + "await fetch('https://x');\n", 'its own request'],
+    [ok + "if (u.hostname === HOST) {\n  const res = await route.fetch(); }\n", 'a held request forwarded'],
+    [ok + "if (u.hostname === 'cdn.jsdelivr.net' && r.method() === 'GET') {\n  const res = await route.fetch(); await fetch('https://y'); }\n", 'a request smuggled beside the CDN one'],
+  ]) assert.ok(cannotReachProduction(bad).length, `the check let through: ${what}`);
+});
+
 await run('every script the walker never sees that carries a write marker refuses first too (columns declared by hand, not checked)', () => {
   const unseen = scriptFiles().filter(f => !walkerScans(f) && f !== 'scripts/lib/production-write.mjs');
-  const writers = unseen.filter(f => WRITE_MARKER.test(W.strip(readSource(f))));
+  // CHANGED 2026-11-19, declared: files checked above as unable to reach production are not writers
+  const writers = unseen.filter(f => WRITE_MARKER.test(W.strip(readSource(f))) && !(f in CANNOT_REACH_PRODUCTION));
   assert.ok(writers.length >= 4, `found ${writers.length}: ${writers.join(', ')}`);
   for (const file of writers) {
     const s = W.strip(readSource(file));

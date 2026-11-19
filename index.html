@@ -23,8 +23,16 @@
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-  <!-- Supabase -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Supabase. PINNED to an exact version (2026-11-19, the reviewer). It was "@2" (major only), so the library could
+       change under the app with no commit, no CI run and no notice -- and the instance happened while pinning was being
+       argued: @2 served 2.119.1 at 2026-11-19 02:42Z and 2.119.2 at 15:37Z (jsdelivr x-jsd-version, read live). Pinned
+       to 2.119.2, what was in use, not what was read the day before.
+       A PIN FREEZES A VERSION, NOT A PROPERTY. Depended on, and nothing else: .abortSignal() on each builder shape
+       core/store.js bounds, each reaching its outcome at the bound through boundedRequest (FAILED for a read, UNKNOWN
+       for a write). Re-established at EVERY deliberate bump by node scripts/probe-supabase-abort.mjs, whose last line
+       is quoted here; tests/external-scripts-pinned.test.js fails if the probed version is not the pinned one.
+       probe: PROBED: supabase-js 2.119.2, 6 shapes, 2026-11-19T15:56:50.567Z -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.2"></script>
 
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -139,6 +147,6 @@
   <script src="core/universe.js?v=20261118050000"></script>
   <script src="core/edge-scoring.js?v=20261022020000"></script>
   <script src="shell/registry.js?v=20260915180000"></script>
-  <script src="app.js?v=20261119020000"></script>
+  <script src="app.js?v=20261119030000"></script>
 </body>
 </html>
