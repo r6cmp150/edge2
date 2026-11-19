@@ -418,15 +418,23 @@ async function readAllRows(query) {
 // each of which could change unnoticed. Now: the rows read must equal the exact count the database reports, and an
 // empty answer stands only if the control (trades_v2, never empty) answers with rows. Otherwise it throws, and the
 // boot shows "Couldn't load your data" with Retry instead of an empty portfolio.
+// BOUNDED (2026-11-18): both reads go through boundedRequest. A hung read held boot at "Loading your data…" for good,
+// and held refreshPortfolio's in-flight flag set, so every later refresh in the session was silently skipped. A READ
+// that gets no answer is FAILED ("could not read" is simply true: a read has no side effect), and this function's
+// contract for "could not read" has always been to throw: boot shows "Couldn't load your data" with Retry, and the
+// refresh becomes NOT_REFRESHED with its line, releasing its flag. A read has no UNKNOWN, so nothing collapses here.
+const LOAD_READ_TIMEOUT_MS = 15000; // boot cannot open without this read, so a slow network gets longer
 async function loadPortfolioFromSupabase() {
-  const { data, error, count } = await supabaseClient.from('portfolio').select('*', { count: 'exact' }).order('buy_date', { ascending: true });
-  if (error) throw error;
-  const rows = data || [];
+  const read = await boundedRequest(supabaseClient.from('portfolio').select('*', { count: 'exact' }).order('buy_date', { ascending: true }),
+    { ms: LOAD_READ_TIMEOUT_MS, kind: 'read', what: 'the portfolio read' });
+  if (read.outcome !== 'OK') throw new Error(read.reason);
+  const rows = read.data || [], count = read.count;
   if (count == null) throw new Error('the portfolio read gave no row count, so whether it is complete is not known');
   if (rows.length !== count) throw new Error(`the portfolio read ${rows.length} of ${count} rows: not complete`);
   if (!rows.length) {
-    const control = await supabaseClient.from('trades_v2').select('id', { count: 'exact', head: true });
-    if (control.error) throw new Error(`the portfolio read back empty, and the check that it was not denied failed (${control.error.message || control.error})`);
+    const control = await boundedRequest(supabaseClient.from('trades_v2').select('id', { count: 'exact', head: true }),
+      { ms: LOAD_READ_TIMEOUT_MS, kind: 'read', what: 'the check that the empty portfolio was not a denied read' });
+    if (control.outcome !== 'OK') throw new Error(`the portfolio read back empty, and ${control.reason}`);
     if (!(control.count > 0)) throw new Error('the portfolio read back empty and so did trades_v2, which never is: a denied read cannot be ruled out');
   }
   return rows.map(mapSupabasePortfolioRowToPosition);
@@ -540,6 +548,15 @@ async function savePositionToSupabase(position) {
 //   { outcome: 'UNKNOWN', reason }     a WRITE got no answer: aborted at `ms`, or the request itself did not complete
 //                                      (a transport error carries no server code). It may have landed: never "failed".
 // supabase-js resolves an aborted request with an error rather than throwing, so the timeout is checked first.
+// THREE PHRASINGS FOR SILENCE, AND THEY ARE NOT TO BE UNIFIED (the reviewer, 2026-11-19). The wording follows what the
+// caller's function is for, not the verb:
+//   a plain READ with no answer has FAILED: there is no data, and "could not read" is simply true;
+//   a WRITE with no answer is UNKNOWN: it may have landed ("whether it was applied is not known");
+//   a CHECK whose job is to ESTABLISH something, and does not complete, has neither failed nor found nothing: it
+//   COULD NOT ESTABLISH. Its caller says so in its own terms, never "failed" and never an answer:
+//   loadPortfolioFromSupabase's trades_v2 control throws "the portfolio read back empty, and <reason>" (a transport
+//   error reads "the request did not complete (x)"); the delete's existence check makes the delete UNKNOWN ("whether it
+//   is still open is not known").
 async function boundedRequest(builder, { ms, kind, what }) {
   const abort = new AbortController();
   let timedOut = false;

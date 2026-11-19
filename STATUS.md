@@ -778,7 +778,9 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   10 functions, none bounded), not by any test: an inventory of a class of thing finds the members nobody thought to
   test, which is most of why inventories are worth their cost. The rest of the enumeration's list
   (review-store-request-enumeration.md) is being bounded in the order there, reads failing as "could not read", writes
-  never as "failed" when the answer did not come.
+  never as "failed" when the answer did not come. **The current state is `tests/store-requests-bounded.test.js`**: every
+  request in core/store.js by name, each bounded or pending with its step and reason. This line carries no count of
+  its own; read it there.
 - **The empty-read registry now identifies every read it classifies (2026-11-18, 6b8cb68): 55 reads under 24 keys, each
   pinned to the function that holds it.** It used to match reads to their classifications by how many there were per
   table, so a swapped read did not merely lose coverage: it **inherited the judgement made for the read it replaced**,

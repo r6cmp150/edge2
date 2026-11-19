@@ -104,3 +104,33 @@ run('the tab says so when it could not refresh (reason, and since when), and say
   assert.ok(app.includes(`onclick="refreshPortfolio('button')">↻</button>`), 'the ↻ re-reads');
   assert.ok(app.includes('  ${portfolioRefreshLine()}\n'), 'the line is in the tab');
 });
+
+// 2026-11-18 (the reviewer): a hung re-read held portfolioRefreshInFlight set, so every later refresh that session was
+// skipped with nothing shown. The real load (core/store.js, bounded) against a database that never answers: at the
+// bound the refresh is NOT_REFRESHED, its line is shown, AND the flag is released, so the next refresh runs. Never one
+// without the other. Raced against a real timer.
+run('a re-read with no answer: the line is shown AND the flag released, and the next refresh runs', async () => {
+  const store = readSource('core/store.js');
+  const piece = (start, end = '\n}\n') => { const i = store.indexOf(start); assert.ok(i >= 0, start); return store.slice(i, store.indexOf(end, i) + end.length); };
+  let answering = false;
+  const answer = (v, sig) => answering ? Promise.resolve(v)
+    : new Promise(res => sig.addEventListener('abort', () => res({ data: null, error: { message: 'AbortError: The operation was aborted.', code: '' } })));
+  const client = { from: () => ({ select: () => ({ order: () => ({ abortSignal: sig => answer({ data: [{ position_id: 'a' }], error: null, count: 1 }, sig) }) }) }) };
+  // eslint-disable-next-line no-new-func
+  const realLoad = new Function('supabaseClient', 'mapSupabasePortfolioRowToPosition', 'setTimeout',
+    piece('async function boundedRequest(') + piece('const LOAD_READ_TIMEOUT_MS', '\n') + piece('async function loadPortfolioFromSupabase(') + '\nreturn loadPortfolioFromSupabase;')(
+    client, r => ({ id: r.position_id, ticker: 'AAA' }), fn => { setImmediate(fn); return 0; });
+  const { renders } = load({ reread: realLoad, session: [A] });
+  eval(grab('portfolioRefreshLine') + '\nglobal.__line = portfolioRefreshLine;');
+  const REAL = global.setTimeout; let t;
+  try {
+    await Promise.race([global.__refresh('button'), new Promise((_, rej) => { t = REAL(() => rej(new Error('the refresh hung: no outcome within 3 s')), 3000); })]);
+  } finally { clearTimeout(t); }
+  assert.strictEqual(global.state.portfolioRefresh.state, 'NOT_REFRESHED');
+  assert.ok(/the portfolio read: no answer within 15 s/.test(global.state.portfolioRefresh.reason), global.state.portfolioRefresh.reason);
+  assert.strictEqual(global.state.portfolioRefreshInFlight, false, 'the flag is released');
+  assert.ok(renders.length >= 1 && /Could not refresh from the database \(the portfolio read: no answer within 15 s\)/.test(global.__line()), 'the line is shown');
+  answering = true;
+  await global.__refresh('button');
+  assert.strictEqual(global.state.portfolioRefresh.state, 'REFRESHED', 'the next refresh ran');
+});

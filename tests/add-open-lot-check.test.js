@@ -132,14 +132,22 @@ run('NOT_FOUND: no question, the add goes ahead; COULD_NOT_CHECK: says so with t
 });
 
 // The load, guarded in the same change: core/store.js loadPortfolioFromSupabase, for real.
-function loadFn({ rows = [], count = rows.length, error = null, control = 906, controlError = null } = {}) {
+// CHANGED 2026-11-18, declared: the load's two reads are bounded (boundedRequest), so the harness loads that too, with
+// the load's own bound, and the stub answers .abortSignal. HANG never answers unless aborted (then an AbortError, as
+// supabase-js resolves it).
+const LOAD_HANG = Symbol('no answer');
+function loadFn({ rows = [], count = rows.length, error = null, control = 906, controlError = null, hang = false } = {}) {
   const i = store.indexOf('async function loadPortfolioFromSupabase(');
   const body = store.slice(i, store.indexOf('\n}\n', i) + 3);
+  const b = store.indexOf('async function boundedRequest(');
+  const helper = store.slice(b, store.indexOf('\n}\n', b) + 3);
+  const bound = store.slice(store.indexOf('const LOAD_READ_TIMEOUT_MS'), store.indexOf('\n', store.indexOf('const LOAD_READ_TIMEOUT_MS')) + 1);
+  const answer = (v, sig) => (hang ? new Promise(res => sig.addEventListener('abort', () => res({ data: null, error: { message: 'AbortError: The operation was aborted.', code: '' } }))) : Promise.resolve(v));
   const client = { from: t => ({ select: () => (t === 'portfolio'
-    ? { order: async () => ({ data: error ? null : rows, error, count }) }
-    : Promise.resolve({ count: controlError ? null : control, error: controlError })) }) };
+    ? { order: () => ({ abortSignal: sig => answer({ data: error ? null : rows, error, count }, sig) }) }
+    : { abortSignal: sig => answer({ count: controlError ? null : control, error: controlError }, sig) }) }) };
   // eslint-disable-next-line no-new-func
-  return new Function('supabaseClient', 'mapSupabasePortfolioRowToPosition', body + '\nreturn loadPortfolioFromSupabase;')(client, r => ({ id: r.position_id }));
+  return new Function('supabaseClient', 'mapSupabasePortfolioRowToPosition', 'setTimeout', helper + bound + body + '\nreturn loadPortfolioFromSupabase;')(client, r => ({ id: r.position_id }), hang ? (fn => { setImmediate(fn); return 0; }) : setTimeout);
 }
 run('the portfolio load: complete or it throws; empty only after the control; it never returns [] for a doubt', async () => {
   assert.deepStrictEqual(await loadFn({ rows: [{ position_id: 'a' }] })(), [{ id: 'a' }]);
@@ -148,7 +156,9 @@ run('the portfolio load: complete or it throws; empty only after the control; it
     [{ rows: [{ position_id: 'a' }], count: 2 }, /read 1 of 2 rows: not complete/],
     [{ rows: [{ position_id: 'a' }], count: null }, /gave no row count/],
     [{ rows: [], control: 0 }, /read back empty and so did trades_v2/],
-    [{ rows: [], controlError: { message: 'x' } }, /check that it was not denied failed \(x\)/],
+    // reworded 2026-11-18 (declared): a control error with no server code is a request that did not complete
+    [{ rows: [], controlError: { message: 'x' } }, /read back empty, and the check that the empty portfolio was not a denied read: the request did not complete \(x\)/],
+    [{ rows: [], controlError: { message: 'denied', code: '42501' } }, /read back empty, and the check that the empty portfolio was not a denied read: denied/],
     [{ error: { message: 'denied' } }, /denied/],
   ]) {
     // the database's own error is a plain object (as supabase-js returns it), so the message is what is compared
@@ -171,4 +181,15 @@ run('friendlyBuyWhen: weekday, month/day and a 12-hour time; the date alone with
   assert.strictEqual(f('2026-11-18', 'not a time'), 'Wed 11/18');
   assert.strictEqual(f('soon', '09:46'), 'soon', 'not a date: shown as stored');
   assert.strictEqual(f(null, null), 'date not recorded');
+});
+
+// 2026-11-18: the load is bounded. A read that gets no answer is "could not read" (a read has no side effect), which is
+// this function's throw: boot shows Retry; a refresh is NOT_REFRESHED and releases its flag. Raced against a real timer.
+run('the portfolio load with no answer: it throws "no answer within 15 s" at the bound, never hangs', async () => {
+  let thrown = null, t;
+  const real = global.setTimeout;
+  try {
+    await Promise.race([loadFn({ hang: true })(), new Promise((_, rej) => { t = real(() => rej(new Error('the load hung: no outcome within 3 s')), 3000); })]);
+  } catch (e) { thrown = e; } finally { clearTimeout(t); }
+  assert.ok(thrown && /the portfolio read: no answer within 15 s/.test(thrown.message), thrown && thrown.message);
 });

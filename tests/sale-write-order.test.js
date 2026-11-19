@@ -192,7 +192,13 @@ run('a delete with no answer is shown as not known, never as failed or as "wasn\
   assert.ok(/not known/.test(unknownText) && /safe either way/.test(unknownText), unknownText);
   assert.ok(!/fail|wasn't removed|was not removed/i.test(unknownText.replace("If it wasn't, ", '')), 'never "failed", never "wasn\'t removed": ' + unknownText);
   // every caller of the delete reads its outcome; none wraps it in a catch that would turn UNKNOWN into "failed"
+  // IDENTIFIED, 2026-11-18 (the reviewer: this was a count, ">= 4", so a fifth caller satisfied nothing and a replaced
+  // one inherited the assertion): the four callers by name, each reading the outcome.
+  const { enclosingFunctions } = require('./_lib');
+  const re = /deletePositionFromSupabase\(/g;
+  const callers = enclosingFunctions(app, re);
+  assert.deepStrictEqual([...callers].sort(), ['cancelPendingOrder', 'recordSaleThenRemovePosition', 'removePositionAgain', 'retrySaleWrite']);
   const calls = [...app.matchAll(/(.{0,60})deletePositionFromSupabase\(/g)].map(m => m[1]);
-  assert.ok(calls.length >= 4 && calls.every(c => /const del = await $/.test(c)), 'each call is read as an outcome: ' + JSON.stringify(calls));
+  calls.forEach((c, i) => assert.ok(/const del = await $/.test(c), `${callers[i]}: the call is read as an outcome: ${c}`));
   assert.ok(!/try \{ await deletePositionFromSupabase/.test(app) && !/catch \(e\) \{\s*notePositionStillOpen/.test(app), 'no catch around the delete');
 });
