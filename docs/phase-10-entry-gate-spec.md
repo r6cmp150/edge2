@@ -3075,6 +3075,24 @@ already did safely:
 4. a probe (2026-11-18, the impostor audit) inserted print lines into two test files, failed on the second anchor
    after writing the first, and its `&&` skipped its own restore. Recovered by restoring from a copy, confirmed
    clean with `git diff`, and redone on temporary copies of the tests (never the files themselves), deleted after.
+5. **the rule itself, the same day it was written (2026-11-18, landing 09133af).** Nine mutants for the request
+   registry and the bounded load were run by editing `core/store.js` and `app.js` in place and restoring them from
+   copies. The restores held (the diff matched the work in progress, the suite ran 140/140 before the commit), but that
+   was "I will put it back". Disclosed unprompted on 2026-11-19, and remediated by re-running the same nine, through
+   `mutants.cjs`, against 09133af on a clean tree: 11 of 11 killed (the old load put back, against three tests), clean
+   before and after. The earlier numbers stand only because of that second run.
+
+**A RULE IS NOT A MECHANISM (2026-11-19, the reviewer, on the fifth instance).** The fifth instance is the rule failing
+to prevent the thing it describes: written in the morning and broken by the afternoon, by the one who wrote it down,
+while doing careful work. Where a mechanism exists (the committed harness refuses a dirty tree and guarantees the
+restore), the rule's only job is to make people use it, and rules are bad at that. The durable fix is that the safe
+path is the easy one: make `mutants.cjs` quicker to reach for than a throwaway, rather than writing this rule a sixth
+time.
+
+**A COMMENT STATES WHAT THE CODE DOES, ESTABLISHED THE SAME WAY ANY OTHER CLAIM IS (2026-11-19, the reviewer's rule).** A
+comment is an assertion with no test behind it, and it outlives the code it describes. The instance: the comment at
+`boundedRequest` first said both establishing checks report "the request did not complete"; only the `trades_v2`
+control can, and the delete's existence check makes the delete UNKNOWN. Caught by reading the code before committing.
 
 **A TEST THAT COUNTS CAN BE SATISFIED BY AN IMPOSTOR (2026-11-18, the reviewer's rule).** A count asserts how many, not
 which. Where the counted things can move or be replaced (and a refactor does exactly that), the count survives the
