@@ -172,6 +172,43 @@ run('Groq is asked once per trading day unconditionally, again on a pattern chan
   assert.strictEqual(c.macroGroqAskReason({ tradingDate: '2026-11-03', patternCondition: 'GEOPOLITICAL' }, '2026-11-03', 'CHOPPY'), 'pattern_changed');
 });
 
+// 2026-11-19 (the reviewer): a failed ask is not an answer. It was carried like one, so a failed morning ask spent the
+// day. Both directions: a failed ask today is asked again, for the reason it was asked; a successful one is carried.
+run('a failed ask today is asked again, for the reason it was asked; an answered one is still carried', () => {
+  const c = ctx();
+  const today = '2026-11-03';
+  assert.strictEqual(c.macroGroqAskReason({ tradingDate: today, patternCondition: 'CHOPPY', failed: true, reason: 'daily' }, today, 'CHOPPY'), 'daily');
+  assert.strictEqual(c.macroGroqAskReason({ tradingDate: today, patternCondition: 'CHOPPY', failed: true, reason: 'pattern_changed' }, today, 'CHOPPY'), 'pattern_changed');
+  assert.strictEqual(c.macroGroqAskReason({ tradingDate: today, patternCondition: 'CHOPPY', failed: true }, today, 'CHOPPY'), 'daily', 'state saved before the change has no reason');
+  assert.strictEqual(c.macroGroqAskReason({ tradingDate: today, patternCondition: 'CHOPPY', failed: true, reason: 'junk' }, today, 'CHOPPY'), 'daily', 'a malformed stored reason is never written');
+  assert.strictEqual(c.macroGroqAskReason({ tradingDate: today, patternCondition: 'CHOPPY', failed: false, reason: 'daily' }, today, 'CHOPPY'), null, 'an answer is carried');
+  assert.strictEqual(c.macroGroqAskReason({ tradingDate: '2026-11-02', patternCondition: 'CHOPPY', failed: true }, today, 'CHOPPY'), 'daily', 'yesterday\'s failure: today\'s daily ask');
+});
+
+run('observeMacro: a failed ask, then the next scan asks again and labels the day (first answer given the moves)', async () => {
+  const h = observed({ moves: FLAT, groqOk: false });
+  const first = await h.c.observeMacro();
+  assert.strictEqual(first.groqFailed, true);
+  assert.strictEqual(h.c.state.macroGroqLast.failed, true);
+  assert.strictEqual(h.c.state.macroGroqLast.reason, 'daily', 'the reason is kept with the failed ask');
+  // the network recovers: the same phone, the same day, the same pattern
+  h.c.fetch = async (url, opts) => { h.calls.groqBodies.push(JSON.parse(opts.body)); return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'GEOPOLITICAL — oil up on tensions' } }] }) }; };
+  const second = await h.c.observeMacro();
+  assert.strictEqual(h.calls.groqBodies.length, 2, 'asked again, not carried');
+  const row = h.c.inserted[1].row;
+  assert.ok(row.groq_asked && row.groq_ask_reason === 'daily' && row.groq_failed === false && row.groq_condition === 'GEOPOLITICAL', JSON.stringify(row));
+  assert.strictEqual(second.path, 'groq');
+  // and the day's label, by the sign-test's own rule, is the retry's answer: the failed row labels nothing
+  const { firstLabel } = await import('../scripts/lib/macro-sign-test.mjs');
+  assert.strictEqual(h.c.inserted[0].row.groq_condition, null, 'the failed row names no condition');
+  const label = firstLabel(h.c.inserted.map(x => x.row));
+  assert.ok(label && label.condition === 'GEOPOLITICAL' && label.at === row.fetched_at, JSON.stringify(label));
+  // a third scan, answered: carried, not asked
+  await h.c.observeMacro();
+  assert.strictEqual(h.calls.groqBodies.length, 2, 'once answered, carried');
+  assert.strictEqual(h.c.inserted[2].row.groq_asked, false);
+});
+
 // observeMacro end to end, with every external call faked and recorded.
 function observed({ moves, groqReply = 'GEOPOLITICAL — oil up on tensions', groqOk = true, last = null, insertError = null, staleBars = false }) {
   const c = ctx();

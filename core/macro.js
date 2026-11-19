@@ -129,8 +129,18 @@ function decideMacroPath({ patternCondition, ambiguous, groqCondition }) {
 // UNCONDITIONALLY, so the disagreement record isn't conditioned on
 // ambiguity, plus again whenever the pattern answer changes intraday.
 // Otherwise the day's last answer is carried (groq_asked false).
+// A FAILED ASK IS NOT AN ANSWER (2026-11-19, the reviewer). It was carried like one: once the day's ask failed (a 503,
+// a timeout, a reply naming no condition), the same pattern returned null here and Groq was never asked again that day,
+// so one failed morning ask spent the whole day's label with nothing on the phone to say so. Now a failed ask counts
+// as not asked: the next observation asks again, for the reason the failed one was asked (last.reason; state saved
+// before this change has none, and anything but 'pattern_changed' is the day's ask, 'daily'). This changes COVERAGE (which days can be labelled),
+// not the treatment: the reading is observe-only, a retry's answer is the day's first answer given the moves, and a
+// later answer has a later label time, so FEWER signals qualify for that day, never more. No re-registration.
 function macroGroqAskReason(last, tradingDate, patternCondition) {
   if (!last || last.tradingDate !== tradingDate) return 'daily';
+  // literals only (tests/enumerated-values: a value copied from stored state is not enumerable, and a malformed one
+  // would reach the database as a refusal): 'pattern_changed' when that is what failed, else the day's ask
+  if (last.failed) return last.reason === 'pattern_changed' ? 'pattern_changed' : 'daily';
   if (last.patternCondition !== patternCondition) return 'pattern_changed';
   return null;
 }

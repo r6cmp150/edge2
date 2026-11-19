@@ -1643,7 +1643,8 @@ async function observeMacro() {
   const reason = macroGroqAskReason(state.macroGroqLast, tradingDate, patternCondition);
   const asked = reason ? await askMacroGroq(changes) : null;
   if (asked) {
-    state.macroGroqLast = { tradingDate, patternCondition, condition: asked.groq_condition, failed: asked.groq_failed, error: asked.groq_error, explanation: asked.explanation, askedAt: fetchedAt.toISOString() };
+    // reason: kept so a failed ask is retried for the reason it was asked (core/macro.js macroGroqAskReason, 2026-11-19)
+    state.macroGroqLast = { tradingDate, patternCondition, condition: asked.groq_condition, failed: asked.groq_failed, error: asked.groq_error, explanation: asked.explanation, askedAt: fetchedAt.toISOString(), reason };
     persist('macroGroqLast');
   }
   const last = state.macroGroqLast || {};
