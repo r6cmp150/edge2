@@ -184,6 +184,21 @@ Example: "GEOPOLITICAL — Oil prices spiking on Middle East tensions driving
 energy up while broad market sells off."`;
 }
 
+// THE REQUEST AND THE PARSE, ONE DEFINITION EACH (2026-11-19, the reviewer: "so the test and the app send and parse
+// identically"). Moved out of askMacroGroq unchanged; scripts/macro-capability-test.mjs sends and reads through these.
+const MACRO_GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const MACRO_GROQ_MAX_TOKENS = 2000;
+function macroGroqRequestBody(prompt) {
+  return { model: GROQ_MODEL, messages: [{ role: 'user', content: prompt }], temperature: MACRO_GROQ_TEMPERATURE, max_tokens: MACRO_GROQ_MAX_TOKENS };
+}
+// { condition, explanation } when the reply names one of the conditions; null when it does not.
+function parseMacroGroqReply(raw) {
+  const text = String(raw ?? '').trim().replace(/^["']|["']$/g, '');
+  const re = new RegExp(`^\\**\\s*(${MACRO_CONDITIONS.join('|')})\\**\\s*[—-]+\\s*(.*)$`, 's');
+  const match = text.match(re);
+  return match ? { condition: match[1], explanation: match[2].trim() } : null;
+}
+
 // One Groq ask, with everything it was given and everything it said. Never
 // throws: a failure is a recorded result (groq_failed, groq_error), since
 // pattern_groq_failed is a value the record has to be able to count.
@@ -197,21 +212,19 @@ async function askMacroGroq(changes) {
     out.groq_request = request;
     out.groq_headlines = headlines.map(h => ({ id: h.id ?? null, created_at: h.created_at ?? null, source: h.source ?? null, headline: h.headline ?? '' }));
     out.groq_headlines_empty = headlines.length === 0;
-    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const r = await fetch(MACRO_GROQ_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify({ model: GROQ_MODEL, messages: [{ role: 'user', content: buildMacroGroqPrompt(changes, headlines) }], temperature: MACRO_GROQ_TEMPERATURE, max_tokens: 2000 }),
+      body: JSON.stringify(macroGroqRequestBody(buildMacroGroqPrompt(changes, headlines))),
     });
     if (!r.ok) throw new Error(`Groq ${r.status}`);
     const data = await r.json();
     const raw = data.choices?.[0]?.message?.content ?? '';
     out.groq_raw_reply = raw;
-    const text = raw.trim().replace(/^["']|["']$/g, '');
-    const re = new RegExp(`^\\**\\s*(${MACRO_CONDITIONS.join('|')})\\**\\s*[—-]+\\s*(.*)$`, 's');
-    const match = text.match(re);
-    if (!match) { out.groq_error = 'the reply did not name one of the conditions'; return out; }
-    out.groq_condition = match[1];
-    out.explanation = match[2].trim();
+    const parsed = parseMacroGroqReply(raw);
+    if (!parsed) { out.groq_error = 'the reply did not name one of the conditions'; return out; }
+    out.groq_condition = parsed.condition;
+    out.explanation = parsed.explanation;
     out.groq_failed = false;
     return out;
   } catch (e) {

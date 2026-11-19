@@ -61,10 +61,12 @@ function ctx(over = {}) {
     columnValidatorsSrc(),
     grabConst('GROQ_MODEL'), grabConst('MACRO_ETFS'), grabConst('MACRO_OVERLAY_PINNED_OFF'), grabConst('MACRO_OVERLAY_SOURCE'), grabConst('MACRO_CONDITIONS'),
     grabConst('MACRO_REQUIRED_ETFS'), grabConst('MACRO_GROQ_TEMPERATURE'), grabConst('MACRO_HEADLINE_HOURS'), grabConst('MACRO_HEADLINE_LIMIT'), grabConst('fmtMove'),
+    // CHANGED 2026-11-19, declared: askMacroGroq's request body and reply parse moved into their own definitions
+    grabConst('MACRO_GROQ_URL'), grabConst('MACRO_GROQ_MAX_TOKENS'),
     grabConst('BASE_SCORE_THRESHOLD'), grabConst('ELEVATED_SCORE_THRESHOLD'), grabConst('SECTOR_WEAKNESS_THRESHOLD_CATEGORIES'), grabConst('BROAD_ELEVATED_CONDITIONS'),
     grabConst('MACRO_INTERPRETATIONS'),
     ...['classifyMacroCondition', 'getDisplayThreshold', 'wouldBeDisplayThreshold', 'macroMovesFromSnapshots', 'macroBarState', 'decideMacroPath', 'macroGroqAskReason',
-      'fetchMacroHeadlines', 'buildMacroGroqPrompt', 'askMacroGroq', 'macroWouldAdjust', 'observeMacro', 'macroBannerAge', 'buildMacroBanner'].map(grab),
+      'fetchMacroHeadlines', 'buildMacroGroqPrompt', 'macroGroqRequestBody', 'parseMacroGroqReply', 'askMacroGroq', 'macroWouldAdjust', 'observeMacro', 'macroBannerAge', 'buildMacroBanner'].map(grab),
     ';Object.assign(globalThis, { classifyMacroCondition, getDisplayThreshold, wouldBeDisplayThreshold, macroMovesFromSnapshots, macroBarState, decideMacroPath, macroGroqAskReason, observeMacro, buildMacroBanner, MACRO_OVERLAY_PINNED_OFF, MACRO_CONDITIONS, BASE_SCORE_THRESHOLD });',
   ].join('\n'), c);
   return c;
