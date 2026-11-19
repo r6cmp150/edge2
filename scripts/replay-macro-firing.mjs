@@ -37,8 +37,8 @@ const TIMES = ['06:00', '07:00', '07:30', '09:00', '11:00'];
 const ETFS = ['SPY', 'XLE', 'XLK', 'XBI', 'XLF', 'XLI', 'XLRE', 'XLY'];
 const REQUIRED = ['SPY', 'XLE', 'XLK', 'XBI', 'XLF'];
 
-// The app's classifier, verbatim.
-const app = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+// The app's classifier, verbatim (core/macro.js since 2026-11-19, moved there verbatim from app.js).
+const app = fs.readFileSync(path.join(ROOT, 'core/macro.js'), 'utf8');
 const i = app.search(/^function classifyMacroCondition\(/m);
 const c = {};
 vm.createContext(c);

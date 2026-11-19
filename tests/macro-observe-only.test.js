@@ -27,12 +27,17 @@ const vm = require('vm');
 const { readSource, run, columnValidatorsSrc } = require('./_lib');
 
 const app = readSource('app.js');
-const grab = name => { const i = app.search(new RegExp(`^(async )?function ${name}\\(`, 'm')); assert.ok(i >= 0, name); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
+// CHANGED 2026-11-19, declared: the macro observation's helpers and constants moved verbatim to core/macro.js (shared
+// with the scheduled logger), so a name is looked up in app.js and then there. Each name is found in exactly one.
+const macro = readSource('core/macro.js');
+const sourceOf = re => { const inApp = app.search(re) >= 0, inMacro = macro.search(re) >= 0; assert.ok(inApp !== inMacro, `${re}: in exactly one of app.js and core/macro.js`); return inApp ? app : macro; };
+const grab = name => { const re = new RegExp(`^(async )?function ${name}\\(`, 'm'), s = sourceOf(re); const i = s.search(re); return s.slice(i, s.indexOf('\n}\n', i) + 3); };
 const grabConst = name => {
-  const i = app.search(new RegExp(`^const ${name} = `, 'm')); assert.ok(i >= 0, name);
-  const lineEnd = app.indexOf('\n', i);
-  const first = app.slice(i, lineEnd);
-  if (/[[{]\s*$/.test(first)) { const close = app.slice(lineEnd).search(/\n[\]}];/); return app.slice(i, lineEnd + close + 3); }
+  const re = new RegExp(`^const ${name} = `, 'm'), s = sourceOf(re);
+  const i = s.search(re);
+  const lineEnd = s.indexOf('\n', i);
+  const first = s.slice(i, lineEnd);
+  if (/[[{]\s*$/.test(first)) { const close = s.slice(lineEnd).search(/\n[\]}];/); return s.slice(i, lineEnd + close + 3); }
   return first;
 };
 

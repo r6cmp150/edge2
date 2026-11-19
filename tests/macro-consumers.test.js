@@ -26,13 +26,15 @@ const { readSource, run, REPO_ROOT } = require('./_lib');
 
 const ID = /\b(macroContext|macroCondition|macro_condition|macroConditionAtBuy|macro_condition_at_buy|macroChanges|getMacroAdjustment|MACRO_ADJUSTMENTS|wouldBeDisplayThreshold|BROAD_ELEVATED_CONDITIONS|MACRO_TAILWIND_CONDITIONS|SECTOR_WEAKNESS_THRESHOLD_CATEGORIES|SECTOR_WEAKNESS_DISPLAY_NAME|macroAdjustment|macroPath|macro_path|macroPathAtBuy|macro_path_at_buy|MACRO_INTERPRETATIONS|macroObservationId|macro_observation_id|macro_observations|macroGroqLast|observeMacro|classifyMacroCondition)\b/;
 
+// CHANGED 2026-11-19, declared: MACRO_REQUIRED_ETFS, classifyMacroCondition and macroWouldAdjust moved verbatim to
+// core/macro.js (shared with the scheduled logger); their classifications move with them, unchanged.
 const REGISTRY = {
   'app.js|state':                           ['OBSERVE', 'state.macroContext starts null (no reading yet)'],
   'app.js|loadState':                       ['RECORD', 'macroGroqLast (the day\'s last Groq answer) persisted across reloads'],
-  'app.js|MACRO_REQUIRED_ETFS':             ['DEFINITION', 'the ETFs classifyMacroCondition needs'],
+  'core/macro.js|MACRO_REQUIRED_ETFS':      ['DEFINITION', 'the ETFs classifyMacroCondition needs'],
   'app.js|MACRO_INTERPRETATIONS':           ['DEFINITION', 'plain-language text per condition, read by the banner'],
-  'app.js|classifyMacroCondition':          ['OBSERVE', 'the deterministic pattern rule'],
-  'app.js|macroWouldAdjust':                ['COUNTERFACTUAL', 'per-category score and cut that WOULD have applied; stored in macro_observations.would_adjust, applied CHECKed false'],
+  'core/macro.js|classifyMacroCondition':   ['OBSERVE', 'the deterministic pattern rule'],
+  'core/macro.js|macroWouldAdjust':         ['COUNTERFACTUAL', 'per-category score and cut that WOULD have applied; stored in macro_observations.would_adjust, applied CHECKed false'],
   'app.js|observeMacro':                    ['OBSERVE', 'one observation per scan: moves, both answers, path, cut, counterfactual; writes macro_observations'],
   'app.js|SECTOR_WEAKNESS_THRESHOLD_CATEGORIES': ['DEFINITION', 'the old raise rule, read only by wouldBeDisplayThreshold'],
   'app.js|BROAD_ELEVATED_CONDITIONS':       ['DEFINITION', 'the old raise rule, read by wouldBeDisplayThreshold and the pinned exit branch'],

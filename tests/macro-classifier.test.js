@@ -11,7 +11,8 @@ const assert = require('assert');
 const vm = require('vm');
 const { readSource, run } = require('./_lib');
 
-const app = readSource('app.js');
+// CHANGED 2026-11-19, declared: classifyMacroCondition moved verbatim to core/macro.js (shared with the scheduled logger)
+const app = readSource('core/macro.js');
 const i = app.search(/^function classifyMacroCondition\(/m);
 const src = app.slice(i, app.indexOf('\n}\n', i) + 3);
 const c = {};
