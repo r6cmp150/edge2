@@ -66,7 +66,7 @@ function ctx(over = {}) {
     grabConst('BASE_SCORE_THRESHOLD'), grabConst('ELEVATED_SCORE_THRESHOLD'), grabConst('SECTOR_WEAKNESS_THRESHOLD_CATEGORIES'), grabConst('BROAD_ELEVATED_CONDITIONS'),
     grabConst('MACRO_INTERPRETATIONS'),
     ...['classifyMacroCondition', 'getDisplayThreshold', 'wouldBeDisplayThreshold', 'macroMovesFromSnapshots', 'macroBarState', 'decideMacroPath', 'macroGroqAskReason',
-      'fetchMacroHeadlines', 'buildMacroGroqPrompt', 'macroGroqRequestBody', 'readMacroGroqReply', 'parseMacroGroqReply', 'askMacroGroq', 'macroWouldAdjust', 'observeMacro', 'macroBannerAge', 'buildMacroBanner'].map(grab),
+      'fetchMacroHeadlines', 'macroNewsState', 'buildMacroGroqPrompt', 'macroGroqRequestBody', 'readMacroGroqReply', 'parseMacroGroqReply', 'askMacroGroq', 'macroWouldAdjust', 'observeMacro', 'macroBannerAge', 'buildMacroBanner'].map(grab),
     ';Object.assign(globalThis, { classifyMacroCondition, getDisplayThreshold, wouldBeDisplayThreshold, macroMovesFromSnapshots, macroBarState, decideMacroPath, macroGroqAskReason, observeMacro, buildMacroBanner, MACRO_OVERLAY_PINNED_OFF, MACRO_CONDITIONS, BASE_SCORE_THRESHOLD });',
   ].join('\n'), c);
   return c;

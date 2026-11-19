@@ -2889,7 +2889,7 @@ function buildPreMarketDetailPanel(m) {
     </div>
     <div class="premarket-detail-row">
       <span class="premarket-detail-label">News</span>
-      <span>${state.newsUnavailable ? 'News unavailable' : headline ? `"${headline}"` : state.newsTruncatedSymbols.includes(m.ticker) ? 'News check incomplete' : 'No recent news'}</span>
+      <span>${state.newsUnavailable ? 'News unavailable' : headline ? `"${headline}"` : (state.newsFailedSymbols || []).includes(m.ticker) ? NEWS_NOT_RETRIEVED_TEXT : state.newsTruncatedSymbols.includes(m.ticker) ? 'News check incomplete' : 'No recent news'}</span>
     </div>
     <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="event.stopPropagation();analyzePreMarketMover('${m.ticker}')">📊 Analyze with Groq</button>
     <div id="premarket-groq-${m.ticker}" class="premarket-groq-result"></div>
@@ -3329,8 +3329,14 @@ function getNewsSentiment(hasNeg, createdAt) {
   return ageH < 12 ? 'POSITIVE' : 'NEUTRAL';
 }
 
+// A ticker whose news batch failed is NOT "no recent news" (2026-11-19, the reviewer: the screen says why). Shown on the
+// card, the modal and the pre-market row; EDGE's score counted it as no catalyst, so the text says that too.
+const NEWS_NOT_RETRIEVED_TEXT = 'News not retrieved (scored without it)';
 function buildCardNewsSnippet(s) {
   if (state.newsUnavailable) return `<div class="sc-news"><span class="sc-news-nonews">News unavailable</span></div>`;
+  // 2026-11-19: this ticker's own news batch failed (core/news.js newsFailedSymbols). It used to read "No recent news",
+  // which is false; the score counted it as no catalyst (scoring's hashed source does not move), so the card says so.
+  if (!s.news && (state.newsFailedSymbols || []).includes(s.ticker)) return `<div class="sc-news"><span class="sc-news-nonews">${NEWS_NOT_RETRIEVED_TEXT}</span></div>`;
   if (!s.news && state.newsTruncatedSymbols.includes(s.ticker)) return `<div class="sc-news"><span class="sc-news-nonews">News check incomplete</span></div>`;
   if (!s.news) return `<div class="sc-news"><span class="sc-news-nonews">No recent news</span></div>`;
   const ageH = (Date.now() - new Date(s.news.created_at).getTime()) / 3600000;
@@ -3606,7 +3612,7 @@ function buildModalNewsSection(ticker) {
     .filter(n => (n.symbols || []).includes(ticker))
     .slice(0, 3);
   if (!items.length) {
-    const msg = state.newsTruncatedSymbols.includes(ticker) ? 'News check incomplete' : 'No recent news';
+    const msg = (state.newsFailedSymbols || []).includes(ticker) ? NEWS_NOT_RETRIEVED_TEXT : state.newsTruncatedSymbols.includes(ticker) ? 'News check incomplete' : 'No recent news';
     return `<div class="section-label">Recent News</div><div class="card-no-news" style="padding:4px 0 8px">${msg}</div>`;
   }
   const rowsHtml = items.map(n => {

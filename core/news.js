@@ -83,7 +83,14 @@ async function fetchNewsForTickers(tickers) {
         const params = { symbols: batch.join(','), start, limit: 50, sort: 'desc' };
         if (pageToken) params.page_token = pageToken;
         const data = await alpacaGet('/news', params, ALPACA_NEWS_BASE);
-        const items = data.news || [];
+        // A MISSING news ARRAY IS NOT "NO NEWS" (2026-11-19, the reviewer). `data.news || []` turned a response without
+        // the array (a changed shape, an error body sent with a 200) into a confirmed zero. Now it throws into this
+        // batch's own catch: its symbols are newsFailedSymbols (NOT RETRIEVED). DECLARED AS TOUCHING THE GATE: on Warrior
+        // that is Pillar 4 'fetch-failed' (engines/warrior/gate.js), which blocks qualification and says why; on EDGE the
+        // card, modal and pre-market row say "News not retrieved (scored without it)" (scoring's hashed source does not
+        // move). An explicit empty array is still a real zero: the 11-17 SPY/QQQ answer was one.
+        if (!data || !Array.isArray(data.news)) throw new Error(`the news response has no news array (keys: ${data && typeof data === 'object' ? Object.keys(data).join(', ') || 'none' : typeof data}): not retrieved`);
+        const items = data.news;
         allNews.push(...items);
         items.forEach(n => (n.symbols || []).forEach(sym => seenInBatch.add(sym)));
         pageToken = data.next_page_token || null;

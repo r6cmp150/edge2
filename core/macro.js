@@ -6,7 +6,8 @@
 // Call-time globals it reads (each counted in this file's code, 2026-11-19): scanFreshness, ptDateTimeOf and
 // classifySession (core/clock.js); fetchNewsForTickers, state.newsLastRequest and state.newsUnavailable (core/news.js);
 // getMacroAdjustment and MACRO_ADJUSTMENTS (core/edge-scoring.js); wouldBeDisplayThreshold and GROQ_MODEL (app.js);
-// state.settings.groqKey and fetch (askMacroGroq, to Groq).
+// state.settings.groqKey and fetch (askMacroGroq, to Groq); alpacaGet (core/api-client.js) and ALPACA_NEWS_BASE (core/news.js),
+// in macroNewsState's control.
 
 // VIX excluded — it's a CBOE index, not an equity, and is not obtainable through
 // Alpaca's /stocks endpoints on any tier. See Macro Market Overlay addendum.
@@ -156,7 +157,30 @@ async function fetchMacroHeadlines() {
     filter_hours: MACRO_HEADLINE_HOURS, limit: MACRO_HEADLINE_LIMIT, returned: news.length,
     news_unavailable: !!state.newsUnavailable,
   });
-  return { headlines, request };
+  // COMPUTED, NOT STORED AND NOT GIVEN TO GROQ (2026-11-19, the reviewer: option two). Neither the request record nor
+  // the prompt changes: a change to what Groq reads is a change of treatment, and the instrument changes once, as one
+  // declared revision, never in instalments. Storing it waits for db/047, approved in form and held in timing.
+  const newsState = await macroNewsState(news);
+  return { headlines, request, newsState };
+}
+// THREE STATES FOR THE SOURCE'S ANSWER, NOT TWO (2026-11-19, the reviewer). "None for SPY/QQQ" was reported the same
+// whether the source answered empty or could not be reached; on 11-17 the provider untagged SPY/QQQ and the record said
+// "no recent headlines" for days while the feed was live (scripts/diagnose-news-source.mjs).
+//   retrieved           the SPY/QQQ request returned items
+//   zero_source_alive   it returned none, and one unfiltered item in the same window came back: the source is live
+//   not_retrieved       the request failed; or the control could not say whether the source is alive (it failed,
+//                       answered without a news array, or returned nothing either)
+// The control runs only on a zero, which today is every ask: one request of limit 1 per macro ask, against Alpaca's
+// news rate limit (response headers read 2026-11-19: x-ratelimit-limit 200, a rolling window).
+async function macroNewsState(news) {
+  if (state.newsUnavailable || (state.newsFailedSymbols || []).length) return { state: 'not_retrieved', why: 'the SPY/QQQ news request failed' };
+  if (news.length) return { state: 'retrieved', why: null };
+  let probe;
+  try { probe = await alpacaGet('/news', { start: (state.newsLastRequest || {}).start, limit: 1, sort: 'desc' }, ALPACA_NEWS_BASE); }
+  catch (e) { return { state: 'not_retrieved', why: `none for SPY/QQQ, and the control request failed (${String(e?.message || e).slice(0, 120)}): whether the source is alive is not known` }; }
+  if (!probe || !Array.isArray(probe.news)) return { state: 'not_retrieved', why: 'none for SPY/QQQ, and the control answered without a news array: whether the source is alive is not known' };
+  if (!probe.news.length) return { state: 'not_retrieved', why: 'none for SPY/QQQ, and the unfiltered feed returned nothing in the same window either' };
+  return { state: 'zero_source_alive', why: 'the source answered and had none for SPY/QQQ; the unfiltered feed is live' };
 }
 
 const fmtMove = v => (v == null ? 'not available' : `${v.toFixed(2)}%`);
