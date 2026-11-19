@@ -17,6 +17,7 @@ const { run, REPO_ROOT } = require('./_lib');
 const KILLED_BY_OWN_TIMER = {
   'scripts/lib/mutants.cjs': "setTimeout(() => { timedOutNow = true; child.kill('SIGKILL'); }, timeoutMs);",
   'tests/mutants-harness.test.js': 'child.kill(', // its cases kill the harness process themselves; that is what they test
+  'tests/mutants-wip.test.js': "const killer = setTimeout(() => child.kill('SIGKILL'), 240000);", // 2026-11-19, and its cases kill the run themselves
 };
 
 function nodeSpawns(root = REPO_ROOT) {

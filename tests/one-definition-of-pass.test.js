@@ -48,6 +48,7 @@ const RUNNERS = {
 const NOT_JUDGING = {
   'tests/check-push.test.js': 'hands fixture test files to the runner and reads the runner\'s exit and output',
   'tests/mutants-harness.test.js': 'hands fixture test files to the harness and reads its report',
+  'tests/mutants-wip.test.js': 'hands fixture test files to scripts/mutants-wip.mjs (the harness, in a clone) and reads its report',
   'tests/paged-reads-ordered.test.js': 'hands fixture test files to the harness and reads its report',
   'tests/run-tests-checker.test.js': 'hands fixture test files to the runner and reads its verdicts',
   'tests/spawn-timeouts.test.js': 'reads sources for spawn calls; runs no test file',

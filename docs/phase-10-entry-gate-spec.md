@@ -3087,7 +3087,10 @@ to prevent the thing it describes: written in the morning and broken by the afte
 while doing careful work. Where a mechanism exists (the committed harness refuses a dirty tree and guarantees the
 restore), the rule's only job is to make people use it, and rules are bad at that. The durable fix is that the safe
 path is the easy one: make `mutants.cjs` quicker to reach for than a throwaway, rather than writing this rule a sixth
-time.
+time. **The mechanism (2026-11-19):** `scripts/mutants-wip.mjs` mutation-checks work in progress in a clone of HEAD
+with the working changes applied, and never writes to the real tree at all: by construction, not by care, so an
+interrupted run, a killed process or a mistaken mutant cannot reach the repository (`tests/mutants-wip.test.js`, which
+holds the real tree byte-identical after a run, a kill and an interrupt, each mid-mutant).
 
 **A COMMENT STATES WHAT THE CODE DOES, ESTABLISHED THE SAME WAY ANY OTHER CLAIM IS (2026-11-19, the reviewer's rule).** A
 comment is an assertion with no test behind it, and it outlives the code it describes. The instance: the comment at

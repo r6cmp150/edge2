@@ -94,7 +94,8 @@ await run('every test file reports through the harness, so none is outside this'
   // These hold the words in fixtures they hand to the runner.
   // CHANGED 2026-11-18, declared: the mutation harness judges by the runner's verdict, so its fixtures report like
   // real tests, and the two files that build them now hold the words too.
-  const fixtures = ['global-state-leaks.test.js', 'run-tests-checker.test.js', 'tree-record.test.js', 'check-push.test.js', 'mutants-harness.test.js', 'paged-reads-ordered.test.js'];
+  const fixtures = ['global-state-leaks.test.js', 'run-tests-checker.test.js', 'tree-record.test.js', 'check-push.test.js', 'mutants-harness.test.js', 'paged-reads-ordered.test.js',
+    'mutants-wip.test.js']; // 2026-11-19, declared: its fixture repos hold test files that report like real ones
   const bare = fs.readdirSync(dir).filter(f => f.endsWith('.test.js') && !fixtures.includes(f)).filter(f => !/require\('\.\/_lib'\)/.test(fs.readFileSync(path.join(dir, f), 'utf8')) || /console\.(log|error)\(`?['"\\n]*(PASS|FAIL): /.test(fs.readFileSync(path.join(dir, f), 'utf8')));
   assert.deepStrictEqual(bare, []);
 });
