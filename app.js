@@ -2889,7 +2889,7 @@ function buildPreMarketDetailPanel(m) {
     </div>
     <div class="premarket-detail-row">
       <span class="premarket-detail-label">News</span>
-      <span>${state.newsUnavailable ? 'News unavailable' : headline ? `"${headline}"` : (state.newsFailedSymbols || []).includes(m.ticker) ? NEWS_NOT_RETRIEVED_TEXT : state.newsTruncatedSymbols.includes(m.ticker) ? 'News check incomplete' : 'No recent news'}</span>
+      <span>${state.newsUnavailable ? 'News unavailable' : headline ? `"${headline}"` : (state.newsFailedSymbols || []).includes(m.ticker) ? NEWS_NOT_RETRIEVED_TEXT : state.newsTruncatedSymbols.includes(m.ticker) ? NEWS_INCOMPLETE_TEXT : 'No recent news'}</span>
     </div>
     <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="event.stopPropagation();analyzePreMarketMover('${m.ticker}')">📊 Analyze with Groq</button>
     <div id="premarket-groq-${m.ticker}" class="premarket-groq-result"></div>
@@ -3329,15 +3329,22 @@ function getNewsSentiment(hasNeg, createdAt) {
   return ageH < 12 ? 'POSITIVE' : 'NEUTRAL';
 }
 
-// A ticker whose news batch failed is NOT "no recent news" (2026-11-19, the reviewer: the screen says why). Shown on the
-// card, the modal and the pre-market row; EDGE's score counted it as no catalyst, so the text says that too.
-const NEWS_NOT_RETRIEVED_TEXT = 'News not retrieved (scored without it)';
+// FOUR NEWS STATES ON SCREEN (2026-11-19, the reviewer): retrieved (the headline), NOT RETRIEVED (this ticker's batch
+// failed), INCOMPLETE (its batch hit the page cap before the window ran out, so it may have news that was never
+// fetched), and genuinely none ("No recent news"). CORRECTED the same day: the first text said "scored without it",
+// which was false: EDGE's score has no news term (core/edge-scoring.js: news feeds only risk). News adds +2 to risk
+// for a negative headline under 24 h old (calcRiskScore, capped at 10), so when it was not fetched the risk shown is
+// correct or LOWER than it should be, never higher: the error has a direction, and the text says it. Not "by 2": with
+// the cap the gap is 0, 1 or 2, so "by 2" would be false on the capped cases. Both unfetched states say the same,
+// because they have the same consequence.
+const NEWS_NOT_RETRIEVED_TEXT = 'News not retrieved (risk may be understated)';
+const NEWS_INCOMPLETE_TEXT = 'News check incomplete (risk may be understated)';
 function buildCardNewsSnippet(s) {
   if (state.newsUnavailable) return `<div class="sc-news"><span class="sc-news-nonews">News unavailable</span></div>`;
   // 2026-11-19: this ticker's own news batch failed (core/news.js newsFailedSymbols). It used to read "No recent news",
-  // which is false; the score counted it as no catalyst (scoring's hashed source does not move), so the card says so.
+  // which is false. See NEWS_NOT_RETRIEVED_TEXT for what it means for risk.
   if (!s.news && (state.newsFailedSymbols || []).includes(s.ticker)) return `<div class="sc-news"><span class="sc-news-nonews">${NEWS_NOT_RETRIEVED_TEXT}</span></div>`;
-  if (!s.news && state.newsTruncatedSymbols.includes(s.ticker)) return `<div class="sc-news"><span class="sc-news-nonews">News check incomplete</span></div>`;
+  if (!s.news && state.newsTruncatedSymbols.includes(s.ticker)) return `<div class="sc-news"><span class="sc-news-nonews">${NEWS_INCOMPLETE_TEXT}</span></div>`;
   if (!s.news) return `<div class="sc-news"><span class="sc-news-nonews">No recent news</span></div>`;
   const ageH = (Date.now() - new Date(s.news.created_at).getTime()) / 3600000;
   // Matches core/news.js's actual fetch window for this scan (state.newsLookbackHours),
@@ -3612,7 +3619,7 @@ function buildModalNewsSection(ticker) {
     .filter(n => (n.symbols || []).includes(ticker))
     .slice(0, 3);
   if (!items.length) {
-    const msg = (state.newsFailedSymbols || []).includes(ticker) ? NEWS_NOT_RETRIEVED_TEXT : state.newsTruncatedSymbols.includes(ticker) ? 'News check incomplete' : 'No recent news';
+    const msg = (state.newsFailedSymbols || []).includes(ticker) ? NEWS_NOT_RETRIEVED_TEXT : state.newsTruncatedSymbols.includes(ticker) ? NEWS_INCOMPLETE_TEXT : 'No recent news';
     return `<div class="section-label">Recent News</div><div class="card-no-news" style="padding:4px 0 8px">${msg}</div>`;
   }
   const rowsHtml = items.map(n => {

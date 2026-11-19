@@ -79,15 +79,23 @@ await run('a ticker whose news was not retrieved says so on the EDGE card, the m
   const grab = n => { const i = app.search(new RegExp(`^function ${n}\\(`, 'm')); assert.ok(i >= 0, n); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
   const c = { state: { newsUnavailable: false, newsTruncatedSymbols: ['TRNC'], newsFailedSymbols: ['FAIL'], news: [] }, Date };
   vm.createContext(c);
-  vm.runInContext(app.match(/^const NEWS_NOT_RETRIEVED_TEXT = [^\n]*/m)[0] + '\n' + grab('buildCardNewsSnippet') + grab('buildModalNewsSection') + ';globalThis.T = NEWS_NOT_RETRIEVED_TEXT;', c);
-  assert.strictEqual(c.T, 'News not retrieved (scored without it)');
+  vm.runInContext(app.match(/^const NEWS_NOT_RETRIEVED_TEXT = [^\n]*/m)[0] + '\n' + app.match(/^const NEWS_INCOMPLETE_TEXT = [^\n]*/m)[0] + '\n'
+    + grab('buildCardNewsSnippet') + grab('buildModalNewsSection') + ';globalThis.T = NEWS_NOT_RETRIEVED_TEXT; globalThis.I = NEWS_INCOMPLETE_TEXT;', c);
+  // CHANGED 2026-11-19, declared: the first text said "scored without it", which was false (EDGE's score has no news
+  // term; news feeds only risk, +2 for a recent negative headline, capped at 10). Both unfetched states now say the
+  // direction of the error, the same for both, and neither may claim anything about the score.
+  assert.strictEqual(c.T, 'News not retrieved (risk may be understated)');
+  assert.strictEqual(c.I, 'News check incomplete (risk may be understated)');
+  for (const t of [c.T, c.I]) assert.ok(/\(risk may be understated\)$/.test(t) && !/scor/i.test(t), t);
   assert.ok(c.buildCardNewsSnippet({ ticker: 'FAIL', news: null }).includes(c.T));
   assert.ok(c.buildModalNewsSection('FAIL').includes(c.T));
-  // the other states are unchanged
-  assert.ok(c.buildCardNewsSnippet({ ticker: 'TRNC', news: null }).includes('News check incomplete'));
+  assert.ok(c.buildCardNewsSnippet({ ticker: 'TRNC', news: null }).includes(c.I), 'incomplete states the same consequence');
+  assert.ok(c.buildModalNewsSection('TRNC').includes(c.I));
+  // genuinely none is unchanged
   assert.ok(c.buildCardNewsSnippet({ ticker: 'NONE', news: null }).includes('No recent news'));
   assert.ok(c.buildModalNewsSection('NONE').includes('No recent news'));
-  assert.ok(/\(state\.newsFailedSymbols \|\| \[\]\)\.includes\(m\.ticker\) \? NEWS_NOT_RETRIEVED_TEXT : state\.newsTruncatedSymbols/.test(app), 'the pre-market row too');
+  assert.ok(/\(state\.newsFailedSymbols \|\| \[\]\)\.includes\(m\.ticker\) \? NEWS_NOT_RETRIEVED_TEXT : state\.newsTruncatedSymbols\.includes\(m\.ticker\) \? NEWS_INCOMPLETE_TEXT/.test(app), 'the pre-market row too');
+  assert.ok(!/'News check incomplete'|>News check incomplete</.test(app), 'no literal copy of the incomplete text left behind');
 });
 
 })();
