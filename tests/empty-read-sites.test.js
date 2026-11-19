@@ -87,6 +87,10 @@ const REGISTRY = {
     { verdict: OK, empty: 'the CONTROL: trades_v2 is never empty; a total of 0 = cannot tell', denied: 'exit 1, "could not read", red' }],
   // 2026-11-12, landing (c). One paged reader, two tables (rating_snapshots, macro_observations); held by
   // tests/macro-observation-count.test.js in every state, the denied read included.
+  // 2026-11-19: the capability test reads the stored asks (Groq asked and answered). Empty or denied, the declared
+  // headline set (11-16 08:24:52 PT, 5a024fcb) is not found and every arm refuses before sending: INCOMPLETE, exit 1.
+  'scripts/macro-capability-test.mjs|macro_observations': [
+    { verdict: OK, empty: 'the declared headline row is not found: INCOMPLETE 0, nothing sent, exit 1', denied: 'the same: an empty answer cannot become an empty plan reported COMPLETE' }],
   'scripts/count-macro-observations.mjs|${table}': [
     { verdict: OK, empty: 'rating_snapshots with macro_path <> unknown empty = NOT STARTED (no scan by an observing build), said as such; macro_observations empty is judged against the scans: a decided reading with no readable observation is red, quotes-only scans owe none', denied: 'a denied macro_observations read is 200, empty, count 0: the scans that point to observations make it red ("cannot be read here"); a denied rating_snapshots read can only look like NOT STARTED -- the one case the control cannot see, and its own daily backup (backup-tables.mjs, floors) is the check on that table' }],
   'scripts/backup-tables.mjs|${table}': [
@@ -204,6 +208,7 @@ const READ_SITES = {
   'core/store.js|settings': ['loadSettingsFromSupabase', 'readExecutionMode', 'saveSettingsToSupabase', 'writeExecutionMode'],
   'scripts/backup-tables.mjs|${table}': ['(top level)', 'fetchTable'],
   'scripts/count-macro-observations.mjs|${table}': ['readAll'],
+  'scripts/macro-capability-test.mjs|macro_observations': ['readAsks'],
   'scripts/count-not-known.mjs|${table}': ['liveRows'],
   'scripts/count-not-known.mjs|trades_v2': ['main'],
   'scripts/fill-outcomes.mjs|signal_log': ['main', 'main', 'main'],

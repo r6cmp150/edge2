@@ -62,7 +62,8 @@ run('a job with no run in the window is shown, red', () => {
 // days"). A workflow without a schedule must be named in NOT_SCHEDULED, so
 // a new scheduled one still can't exist unmonitored and an unscheduled one
 // can't be added silently. The first: Tests (tests.yml), push-triggered.
-const NOT_SCHEDULED = ['Tests'];
+// 2026-11-19: Macro capability test (macro-capability-test.yml), manual only: one arm per run, its log the record.
+const NOT_SCHEDULED = ['Tests', 'Macro capability test'];
 run('the six names match the scheduled workflow files exactly; every other workflow is named', () => {
   const fs = require('fs');
   const dir = path.join(__dirname, '..', '.github', 'workflows');
