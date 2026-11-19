@@ -12,14 +12,20 @@ const { readSource, run, settingLabelsSrc } = require('./_lib');
 const app = readSource('app.js');
 const grab = name => { const i = app.search(new RegExp(`^(async )?function ${name}\\(`, 'm')); assert.ok(i >= 0, name); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
 
-function store({ row, phoneRaw = null, phoneThrows = false, updateRows = r => [{ id: 3 }] } = {}) {
+// CHANGED 2026-11-19, declared: the load is bounded (boundedRequest), so the context has AbortController and timers,
+// and maybeSingle answers .abortSignal. hang: the read never answers unless aborted (then an AbortError, as supabase-js
+// resolves it), and the context's setTimeout fires at once, so the bound is reached without waiting 15 s.
+function store({ row, phoneRaw = null, phoneThrows = false, updateRows = r => [{ id: 3 }], hang = false, loadError = null } = {}) {
   const sent = [];
+  const answer = sig => (hang ? new Promise(res => sig.addEventListener('abort', () => res({ data: null, error: { message: 'AbortError: The operation was aborted.', code: '' } })))
+    : Promise.resolve(loadError ? { data: null, error: loadError } : { data: row ?? null, error: null }));
   const c = {
-    console, JSON, Date, Math, Object, Array, String, Promise, Error, Number, Set,
+    console, JSON, Date, Math, Object, Array, String, Promise, Error, Number, Set, AbortController, clearTimeout,
+    setTimeout: hang ? (fn => { setImmediate(fn); return 0; }) : setTimeout,
     localStorage: { getItem: () => { if (phoneThrows) throw new Error('storage blocked'); return phoneRaw; }, setItem() { throw new Error('nothing may write the phone copy'); } },
     window: { supabase: { createClient: () => ({
       from: () => ({
-        select: () => ({ order: () => ({ limit: () => ({ maybeSingle: async () => ({ data: row ?? null, error: null }) }) }) }),
+        select: () => ({ order: () => ({ limit: () => ({ maybeSingle: () => ({ abortSignal: answer, ...(hang ? { then() {} } : {}) }) }) }) }), // hung and unbounded: never answers
         update: payload => ({ eq: () => ({ select: async () => { sent.push(payload); return { data: updateRows(payload), error: null }; } }) }),
         insert: () => { throw new Error('settings insert'); },
       }),
@@ -109,4 +115,21 @@ run('every user setting starts as source default (inert), and nothing writes the
   assert.ok(/state\.settingsSource = Object\.fromEntries\(Object\.keys\(SETTINGS_COLUMNS\)\.map\(k => \[k, 'default'\]\)\)/.test(ls));
   for (const f of ['app.js', 'core/store.js']) assert.ok(!/localStorage\.setItem\('edge_localOnlySettings'|setItem\(PHONE_ONLY_SETTINGS_KEY/.test(readSource(f)), `${f} writes the phone copy`);
   assert.ok(!/function persistLocalOnlySettings/.test(readSource('core/store.js')));
+});
+
+// 2026-11-19 (step 3, boot): the settings read is bounded. With no answer it throws "no answer within 15 s" (a read
+// with no answer has FAILED, and this load's contract for that is to throw: boot's error screen with Retry, never
+// defaults). Raced against a real timer. A server error is named as the settings read's; no row is still the
+// missing-row message.
+run('the settings load with no answer throws at the bound, never hangs; a server error and a missing row each say which', async () => {
+  const { s } = store({ hang: true });
+  let thrown = null, t;
+  const REAL = global.setTimeout;
+  try {
+    await Promise.race([s.loadSettingsFromSupabase(), new Promise((_, rej) => { t = REAL(() => rej(new Error('the settings load hung: no outcome within 3 s')), 3000); })]);
+  } catch (e) { thrown = e; } finally { clearTimeout(t); }
+  assert.ok(thrown && thrown.message === 'the settings read: no answer within 15 s', thrown && thrown.message);
+  await assert.rejects(store({ loadError: { message: 'permission denied for table settings', code: '42501' } }).s.loadSettingsFromSupabase(),
+    e => e.message === 'the settings read: permission denied for table settings');
+  await assert.rejects(store({ row: null }).s.loadSettingsFromSupabase(), e => /settings row is missing/.test(e.message));
 });

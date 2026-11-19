@@ -12276,11 +12276,18 @@ async function loadPortfolioAndSettingsFromSupabase() {
   for (const [k, v] of Object.entries(settings)) { state.settings[k] = v; state.settingsSource[k] = 'supabase'; }
 }
 
+// THE BOOT WAIT IS SAID (2026-11-19, step 3). At 5 s with no answer the line becomes BOOT_SLOW_TEXT; each read is
+// bounded at 15 s (core/store.js LOAD_READ_TIMEOUT_MS), after which "Couldn't load your data" with Retry. The worst
+// case is about 30 s, not 15: an empty portfolio's control read runs after the portfolio read (store.js says why that
+// is declared, not engineered away). There is deliberately NO cached portfolio to fall back on: a stale list at boot,
+// with no way to know it is stale, is the defect this project removed. Do not add one.
+const BOOT_SLOW_MS = 5000;
+const BOOT_SLOW_TEXT = 'Still loading — the database hasn\'t answered yet';
 function renderDataLoadingScreen() {
   document.body.innerHTML = `
     <div class="pin-screen">
       <div class="pin-title">EDGE2</div>
-      <div class="pin-subtitle">Loading your data…</div>
+      <div class="pin-subtitle" id="data-loading-subtitle">Loading your data…</div>
       <div style="margin-top:24px"><span class="spinner"></span></div>
     </div>`;
 }
@@ -12313,12 +12320,14 @@ function clearLegacyPortfolioSettingsStorage() {
 
 async function runDataLoadAndInit() {
   renderDataLoadingScreen();
+  // by id, so a timer that fires late has nothing to write into once the error screen or the app shell replaced it
+  const slow = setTimeout(() => { const el = document.getElementById('data-loading-subtitle'); if (el) el.textContent = BOOT_SLOW_TEXT; }, BOOT_SLOW_MS);
   try {
     await loadPortfolioAndSettingsFromSupabase();
   } catch(e) {
     renderDataLoadErrorScreen(e.message || 'Unknown error — check your connection and try again.');
     return;
-  }
+  } finally { clearTimeout(slow); }
   clearLegacyPortfolioSettingsStorage();
   document.body.innerHTML = APP_SHELL_HTML;
   await registerServiceWorker();

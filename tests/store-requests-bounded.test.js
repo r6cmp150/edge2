@@ -21,7 +21,7 @@ const REGISTRY = {
   'loadPortfolioFromSupabase · trades_v2 · #1': BOUNDED,
   'deletePositionFromSupabase · portfolio · #1': BOUNDED,
   'deletePositionFromSupabase · portfolio · #2': BOUNDED,
-  'loadSettingsFromSupabase · settings · #1': pending(3, 'boot: a hang is "Loading your data…" for good (with the 5 s "still loading" line)'),
+  'loadSettingsFromSupabase · settings · #1': BOUNDED,
   'insertPositionToSupabase · portfolio · #1': pending(4, 'the Add: the form hangs with its button disabled; a write, so UNKNOWN on no answer'),
   'readExecutionMode · settings · #1': pending(4, 'the Add: the Live/Paper read before every buy is recorded (8 s)'),
   'writeExecutionMode · settings · #1': pending(5, 'the Live/Paper toggle never confirms'),

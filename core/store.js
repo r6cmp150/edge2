@@ -423,6 +423,11 @@ async function readAllRows(query) {
 // that gets no answer is FAILED ("could not read" is simply true: a read has no side effect), and this function's
 // contract for "could not read" has always been to throw: boot shows "Couldn't load your data" with Retry, and the
 // refresh becomes NOT_REFRESHED with its line, releasing its flag. A read has no UNKNOWN, so nothing collapses here.
+// The bound is per READ, not per load. Boot's WORST CASE IS ABOUT 30 s, not 15 (2026-11-19, the reviewer): when the
+// portfolio reads back empty, the trades_v2 control runs after it, not beside it, so a first answer just under 15 s
+// followed by a control that never answers reaches the error screen near 30 s. It needs an empty portfolio at boot.
+// Declared, not engineered away (a whole-boot deadline would cancel two reads to cover it); the "Still loading" line
+// at 5 s (app.js BOOT_SLOW_MS) is part of why 30 s is tolerable.
 const LOAD_READ_TIMEOUT_MS = 15000; // boot cannot open without this read, so a slow network gets longer
 async function loadPortfolioFromSupabase() {
   const read = await boundedRequest(supabaseClient.from('portfolio').select('*', { count: 'exact' }).order('buy_date', { ascending: true }),
@@ -637,10 +642,15 @@ const SETTINGS_ROW_MISSING = 'Your settings row is missing from Supabase (or thi
 // that setting's phone value or default and its source says which. A missing
 // row is an error, never "nothing migrated yet": Roman's row has existed since
 // 2026-08-17, and an RLS-denied read returns the same empty result.
+// BOUNDED (2026-11-19, step 3): at LOAD_READ_TIMEOUT_MS, as the portfolio read beside it at boot. A read that gets no
+// answer has FAILED ("could not read" is simply true), and this function's contract for that has always been to throw:
+// boot shows "Couldn't load your data" with Retry, never defaults. A server error now reads "the settings read: <its
+// message>". No row is still SETTINGS_ROW_MISSING.
 async function loadSettingsFromSupabase() {
-  const { data, error } = await supabaseClient
-    .from('settings').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
-  if (error) throw error;
+  const read = await boundedRequest(supabaseClient.from('settings').select('*').order('id', { ascending: false }).limit(1).maybeSingle(),
+    { ms: LOAD_READ_TIMEOUT_MS, kind: 'read', what: 'the settings read' });
+  if (read.outcome !== 'OK') throw new Error(read.reason);
+  const data = read.data;
   if (!data) { settingsRowId = null; throw new Error(SETTINGS_ROW_MISSING); }
   settingsRowId = data.id;
   const out = {};

@@ -24,7 +24,9 @@ function load({ loadRow, updateReturns = rows => rows, updateError = null } = {}
       select(cols) { q.selected = cols; return api; },
       order() { return api; }, limit() { return api; },
       eq(col, val) { q.filters.push([col, val]); return api; },
-      maybeSingle: async () => ({ data: loadRow ?? null, error: null }),
+      // CHANGED 2026-11-19, declared: the load is bounded, so maybeSingle answers .abortSignal (and the context has
+      // AbortController and timers, below)
+      maybeSingle: () => ({ abortSignal: async () => ({ data: loadRow ?? null, error: null }) }),
       then(res, rej) {
         if (verb === 'update') return Promise.resolve(updateError ? { data: null, error: updateError } : { data: updateReturns([{ id: q.filters[0]?.[1] }]), error: null }).then(res, rej);
         return Promise.resolve({ data: [], error: null }).then(res, rej);
@@ -40,7 +42,7 @@ function load({ loadRow, updateReturns = rows => rows, updateError = null } = {}
       delete: () => chain(table, 'delete'),
     }),
   };
-  const c = { console, JSON, Date, Math, Object, Array, String, Promise, Error, localStorage: { getItem: () => null, setItem() {} },
+  const c = { console, JSON, Date, Math, Object, Array, String, Promise, Error, AbortController, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
     window: { supabase: { createClient: () => client } }, state: { settings: {} } };
   vm.createContext(c);
   vm.runInContext(readSource('core/store.js') + '\n;globalThis.__s = { loadSettingsFromSupabase, saveSettingsToSupabase };', c);
