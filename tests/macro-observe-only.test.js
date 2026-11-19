@@ -66,7 +66,7 @@ function ctx(over = {}) {
     grabConst('BASE_SCORE_THRESHOLD'), grabConst('ELEVATED_SCORE_THRESHOLD'), grabConst('SECTOR_WEAKNESS_THRESHOLD_CATEGORIES'), grabConst('BROAD_ELEVATED_CONDITIONS'),
     grabConst('MACRO_INTERPRETATIONS'),
     ...['classifyMacroCondition', 'getDisplayThreshold', 'wouldBeDisplayThreshold', 'macroMovesFromSnapshots', 'macroBarState', 'decideMacroPath', 'macroGroqAskReason',
-      'fetchMacroHeadlines', 'buildMacroGroqPrompt', 'macroGroqRequestBody', 'parseMacroGroqReply', 'askMacroGroq', 'macroWouldAdjust', 'observeMacro', 'macroBannerAge', 'buildMacroBanner'].map(grab),
+      'fetchMacroHeadlines', 'buildMacroGroqPrompt', 'macroGroqRequestBody', 'readMacroGroqReply', 'parseMacroGroqReply', 'askMacroGroq', 'macroWouldAdjust', 'observeMacro', 'macroBannerAge', 'buildMacroBanner'].map(grab),
     ';Object.assign(globalThis, { classifyMacroCondition, getDisplayThreshold, wouldBeDisplayThreshold, macroMovesFromSnapshots, macroBarState, decideMacroPath, macroGroqAskReason, observeMacro, buildMacroBanner, MACRO_OVERLAY_PINNED_OFF, MACRO_CONDITIONS, BASE_SCORE_THRESHOLD });',
   ].join('\n'), c);
   return c;
@@ -209,6 +209,26 @@ run('observeMacro: a failed ask, then the next scan asks again and labels the da
   await h.c.observeMacro();
   assert.strictEqual(h.calls.groqBodies.length, 2, 'once answered, carried');
   assert.strictEqual(h.c.inserted[2].row.groq_asked, false);
+});
+
+// 2026-11-19 (the reviewer): "a truncated reply that still happens to parse becomes a label nobody can tell from a real
+// one." A reply that ends at the token ceiling (finish_reason 'length') is refused BEFORE the parser sees it, even
+// when its text parses; it labels nothing; the next scan asks again. The control: the same text ending 'stop' labels.
+run('a reply cut off at max_tokens is not an answer, even when its text parses; the next scan asks again', async () => {
+  const { firstLabel } = await import('../scripts/lib/macro-sign-test.mjs');
+  const h = observed({ moves: FLAT });
+  const reply = finish => async (url, opts) => { h.calls.groqBodies.push(JSON.parse(opts.body)); return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'GEOPOLITICAL — Trump-China tensions and AI chip export ru' }, finish_reason: finish }] }) }; };
+  h.c.fetch = reply('length');
+  await h.c.observeMacro();
+  const cut = h.c.inserted[0].row;
+  assert.ok(cut.groq_asked && cut.groq_failed === true && cut.groq_condition === null, JSON.stringify([cut.groq_failed, cut.groq_condition]));
+  assert.ok(/cut off at max_tokens \(2000\): not an answer/.test(cut.groq_error), cut.groq_error);
+  assert.strictEqual(cut.groq_raw_reply, 'GEOPOLITICAL — Trump-China tensions and AI chip export ru', 'the cut-off text is kept as evidence');
+  assert.strictEqual(firstLabel([cut]), null, 'it labels nothing');
+  h.c.fetch = reply('stop');
+  await h.c.observeMacro();
+  assert.strictEqual(h.calls.groqBodies.length, 2, 'asked again, under the failed-ask rule');
+  assert.strictEqual(h.c.inserted[1].row.groq_condition, 'GEOPOLITICAL', 'the control: the same text, ending normally, is an answer');
 });
 
 // 2026-11-19 (the reviewer): a phone with no Groq key now records an ask on every scan. "It carries no answer, so it

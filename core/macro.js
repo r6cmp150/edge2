@@ -191,6 +191,16 @@ const MACRO_GROQ_MAX_TOKENS = 2000;
 function macroGroqRequestBody(prompt) {
   return { model: GROQ_MODEL, messages: [{ role: 'user', content: prompt }], temperature: MACRO_GROQ_TEMPERATURE, max_tokens: MACRO_GROQ_MAX_TOKENS };
 }
+// A REPLY CUT OFF AT max_tokens IS NOT AN ANSWER, WHATEVER ITS TEXT PARSES AS (2026-11-19, the reviewer). A reply
+// that stops at the token ceiling (finish_reason 'length') can still begin "GEOPOLITICAL --" and parse, and a label
+// made from it could not be told from a real one. So the reply is read here first and a cut-off is refused BEFORE the
+// parser is given the text. (Measured the same day: one capability-test reply used 1,734 of the 2,000.)
+//   { raw, finishReason, cutOff }
+function readMacroGroqReply(data) {
+  const choice = (data && data.choices && data.choices[0]) || {};
+  const finishReason = choice.finish_reason ?? null;
+  return { raw: (choice.message && choice.message.content) ?? '', finishReason, cutOff: finishReason === 'length' };
+}
 // { condition, explanation } when the reply names one of the conditions; null when it does not.
 function parseMacroGroqReply(raw) {
   const text = String(raw ?? '').trim().replace(/^["']|["']$/g, '');
@@ -219,8 +229,10 @@ async function askMacroGroq(changes) {
     });
     if (!r.ok) throw new Error(`Groq ${r.status}`);
     const data = await r.json();
-    const raw = data.choices?.[0]?.message?.content ?? '';
+    const reply = readMacroGroqReply(data);
+    const raw = reply.raw;
     out.groq_raw_reply = raw;
+    if (reply.cutOff) { out.groq_error = `the reply was cut off at max_tokens (${MACRO_GROQ_MAX_TOKENS}): not an answer`; return out; }
     const parsed = parseMacroGroqReply(raw);
     if (!parsed) { out.groq_error = 'the reply did not name one of the conditions'; return out; }
     out.groq_condition = parsed.condition;

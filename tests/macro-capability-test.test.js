@@ -67,6 +67,18 @@ await run('a 429 is retried once after retry-after; a second refusal stops the a
   assert.ok(/^ARM 1 INCOMPLETE: 0 of 18 \(ask 1 failed: HTTP 429 after one retry/.test(twice.lines[twice.lines.length - 1]), twice.lines[twice.lines.length - 1]);
 });
 
+// 2026-11-19 (the reviewer): a reply cut off at max_tokens is read through production's readMacroGroqReply, never parsed
+// into a condition even when its text parses, recorded as CUT OFF, and the arm goes on (a model outcome, not a failure).
+await run('a reply cut off at max_tokens is CUT OFF, never a condition, and the arm completes', async () => {
+  const cut = { ok: true, status: 200, headers: new Map(), text: async () => '', json: async () => ({ choices: [{ message: { content: 'GEOPOLITICAL — tensions over AI chip export ru' }, finish_reason: 'length' }], usage: { total_tokens: 2315 } }) };
+  const { r, text } = await drive({ replies: i => (i === 0 ? cut : okReply('BROAD_RALLY — everything up')) });
+  assert.strictEqual(r.complete, true);
+  assert.strictEqual(r.results[0].condition, null, 'not a condition, though the text begins with one');
+  assert.strictEqual(r.results[0].cutOff, true);
+  assert.ok(text.includes('parsed: CUT OFF at max_tokens: not an answer, not parsed') && text.includes('finish_reason: length'));
+  assert.ok(/condition: CUT OFF 1, BROAD_RALLY 2/.test(text), 'counted as CUT OFF in the summary');
+});
+
 await run('the key is never printed, even when a failure echoes it', async () => {
   const echo = { ok: false, status: 401, headers: new Map(), text: async () => 'bad key SECRET-KEY', json: async () => ({}) };
   const { text, sent } = await drive({ replies: () => echo });

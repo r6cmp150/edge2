@@ -47,7 +47,7 @@ export function loadProduction(root = ROOT) {
   const model = app.match(/^const GROQ_MODEL = '([^']+)';$/m);
   if (!model) throw new Error('GROQ_MODEL not found in app.js');
   c.GROQ_MODEL = model[1];
-  vm.runInContext(readFileSync(path.join(root, 'core/macro.js'), 'utf8') + ';globalThis.__p = { buildMacroGroqPrompt, macroGroqRequestBody, parseMacroGroqReply, classifyMacroCondition, MACRO_GROQ_URL, MACRO_GROQ_MAX_TOKENS };', c);
+  vm.runInContext(readFileSync(path.join(root, 'core/macro.js'), 'utf8') + ';globalThis.__p = { buildMacroGroqPrompt, macroGroqRequestBody, readMacroGroqReply, parseMacroGroqReply, classifyMacroCondition, MACRO_GROQ_URL, MACRO_GROQ_MAX_TOKENS };', c);
   const edge = readFileSync(path.join(root, 'core/edge-scoring.js'), 'utf8');
   const at = edge.indexOf('const MACRO_ADJUSTMENTS = {');
   vm.runInContext(edge.slice(at, edge.indexOf('\n};\n', at) + 4) + ';globalThis.__adj = MACRO_ADJUSTMENTS;', c);
@@ -108,13 +108,17 @@ export async function runArm({ arm, asks, prod, key, cap, paceMs, fetchImpl = fe
     if (failure) { out(`FAILED: ${failure}`); stop = `ask ${a.id} failed: ${failure.slice(0, 120)}`; break; }
     const data = await res.json();
     const msg = data.choices?.[0]?.message || {};
-    const raw = msg.content ?? '';
-    const parsed = prod.parseMacroGroqReply(raw);
+    // read through production's reader: a reply cut off at max_tokens is not an answer, and is never parsed
+    // (a model outcome, not a transport failure: recorded as CUT OFF with no condition, and the arm continues)
+    const reply = prod.readMacroGroqReply(data);
+    const raw = reply.raw;
+    const parsed = reply.cutOff ? null : prod.parseMacroGroqReply(raw);
     out(`raw reply (in full): ${raw}`);
+    out(`finish_reason: ${reply.finishReason}`);
     if (msg.reasoning != null) out(`reasoning (in full): ${msg.reasoning}`);
     out(`usage: ${JSON.stringify(data.usage ?? null)}`);
-    out(`parsed: ${parsed ? `${parsed.condition} [${signOf(parsed.condition, prod.adjustments)}]` : 'NAMES NO CONDITION'}`);
-    results.push({ ...a, raw, condition: parsed ? parsed.condition : null, usage: data.usage ?? null });
+    out(`parsed: ${reply.cutOff ? 'CUT OFF at max_tokens: not an answer, not parsed' : parsed ? `${parsed.condition} [${signOf(parsed.condition, prod.adjustments)}]` : 'NAMES NO CONDITION'}`);
+    results.push({ ...a, raw, condition: parsed ? parsed.condition : null, cutOff: reply.cutOff, usage: data.usage ?? null });
   }
   // the summary: by input, sign first, condition second, and the deterministic rule beside it
   out(`\n${status()}`); // first line of the report; the last line repeats it
@@ -124,7 +128,7 @@ export async function runArm({ arm, asks, prod, key, cap, paceMs, fetchImpl = fe
   const tally = xs => { const t = {}; for (const x of xs) t[x] = (t[x] || 0) + 1; return Object.entries(t).map(([k, n]) => `${k} ${n}`).join(', '); };
   for (const [k, rs] of byInput) {
     const pattern = prod.classifyMacroCondition(rs[0].moves).condition;
-    out(`  ${k}\n    sign: ${tally(rs.map(r => signOf(r.condition, prod.adjustments)))} | condition: ${tally(rs.map(r => r.condition || 'NONE'))} | pattern rule: ${pattern} [${signOf(pattern, prod.adjustments)}]`);
+    out(`  ${k}\n    sign: ${tally(rs.map(r => signOf(r.condition, prod.adjustments)))} | condition: ${tally(rs.map(r => (r.cutOff ? 'CUT OFF' : (r.condition || 'NONE'))))} | pattern rule: ${pattern} [${signOf(pattern, prod.adjustments)}]`);
   }
   const used = results.map(r => r.usage?.total_tokens).filter(n => Number.isFinite(n));
   out(`usage reported: ${used.length} ask(s), total ${used.reduce((a, b) => a + b, 0)} tokens, max per ask ${used.length ? Math.max(...used) : '-'}, reserved ${reserved}`);
