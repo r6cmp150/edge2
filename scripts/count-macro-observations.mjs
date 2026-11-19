@@ -32,6 +32,37 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // The declared ending's cap (STATUS, "Declared 2026-11-17, before the bar was met"). Part of the registration as
 // declared that day, not a parameter: changing it is an amendment, and an amendment is dated in STATUS first.
 const ENDING_CAP = 40;
+// THE INSTRUMENT'S SEGMENTS (STATUS, "Declared 2026-11-19 ...: THE LABELLER CHANGED ON 11-17"). A day's instrument is the
+// headline state of the row that labels it (macro_observations.groq_headlines_empty: false = WITH headlines, true =
+// WITHOUT); a carried row records none, so the day's latest ask at or before the label decides. The label row is found
+// by the registration's own rule (firstLabel's: the earliest row given the full moves with a Groq answer).
+export const CURRENT_SEGMENT = 'without';
+// Every change in the asks' headline state, identified by the ask where it happened. One declared: the provider
+// untagged SPY/QQQ between the last ask with headlines (11-16 16:37Z) and the first without (this one).
+export const DECLARED_TRANSITIONS = [{ at: '2026-11-17T14:59:02.969Z', to: 'without' }];
+const headlineState = r => (r.groq_headlines_empty === true ? 'without' : r.groq_headlines_empty === false ? 'with' : null);
+const byTime = (a, b) => String(a.fetched_at).localeCompare(String(b.fetched_at));
+export function daySegments(observations) {
+  const out = new Map();
+  for (const date of [...new Set(observations.map(o => o.trading_date))]) {
+    const rows = observations.filter(o => o.trading_date === date).sort(byTime);
+    const label = rows.find(r => !r.pattern_incomplete && r.pattern_condition && r.groq_condition);
+    if (!label) continue;
+    const ask = headlineState(label) ? label : rows.filter(r => r.groq_asked && headlineState(r) && String(r.fetched_at) <= String(label.fetched_at)).pop();
+    out.set(date, ask ? headlineState(ask) : null);
+  }
+  return out;
+}
+export function headlineTransitions(observations) {
+  const asks = observations.filter(r => r.groq_asked && headlineState(r)).sort(byTime);
+  const changes = [];
+  for (let i = 1; i < asks.length; i++) {
+    const from = headlineState(asks[i - 1]), to = headlineState(asks[i]);
+    if (from !== to) changes.push({ at: new Date(asks[i].fetched_at).toISOString(), from, to });
+  }
+  const newest = asks[asks.length - 1];
+  return Object.assign(changes, { current: newest ? headlineState(newest) : null, newestAt: newest ? newest.fetched_at : null });
+}
 function macroAdjustments() {
   const edge = readFileSync(path.join(ROOT, 'core/edge-scoring.js'), 'utf8');
   const at = edge.indexOf('const MACRO_ADJUSTMENTS = {');
@@ -68,8 +99,9 @@ export async function main({ fetchImpl = fetch, log = console.log, now = new Dat
   let scans, observations;
   try {
     scans = await readAll('rating_snapshots', 'id,captured_at,macro_path,macro_observation_id', '&macro_path=neq.unknown', fetchImpl);
-    // + the columns the bar's label rule reads (firstLabel)
-    observations = await readAll('macro_observations', 'id,fetched_at,trading_date,applied,pattern_condition,pattern_incomplete,groq_condition', '', fetchImpl);
+    // + the columns the bar's label rule reads (firstLabel), and (2026-11-19) the two that place a day's instrument and
+    // detect a change in it (groq_asked, groq_headlines_empty)
+    observations = await readAll('macro_observations', 'id,fetched_at,trading_date,applied,pattern_condition,pattern_incomplete,groq_condition,groq_asked,groq_headlines_empty', '', fetchImpl);
   } catch (e) {
     log(`macro_observations count: COULD NOT READ (${e.message}) -- whether the macro reading is being recorded is unknown.`);
     return 1;
@@ -108,11 +140,27 @@ export async function main({ fetchImpl = fetch, log = console.log, now = new Dat
       log(`  sign-test bar: COULD NOT READ signal_log (${e.message}) -- neither half of the bar can be counted.`);
       return 1;
     }
-    const { days, dropped } = buildDays(observations, signals, macroAdjustments());
-    const b = barState(days);
-    log(`  sign-test bar (scripts/lib/macro-sign-test.mjs, the registration, unchanged): labelled days ${b.n} of ${MIN_DAYS}; ` +
+    const { days: allDays, dropped } = buildDays(observations, signals, macroAdjustments());
+    // BY INSTRUMENT (STATUS, "Declared 2026-11-19 ...: THE LABELLER CHANGED ON 11-17"): reported separately, never pooled;
+    // the bar and the declared ending are counted on the CURRENT instrument (without headlines) alone.
+    const seg = daySegments(observations);
+    const days = allDays.filter(d => seg.get(d.date) === CURRENT_SEGMENT);
+    const closed = allDays.filter(d => seg.get(d.date) === 'with');
+    const unknown = allDays.filter(d => seg.get(d.date) == null);
+    const b = barState(days), bc = barState(closed), bp = barState(allDays);
+    log(`  sign-test bar (scripts/lib/macro-sign-test.mjs, the registration; the current instrument, WITHOUT headlines, declared 2026-11-19): labelled days ${b.n} of ${MIN_DAYS}; ` +
         `by predicted sign + ${b.plus}, - ${b.minus}, 0 ${b.zero}; away from the most common sign ${b.awayFromCommon} of ${MIN_DAYS_AWAY_FROM_COMMON_SIGN}; ${b.met ? 'BAR MET' : 'not met'}.`);
+    log(`  closed instrument (WITH headlines, until 2026-11-16; reported, not pooled): ${bc.n} labelled day(s); + ${bc.plus}, - ${bc.minus}, 0 ${bc.zero}. Pooled across both, NOT the bar: ${bp.n}.`);
+    if (unknown.length) { log(`  DEFECT ${unknown.length} labelled day(s) whose instrument cannot be placed (no headline state on the ask behind the label): ${unknown.map(d => d.date).join(', ')}.`); bad = true; }
     log(`  not labelled: ${dropped.length ? dropped.map(d => `${d.date} (${d.reason})`).join('; ') : 'none'}.`);
+    // THE INSTRUMENT-CHANGE DETECTOR (the reviewer, 2026-11-19: "we should learn about the next instrument change from
+    // the report, not from a stray observation three days later"). Every change in the asks' headline state is listed;
+    // one that is not DECLARED is a change of treatment nobody has declared: red, named, until it is declared (here and
+    // in STATUS) before any result. Both directions: the tags coming back is a change too.
+    const transitions = headlineTransitions(observations);
+    const undeclared = transitions.filter(t => !DECLARED_TRANSITIONS.some(d => Date.parse(d.at) === Date.parse(t.at) && d.to === t.to));
+    log(`  instrument: the newest ask ${transitions.current ? `is ${transitions.current.toUpperCase()} headlines (${transitions.newestAt})` : 'cannot be placed'}; headline-state changes: ${transitions.length ? transitions.map(t => `${t.from} -> ${t.to} at ${t.at}${undeclared.includes(t) ? ' (UNDECLARED)' : ' (declared)'}`).join('; ') : 'none'}.`);
+    if (undeclared.length) { log(`  INSTRUMENT CHANGE NOT DECLARED: ${undeclared.map(t => `${t.from} -> ${t.to} headlines at ${t.at}`).join('; ')}. A change in what Groq reads is a change of treatment: declare the new segment in STATUS and in DECLARED_TRANSITIONS before reading any result.`); bad = true; }
     // THE DECLARED ENDING (STATUS, "Declared 2026-11-17, before the bar was met"): from 20 labelled days, the window
     // extends until 5 are away from the most common sign or 40 labelled days, whichever comes first; at 40 with fewer
     // than 5 away, cannot conclude, and the test is closed. Judged on the first 40 labelled days in date order, so a

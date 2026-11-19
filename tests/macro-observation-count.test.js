@@ -78,7 +78,9 @@ await run('a failed or short read is COULD NOT READ, and red, never a count', as
 // 2026-11-17: BOTH halves of the registered bar, counted by the registration's own code (buildDays, barState). Three
 // labelled days, two signs: RISK_OFF (-1), SECTOR_WEAKNESS_TECH (-1), BROAD_RALLY (+1). Plus a day with only a pattern
 // reading (no Groq answer given the moves: labels nothing) and a day whose signals all predate the label.
-const lab = (id, day, condition, at = '14:30') => ({ id, fetched_at: `${day}T${at}:00Z`, trading_date: day, applied: false, pattern_condition: 'CHOPPY', pattern_incomplete: false, groq_condition: condition });
+// CHANGED 2026-11-19, declared: a label row is an ask on the CURRENT instrument (no headlines) unless a case says otherwise;
+// the bar now counts the current instrument alone (STATUS, "Declared 2026-11-19").
+const lab = (id, day, condition, at = '14:30', headlines = 'without') => ({ id, fetched_at: `${day}T${at}:00Z`, trading_date: day, applied: false, pattern_condition: 'CHOPPY', pattern_incomplete: false, groq_condition: condition, groq_asked: true, groq_headlines_empty: headlines === 'without' ? true : headlines === 'with' ? false : null });
 const sig = (id, day, at, ret) => ({ id, signal_date: day, engine_source: 'EDGE', tier: 'SHOWN', first_shown_at: `${day}T${at}:00Z`, ret_close: ret, ret_close_split_in_window: false });
 await run('the sign-test bar: both halves printed, labelled days and the split by sign, and no outcome', async () => {
   const observations = [lab('a', '2026-11-13', 'RISK_OFF'), lab('b', '2026-11-16', 'SECTOR_WEAKNESS_TECH'), lab('c', '2026-11-17', 'BROAD_RALLY'),
@@ -120,6 +122,61 @@ await run('the declared ending: 40 days, 4 away -> CANNOT CONCLUDE and closed; a
   assert.ok(r.out.includes('labelled days 41 of 20'), 'the plain count still reports all 41');
   assert.ok(!/outcome|0\.00[1-6]/i.test(r.out.split('sign-test bar')[1]), 'still no outcome');
 });
+
+// 2026-11-19 (the reviewer): the two instruments, reported separately and never pooled; the bar and the ending on the
+// current one alone; and the instrument-change detector, in both directions.
+const mixed = (heads, conds) => {
+  const day = i => new Date(Date.UTC(2026, 11, 1) + i * 86400e3).toISOString().slice(0, 10);
+  const observations = conds.map((c, i) => lab(`o${i}`, day(i), c, '14:30', heads[i]));
+  const signals = conds.map((c, i) => sig(`s${i}`, day(i), '15:00', 0.001));
+  return count({ scans: conds.map((_, i) => scan(i + 1, 'groq', `o${i}`)), observations, signals });
+};
+await run('by instrument: the bar counts the current instrument (without headlines) alone; the closed one is reported, not pooled', async () => {
+  const r = await mixed(['with', 'with', 'without'], ['RISK_OFF', 'RISK_OFF', 'BROAD_RALLY']);
+  assert.ok(r.out.includes('the current instrument, WITHOUT headlines, declared 2026-11-19): labelled days 1 of 20; by predicted sign + 1, - 0, 0 0'), r.out);
+  assert.ok(r.out.includes('closed instrument (WITH headlines, until 2026-11-16; reported, not pooled): 2 labelled day(s); + 0, - 2, 0 0. Pooled across both, NOT the bar: 3.'), r.out);
+});
+await run('the declared ending is judged on the current instrument: 20 days with headlines start nothing', async () => {
+  const r = await mixed(Array(20).fill('with'), Array(20).fill('RISK_OFF'));
+  assert.ok(r.out.includes('labelled days 0 of 20') && !/declared ending/.test(r.out), r.out);
+});
+await run('a labelled day whose instrument cannot be placed is a DEFECT, red, named', async () => {
+  const r = await mixed([null], ['RISK_OFF']);
+  assert.strictEqual(r.code, 1);
+  assert.ok(/DEFECT 1 labelled day\(s\) whose instrument cannot be placed/.test(r.out), r.out);
+});
+await run('the detector: an undeclared change in the headline state is red and named, in both directions; none is quiet', async () => {
+  const back = await mixed(['without', 'without', 'with'], ['RISK_OFF', 'RISK_OFF', 'RISK_OFF']);
+  assert.strictEqual(back.code, 1, 'the tags coming back is a change too');
+  assert.ok(/INSTRUMENT CHANGE NOT DECLARED: without -> with headlines at 2026-12-03T14:30:00.000Z/.test(back.out), back.out);
+  const gone = await mixed(['with', 'without'], ['RISK_OFF', 'RISK_OFF']);
+  assert.strictEqual(gone.code, 1);
+  assert.ok(/INSTRUMENT CHANGE NOT DECLARED: with -> without headlines at 2026-12-02T14:30:00.000Z/.test(gone.out), gone.out);
+  const steady = await mixed(['without', 'without'], ['RISK_OFF', 'RISK_OFF']);
+  assert.strictEqual(steady.code, 0);
+  assert.ok(/headline-state changes: none\./.test(steady.out), steady.out);
+});
+await run('the detector: the declared 11-17 change is listed as declared and is not red', async () => {
+  const observations = [lab('a', '2026-11-16', 'RISK_OFF', '16:37', 'with'), { ...lab('b', '2026-11-17', 'RISK_OFF', '14:59', 'without'), fetched_at: '2026-11-17T14:59:02.969+00:00' }];
+  const r = await count({ scans: [scan(1, 'groq', 'a'), scan(2, 'groq', 'b')], observations, signals: [sig('1', '2026-11-16', '17:00', 0.01), sig('2', '2026-11-17', '15:00', 0.01)] });
+  assert.strictEqual(r.code, 0, r.out);
+  assert.ok(r.out.includes('with -> without at 2026-11-17T14:59:02.969Z (declared)'), r.out);
+});
+
+
+await run('a day is placed by the ask behind its LABEL, not its last ask; a carried label row takes the ask before it', async () => {
+  // labelled at 14:30 without headlines; the tags come back at 16:00 the same day: the day stays on the current instrument
+  const mid = [lab('a', '2026-12-01', 'BROAD_RALLY', '14:30', 'without'), lab('b', '2026-12-01', 'RISK_OFF', '16:00', 'with')];
+  const r = await count({ scans: [scan(1, 'groq', 'a'), scan(2, 'groq', 'b')], observations: mid, signals: [sig('1', '2026-12-01', '15:00', 0.01)] });
+  assert.ok(r.out.includes('WITHOUT headlines, declared 2026-11-19): labelled days 1 of 20; by predicted sign + 1'), r.out);
+  assert.ok(/INSTRUMENT CHANGE NOT DECLARED: without -> with/.test(r.out) && r.code === 1, 'and the change itself is still red');
+  // the label row is CARRIED (no headline state of its own): the day's latest ask at or before it decides
+  const carried = [lab('c', '2026-12-02', 'RISK_OFF', '13:00', 'with'), { ...lab('d', '2026-12-02', 'RISK_OFF', '14:00', null), groq_asked: false, groq_condition: 'RISK_OFF' }];
+  carried[0].groq_condition = null; // the 13:00 ask labels nothing; the 14:00 carried row is the label
+  const r2 = await count({ scans: [scan(1, 'groq', 'c'), scan(2, 'groq', 'd')], observations: carried, signals: [sig('2', '2026-12-02', '15:00', 0.01)] });
+  assert.ok(r2.out.includes('closed instrument (WITH headlines, until 2026-11-16; reported, not pooled): 1 labelled day(s)'), r2.out);
+});
+
 
 await run('the bar\'s signal_log read DENIED (200, empty): COULD NOT READ and red, never "0 labelled days"', async () => {
   const r = await count({ scans: [scan(1, 'groq', 'a')], observations: [lab('a', '2026-11-13', 'RISK_OFF')], signals: [] });
