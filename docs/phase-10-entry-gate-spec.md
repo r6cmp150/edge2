@@ -3115,6 +3115,18 @@ bucket set each closes), db/041's probes (by table, value and kind), and the sto
 its first answers: code between functions, and `export`ed functions). Not covered by this audit: count assertions
 over a test's own computed data, where the items are the test's own inputs.
 
+**WHERE TWO PATHS RUN CONCURRENTLY AND EITHER CAN SATISFY THE ASSERTION, EACH IS EXERCISED ALONE (2026-11-19, the
+reviewer's rule).** A test that fails both proves only that at least one is guarded, and the race decides which, so it
+reports the strongest of them and hides the rest. This is masking, not substitution (the counting rule above): nothing
+was replaced; a sibling running at the same time satisfied the assertion first. **The instance:** boot's first
+end-to-end test (2231f5b, before it landed) hung BOTH the portfolio read and the settings read. Boot runs them under
+`Promise.all`, which fails at the first rejection, so the bounded portfolio read reached "Couldn't load your data" on
+its own and the test passed with the settings read unbounded. In real life the masked case is the one that matters:
+only settings hangs, and boot sits on "Loading your data…" for good. **Found by the mutation run, not the suite:** the
+mutant restoring the unbounded settings read survived, which is what showed the test was passing for a sibling's
+reason. Split into one hung read at a time, each asserting the read it names; the same mutant is then killed by the
+hang itself.
+
 **AN INSTRUMENT'S FIRST OUTPUT IS READ BY HAND BEFORE ANYTHING IS PINNED TO IT (2026-11-18, the reviewer's rule).** A pin
 inherits the instrument's errors and makes them permanent; after that they are no longer mistakes, they are the
 expected values. The instance: `enclosingFunctions`, built for the impostor audit, gave three wrong answers in its
