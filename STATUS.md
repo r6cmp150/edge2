@@ -350,6 +350,23 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   registration's code counts (barState: away = labelled days minus the largest of the +, - and 0 counts), so a
   CHOPPY day (sign 0) counts as away, as a + day does. The bar can be met with no + day at all, contrasting - with 0.
   That is the registration as written and it stands; it is stated here so nobody discovers it later.
+- **Declared 2026-11-19, before the next labelled day's outcome (part of the registration, dated): THE LABELLER CHANGED
+  ON 11-17, AND THAT IS TREATMENT, NOT COVERAGE.** Groq's prompt carries the SPY/QQQ headlines from Alpaca's news
+  endpoint. The provider stopped tagging news SPY/QQQ, and removed the tags retroactively, between the last ask that
+  received any (2026-11-16 16:37Z, 42 returned) and the first that received none (2026-11-17 14:59Z, 0 returned). From
+  then on every ask reads the moves and "(no recent headlines available)": same code, model and temperature, a
+  materially different function. Established 2026-11-19 19:40Z by read-only requests with controls (the key and the
+  endpoint work; other symbols return 32 items over 72 h; the unfiltered feed returns 50 in two minutes, none tagged
+  SPY/QQQ; SPY/QQQ over 14 days returns 1 item, though the 11-13 and 11-16 asks stored real SPY/QQQ-tagged headlines
+  from inside that window). **Which labelled days fall on each side:** with headlines, 11-13 (label 06:58 PT) and
+  11-16 (06:59 PT); without, 11-17 (06:59 PT), and 11-19 (07:43 PT) once its outcomes land. **The handling, declared
+  now:** the two instruments are reported SEPARATELY and are NOT pooled. A day's instrument is its labelling row's
+  headline state (`macro_observations.groq_headlines_empty`: false = with headlines, true = without), which also
+  places any day if the tags return. The 20-day bar and the declared ending are counted on the current instrument
+  (without headlines) alone; the with-headlines days are reported beside them, closed at 2 while the source is gone.
+  Pooling, if ever proposed, is argued here first, never discovered afterwards to be convenient. **So the clock did not
+  stall on 11-17: it restarted.** The current instrument stands at 1 labelled day. The headline source stays as it is
+  (the reviewer, 2026-11-19): changing the labeller's input while testing whether it can vary would confound the test.
   **Declared 2026-11-17.** The result states which contrast carried the minority. A bar met with CHOPPY days as the
   minority is reported as a test of *whether a move occurred*, not of *its direction*, and the two are never pooled
   into a single claim. (- against + tests direction, the claim the overlay was built on; - against 0 tests the
