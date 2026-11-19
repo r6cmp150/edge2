@@ -3,8 +3,8 @@
 // app.js (MACRO_ETFS, MACRO_CONDITIONS, and section 6b through macroWouldAdjust). Nothing here is new. observeMacro
 // stays in app.js verbatim: its row literal must sit beside its insert for tests/_write-walker.js to read the write.
 // A classic script, like the other core/ files: its globals are the app's, and index.html loads it before app.js.
-// Call-time globals it reads (each counted in this file's code, 2026-11-19): scanFreshness and ptDateTimeOf
-// (core/clock.js); fetchNewsForTickers, state.newsLastRequest and state.newsUnavailable (core/news.js);
+// Call-time globals it reads (each counted in this file's code, 2026-11-19): scanFreshness, ptDateTimeOf and
+// classifySession (core/clock.js); fetchNewsForTickers, state.newsLastRequest and state.newsUnavailable (core/news.js);
 // getMacroAdjustment and MACRO_ADJUSTMENTS (core/edge-scoring.js); wouldBeDisplayThreshold and GROQ_MODEL (app.js);
 // state.settings.groqKey and fetch (askMacroGroq, to Groq).
 
@@ -231,3 +231,18 @@ function macroWouldAdjust(condition) {
   };
 }
 
+
+// THE OBSERVATION'S OWN SESSION CHECK (2026-11-19, the reviewer, for the scheduled logger: "a run that starts after the
+// close must not write an observation at all -- not one that labels nothing, which would sit in the data looking like
+// a reading"). An observation may be written only if the REGULAR session is open AT THE INSTANT ITS QUOTES ARE READ,
+// judged by classifySession (core/clock.js: holiday- and early-close-aware, so 11-27 closes at 10:00 PT). It is checked
+// on its own, never inherited: not from the scan gate, which judges the run's start (a run that passes it at 12:59:50
+// and reads its quotes at 13:00:05 is past the close), and not from whatever started the run (a manual dispatch skips
+// the gate entirely). Its only input is that instant. Otherwise no row; `why` is the line the log prints.
+function macroObservationSession(atMs) {
+  const { date, hhmm } = ptDateTimeOf(atMs);
+  const session = classifySession(date, hhmm);
+  return session === 'REGULAR'
+    ? { allowed: true, session, date, hhmm, why: null }
+    : { allowed: false, session, date, hhmm, why: `no observation: ${session} at ${date} ${hhmm} PT (the regular session is not open when the quotes are read)` };
+}
