@@ -209,6 +209,40 @@ run('observeMacro: a failed ask, then the next scan asks again and labels the da
   assert.strictEqual(h.c.inserted[2].row.groq_asked, false);
 });
 
+// 2026-11-19 (the reviewer): a phone with no Groq key now records an ask on every scan. "It carries no answer, so it
+// should not qualify -- but 'should not' is not 'cannot'." Rows from the REAL observeMacro with no key, read by EVERY
+// label rule that reads macro_observations: the sign test's firstLabel and buildDays (scripts/run-macro-sign-test.mjs,
+// scripts/count-macro-observations.mjs) and the report's macroGroqDayLabel (app.js). None labels the day; the control
+// (the same day, with a key) does, so the rules are not simply refusing everything.
+run('a "no Groq key" row is never a label, by any rule that reads the table (and the same day with a key is)', async () => {
+  const { firstLabel, buildDays } = await import('../scripts/lib/macro-sign-test.mjs');
+  const rc = {};
+  vm.createContext(rc);
+  const grabR = name => { const i = app.search(new RegExp(`^function ${name}\\(`, 'm')); assert.ok(i >= 0, name); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
+  vm.runInContext(grabR('macroRuleStance') + grabR('macroGroqDayLabel') + ';globalThis.dayLabel = macroGroqDayLabel;', rc);
+  const ADJ = { GEOPOLITICAL: { OTHER: -10 }, CHOPPY: { OTHER: 0 } };
+  const rowsOf = async key => {
+    const h = observed({ moves: FLAT });
+    h.c.state.settings.groqKey = key;
+    for (let i = 0; i < 3; i++) await h.c.observeMacro();
+    return { rows: h.c.inserted.map(x => x.row), asks: h.calls.groqBodies.length };
+  };
+  const none = await rowsOf('');
+  assert.strictEqual(none.asks, 0, 'no key: no request is made');
+  assert.ok(none.rows.length === 3 && none.rows.every(r => r.groq_asked && r.groq_failed === true && r.groq_error === 'no Groq key configured' && r.groq_condition === null), JSON.stringify(none.rows.map(r => [r.groq_asked, r.groq_failed, r.groq_error, r.groq_condition])));
+  const day = none.rows[0].trading_date;
+  const signal = { engine_source: 'EDGE', tier: 'SHOWN', signal_date: day, first_shown_at: '2999-01-01T00:00:00Z', ret_close: 0.01 };
+  assert.strictEqual(firstLabel(none.rows), null, 'firstLabel');
+  assert.strictEqual(rc.dayLabel(none.rows), null, 'macroGroqDayLabel');
+  const b = buildDays(none.rows, [signal], ADJ);
+  assert.deepStrictEqual([b.days.length, b.dropped[0] && b.dropped[0].reason], [0, 'no Groq answer given the moves'], 'buildDays');
+  // the control: the same day, with a key, IS labelled by all three
+  const key = await rowsOf('k');
+  assert.strictEqual(firstLabel(key.rows).condition, 'GEOPOLITICAL');
+  assert.strictEqual(rc.dayLabel(key.rows), 'GEOPOLITICAL');
+  assert.strictEqual(buildDays(key.rows, [signal], ADJ).days.length, 1);
+});
+
 // observeMacro end to end, with every external call faked and recorded.
 function observed({ moves, groqReply = 'GEOPOLITICAL — oil up on tensions', groqOk = true, last = null, insertError = null, staleBars = false }) {
   const c = ctx();
