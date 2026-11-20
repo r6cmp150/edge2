@@ -89,7 +89,7 @@ export function verdictLine(ci, days) {
 
 const $ = x => (x == null ? '—' : `${x < 0 ? '-' : ''}$${Math.abs(x).toFixed(2)}`);
 
-async function quotesAt(headers, sym, at, cacheDir) {
+export async function quotesAt(headers, sym, at, cacheDir) {
   const start = new Date(at - LOOKBACK_MS).toISOString(), end = new Date(at).toISOString();
   const key = path.join(cacheDir, `${sym}-${start}-${end}.json`.replace(/:/g, ''));
   if (existsSync(key)) return JSON.parse(readFileSync(key, 'utf8'));
