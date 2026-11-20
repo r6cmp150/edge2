@@ -75,7 +75,7 @@ const median = xs => { const s = [...xs].sort((a, b) => a - b), n = s.length; re
 // One request per trade, and the ONLY bar wanted is the latest at or before the buy minute: sort=desc&limit=1 returns
 // exactly that bar, so no page holding a wanted bar can exist (CLAUDE.md pagination rule: the window is asked for one
 // bar and one bar is all that is used).
-async function latestSipBar(headers, sym, buyMs) {
+export async function latestSipBar(headers, sym, buyMs) {
   const start = new Date(buyMs - LOOKBACK_DAYS * 86400000).toISOString(), end = new Date(buyMs).toISOString();
   const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${encodeURIComponent(sym)}&timeframe=1Min&start=${start}&end=${end}&feed=sip&adjustment=raw&limit=1&sort=desc`;
   for (let attempt = 0; ; attempt++) {
