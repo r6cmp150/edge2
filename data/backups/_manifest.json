@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-11-21T13:48:03.928Z",
+  "run_at": "2026-11-22T13:41:18.531Z",
   "floors": {
     "trades": 37,
     "trades_v2": 451,
@@ -29,7 +29,7 @@
       "mode": "daily",
       "read": 2172,
       "live": 3910,
-      "prior": 3776,
+      "prior": 3910,
       "fetched": 3910,
       "written": true,
       "reason": null,
