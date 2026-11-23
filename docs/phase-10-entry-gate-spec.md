@@ -174,18 +174,25 @@ goes to die.
 > rate; §7.6, "§3.3 Friday: dropped"). The fourth is a different kind:
 > **the labels themselves could be wrong.** `buyDayOfWeek` and
 > `sellDayOfWeek` were read from the day the add or sale was *recorded*,
-> not the order or sale date (fixed 2026-10-27, §7.7). **Measured on the
+> not the order or sale date (fixed 2026-10-27, §7.7). ~~**Measured on the
 > existing data, the fourth has not yet bitten:** 0 of 292 sales and 0 of
 > the 268 datable buys were recorded on a different day from the event, so
-> every checkable weekday label is right. 24 buys (August to early
+> every checkable weekday label is right.~~ **RETRACTED 2026-11-22 (not
+> corrected to another number: it was never a measurement).** The check
+> compares the entered date with the recording date, and the entered date
+> DEFAULTS to the recording date, so a late recording with the default left
+> in place reads as on time: exactly the case it was meant to find. It can
+> see only an edited date. Whether trades were recorded late is NOT
+> ESTABLISHED by it (§3.4 below; the self-referential-guard sweep). 24 buys (August to early
 > September, before the portfolio backups) can't be dated. It's recorded
 > because it would have bitten silently the first time Roman backdated an
 > add, not because it changed this table.
 
 ### 3.4 No entries in the first hour (6:30–7:30 PT)
 
-> **The stored buy times are real fill times, so the 07:00–07:29 result is
-> not about typing (verified 2026-10-27, `trades_v2` at `b4620bc`, the 270
+> **[2026-11-22: NOT ESTABLISHED. Its first test is RETRACTED and its
+> second is LIMITED to typed prices, both below.]** ~~The stored buy times are real fill times, so the 07:00–07:29 result is
+> not about typing~~ (verified 2026-10-27, `trades_v2` at `b4620bc`, the 270
 > rows without `sell_price_unverified`, which reproduce the bucket exactly:
 > n=70, −$377, 14 days.
 > **Two counts, defined so the documents agree:** Roman's timing analysis
@@ -200,12 +207,19 @@ goes to die.
 > placebo), `node scripts/audit-after-hours-buys.mjs`).** `buy_time`, `sell_time` and `buy_session` are
 > read from the clock at *recording*, so the risk was that the table
 > measured when Roman typed rather than when he bought. Two tests:
-> - **Recorded on a different day?** Never, where it can be checked.
+> - ~~**Recorded on a different day?** Never, where it can be checked.
 >   0 of 268 datable buys (dated by the portfolio backups' position ids,
 >   which are the add's `Date.now()`, or bounded by a same-day sale) and
 >   0 of 292 sales. `created_at` is a real recording stamp (its PT time
 >   equals `sell_time` to the minute on 286 of 292 rows), so the sale
->   check isn't circular. 24 buys can't be dated; 2 are in the bucket
+>   check isn't circular.~~ **RETRACTED 2026-11-22, the zero and the claim
+>   that the check isn't circular.** `created_at` is a real stamp, but it is
+>   compared with `sell_date` (and the add's stamp with `buy_date`), and
+>   both form dates DEFAULT TO TODAY: a sale or add recorded days late with
+>   the date left at its default stores the recording day, and the audit
+>   reads it as on time. It cannot fail in the case it exists for; it sees
+>   only an edited date. "0 late" was never a measurement. Recording lag is
+>   NOT ESTABLISHED. 24 buys can't be dated; 2 are in the bucket
 >   (BTDR 08-17 07:12, PGEN 08-26 07:26). **The audit has a hard floor of
 >   2026-09, by construction.** The 24 are trades held overnight before the
 >   portfolio backups began, so no backup ever holds their add. That gap
@@ -223,6 +237,17 @@ goes to die.
 >   minute with another buy (up to five, e.g. 09-30 07:08 RIVN, COMP,
 >   AUR, COUR and OPEN), and their prices trade at that minute too: basket
 >   orders placed together, not a later batch of typing.
+>   **LIMIT, FLAGGED 2026-11-22 for the reviewer's ruling (found applying the
+>   self-referential-guard sweep; the measurement is not retracted):** the
+>   tape test has power only for a price that was TYPED. A price left at the
+>   add form's pre-fill is the live price AT THE RECORDING MOMENT, so it
+>   trades on the tape at the recording minute whenever the decision was
+>   made, and the placebo (shifting by an hour) fails it for the same reason.
+>   On the 244 trades with a buy snapshot, buy_price equals the pre-fill on
+>   244 of 244 (2026-11-20). For pre-filled rows the 68 of 70 shows the price
+>   was taken at the recorded minute; it does not show the recorded minute is
+>   when the buy was decided, so "not a later batch of typing" is not
+>   established for them.
 > - **`buy_session`:** REGULAR checks out on 209 of 215. CLOSED (24, the
 >   Sunday orders) is labelled by date and correct. AFTER_HOURS: 16 of 31
 >   verified and 1 outside; **14 are ambiguous.** Each is priced at or near
@@ -3361,9 +3386,10 @@ the buy and sale capture code):
   NULLing changes what the order-basis check (§5) and the session splits
   see, so it gets its own review. Until then, any of the four is
   trustworthy only where the event date equals the PT date of the row's
-  `created_at`. **Measured on the existing 292 (§3.4, 2026-10-27):** no
-  sale and no datable buy was recorded on a different day, and the
-  stored buy times match the tape (68 of 70 in the 07:00–07:29 bucket,
+  `created_at`. **Measured on the existing 292 (§3.4, 2026-10-27):** ~~no
+  sale and no datable buy was recorded on a different day~~ (RETRACTED
+  2026-11-22: that check cannot see a late recording with the default date
+  left in place, see §3.4), and the stored buy times match the tape (68 of 70 in the 07:00–07:29 bucket,
   with a placebo confirming the test's power). So the defect is latent in
   this data, except for 14 ambiguous AFTER_HOURS rows and 24 undatable
   buys.

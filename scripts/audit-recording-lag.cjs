@@ -6,9 +6,13 @@
 // sell_time to the minute). Buy recording = the add's Date.now(), from the
 // portfolio backups' position ids, or bounded by a same-day sale.
 //   node scripts/audit-recording-lag.cjs [rev]     (default b4620bc)
-// Result at b4620bc: 0 late sales of 292, 0 late buys of 268 datable, 24
-// undatable; the 270 verified rows reproduce the 07:00-07:29 bucket
-// (n=70, -$377, 14 days).
+// RETRACTED 2026-11-22 (the self-referential-guard sweep; the reviewer: "retracted, not corrected to a smaller
+// number, because it was never a measurement"): "Result at b4620bc: 0 late sales of 292, 0 late buys of 268
+// datable". THIS AUDIT CANNOT SEE RECORDING LAG. It compares sell_date and buy_date with the recording dates, and
+// both form dates DEFAULT TO TODAY, so a trade recorded days late with the date left at its default stores the
+// recording day and reads as on time: the very case it is named for. It sees only an EDITED date. Its zero is not
+// evidence that trades were recorded on time; that is NOT ESTABLISHED. Its printed counts below say so. (The
+// 07:00-07:29 bucket reproduction, n=70, -$377, 14 days, is a count of rows and is unaffected.)
 // HARD FLOOR: the 24 undatable buys are trades held overnight before the
 // portfolio backups began (2026-09). No backup ever holds their add, so
 // they stay unknown forever. A re-run showing 24 unknowns is that floor,
@@ -44,11 +48,11 @@ const report = (label, xs) => {
   const b = xs.filter(x => x.hm >= '07:00' && x.hm < '07:30');
   const pnl = b.reduce((s, x) => s + Number(x.r.pnl_dollars || 0), 0);
   console.log(`\n${label}: n=${xs.length}`);
-  console.log(`  buy recorded on a different day from buy_date: ${buyLate.length} | buy recording date unknown: ${buyUnknown.length} | dated by backup ${xs.filter(x => x.how === 'backup').length}, by sandwich ${xs.filter(x => x.how === 'sandwich').length}`);
-  console.log(`  sale recorded on a different day from sell_date: ${sellLate.length}`);
+  console.log(`  buy_date EDITED off the recording day (a late add with the default date left in place is NOT counted: recording lag is not measured here): ${buyLate.length} | buy recording date unknown: ${buyUnknown.length} | dated by backup ${xs.filter(x => x.how === 'backup').length}, by sandwich ${xs.filter(x => x.how === 'sandwich').length}`);
+  console.log(`  sell_date EDITED off the recording day (a late sale with the default date left in place is NOT counted: recording lag is not measured here): ${sellLate.length}`);
   console.log(`  07:00-07:29 bucket: n=${b.length}, P&L $${pnl.toFixed(0)}, distinct days ${new Set(b.map(x => x.bd)).size}`);
   const inB = b.filter(x => !x.buyRec || x.buyRec !== x.bd || x.saleRec !== x.sd);
-  console.log(`  of those, buy or sale recorded late, or buy recording unknown: ${inB.length}${inB.length ? ' -> ' + inB.map(x => `${x.r.ticker} buy ${x.bd} ${x.hm} (buy rec ${x.buyRec || '?'}, ${x.how || 'unmatched'}) sell ${x.sd} rec ${x.saleRec}`).join('; ') : ''}`);
+  console.log(`  of those, buy or sale date edited off the recording day, or buy recording unknown: ${inB.length}${inB.length ? ' -> ' + inB.map(x => `${x.r.ticker} buy ${x.bd} ${x.hm} (buy rec ${x.buyRec || '?'}, ${x.how || 'unmatched'}) sell ${x.sd} rec ${x.saleRec}`).join('; ') : ''}`);
   return { buyLate, buyUnknown, sellLate };
 };
 const all = report('all trades_v2 at ' + REV, out);
