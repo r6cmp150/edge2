@@ -6,7 +6,7 @@ const assert = require('assert');
 const { readSource, run, evalModule } = require('./_lib');
 
 global.ptWallClockToInstant = (d, h, m) => new Date(`${d}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00-07:00`);
-evalModule(readSource('core/orders.js'), { expose: ['readSaleFill'] });
+evalModule(readSource('core/orders.js'), { expose: ['readSaleFill', 'placeableSaleAt'] });
 const app = readSource('app.js');
 const grab = name => { const i = app.search(new RegExp(`^(async )?function ${name}\\(`, 'm')); assert.ok(i >= 0, name); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
 const atNine = fn => () => { const n = Date.now; Date.now = () => Date.parse('2026-10-08T16:00:00Z'); try { fn(); } finally { Date.now = n; } };
@@ -36,6 +36,16 @@ run('three states: entered, the default accepted, not known', atNine(() => {
   assert.strictEqual(global.readSaleFill('2026-10-08', '09:10', null, { notKnown: true }).filledAt, null, 'not known wins over a time left in the box');
 }));
 
+run('only a TYPED fill time can place a scan against the fill: a default or not-known gives null (2026-11-22)', atNine(() => {
+  // the default is the moment the form opened, after the scan it was opened from: placing against it says "before"
+  // nearly always, so it must not be passed on (saleDisplayFields refuses it for the same reason)
+  const typed = global.readSaleFill('2026-10-08', '07:31', null, { defaultTime: '09:00' });
+  assert.strictEqual(global.placeableSaleAt(typed), Date.parse('2026-10-08T14:31:00Z'));
+  assert.strictEqual(global.placeableSaleAt(global.readSaleFill('2026-10-08', '09:00', null, { defaultTime: '09:00' })), null, 'the default left in place');
+  assert.strictEqual(global.placeableSaleAt(global.readSaleFill('2026-10-08', '', null, { notKnown: true })), null, 'not known');
+  assert.strictEqual(global.placeableSaleAt(null), null);
+}));
+
 run('the form asks for it, and a date other than today clears the time', () => {
   const modal = grab('openMarkSoldModal');
   assert.ok(/<label class="form-label">Fill time \(PT\)<\/label>\s*<input id="sold-time" class="form-input" type="time" value="\$\{hhmm\}" data-default="\$\{hhmm\}">/.test(modal), 'labelled as the buy form labels it');
@@ -56,7 +66,7 @@ run('the fill goes in its own column; sell_time stays the clock at recording', (
   assert.ok(write.includes('sell_filled_at_source: record.sellFilledAtSource ?? null'), 'written');
   const start = confirm.indexOf('readSaleFill('), firstWrite = confirm.indexOf('deletePositionFromSupabase');
   assert.ok(firstWrite < 0 || start < firstWrite, 'refused before anything is written');
-  assert.ok(confirm.includes('computeSaleVerdictFields(pos, saleDate, saleFill.at)'), 'the last scan is placed against the fill');
+  assert.ok(confirm.includes('computeSaleVerdictFields(pos, saleDate, placeableSaleAt(saleFill))'), 'the last scan is placed against the fill');
   assert.ok(grab('signalBeforeSale').includes('sig.scannedAt < saleAt'), 'by its own instant');
 });
 

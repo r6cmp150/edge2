@@ -19,7 +19,7 @@
 // and bumps only store.js's stamp leaves this name, and so this file, unchanged: it ships a worker nobody installs,
 // and phones keep the old store.js from the old cache. So bump app.js's stamp too, even with app.js unchanged, and set
 // this to it. The equality test is not over-strict; do not "fix" it.
-const CACHE_NAME = 'edge2-20261119100000';
+const CACHE_NAME = 'edge2-20261122120000';
 
 // Unversioned entry points. The versioned scripts and styles are read from
 // index.html at install (below), so the cache holds exactly what this deploy

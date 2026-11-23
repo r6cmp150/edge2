@@ -86,7 +86,7 @@ run('signal_before_sale: the last scan signal that PREDATES the sale (by PT date
   for (const iso of ['2026-11-02T14:00:00Z', '2026-11-02T23:59:00Z']) {
     const s = saleCtx({ sig: sigAt(at(iso)) }).__s(pos, '2026-11-02');
     assert.strictEqual(s.state, 'NOT_ESTABLISHED', iso);
-    assert.ok(/is not before the sale date 2026-11-02; the sale's time isn't known/.test(s.reason), s.reason);
+    assert.ok(/is not before the sale date 2026-11-02; the sale's fill time wasn't typed \(not known, or left at its default\)/.test(s.reason), s.reason);
   }
   // Same day, the fill known: the scan's own instant places it, either way.
   const same = sigAt(at('2026-11-02T15:00:00Z'));

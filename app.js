@@ -7562,8 +7562,8 @@ function computeSaleVerdictFields(pos, saleDate, saleAt = null) {
 }
 
 // The last scan signal for this ticker that PREDATES the sale, stamped with
-// its own scan time, or why none can be established. With the sale's fill time,
-// the scan's own instant places it. With "Time not known" (saleAt null) only the
+// its own scan time, or why none can be established. With a TYPED fill time,
+// the scan's own instant places it. With "Time not known" or a default (saleAt null) only the
 // PT date can, so a scan on the sale date itself can't be put before or after the
 // fill. And only the latest scan is retained (ownedScores), so when it isn't before
 // the sale, the earlier ones are gone. Both are said, not guessed. -> { state: 'PREDATES_SALE', scanned_at, scan_date, scan_hhmm,
@@ -7581,7 +7581,7 @@ function signalBeforeSale(pos, saleDate, saleAt = null) {
   if (saleAt != null ? !(sig.scannedAt < saleAt) : !(scan.date < saleDate)) {
     return none(saleAt != null
       ? `the latest retained scan (${scan.date} ${scan.hhmm} PT) is not before the sale's fill, and earlier scans aren't kept`
-      : `the latest retained scan (${scan.date} ${scan.hhmm} PT) is not before the sale date ${saleDate}; the sale's time isn't known, so a same-day scan can't be placed before it, and earlier scans aren't kept`);
+      : `the latest retained scan (${scan.date} ${scan.hhmm} PT) is not before the sale date ${saleDate}; the sale's fill time wasn't typed (not known, or left at its default), so a same-day scan can't be placed before it, and earlier scans aren't kept`);
   }
   return {
     state: 'PREDATES_SALE',
@@ -7634,7 +7634,7 @@ async function confirmMarkSold(posId, btn) {
     : null;
   // Rule 5: did the position actually exit via the trailing stop threshold?
   const trailingStopTriggered = !!pos.momentumProtectionActivated && salePrice <= pos.peakPrice * 0.85;
-  const saleVerdictFields = computeSaleVerdictFields(pos, saleDate, saleFill.at);
+  const saleVerdictFields = computeSaleVerdictFields(pos, saleDate, placeableSaleAt(saleFill)); // a typed fill only (core/orders.js)
 
   const record = {
     id: Date.now().toString(),
