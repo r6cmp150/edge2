@@ -80,7 +80,15 @@ async function main() {
   const sample = (j => (Array.isArray(j) ? j : j.rows))(JSON.parse(execSync(`git show ${REV}:data/backups/trades_v2.json`, { cwd: ROOT, maxBuffer: 1e9 }).toString())).filter(r => r.sell_price_unverified === false);
   console.log(FRAMING + '\n');
   const rows = [], missing = [];
-  const ref = async (sym, ms) => { const r = pickReference(await latestSipBar(headers, sym, ms), ms); await new Promise(res => setTimeout(res, 320)); return r; };
+  // A dropped connection (fetch failed: ECONNRESET, which ended the first run after ~1 minute with no number printed)
+  // is retried, up to 5 times with backoff: transport only, the same request and the same method (2026-11-23).
+  const fetchBar = async (sym, ms) => {
+    for (let i = 0; ; i++) {
+      try { return await latestSipBar(headers, sym, ms); }
+      catch (e) { if (!(e instanceof TypeError) || i >= 5) throw e; await new Promise(res => setTimeout(res, 2000 * (i + 1))); }
+    }
+  };
+  const ref = async (sym, ms) => { const r = pickReference(await fetchBar(sym, ms), ms); await new Promise(res => setTimeout(res, 320)); return r; };
   for (const t of sample) {
     const b = pacificMinuteUtc(String(t.buy_date).slice(0, 10), t.buy_time), s = pacificMinuteUtc(String(t.sell_date).slice(0, 10), t.sell_time);
     const [eb, es, ib, is] = [await ref(t.ticker, b), await ref(t.ticker, s), await ref(BENCH, b), await ref(BENCH, s)];
