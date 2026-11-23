@@ -3,6 +3,18 @@
 The open list, kept in the repo so nobody carries it from memory. Updated with every push; each line says where its
 evidence is. Last updated 2026-11-11 with the 2026-11-11 capture (db/042 applied).
 
+> **THE HURDLE (2026-11-22, the bar, not a result). Roman's universe skews under $5, and that is where crossing the
+> spread costs nearly three times as much:**
+>
+> | Position | Round trip | Per trade |
+> |---|---|---|
+> | **Under $5** | **0.493%** | **$2.38** |
+> | $5 and up | 0.175% | $0.94 |
+> | Blended | 0.291% | $1.49 |
+>
+> A strategy must beat this on paper, before costs, or it does not need building to be rejected. EDGE's gross was
+> +$0.03 a trade. The arithmetic and the source are in "THE HURDLE" below.
+
 ## Live database
 - **Applied, and shown by the 2026-11-11 capture:** everything up to db/035 (run 1), db/037 (2026-11-05 ~20:00 PT;
   run 2 PASS), db/038 (2026-11-06, revision e; run 2 PASS), db/040, and **db/042** (2026-11-11: RUN-ME-10 Success,
@@ -181,6 +193,12 @@ reviewer's predicted 0.3%-1% was right at its lower edge, not below it. "Below t
 **Scope:**
 - One historical sample, at Roman's position sizes and in his universe.
 - The 73 unquoted trades are not in it.
+  - **They include all 24 buys of Sunday 2026-09-27**, entered on a day with no market (af9d788): 23 had no buy quote,
+    1 none at either end.
+  - Their "price at the buy minute" cannot be a market price. In the entry-gap run (84d161a) their SIP references were
+    Friday 09-25's last prints, 2,319 to 3,038 minutes old, and their median gap was 0.000%: the recorded price was
+    Friday's close.
+  - Recorded, not measured further: 24 of 586 cannot move -$1.43 a trade, and the score question is closed.
 - A strategy that trades other names, or other sizes, has its own bar.
 
 ## After realistic costs: pre-registered, answered 2026-11-11

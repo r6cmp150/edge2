@@ -98,6 +98,10 @@ These are product facts that bear on every field above.
     labelled the card "Scored on 11-03's price, not today's: no trade on the feed yet when scanned — not buyable".
   - Whether Roman saw that label is NOT ESTABLISHED: neither snapshot has `appShowedAtBuy`.
   - The price figure itself carries no date.
+- **24 of the 586 were entered on a day with no market** (Sunday 2026-09-27, af9d788).
+  - Their `buy_price` is Friday 09-25's close. The SIP reference was 2,319 to 3,038 minutes old, with a median gap of
+    0.000% (84d161a).
+  - None of them is in the 513 priced at the quote: 23 had no buy quote, 1 none at either end.
 - **The stale daily bar, three states:** stale 2, fresh 154, not recorded 88, of the 244 snapshot trades. There is
   nothing on the other 342 (7dd8248).
 - **The pre-fill limit:** a price left at its pre-fill is the live price at the recording moment. So a tape check at

@@ -28,6 +28,9 @@
 //     positions at cost, recorded share counts, same-minute entries by score), run over the trades quoted at both ends
 //     with the ASK as each entry's price (so its cost) and NET as its P&L, with the same figures and concentration.
 //     LIMIT, printed: an unquoted trade is absent from the replay, so the budget fills as if it never existed.
+//   LIMIT, RECORDED AFTER THE RUN (2026-11-22, the reviewer; no number here changes): the 73 unquoted include all 24 buys
+//     of Sunday 2026-09-27, a day with no market (scripts/audit-temporal.mjs, af9d788). 23 had no buy quote, 1 none at
+//     either end. None of the 24 is in the 513.
 //   node scripts/measure-spread-net.mjs [--env-root <dir with .env.local>] [--out <file.csv outside the repo>]
 //   (quotes are cached outside the repo, as prereg-costs.mjs does: QUOTES_CACHE, default the OS temp dir)
 import { execSync } from 'node:child_process';
