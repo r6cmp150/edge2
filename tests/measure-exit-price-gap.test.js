@@ -57,4 +57,11 @@ await run('the output says it does not bear on the score question, computes noth
   assert.ok(src.includes("console.log('A FRICTIONLESS PAPER SIMULATION, not P&L"));
   assert.ok(!/score-vs-return/.test(src.replace(/^\/\/.*$/gm, '')), 'the score test is not imported, so it cannot be re-run here');
 });
+
+await run('CORRECTED 2026-11-22: the sell-minute agreement is the save\'s own clock and does not reach the decision', () => {
+  const src = readSource('scripts/measure-exit-price-gap.mjs');
+  assert.ok(!/so each sale\s*(\/\/)?\s*was recorded at the minute it was made and/.test(src), 'the overstated claim is gone');
+  assert.ok(src.includes("BOTH THE SAVE'S OWN CLOCK") && src.includes('Neither reaches the DECISION'));
+  assert.ok(src.includes("Both are the save's own clock: this checks the conversion and that sell_date kept the recording day, not when the sale was made.`);"));
+});
 })();

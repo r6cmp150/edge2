@@ -14,8 +14,13 @@
 // DECLARED BEFORE THE FIRST RUN, AND COMMITTED BEFORE IT.
 //   SAMPLE: the pre-registered 586: trades_v2 @ 314f6e0, sell_price_unverified false. No exclusions.
 //   SELL MINUTE: sell_date + sell_time, a Pacific wall clock: sell_time is the RECORDING time (getPT() at the save,
-//     app.js:7689). On 586 of 586 it lies within 2 minutes of the row's created_at (printed again below), so each sale
-//     was recorded at the minute it was made and sell_date was not moved off the recording day.
+//     app.js:7689). On 586 of 586 it lies within 2 minutes of the row's created_at (printed again below).
+//     CORRECTED 2026-11-22 (the self-referential-guard sweep), replacing "so each sale was recorded at the minute it
+//     was made": sell_time and created_at are BOTH THE SAVE'S OWN CLOCK, so the time half of that agreement proves
+//     nothing, and the date half shows only that sell_date was left on the recording day (its default, or a same-day
+//     sale; the two cannot be told apart). Neither reaches the DECISION: when the sale was actually made is not
+//     established by it. The price work stands on a different ground: in a paper book the save is when the price was
+//     taken, so the save's minute IS the reference for "was the recorded price the market price".
 //   REFERENCE, BOTH ENDS: exactly the entry measurement's (scripts/measure-entry-price-gap.mjs, 84d161a): the close of
 //     the latest SIP 1-minute bar starting at or before the minute, raw, looking back 7 days. The entry end is fetched
 //     again by the same code, and its count of trades off by 1% or more is printed beside 84d161a's 51.
@@ -67,7 +72,7 @@ async function main() {
   console.log(`SOURCE: data/backups/trades_v2.json @ ${REV}: the sample (sell_price_unverified false): ${sample.length}.`);
   const sellMs = r => pacificMinuteUtc(String(r.sell_date).slice(0, 10), r.sell_time);
   const recordedAtSale = sample.filter(r => Math.abs(Date.parse(r.created_at) - sellMs(r)) <= 2 * 60000).length;
-  console.log(`SELL MINUTE: sell_date + sell_time (Pacific) within 2 minutes of created_at on ${recordedAtSale} of ${sample.length}.`);
+  console.log(`SELL MINUTE: sell_date + sell_time (Pacific) within 2 minutes of created_at on ${recordedAtSale} of ${sample.length}. Both are the save's own clock: this checks the conversion and that sell_date kept the recording day, not when the sale was made.`);
   console.log(`sell_price of 0: ${sample.filter(r => Number(r.sell_price) === 0).length}; missing: ${sample.filter(r => r.sell_price == null || r.sell_price === '').length}.`);
 
   const out = [];

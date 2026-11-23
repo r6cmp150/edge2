@@ -70,4 +70,10 @@ await run('the declared rule, the last-re-run sentence, the limits and the SIP f
   assert.ok(src.includes("THE RULE DOES NOT FIRE: the re-run is not computed, and ef99790"));
   assert.ok(!/winsor|trim\(|outlier/i.test(src.replace(/^\/\/.*$/gm, '')), 'no trimming in the code');
 });
+await run('CORRECTED 2026-11-22: the buy-minute agreement is the add\'s own clock, said in the header and the printed line', () => {
+  const src = readSource('scripts/measure-entry-price-gap.mjs');
+  assert.ok(src.includes("BOTH ARE THE ADD'S OWN CLOCK") && src.includes('It says NOTHING about when the buy was decided.'));
+  assert.ok(src.includes("Both are the add's own clock: this checks the conversion, not when the buy was decided.`);"));
+});
+
 })();

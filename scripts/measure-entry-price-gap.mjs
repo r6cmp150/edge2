@@ -15,8 +15,12 @@
 //     stale bar, so their gaps were seen before this was declared; no other trade's was.
 //   BUY MINUTE: buy_date + buy_time, a Pacific wall clock (app.js:4957, getPT() at the add), PDT (UTC-7) before
 //     2026-11-01 and PST (UTC-8) from it. On the 316 trades with a position_id (Date.now() at the add) this equals
-//     the position_id instant to the minute on 316 of 316 (printed again below). For the 270 without one it is not
-//     independently checkable: a backdated add would carry the add's clock time on a different day.
+//     the position_id instant to the minute on 316 of 316 (printed again below). CORRECTED 2026-11-22 (the
+//     self-referential-guard sweep): BOTH ARE THE ADD'S OWN CLOCK, so that agreement checks only the Pacific
+//     conversion and that buy_date was not moved off the add's day. It says NOTHING about when the buy was decided.
+//     The price work stands on a different ground: in a paper book the add is when the price was taken, so the add's
+//     minute IS the reference for "was the recorded price the market price". For the 270 without a position_id even
+//     the conversion is not checkable: a backdated add would carry the add's clock time on a different day.
 //   REFERENCE: the close of the latest SIP 1-minute bar starting at or before the buy minute, looking back up to 7
 //     days (the last sale, whatever the session). The bar of the buy minute itself counts, so its close can be up to
 //     59 seconds after the add. Its age (buy minute minus the bar's start) is printed. A trade with no bar in 7 days
@@ -97,7 +101,7 @@ async function main() {
   console.log(`buy_price of 0: ${sample.filter(r => Number(r.buy_price) === 0).length}; missing: ${sample.filter(r => r.buy_price == null || r.buy_price === '').length}.`);
   const withId = sample.filter(r => r.position_id != null);
   const agree = withId.filter(r => Math.floor(Number(r.position_id) / 60000) * 60000 === buyMinuteUtc(String(r.buy_date).slice(0, 10), r.buy_time)).length;
-  console.log(`BUY MINUTE: buy_date + buy_time (Pacific) equals the position_id instant to the minute on ${agree} of ${withId.length}; ${sample.length - withId.length} have no position_id to check against.`);
+  console.log(`BUY MINUTE: buy_date + buy_time (Pacific) equals the position_id instant to the minute on ${agree} of ${withId.length}; ${sample.length - withId.length} have no position_id to check against. Both are the add's own clock: this checks the conversion, not when the buy was decided.`);
 
   const out = [];
   for (const r of sample) {
