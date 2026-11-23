@@ -4,8 +4,11 @@
 // always have had -- the number any future idea gets judged on".) Everything measured before was absolute return
 // ("did money come in"); this is the only figure about picking.
 //
-// It begins 2026-11-12: before that the app saved only scan rows scoring 60 or more, so the universe of what was
-// available but not picked is NOT RECOVERABLE for any earlier day, and nothing before 11-12 can be computed.
+// THE START LINE (declared 2026-11-23, after RUN-ME-21 deleted every open position): the FORWARD differential counts only
+// positions opened after 2026-11-23T20:42:43Z, the first opened after the delete, so no trade that could have generated
+// a hypothesis is in it. That is the one start date. Separately, as a fact about the data: before 2026-11-12 the app
+// saved only scan rows scoring 60 or more, so nothing earlier can be computed at all; --history reports 11-12 up to the
+// start line, labelled as history, never as the test (its first reading, 2026-11-23: +0.31% over 4 days, STATUS).
 //
 // DECLARED BEFORE THE FIRST RUN, AND COMMITTED BEFORE IT.
 //   DATA: the backups as committed (data/backups/rating_snapshots and trades_v2.json at the commit named by --rev,
@@ -34,7 +37,16 @@ import { mean, ret } from './measure-good-days.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const FIRST_DAY = '2026-11-12', LOOKBACK_MIN = 15, BENCH = 'IWM';
-export const BEGINS = 'THE SELECTION DIFFERENTIAL BEGINS 2026-11-12: before that the universe (what was available but not picked) was not saved, and nothing earlier can be computed. It is the only figure here about picking; returns alone answer "did money come in".';
+// THE START LINE (declared 2026-11-23, the reviewer: "one start date in the record, not two"): the forward selection
+// differential begins with the first position opened after Roman's delete of every open position (RUN-ME-21). The
+// export was read at this instant and RUN-ME-21's guard proved nothing was added between that read and the delete, so a
+// position added after it was opened after the delete. FIRST_DAY is not a second start: it is only the earliest day a
+// universe was saved, and rows from it up to the start line are reported apart, as history, never as the test.
+export const START_LINE = '2026-11-23T20:42:43.124Z';
+// the moment a position was added: its position_id (Date.now() at the add) when present, else its Pacific buy minute
+export const addedAt = r => (r.position_id != null && Number(r.position_id) > 1.7e12 ? Number(r.position_id) : pacificMinuteUtc(String(r.buy_date).slice(0, 10), r.buy_time));
+export const afterStart = r => addedAt(r) > Date.parse(START_LINE);
+export const BEGINS = 'THE FORWARD SELECTION DIFFERENTIAL BEGINS AT THE START LINE, 2026-11-23T20:42:43Z: the first position opened after Roman\'s delete. The --history run (from 2026-11-12, the earliest day a universe was saved) is before the start line: descriptive, never the test.'; export const BEGINS_DATA = 'Before 2026-11-12 the universe (what was available but not picked) was not saved, and nothing earlier can be computed.';
 
 // the close of the latest bar starting at or before ms, within the lookback; null when none
 export function priceAt(bars, ms, lookbackMin = LOOKBACK_MIN) {
@@ -59,10 +71,13 @@ async function main() {
   const ptDate = t => new Date(t).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
   const uni = new Map();
   for (const r of scans) { const d = ptDate(r.captured_at); (uni.get(d) || uni.set(d, { t: new Set(), min: Infinity }).get(d)).t.add(r.ticker); uni.get(d).min = Math.min(uni.get(d).min, r.score); }
-  const closed = show('trades_v2.json').filter(r => r.sell_price_unverified === false && String(r.buy_date).slice(0, 10) >= FIRST_DAY);
-  const open = show('portfolio.json').filter(r => String(r.buy_date).slice(0, 10) >= FIRST_DAY);
-  console.log(BEGINS + '\n');
-  console.log(`DATA @ ${rev}: ${closed.length} closed picks and ${open.length} open positions bought from ${FIRST_DAY}.`);
+  const history = process.argv.includes('--history');
+  const inScope = r => (history ? String(r.buy_date).slice(0, 10) >= FIRST_DAY && !afterStart(r) : afterStart(r));
+  const closed = show('trades_v2.json').filter(r => r.sell_price_unverified === false && inScope(r));
+  const open = show('portfolio.json').filter(inScope);
+  console.log(BEGINS + ' ' + BEGINS_DATA + '\n');
+  console.log(history ? `HISTORY, BEFORE THE START LINE (${FIRST_DAY} to ${START_LINE}): descriptive only, NOT the forward test.` : `THE FORWARD TEST, from the start line ${START_LINE}.`);
+  console.log(`DATA @ ${rev}: ${closed.length} closed picks and ${open.length} open positions in scope (${history ? `bought ${FIRST_DAY} up to the start line` : "added after the start line"}).`);
   const fullDays = new Set([...uni].filter(([, u]) => u.min === 0).map(([d]) => d));
   const barsCache = new Map();
   const barsNear = async (symbols, ms) => {
@@ -91,7 +106,8 @@ async function main() {
   }
   const ci = dayInterval(rows);
   const iwmRows = rows.filter(r => r.iwm != null);
-  console.log(`\nCUMULATIVE from ${FIRST_DAY}: ${rows.length} picks on ${new Set(rows.map(r => r.day)).size} days; picks ${fmt(mean(rows.map(r => r.pick)))}, universe ${fmt(mean(rows.map(r => r.universe)))}, SELECTION DIFFERENTIAL ${fmt(mean(rows.map(r => r.diff)))} (95% by days ${fmt(ci.lo)} to ${fmt(ci.hi)}).`);
+  if (!rows.length) { console.log('\nNO CLOSED POSITION opened after the start line yet: nothing to report, which is not zero.'); console.log(`\n${BEGINS}`); return; }
+  console.log(`\nCUMULATIVE ${history ? `from ${FIRST_DAY} to the start line` : 'from the start line'}: ${rows.length} picks on ${new Set(rows.map(r => r.day)).size} days; picks ${fmt(mean(rows.map(r => r.pick)))}, universe ${fmt(mean(rows.map(r => r.universe)))}, SELECTION DIFFERENTIAL ${fmt(mean(rows.map(r => r.diff)))} (95% by days ${fmt(ci.lo)} to ${fmt(ci.hi)}).`);
   console.log(`BESIDE IT, for 7e15b5b: the universe against IWM over the same windows ${fmt(mean(iwmRows.map(r => r.universe - r.iwm)))}; the picks against IWM ${fmt(mean(iwmRows.map(r => r.pick - r.iwm)))}.`);
   console.log(`\n${BEGINS}`);
 }

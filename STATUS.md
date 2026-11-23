@@ -168,7 +168,25 @@ beat the stocks EDGE scanned that day and he did not buy.
   scanned that day over the same window.
 - **It begins 2026-11-12. Nothing earlier can be computed:** before that the app saved only scan rows scoring 60+.
 
-**First reading, @ 98bcc07: 155 closed picks on 4 days.**
+**THE START LINE, declared 2026-11-23: the forward differential begins with the first position opened after Roman
+deleted every open position (RUN-ME-21).**
+- **The instant:** 2026-11-23T20:42:43Z, the export read. RUN-ME-21's guard proved nothing was added between that read
+  and the delete, so a position added after it was opened after the delete.
+- **One start date in the record.** 11-12 is not a second start: it is only the earliest day a universe was saved. The
+  reading below, 11-12 up to the start line, is HISTORY (`--history`). It may have generated the hypothesis, so it is
+  never part of the test.
+- **What the forward test still needs:** its duration and its bar, declared before it runs, from the power calculation.
+
+**Read back after the delete, live, 2026-11-23T21:04Z (read only):**
+- **Portfolio:** 0 rows.
+- **trades_v2:** 908 rows, identical row for row to the 11-20 and 11-21 backups (the same md5 over every row).
+- **No row references the 46 position_ids except `signal_snapshot_at_buy`:** 46 rows, one buy snapshot per deleted
+  position, left as they are.
+- **peak_corrections:** the publishable key cannot read it, so whether it references any is NOT ESTABLISHED.
+- **The app booted against the empty book as an ESTABLISHED empty** (the trades_v2 control read answered; no error
+  screen), with Live $0.00 and Available $1,500.00, and tried no write.
+
+**History, before the start line, @ 98bcc07: 155 closed picks on 4 days.**
 
 | Day | Closed | Still open | Picks | Universe | Differential |
 |---|---|---|---|---|---|

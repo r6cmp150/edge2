@@ -31,10 +31,23 @@ await run('the universe mean leaves out a stock without a price at either end, a
   assert.strictEqual(M.universeReturn({}, {}, ['A'], T(0), T(1)).value, null);
 });
 
+await run('the start line: one declared instant; a position counts only if it was added after it; history is apart', () => {
+  assert.strictEqual(M.START_LINE, '2026-11-23T20:42:43.124Z');
+  assert.strictEqual(M.afterStart({ position_id: String(Date.parse('2026-11-23T20:42:44Z')) }), true);
+  assert.strictEqual(M.afterStart({ position_id: String(Date.parse('2026-11-23T20:42:43Z')) }), false, 'not after: at or before the export read');
+  assert.strictEqual(M.afterStart({ position_id: String(Date.parse(M.START_LINE)) }), false, 'the instant itself is not after it');
+  assert.strictEqual(M.afterStart({ position_id: null, buy_date: '2026-11-24', buy_time: '07:00' }), true, 'no position_id: the Pacific buy minute');
+  assert.strictEqual(M.afterStart({ position_id: '1795000000000', buy_date: '2026-11-17', buy_time: '07:00' }), false, 'a 11-17 add is before the line');
+  assert.ok(M.BEGINS.startsWith('THE FORWARD SELECTION DIFFERENTIAL BEGINS AT THE START LINE, 2026-11-23T20:42:43Z'));
+  assert.ok(M.BEGINS.includes('never the test'));
+  const src = readSource('scripts/measure-selection-differential.mjs');
+  assert.ok(src.includes("NO CLOSED POSITION opened after the start line yet: nothing to report, which is not zero."));
+});
+
 await run('it says where it begins, first and last, and that it is the figure about picking', () => {
   const src = readSource('scripts/measure-selection-differential.mjs');
-  assert.ok(M.BEGINS.startsWith('THE SELECTION DIFFERENTIAL BEGINS 2026-11-12') && M.BEGINS.includes('nothing earlier can be computed'));
-  assert.ok(src.includes("console.log(BEGINS + '\\n');") && src.includes('console.log(`\\n${BEGINS}`);'));
+  assert.ok(M.BEGINS_DATA.includes('nothing earlier can be computed'));
+  assert.ok(src.includes("console.log(BEGINS + ' ' + BEGINS_DATA + '\\n');") && src.includes('console.log(`\\n${BEGINS}`);'));
   assert.ok(src.includes('the universe against IWM over the same windows'), 'the explanation 7e15b5b needs is printed beside it');
 });
 })();
