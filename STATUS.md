@@ -159,6 +159,39 @@ declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 
   bought. Before it: re-derivable since 10-29 only, as a labelled hypothesis, with a pre-registered falsification
   test (spec: first 5 buy days of overlap; any disagreement voids it).
 
+## THE SELECTION DIFFERENTIAL: did the chosen beat the unchosen? (standing; first reading 2026-11-23)
+**The only figure here about PICKING.** Returns answer "did money come in"; this answers whether the stocks Roman bought
+beat the stocks EDGE scanned that day and he did not buy.
+
+**Source:** `node scripts/measure-selection-differential.mjs` (0e27942), re-run on each new backup (`--rev`).
+- **What it measures:** per closed pick, its SIP return over its own window minus the mean return of every stock
+  scanned that day over the same window.
+- **It begins 2026-11-12. Nothing earlier can be computed:** before that the app saved only scan rows scoring 60+.
+
+**First reading, @ 98bcc07: 155 closed picks on 4 days.**
+
+| Day | Closed | Still open | Picks | Universe | Differential |
+|---|---|---|---|---|---|
+| 11-12 | 32 | 0 | -0.07% | -0.33% | +0.26% |
+| 11-13 | 34 | 0 | +0.76% | +0.08% | +0.69% |
+| 11-16 | 47 | 2 | -0.53% | -0.83% | +0.30% |
+| 11-17 | 42 | 38 | -0.30% | -0.37% | +0.07% |
+| **All** | **155** | **40** | **-0.09%** | **-0.40%** | **+0.31%** (95% by days +0.13% to +0.57%) |
+
+- **Beside it:** the universe against IWM over the same windows was -0.14%, and the picks against IWM +0.17%.
+
+**Limits, stated with the figure:**
+- **Four days.** An interval from resampling four days is crude.
+- **Only CLOSED picks are measured.** On 11-17, 38 of 80 are still open, and the closed ones are the ones sold first,
+  which is not a random subset.
+- **Before costs.** +0.31% is about the size of the hurdle below (0.291% blended, 0.493% under $5), so on these days
+  the picking edge, if real, is roughly what crossing the spread costs.
+
+**What it is and is not:**
+- **It is NOT a ranking test.** ef99790 asked whether the score ranks trades WITHIN the shown set, and found no. This asks
+  whether the shown-and-bought beat everything scanned, a different question nobody could ask before 11-12.
+- **It is not a result yet.** It becomes one only when a forward test is declared in advance against it.
+
 ## THE HURDLE: the bar, not a result (recorded 2026-11-22)
 **Any future strategy trading this universe the way Roman trades it must clear this on paper, before costs, or it does
 not need building to be rejected.** It is the cost of crossing the spread: commissions are zero at Robinhood, and the
