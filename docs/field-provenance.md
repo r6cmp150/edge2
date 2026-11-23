@@ -25,7 +25,7 @@ was counted, the count is given beside it.
 **What the list does not cover:** it lists the fields this audit actually read, so "not established" is a minority of
 the rows. Every column NOT listed here is **not established**. That includes trades_v2's exit-model and outcome-window
 columns (`unified_*_at_sale`, `*_factors_at_sale`, `best_exit_*`, `price_at_plus*`, `peak_*`, `target_drift_pct`,
-`distance_from_target`, `minutes_late` and the rest). Counted: 41 rows, 18 can be fabricated, 15 provenanced, 8 not
+`distance_from_target`, `minutes_late` and the rest). Counted: 41 rows, 20 can be fabricated, 15 provenanced, 6 not
 established, plus every unlisted column.
 
 ## trades_v2 (the outcome record)
@@ -41,7 +41,7 @@ established, plus every unlisted column.
 | `buy_time` | not established | As the BUY's time. It is the add's clock (`getPT()` at the add, app.js:4957), so it is honest only as "recorded at". The decision is not recorded anywhere. |
 | `sell_time` | provenanced | As what it is named for since 5cf9863: "recorded at". It is not the sale's time; that is `sell_filled_at`. |
 | `sell_filled_at` with `sell_filled_at_source` | provenanced | entered / default / not_known, each stored with its source (db/038). A default is no longer used to place anything against the fill (7d8cf22). |
-| `filled_at` (buy) | not established | It has no source column. Whether it was typed or defaulted is not recorded. |
+| `filled_at` (buy) | can be fabricated | The mark-filled form pre-fills the fill time with NOW and the fill price with the order's price (app.js `mf-time` / `mf-price`, found by tests/prefill-guard.test.js 2026-11-22), and no source column records whether either was typed. (Was: not established.) |
 | `signal_score` | can be fabricated | Five substitution paths in core/edge-scoring.js. Counted on the 586 (7dd8248): 0 established. Path (a) is not established on 342 trades, at most 86. A no-signal add stored `\|\| 0` until 11-14; none of the 586 has a 0. |
 | `volume_ratio_at_buy` | can be fabricated | `avgVol10 > 0 ? volume / avgVol10 : 1`, the TOP of the volume ladder. 0 of 586 exactly 1 or 0 (7dd8248). The modal fallback at app.js:3730 repeats the `: 1`. |
 | `rsi_at_buy` | not established | A NaN RSI scores 0 by design, and the null path was fixed 11-14 ("0 of 817 sales held a 0 or null"). Not re-checked in this audit. |
@@ -72,7 +72,7 @@ established, plus every unlisted column.
 | `peak_price` | can be fabricated | Raised from `currentPrice = getLivePrice(snap) \|\| p.buyPrice` (app.js:5535, 5670), so it can be a stale close or the buy price. |
 | `execution_mode` with `execution_mode_source` | provenanced | A mode is never stored without its source (db/042, db/044). The six 11-02 rows are pending Roman's run of RUN-ME-20. |
 | `peak_rsi` with `peak_rsi_sampled_from` | provenanced | db/044. |
-| `filled_at` | not established | No source column, as on trades_v2. |
+| `filled_at` | can be fabricated | The same pre-filled fill time, with no source recorded, as on trades_v2. |
 
 ## signal_log (what the scheduled logger saw)
 
