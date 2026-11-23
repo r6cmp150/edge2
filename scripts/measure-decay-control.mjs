@@ -37,7 +37,10 @@ import { priceAt } from './measure-selection-differential.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const REV = '98bcc07', FROM = '2026-10-23', HORIZONS = [1, 2, 5];
-export const WINDOW = 'THE COVERED WINDOW: trades sold 2026-10-27 to 2026-11-13. Nothing here extends past it.';
+// a fetch window's end, never later than 20 minutes ago: the free plan refuses SIP data from the last 15 minutes (the
+// first run stopped on that 403 before printing anything); no trading day lies after "now", so no figure changes
+export const endCapped = ms => new Date(Math.min(ms, Date.now() - 20 * 60000)).toISOString();
+export const WINDOW ='THE COVERED WINDOW: trades sold 2026-10-27 to 2026-11-13. Nothing here extends past it.';
 
 // the close of the Nth trading-day bar after the bar dated `day`; null when either is missing
 export function closeAfter(dailyBars, day, n) {
@@ -70,7 +73,7 @@ async function main() {
   const fullDay = d => uni.get(d)?.min === 0;
   console.log(WINDOW + '\n');
   const sells = trades.map(t => String(t.sell_date).slice(0, 10)).sort();
-  const iwmDaily = (await fetchBars(headers, ['IWM'], { timeframe: '1Day', start: `${sells[0]}T00:00:00Z`, end: new Date(Date.parse(sells.at(-1)) + 14 * 864e5).toISOString(), feed: 'sip', adjustment: 'all' })).IWM || [];
+  const iwmDaily = (await fetchBars(headers, ['IWM'], { timeframe: '1Day', start: `${sells[0]}T00:00:00Z`, end: endCapped(Date.parse(sells.at(-1)) + 14 * 864e5), feed: 'sip', adjustment: 'all' })).IWM || [];
   const rows = [], skipped = [];
   for (const t of trades) {
     const bd = String(t.buy_date).slice(0, 10), sd = String(t.sell_date).slice(0, 10);
@@ -104,7 +107,7 @@ async function main() {
     const minuteBars = async (syms, ms) => { if (!barsCache.has(ms)) { barsCache.set(ms, await fetchBars(headers, syms, { timeframe: '1Min', start: new Date(ms - 15 * 60000).toISOString(), end: new Date(ms).toISOString(), feed: 'sip' })); await new Promise(res => setTimeout(res, 400)); } return barsCache.get(ms); };
     for (const day of [...new Set(sub.map(r => r.day))]) {
       const syms = [...uni.get(day).t];
-      const daily = await fetchBars(headers, syms, { timeframe: '1Day', start: `${day}T00:00:00Z`, end: new Date(Date.parse(day) + 21 * 864e5).toISOString(), feed: 'sip', adjustment: 'all' });
+      const daily = await fetchBars(headers, syms, { timeframe: '1Day', start: `${day}T00:00:00Z`, end: endCapped(Date.parse(day) + 21 * 864e5), feed: 'sip', adjustment: 'all' });
       for (const x of sub.filter(r => r.day === day)) {
         const at1 = await minuteBars(syms, x.b), at2 = await minuteBars(syms, x.s);
         const per = syms.map(sy => { const e = priceAt(at1[sy], x.b), q = priceAt(at2[sy], x.s); const h = HORIZONS.map(n => closeAfter(daily[sy], x.sd, n)); return e && q && h.every(v => v != null) ? { exit: ret(e, q), h: Object.fromEntries(HORIZONS.map((n, i) => [n, ret(e, h[i])])) } : null; }).filter(Boolean);
