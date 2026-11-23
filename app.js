@@ -2008,7 +2008,7 @@ function buildAIPrompt(stock, pos) {
   const liveSaid = stock.liveRsi !== undefined;
   const liveRsi = liveSaid ? stock.liveRsi : stock.rsi;
   const liveRsiNotMeasured = liveSaid ? stock.liveRsiNotMeasured : stock.rsiNotMeasured;
-  const todayChange = stock.todayChange ?? 0;
+  const todayChange = stock.todayChange; // null: not measured (2026-11-23), said so below rather than read as 0
   const duration = pos ? pos.duration : stock.duration;
   const entry = pos ? pos.buyPrice : stock.entry;
   const stop = pos ? pos.stop : stock.stop;
@@ -2049,9 +2049,9 @@ number percentages. For each probability name exactly one key factor
 
 Stock: ${stock.ticker} (${stock.company || stock.ticker})
 Current price: $${livePrice.toFixed(2)}
-Today's change: ${todayChange.toFixed(2)}%
+Today's change: ${todayChange == null ? `not measured (${stock.todayChangeNotMeasured || 'no reason recorded'})` : `${todayChange.toFixed(2)}%`}
 RSI (14-day): ${liveRsi == null ? `not measured (${liveRsiNotMeasured || 'no reason recorded'})` : liveRsi.toFixed(1)}
-Volume ratio vs 10-day average: ${stock.volRatio.toFixed(2)}x
+Volume ratio vs 10-day average: ${stock.volRatio == null ? `not measured (${stock.volRatioNotMeasured || 'no reason recorded'})` : `${stock.volRatio.toFixed(2)}x`}
 Volume trend: ${volumeTrend}
 Signal score: ${stock.score}/100
 Risk score: ${stock.risk}/10
@@ -2327,15 +2327,14 @@ async function runScreener() {
     });
 
     // 5. SPY change for relative strength scoring
-    let spyChangePct = 0;
+    // SPY's change from the same session reading as every stock's (sessionInputs, 2026-11-23): null when it was not
+    // measured (no snapshot, a failed fetch, no trade yet today), never 0 -- a 0 made every stock's rsVsSPY its own
+    // change and could award relative-strength points against a market move nobody read.
+    let spyChangePct = null;
     try {
       const spySnap = await fetchSnapshots(['SPY']);
       const spy = spySnap['SPY'];
-      if (spy) {
-        const spyP = getLivePrice(spy);
-        const spyPrev = spy.prevDailyBar?.c || spyP;
-        spyChangePct = spyPrev > 0 ? ((spyP - spyPrev) / spyPrev) * 100 : 0;
-      }
+      if (spy) spyChangePct = sessionInputs(spy).todayChange.value;
     } catch(e) {}
     state.spyChange = spyChangePct;
 
@@ -2627,8 +2626,11 @@ async function retryRatingWrites() {
 async function computePreMarketMovers(snapshots, candidates, allBars, newsMap) {
   const movers = candidates.map(([ticker, snap]) => {
     const prePrice = snap.minuteBar?.c || snap.latestTrade?.p || 0;
-    const prevClose = snap.prevDailyBar?.c || 0;
-    const pct = prevClose > 0 ? ((prePrice - prevClose) / prevClose) * 100 : 0;
+    // Before the open the daily bar IS yesterday's, so prevDailyBar was the close two sessions back: every premarket
+    // gap was measured against the wrong close. The previous close now comes from the session reading; when it is not
+    // measured there is no gap, and the row is not a mover (2026-11-23).
+    const prevClose = sessionInputs(snap).prevClose.value;
+    const pct = prevClose > 0 && prePrice > 0 ? ((prePrice - prevClose) / prevClose) * 100 : null;
     const bars = allBars[ticker];
     // Measured, or null with the reason (2026-11-14): 1-14 bars used to get calcRSI's 50, shown as "Neutral" and given
     // to the pre-market prompt as if read.
@@ -2636,8 +2638,8 @@ async function computePreMarketMovers(snapshots, candidates, allBars, newsMap) {
     const rsi = n ? calcRSI(bars.map(b => b.c)) : null;
     const rsiNotMeasured = rsi != null ? null : n === 0 ? 'no daily bars came back' : `${n} daily close${n === 1 ? '' : 's'} came back, 15 needed`;
     const news = newsMap[ticker] || null;
-    return { ticker, prePrice, pct, rsi, rsiNotMeasured, news };
-  }).filter(m => m.prePrice > 0);
+    return { ticker, prePrice, prevClose, pct, rsi, rsiNotMeasured, news };
+  }).filter(m => m.prePrice > 0 && m.pct != null);
 
   movers.sort((a,b) => Math.abs(b.pct) - Math.abs(a.pct));
   state.preMarketMovers = movers.slice(0, 5);
@@ -2867,7 +2869,7 @@ function preMarketRsiLabel(rsi) {
 // at { ticker, prePrice, pct, rsi, news }) — it's recoverable exactly from
 // prePrice/pct since pct was derived from it in computePreMarketMovers.
 function preMarketPrevClose(m) {
-  return m.prePrice / (1 + (m.pct || 0) / 100);
+  return m.prevClose; // the measured previous close, carried on the row (2026-11-23), not back-solved from a 0 default
 }
 
 function buildPreMarketDetailPanel(m) {
@@ -3202,7 +3204,7 @@ function buildScBadges(s) {
   const riskCls = s.risk <= 3 ? 'sc-badge-green' : s.risk <= 6 ? 'sc-badge-neutral' : 'sc-badge-red';
 
   const badges = [
-    { value: `${s.volRatio.toFixed(1)}×`, label: 'VOLUME', cls: 'sc-badge-neutral' },
+    { value: s.volRatio == null ? '—' : `${s.volRatio.toFixed(1)}×`, label: s.volRatio == null ? 'VOLUME N/M' : 'VOLUME', cls: 'sc-badge-neutral' },
     { value: `${s.rsi.toFixed(0)}`, label: 'RSI', cls: 'sc-badge-neutral' },
     { value: durBadgeText(s.duration), label: 'TIMING', cls: isDayExit ? 'sc-badge-amber' : 'sc-badge-neutral' },
     { value: `${s.score}`, label: s.signal, cls: isBuySignal ? 'sc-badge-green' : 'sc-badge-neutral' },
@@ -3223,7 +3225,8 @@ function buildScBadges(s) {
 }
 
 function renderStockCard(s, marketClosed) {
-  const priceCls = s.todayChange >= 0 ? 'pos' : 'neg';
+  // todayChange null: not measured (no trade on the feed yet today, or no previous close): no colour, no arrow, no 0.
+  const priceCls = s.todayChange == null ? '' : s.todayChange >= 0 ? 'pos' : 'neg';
   const chgSign  = s.todayChange >= 0 ? '▲' : '▼';
   const upside   = ((s.target - s.price) / s.price * 100).toFixed(1);
   // rawTarget in calcEntryTargetStop() is an ATR-volatility projection off
@@ -3256,7 +3259,7 @@ function renderStockCard(s, marketClosed) {
         <div class="sc-header-row">
           <span class="sc-ticker">${s.ticker}</span>
           <span class="sc-price ${priceCls}">$${s.price.toFixed(2)}</span>
-          <span class="sc-pct ${priceCls}">${chgSign}${Math.abs(s.todayChange).toFixed(1)}%</span>
+          <span class="sc-pct ${priceCls}"${s.todayChange == null ? ` title="${s.todayChangeNotMeasured || 'not measured'}"` : ''}>${s.todayChange == null ? 'change n/m' : `${chgSign}${Math.abs(s.todayChange).toFixed(1)}%`}</span>
         </div>
         <div class="sc-company">${s.company}</div>
         ${scanHistoryCardHtml(s.ticker, 'signals')}
@@ -3301,13 +3304,14 @@ function buildSignalActionBanner(s) {
 
   if (s.score < 50) return '';
 
-  const allGreen = s.rsi >= 45 && s.rsi <= 72 && s.volRatio > 1.3 && s.price > s.ma20;
+  const allGreen = s.rsi >= 45 && s.rsi <= 72 && s.volRatio != null && s.volRatio > 1.3 && s.price > s.ma20;
   if (allGreen) {
     return `<div class="action-banner action-buy-now"><strong>BUY NOW</strong> — All signals aligned</div>`;
   }
 
   let waitReason = '';
   if (s.rsi > 72) waitReason = `Wait for RSI to pull back below 70 (currently ${s.rsi.toFixed(0)})`;
+  else if (s.volRatio == null) waitReason = `Volume not measured (${s.volRatioNotMeasured || 'no reason recorded'})`;
   else if (s.volRatio <= 1.3) waitReason = `Wait for volume to exceed 1.3× avg (currently ${s.volRatio.toFixed(1)}×)`;
   else if (s.price <= s.ma20) waitReason = `Wait for price to reclaim 20-day MA`;
 
@@ -3354,8 +3358,8 @@ function buildCardNewsSnippet(s) {
   const ageStr = newsTimeAgo(s.news);
   const sentiment = getNewsSentiment(s.hasNegNews, s.news.created_at);
   const sentCls = sentiment === 'POSITIVE' ? 'sent-pos' : sentiment === 'NEGATIVE' ? 'sent-neg' : 'sent-neutral';
-  const chgCls = s.todayChange >= 0 ? 'pos' : 'neg';
-  const chgStr = `${s.todayChange >= 0 ? '+' : ''}${s.todayChange.toFixed(1)}% today`;
+  const chgCls = s.todayChange == null ? '' : s.todayChange >= 0 ? 'pos' : 'neg';
+  const chgStr = s.todayChange == null ? 'change not measured' : `${s.todayChange >= 0 ? '+' : ''}${s.todayChange.toFixed(1)}% today`;
   const hl = (s.news.headline || '').substring(0, 85);
   const tail = (s.news.headline || '').length > 85 ? '…' : '';
   return `<div class="sc-news">
@@ -3409,7 +3413,9 @@ function computeScoreBreakdown(s) {
   // §7.7). Only the display text lives here. Inputs as before: the
   // signal's own rsVsSPY/consUpDays when present, recomputed for a
   // fallback object that has none.
-  const rsVsSPY       = s.rsVsSPY       ?? (s.todayChange - (s.spyChange || 0));
+  // A signal carries rsVsSPY (null when either change was not measured). Only an object without the key is recomputed,
+  // and then from measured values only: null - 0 is 0, a relative strength nobody read (2026-11-23).
+  const rsVsSPY       = s.rsVsSPY !== undefined ? s.rsVsSPY : (s.todayChange == null || s.spyChange == null ? null : s.todayChange - s.spyChange);
   const consUpDays    = s.consUpDays     ?? 0;
   // An unmeasured RSI goes in as NaN (no band, 0 points), never null, which would land in the under-35 band.
   const c = scoreComponents({
@@ -3423,15 +3429,15 @@ function computeScoreBreakdown(s) {
   const volNote = VOL_BAND_DESCRIPTIONS[c.volBucket];
   const rsiNote = c.rsiBucket ? RSI_BAND_DESCRIPTIONS[c.rsiBucket] : 'RSI unavailable';
 
-  const spySign = (s.spyChange || 0) >= 0 ? '+' : '';
+  const spySign = (s.spyChange ?? 0) >= 0 ? '+' : '';
   const rsSign  = rsVsSPY >= 0 ? '+' : '';
 
   const rows = [
-    { key: 'vol',    short: 'vol',       label: `Volume (${s.volRatio.toFixed(1)}× avg) — ${volNote}`,                          pts: volPts,     fired: volPts > 0, neutral: volPts === 0 },
-    { key: 'mom',    short: 'momentum',  label: `Price momentum (${s.todayChange>=0?'+':''}${s.todayChange.toFixed(1)}% today)`, pts: momPts,     fired: momPts > 0 },
+    { key: 'vol',    short: 'vol',       label: s.volRatio == null ? `Volume not measured — ${s.volRatioNotMeasured || 'no reason recorded'}` : `Volume (${s.volRatio.toFixed(1)}× avg) — ${volNote}`,                          pts: volPts,     fired: volPts > 0, neutral: volPts === 0 },
+    { key: 'mom',    short: 'momentum',  label: s.todayChange == null ? `Price momentum not measured — ${s.todayChangeNotMeasured || 'no reason recorded'}` : `Price momentum (${s.todayChange>=0?'+':''}${s.todayChange.toFixed(1)}% today)`, pts: momPts,     fired: momPts > 0 },
     { key: 'rsi',    short: 'RSI',       label: s.rsi == null ? `RSI not measured${s.rsiNotMeasured ? ` — ${s.rsiNotMeasured}` : ''}` : `RSI position (${s.rsi.toFixed(0)}) — ${rsiNote}`,                            pts: rsiPts,     fired: rsiPts > 0, neutral: rsiPts === 0 },
     { key: 'ma',     short: 'MA',        label: `Above 20-day MA ($${s.ma20.toFixed(2)})`,                                      pts: maPts,      fired: maPts > 0 },
-    { key: 'relstr', short: 'rel str',   label: `Relative strength (${rsSign}${rsVsSPY.toFixed(1)}% vs SPY ${spySign}${(s.spyChange||0).toFixed(1)}%)`, pts: relStrPts, fired: relStrPts > 0 },
+    { key: 'relstr', short: 'rel str',   label: rsVsSPY == null ? `Relative strength not measured (${s.todayChange == null ? 'the stock\'s change' : 'SPY\'s change'} was not measured)` : `Relative strength (${rsSign}${rsVsSPY.toFixed(1)}% vs SPY ${spySign}${s.spyChange.toFixed(1)}%)`, pts: relStrPts, fired: relStrPts > 0 },
     { key: 'consup', short: 'up days',   label: `Consecutive up days (${consUpDays} day${consUpDays !== 1 ? 's' : ''})`,        pts: consUpPts,  fired: consUpPts > 0 },
     { key: 'vbuild', short: 'vol build', label: `Volume build (2 days rising)`,                                                 pts: volBuildPts, fired: volBuildPts > 0 },
     { key: 'rev',    short: 'reversal',  label: `Mean reversion`,                                                               pts: meanRevPts, fired: meanRevPts > 0 },
@@ -3762,8 +3768,8 @@ async function openStockModal(ticker) {
       if (sorted[i].c > sorted[i-1].c) modalConsUpDays++;
       else break;
     }
-    const modalSpyChg  = state.spyChange || 0;
-    const modalRsVsSPY = (stock.todayChange || 0) - modalSpyChg;
+    const modalSpyChg  = state.spyChange ?? null; // null: SPY's change not measured (never 0)
+    const modalRsVsSPY = stock.todayChange == null || modalSpyChg == null ? null : stock.todayChange - modalSpyChg;
     const modalFresh = {
       consUpDays: modalConsUpDays,
       consUpPts: consUpPoints(modalConsUpDays), // core/edge-scoring.js, not a copy
@@ -3828,7 +3834,7 @@ async function openStockModal(ticker) {
       modalScoreSignal = scoreLabel(modalScoreTotal);
     }
 
-    const chgCls  = stock.todayChange >= 0 ? 'change-pos' : 'change-neg';
+    const chgCls  = stock.todayChange == null ? '' : stock.todayChange >= 0 ? 'change-pos' : 'change-neg';
     const chgSign = stock.todayChange >= 0 ? '▲' : '▼';
     const sigBadge = sigBadgeClass(modalScoreSignal);
     const riskCls  = stock.risk <= 3 ? 'risk-low' : stock.risk <= 6 ? 'risk-mid' : 'risk-hi';
@@ -3932,7 +3938,7 @@ async function openStockModal(ticker) {
       ${daySuppressedBanner}
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
         <span class="price-mono" style="font-size:20px">$${price.toFixed(2)}</span>
-        <span class="${chgCls}">${chgSign}${Math.abs(stock.todayChange).toFixed(1)}%</span>
+        <span class="${chgCls}">${stock.todayChange == null ? `change not measured${stock.todayChangeNotMeasured ? ` (${stock.todayChangeNotMeasured})` : ''}` : `${chgSign}${Math.abs(stock.todayChange).toFixed(1)}%`}</span>
         <span class="badge ${sigBadge}">${modalScoreSignal} ${modalScoreTotal}</span>
         <span class="badge ${durBadge}">${durBadgeText(displayDuration)}</span>
         ${stock.catalystSetup ? `<span class="badge badge-catalyst">🔍 CATALYST</span>` : ''}
@@ -3994,7 +4000,7 @@ async function openStockModal(ticker) {
       </div>
       <div class="signal-row">
         <span class="signal-key">Volume vs 10-day avg</span>
-        <span class="signal-val">${stock.volRatio.toFixed(2)}×</span>
+        <span class="signal-val">${stock.volRatio == null ? `not measured${stock.volRatioNotMeasured ? ` (${stock.volRatioNotMeasured})` : ''}` : `${stock.volRatio.toFixed(2)}×`}</span>
       </div>
       <div class="signal-row">
         <span class="signal-key">vs 20-day MA</span>
@@ -5275,13 +5281,17 @@ function portfolioScoreState(sig) {
 // (core/clock.js dailyBarSessionAge), asked of this moment. ->
 //   { state: 'CURRENT' } | { state: 'EARLIER_SESSION_CLOSE', asOf } |
 //   { state: 'UNJUDGED' } (no dailyBar price, or its date unknown)
+// 2026-11-23: the price shown is now the latest trade when there is one (core/market-data.js sessionInputs), so the
+// age judged is THAT price's own date -- a trade's PT date, or the daily bar's -- by the same rule as before
+// (dailyBarSessionAge on that date, at this moment). `what` names which it is, so the tag says "close" only of a close.
 function displayQuoteAge(snap, nowMs) {
-  // Price not from a dailyBar: not judged. (An undated or unparseable
-  // dailyBar is UNJUDGED from scanFreshness itself since 2026-11-02; the
-  // guard that used to sit here for its throw is gone with the throw.)
-  if (!snap?.dailyBar?.c) return { state: 'UNJUDGED' };
-  const age = dailyBarSessionAge(scanFreshness(snap, nowMs));
-  if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf };
+  const { price } = pickLivePrice(snap);
+  if (price.value == null) return { state: 'UNJUDGED' };
+  const priceDate = price.source === 'latestTrade' ? ptDateTimeOf(Date.parse(price.asOf)).date : price.asOf;
+  if (!priceDate) return { state: 'UNJUDGED' };
+  const what = price.source === 'latestTrade' ? 'last trade' : 'close';
+  const age = dailyBarSessionAge(scanFreshness({ dailyBar: { t: priceDate } }, nowMs));
+  if (age.state === 'EARLIER_SESSION') return { state: 'EARLIER_SESSION_CLOSE', asOf: age.asOf, what };
   if (age.state === 'CURRENT') return { state: 'CURRENT' };
   return { state: 'UNJUDGED' };
 }
@@ -5572,7 +5582,7 @@ async function renderPortfolioTab() {
     const quoteAge = displayQuoteAge(snap, nowMs);
     const showsEarlierSessionClose = !priceUnavailable && quoteAge.state === 'EARLIER_SESSION_CLOSE';
     const earlierCloseTag = showsEarlierSessionClose
-      ? `<span class="pf-earlier-close-tag" title="No trade on the feed yet today: this is the ${quoteAge.asOf} close">${quoteAge.asOf} close</span>`
+      ? `<span class="pf-earlier-close-tag" title="No trade on the feed yet today: this is the ${quoteAge.asOf} ${quoteAge.what}">${quoteAge.asOf} ${quoteAge.what}</span>`
       : '';
     // The RSI is MEASURED, or it is null with the reason (2026-11-13, the reviewer: "a fallback that substitutes one
     // measurement for another is a defect, not a default"). It fell back to p.rsiAtBuy, from the first commit until
@@ -5894,7 +5904,7 @@ async function renderPortfolioTab() {
     };
     const unknownWhy = {
       urgency: 'hold window unknown',
-      pnlPct: priceUnavailable ? 'price unavailable' : `price is the ${quoteAge.asOf} close`,
+      pnlPct: priceUnavailable ? 'price unavailable' : `price is the ${quoteAge.asOf} ${quoteAge.what}`,
       filledAtMs: 'fill time not recorded',
       score: scoreState.unknown,
     };
@@ -5970,7 +5980,7 @@ async function renderPortfolioTab() {
           ? '<button class="btn btn-ghost" disabled>Recording sale…</button>'
           : state.saleWriteFailures?.[p.id]?.code === 'SALE_FAILED' || state.saleWriteFailures?.[p.id]?.code === 'SALE_PENDING'
           ? `<button class="btn btn-danger" onclick="retrySaleWrite('${p.id}')">${state.saleWriteFailures[p.id].code === 'SALE_FAILED' ? 'Sale NOT recorded: Retry' : 'Sale not known to be recorded: Retry'}</button>`
-          : `<button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf}'` : 'null'})">Mark as sold</button>`}
+          : `<button class="btn btn-danger" onclick="openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf} ${quoteAge.what}'` : 'null'})">Mark as sold</button>`}
         <button class="btn btn-ghost" onclick="openPositionSnapshotModal('${p.ticker}')">View signal</button>
       </div>
     </div>`;
@@ -6461,8 +6471,10 @@ function calcPeakRiskScore(position, currentSignal, snap, asOfDate = null) {
   }
 
   // ── Volume declining on an up day
-  const prevClose = snap?.prevDailyBar?.c;
-  const todayUp = prevClose != null && price != null && price > prevClose;
+  // From the session reading (2026-11-23): prevDailyBar is two sessions back whenever the daily bar is the previous
+  // session's, which made "up today" a two-day move.
+  const sessionChange = snap ? sessionInputs(snap).todayChange.value : null;
+  const todayUp = sessionChange != null && sessionChange > 0;
   if (todayUp && currentSignal?.volRatio != null && currentSignal.volRatio < 0.7) {
     add(`Up today on thin volume (${currentSignal.volRatio.toFixed(1)}x) — distribution signal`, -15);
   }
@@ -7049,7 +7061,7 @@ function openMarkSoldModal(posId, currentPrice, withheldCloseAsOf = null) {
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
-      ${priceUnavailable ? `<div class="stale-table-warning">⚠ ${withheldCloseAsOf ? `The only price available is the ${withheldCloseAsOf} close (no trade on the feed yet today), so it isn't filled in` : 'No live price was available for this position'} — the field below is empty on purpose. Enter the real fill price from your broker; do not guess.</div>` : ''}
+      ${priceUnavailable ? `<div class="stale-table-warning">⚠ ${withheldCloseAsOf ? `The only price available is the ${withheldCloseAsOf} (no trade on the feed yet today), so it isn't filled in` : 'No live price was available for this position'} — the field below is empty on purpose. Enter the real fill price from your broker; do not guess.</div>` : ''}
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Sale Price per Share</label>

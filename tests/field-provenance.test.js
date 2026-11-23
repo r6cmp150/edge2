@@ -25,9 +25,14 @@ run('the entries the reviewer named are on the list', () => {
 
 run('each cited default still reads that way in the code (a fix must update its row)', () => {
   const app = readSource('app.js');
-  assert.ok(readSource('core/market-data.js').includes('return snap.dailyBar?.c || snap.latestTrade?.p || 0;'), 'getLivePrice: stale-first');
+  // 2026-11-23 (scoring version 3): the latest trade first, null when none; the rows that cited the stale-first order
+  // were rewritten in the same change
+  assert.ok(readSource('core/market-data.js').includes("const price = trade ? { value: trade.p, source: 'latestTrade', asOf: trade.t }"), 'getLivePrice: the latest trade first');
   for (const s of ["target:   sig?.target || price * 1.10,", "stop:     sig?.stop   || price * 0.92,", "duration: sig?.duration || '3-DAY',", 'const currentPrice = getLivePrice(snap) || p.buyPrice;', 'const entryVsSignalPricePct = (sig && sig.price) ? ((price - sig.price) / sig.price) * 100 : null;'])
     assert.ok(app.includes(s), s);
-  assert.ok(readSource('core/edge-scoring.js').includes('const volRatio = avgVol10 > 0 ? volume / avgVol10 : 1;'));
+  // version 3: null with a reason, never 1 (volume_ratio_at_buy moved to provenanced with this line); the modal's
+  // display-only fallback still builds a 1, cited in that row
+  assert.ok(readSource('core/edge-scoring.js').includes('const volRatio = volume == null || !(avgVol10 > 0) ? null : volume / avgVol10;'));
+  assert.ok(app.includes('const volRatio = avgVol10 > 0 ? ((sorted[sorted.length-1]?.v||0) / avgVol10) : 1;'), 'the modal fallback, cited in the volume_ratio_at_buy row');
   assert.ok(readSource('scripts/log-signals-edge.mjs').includes('reference_price: global.getLivePrice(snapshots[r.ticker]) ?? null,'));
 });

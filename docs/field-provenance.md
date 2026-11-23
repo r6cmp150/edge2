@@ -31,14 +31,14 @@ was counted, the count is given beside it.
 **What the list does not cover:** it lists the fields this audit actually read, so "not established" is a minority of
 the rows. Every column NOT listed here is **not established**. That includes trades_v2's exit-model and outcome-window
 columns (`unified_*_at_sale`, `*_factors_at_sale`, `best_exit_*`, `price_at_plus*`, `peak_*`, `target_drift_pct`,
-`distance_from_target`, `minutes_late` and the rest). Counted: 43 rows, 20 can be fabricated, 17 provenanced, 6 not
+`distance_from_target`, `minutes_late` and the rest). Counted: 43 rows, 19 can be fabricated, 18 provenanced, 6 not
 established, plus every unlisted column.
 
 ## trades_v2 (the outcome record)
 
 | Field | State | Clock | Why, and the source |
 |---|---|---|---|
-| `buy_price` | can be fabricated | — | It is the add form's pre-fill (app.js `openAddPortfolioModal`), taken from the signal's `getLivePrice`. That function reads `dailyBar.c` FIRST, however old the bar (core/market-data.js:37). It equals the pre-fill on 244 of 244 snapshot trades. Against SIP: 51 of 586 were off by 1% or more (84d161a). |
+| `buy_price` | can be fabricated | — | It is the add form's pre-fill (app.js `openAddPortfolioModal`), the signal's price. Until 2026-11-23 that was `getLivePrice`'s `dailyBar.c` FIRST, however old (244 of 244 snapshot trades equal the pre-fill; 51 of 586 off SIP by 1% or more, 84d161a). Since scoring version 3 it is the LATEST TRADE, with its date (core/market-data.js `sessionInputs`), and a stale bar can no longer stand in for it; but a last trade can itself be days old and is still pre-filled, so the state stands. |
 | `sell_price` | can be fabricated | — | The sell form's pre-fill is `getLivePrice(snap) \|\| p.buyPrice` (app.js:5535). Since 3f15225 (11-02) an earlier session's close is withheld, and the `buyPrice` fallback renders an empty field. Off by 1% or more against SIP: 38 of 429 sold before 11-02, 6 of 157 after (8bc7432). |
 | `pnl_dollars`, `pnl_pct` | can be fabricated | — | Derived from the two prices above. Exact arithmetic on them: 586 of 586 to the cent. |
 | `shares` | provenanced | — | Typed. The field has a placeholder and no value (app.js `pf-shares`), and is never re-sized. |
@@ -48,8 +48,8 @@ established, plus every unlisted column.
 | `sell_time` | provenanced | the save | As what it is named for since 5cf9863: "recorded at". It is not the sale's time; that is `sell_filled_at`. |
 | `sell_filled_at` with `sell_filled_at_source` | provenanced | typed, or the form opening | entered / default / not_known, each stored with its source (db/038). A default is no longer used to place anything against the fill (7d8cf22). |
 | `filled_at` (buy) | can be fabricated | typed, or the form opening | The mark-filled form pre-fills the fill time with NOW and the fill price with the order's price (app.js `mf-time` / `mf-price`, found by tests/prefill-guard.test.js 2026-11-22), and no source column records whether either was typed. (Was: not established.) |
-| `signal_score` | can be fabricated | — | Five substitution paths in core/edge-scoring.js. Counted on the 586 (7dd8248): 0 established. Path (a) is not established on 342 trades, at most 86. A no-signal add stored `\|\| 0` until 11-14; none of the 586 has a 0. |
-| `volume_ratio_at_buy` | can be fabricated | — | `avgVol10 > 0 ? volume / avgVol10 : 1`, the TOP of the volume ladder. 0 of 586 exactly 1 or 0 (7dd8248). The modal fallback at app.js:3730 repeats the `: 1`. |
+| `signal_score` | can be fabricated | — | Paths (a), (b) and (c) of the 2026-11-20 count are FIXED in scoring version 3 (a missing previous close, volume or 10-day average is null with a reason and earns no points). Still open: (d) the default multipliers (target/stop only) and (e) `MACRO_ADJUSTMENTS[c]?.[k] ?? 0`. On the 586 (version 1/2): 0 established (7dd8248). |
+| `volume_ratio_at_buy` | provenanced | — | Since scoring version 3 (2026-11-23): measured, or null with the reason (`volRatioNotMeasured`, in the signal snapshot); never the substituted 1. Rows from versions 1 and 2 could carry the 1: 0 of 586 did (7dd8248). The stock modal's no-card fallback (app.js:3730) still builds a display-only `: 1`; it is never stored. |
 | `rsi_at_buy` | not established | — | A NaN RSI scores 0 by design, and the null path was fixed 11-14 ("0 of 817 sales held a 0 or null"). Not re-checked in this audit. |
 | `risk_score` | can be fabricated | — | `calcRiskScore(..., hasRecentNegNews)`. With news not retrieved, the +2 is missing. The screen says so ("News not retrieved (risk may be understated)"); the stored number does not. |
 | `duration_classification` | can be fabricated | — | `sig?.duration \|\| '3-DAY'` for a buy with no signal (app.js `finalizeAddPortfolio`). classifyDuration itself returns only DAY / 3-DAY / WEEK (586 of 586). |
@@ -77,7 +77,7 @@ established, plus every unlisted column.
 | `buy_price` | can be fabricated | — | The same pre-fill as `trades_v2.buy_price`. |
 | `target`, `stop` | can be fabricated | — | `sig?.target \|\| price * 1.10` and `sig?.stop \|\| price * 0.92` for a buy with no signal (app.js `finalizeAddPortfolio`). These drive the exit warnings and alerts. |
 | `duration` | can be fabricated | — | `sig?.duration \|\| '3-DAY'`, as above. |
-| `peak_price` | can be fabricated | — | Raised from `currentPrice = getLivePrice(snap) \|\| p.buyPrice` (app.js:5535, 5670), so it can be a stale close or the buy price. |
+| `peak_price` | can be fabricated | — | Raised from `currentPrice = getLivePrice(snap) \|\| p.buyPrice` (app.js:5545, 5670): the latest trade since 2026-11-23, but still the buy price when there is no price at all. |
 | `execution_mode` with `execution_mode_source` | provenanced | — | A mode is never stored without its source (db/042, db/044). The six 11-02 rows are pending Roman's run of RUN-ME-20. |
 | `peak_rsi` with `peak_rsi_sampled_from` | provenanced | the render | db/044. |
 | `filled_at` | can be fabricated | typed, or the form opening | The same pre-filled fill time, with no source recorded, as on trades_v2. |
@@ -87,7 +87,7 @@ established, plus every unlisted column.
 | Field | State | Clock | Why, and the source |
 |---|---|---|---|
 | `first_shown_at` | provenanced | the scan | Provenanced as the first writer's sighting (dedup keeps it). It is NOT what Roman saw: the app wrote rows to 10-22 and the late-running logger after. Only 96 EDGE symbols were ever logged, against 310 traded (05969ca). |
-| `reference_price` | can be fabricated | — | `getLivePrice(snapshot) ?? null` in the logger (scripts/log-signals-edge.mjs:377): the same stale-first preference. |
+| `reference_price` | can be fabricated | — | `getLivePrice(snapshot)` in the logger: the latest trade since 2026-11-23, and a row with NO price is no longer written with a fabricated $0 (it is skipped and named in the run's log). A last trade can still be days old, and the row does not carry its date. |
 | `ret_5m` ... `ret_5d` | provenanced | — | null when no bar or price exists, "never a defaulted 0" (db/016). |
 | `tier` | provenanced | — | SHOWN / BELOW_THRESHOLD / NOT_EVALUATED, a column rather than a filter (db/001). |
 | `taken_resolution`, `matched_trade_id` | not established | — | Not checked in this audit. It cannot match the trades the log never saw. |
@@ -99,13 +99,15 @@ These are product facts that bear on every field above.
 - **What EDGE displayed to Roman is unrecorded before 2026-11-10.** `appShowedAtBuy` began in 4e71a4a. For every
   earlier trade, what he saw is gone, and no record exists that could restore it. A strategy cannot be tested against
   what a person saw if what they saw was never written down. (The reviewer, 2026-11-23.)
-- **A displayed price can be days old, and the price figure says nothing.** `getLivePrice` prefers `dailyBar.c` over
-  the latest trade (core/market-data.js:37). IPST, 2026-11-05: the card's price was $2.67, the 11-03 close, while SIP
-  traded $2.08.
+- **A displayed price could be days old, and the price figure said nothing.** Until 2026-11-23 `getLivePrice` preferred
+  `dailyBar.c` over the latest trade (core/market-data.js). IPST, 2026-11-05: the card's price was $2.67, the 11-03
+  close, while SIP traded $2.08.
   - In the corrected form: a stale-bar gate existed from 11-01 (b2eb9d8, `entryGateStaleDailyBar`). It would have
     labelled the card "Scored on 11-03's price, not today's: no trade on the feed yet when scanned — not buyable".
   - Whether Roman saw that label is NOT ESTABLISHED: neither snapshot has `appShowedAtBuy`.
-  - The price figure itself carries no date.
+  - **FIXED IN PART by scoring version 3 (2026-11-23).** The price is now the latest trade. The portfolio's tag names an
+    earlier-session price as "last trade" or "close". A stale bar's volume and change are not measured, and the gate
+    says which. **The signal card's price figure itself still carries no date.**
 - **24 of the 586 were entered on a day with no market** (Sunday 2026-09-27, af9d788).
   - Their `buy_price` is Friday 09-25's close. The SIP reference was 2,319 to 3,038 minutes old, with a median gap of
     0.000% (84d161a).

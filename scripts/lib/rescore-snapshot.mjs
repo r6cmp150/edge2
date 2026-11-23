@@ -32,6 +32,11 @@ export function snapshotScoreInputs(o) {
 }
 
 const strip = s => s.replace(/^export\s*\{[\s\S]*?\};?\s*$/m, '').replace(/^export (function|const)/gm, '$1');
+// A scorer from before scoring version 3 priced with the old getLivePrice (dailyBar.c first, 0 when none), and that is
+// how its stored scores were made: so it is re-scored with exactly that, or old scores stop reproducing (2026-11-23).
+// A version-3 scorer reads core/market-data.js sessionInputs, which needs core/clock.js, loaded above.
+export const LEGACY_GET_LIVE_PRICE = '\n;getLivePrice = function (snap) { if (!snap) return 0; return snap.dailyBar?.c || snap.latestTrade?.p || 0; };';
+export const usesSessionInputs = src => /sessionInputs\(/.test(src);
 
 // A scorer for one revision's core/edge-scoring.js source. indicators and
 // market-data come from the working tree (the formula hash covers the
@@ -39,7 +44,8 @@ const strip = s => s.replace(/^export\s*\{[\s\S]*?\};?\s*$/m, '').replace(/^expo
 export function scorerFromSource(root, src) {
   const c = { console, Math, Date, JSON, Number, String, Array, Object, Infinity, NaN, isFinite, state: { settings: {}, macroContext: null } };
   vm.createContext(c);
-  for (const f of ['core/indicators.js', 'core/market-data.js']) vm.runInContext(strip(readFileSync(path.join(root, f), 'utf8')), c);
+  for (const f of ['core/indicators.js', 'core/clock.js', 'core/market-data.js']) vm.runInContext(strip(readFileSync(path.join(root, f), 'utf8')), c);
+  if (!usesSessionInputs(src)) vm.runInContext(LEGACY_GET_LIVE_PRICE, c);
   vm.runInContext(strip(src) + '\n;globalThis.__s = scoreStock;', c);
   return c;
 }

@@ -27,6 +27,7 @@ import vm from 'node:vm';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { edgeUniverse, alpacaHeaders, fetchBars } from './lib/alpaca-bars.mjs';
+import { LEGACY_GET_LIVE_PRICE, usesSessionInputs } from './lib/rescore-snapshot.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const H = alpacaHeaders(ROOT);
@@ -48,7 +49,8 @@ const strip = s => s.replace(/^export\s*\{[\s\S]*?\};?\s*$/m, '').replace(/^expo
 function scorer(src) {
   const c = { console, Math, Date, JSON, Number, String, Array, Object, Infinity, NaN, isFinite, state: { settings: { disableMacroOverlay: false }, macroContext: null } };
   vm.createContext(c);
-  for (const f of ['core/indicators.js', 'core/market-data.js']) vm.runInContext(strip(read(f)), c);
+  for (const f of ['core/indicators.js', 'core/clock.js', 'core/market-data.js']) vm.runInContext(strip(read(f)), c);
+  if (!usesSessionInputs(src)) vm.runInContext(LEGACY_GET_LIVE_PRICE, c); // an older scorer prices as it did
   vm.runInContext(strip(src) + '\n;globalThis.__s = scoreStock; globalThis.__t = typeof scoreThresholds === "function" ? scoreThresholds() : null;', c);
   return c;
 }

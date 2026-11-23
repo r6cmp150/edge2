@@ -217,7 +217,7 @@ async function main() {
 
   loadReal('core/clock.js', ['getPT', 'ptDateStr', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession', 'barsFreshness', 'previousTradingDay', 'ptDateTimeOf', 'scanFreshness']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
-  loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT', 'fetchMultiBars', 'checkUnresolvedSymbols']);
+  loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'sessionInputs', 'HISTORICAL_BAR_ADJUSTMENT', 'fetchMultiBars', 'checkUnresolvedSymbols']);
   loadReal('core/universe.js', ['runEdgePrefilter', 'edgePrefilterFailures', 'getEdgeLiquidity', 'getAssetListing', '_getAssetIndex', '_fetchSipDailyBars']);
   loadReal('core/news.js', ['fetchNewsForTickers']);
   loadReal('core/indicators.js', ['calcRSI', 'calcATR', 'calcTrimmedATR', 'calcMA', 'calcAvgVolume']);
@@ -292,15 +292,12 @@ async function main() {
     (n.symbols || []).forEach(sym => { if (!newsMap[sym]) newsMap[sym] = n; });
   });
 
-  let spyChangePct = 0;
+  // SPY's change from the same session reading as the stocks' (sessionInputs, 2026-11-23); null when not measured.
+  let spyChangePct = null;
   try {
     const spySnap = await global.fetchSnapshots(['SPY']);
     const spy = spySnap['SPY'];
-    if (spy) {
-      const spyP = global.getLivePrice(spy);
-      const spyPrev = spy.prevDailyBar?.c || spyP;
-      spyChangePct = spyPrev > 0 ? ((spyP - spyPrev) / spyPrev) * 100 : 0;
-    }
+    if (spy) spyChangePct = global.sessionInputs(spy).todayChange.value;
   } catch (e) { console.warn(`log-signals-edge: SPY snapshot fetch failed: ${e.message}`); }
 
   const category = 'OTHER';
@@ -364,7 +361,13 @@ async function main() {
     trigger_type: triggerTypeForRun(), // db/030: schedule / workflow_dispatch / local
   };
 
-  const signalRows = scoredAll.map(r => ({
+  // A row whose reference price is unknown is NOT AN OBSERVATION (the reviewer, 2026-11-23): signal_log.reference_price
+  // is NOT NULL, and getLivePrice used to return 0 for a missing snapshot, so such a row was written with a fabricated
+  // $0 reference. It now returns null, and the row is not written; the run says which and why, in its log, the form
+  // this logger already uses for what it does not log (the pre-filter line above).
+  const unpriced = scoredAll.filter(r => global.getLivePrice(snapshots[r.ticker]) == null);
+  if (unpriced.length) console.log(`log-signals-edge: ${unpriced.length} row(s) NOT written to signal_log: no reference price (no trade and no daily bar in the snapshot), so not an observation: ${unpriced.map(r => `${r.ticker} (${r.tier})`).join(', ')}`);
+  const signalRows = scoredAll.filter(r => global.getLivePrice(snapshots[r.ticker]) != null).map(r => ({
     signal_date: today,
     symbol: r.ticker,
     engine_source: 'EDGE',

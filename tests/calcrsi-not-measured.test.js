@@ -76,7 +76,10 @@ run('the AI prompt says "not measured (reason)" and never substitutes the scan\'
 
 run('the pre-market movers: unmeasured below 15 closes, with the reason, in the panel and the prompt', async () => {
   const ctx = load(['computePreMarketMovers', 'buildPreMarketGroqPrompt', 'preMarketPrevClose', 'preMarketRsiLabel'], ['AI_NO_MARKET_STATE_LINE'], { state: { signals: [], settings: {} } });
-  const snap = { minuteBar: { c: 5.15 }, prevDailyBar: { c: 5 } };
+  // 2026-11-23: the previous close is read from the session (sessionInputs), so the snapshot carries a daily bar dated
+  // today and its previous bar; a snapshot with only prevDailyBar has no placeable previous close and is not a mover.
+  const today = vm.runInContext('ptDateTimeOf(Date.now()).date', ctx);
+  const snap = { minuteBar: { c: 5.15 }, dailyBar: { t: `${today}T05:00:00Z`, c: 5.1, v: 100 }, prevDailyBar: { c: 5 } };
   const b = n => Array.from({ length: n }, (_, i) => ({ c: 5 + (i % 3) * 0.05 }));
   await ctx.__f.computePreMarketMovers({}, [['AAA', snap], ['BBB', snap], ['CCC', snap]], { AAA: b(5), BBB: [], CCC: b(20) }, {});
   const movers = ctx.state.preMarketMovers; // it writes the top five to state; it returns nothing

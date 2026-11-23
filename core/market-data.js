@@ -34,9 +34,68 @@ const UNVERIFIED_HYPHEN_SYMBOLS = ['CRD-A', 'DGAC-U', 'FTRA-U', 'MTNE-U', 'OCAC-
 // tickers after hours. Reverted to the single dailyBar/latestTrade read
 // that was correct before this helper existed, for ALL market conditions,
 // pending investigation into the actual latestQuote field shape.
+//
+// THE SESSION'S INPUTS, READ TOGETHER (2026-11-23, the reviewer: "it changes once, deliberately, never in instalments").
+// Foundation work, not scorer work: price, the previous close and today's volume are the data layer every future
+// strategy reads. Until this, getLivePrice preferred dailyBar.c however old the bar (IPST 2026-11-05: the 11-03 close
+// shown while SIP traded $2.08), and the scorer read prevDailyBar and dailyBar.v from the same snapshot whatever the
+// bar's age. Fixing the price alone would have compared a fresh price with the close TWO sessions back (a fabricated
+// momentum) and kept yesterday's volume as today's. So all three are decided here, from the daily bar's age at the
+// moment of the reading, and each is a value with its source or null with the reason (never 0, never a substitute):
+//   PRICE: the latest trade (the newest print on the feed, never older than the daily bar's own last trade), else the
+//     daily bar's close; with its source and when it was printed. Neither: null.
+//   THE DAILY BAR IS THE CURRENT SESSION'S (age 0 trading days): prevClose = prevDailyBar.c; volume = dailyBar.v.
+//   IT IS THE PREVIOUS SESSION'S (age 1: before the open, or no trade yet today): prevClose = THAT bar's close, which
+//     is the previous close; volume NOT MEASURED (there is no bar for today). Today's change only from a trade printed
+//     today; otherwise not measured ("no trade on the feed yet today"), never 0.
+//   OLDER (age 2+): the previous session's close is not on the feed: prevClose and volume not measured.
+//   AGE NOT ESTABLISHED (no daily bar, or an undated one): the price is still the latest trade if there is one; prevClose
+//     and volume are not measured, and the reason says the bar's age is not known.
+// The age is core/clock.js scanFreshness's trading-day count (the same rule the entry gate reads).
+// The price and nothing else: needs no clock, so every reader of getLivePrice can load it (the Warrior logger does
+// not load core/clock.js).
+function pickLivePrice(snap) {
+  const trade = snap?.latestTrade && snap.latestTrade.p > 0 && Number.isFinite(Date.parse(snap.latestTrade.t)) ? snap.latestTrade : null;
+  const bar = snap?.dailyBar && snap.dailyBar.c > 0 ? snap.dailyBar : null;
+  const barDate = bar && typeof bar.t === 'string' ? bar.t.slice(0, 10) : null;
+  const price = trade ? { value: trade.p, source: 'latestTrade', asOf: trade.t }
+    : bar ? { value: bar.c, source: 'dailyBar', asOf: barDate }
+    : { value: null, source: null, asOf: null, reason: 'no trade and no daily bar in the snapshot' };
+  return { trade, bar, barDate, price };
+}
+
+function sessionInputs(snap, nowMs = Date.now()) {
+  const none = reason => ({ value: null, reason });
+  const { trade, bar, barDate, price } = pickLivePrice(snap);
+  const age = bar ? scanFreshness(snap, nowMs).dailyBarAgeTradingDays : null;
+  const today = ptDateTimeOf(nowMs).date;
+  const tradedToday = !!trade && ptDateTimeOf(Date.parse(trade.t)).date === today;
+  let prevClose, volume;
+  if (!bar) { prevClose = none('no daily bar in the snapshot: the previous close cannot be placed'); volume = none('no daily bar in the snapshot'); }
+  else if (age == null) { prevClose = none("the daily bar's date is not known: the previous close cannot be placed"); volume = none("the daily bar's date is not known"); }
+  else if (age === 0) {
+    prevClose = snap.prevDailyBar?.c > 0 ? { value: snap.prevDailyBar.c, source: 'prevDailyBar' } : none('no previous daily bar in the snapshot');
+    volume = Number.isFinite(bar.v) && bar.v >= 0 ? { value: bar.v, source: 'dailyBar' } : none('the daily bar carries no volume');
+  } else if (age === 1) {
+    prevClose = { value: bar.c, source: `dailyBar of ${barDate} (the previous session)` };
+    volume = none(`no daily bar for today on the feed yet (the last is ${barDate})`);
+  } else {
+    prevClose = none(`the last daily bar is ${barDate}, ${age} trading days old: the previous session's close is not on the feed`);
+    volume = none(`no daily bar for today on the feed (the last is ${barDate})`);
+  }
+  let todayChange;
+  if (price.value == null) todayChange = none(price.reason);
+  else if (prevClose.value == null) todayChange = none(prevClose.reason);
+  else if (age === 1 && !tradedToday) todayChange = none('no trade on the feed yet today');
+  else todayChange = { value: ((price.value - prevClose.value) / prevClose.value) * 100 };
+  return { price, prevClose, volume, todayChange, dailyBarAgeTradingDays: age };
+}
+
+// The price alone, for readers that need only it: the latest trade, else the daily bar's close, else null (2026-11-23:
+// was dailyBar.c first however old, and 0 when there was none). Its age and source are sessionInputs(snap).price.
 function getLivePrice(snap) {
-  if (!snap) return 0;
-  return snap.dailyBar?.c || snap.latestTrade?.p || 0;
+  if (!snap) return null;
+  return pickLivePrice(snap).price.value;
 }
 
 // CLAUDE.md pagination rule, exemption proof: /stocks/snapshots has no

@@ -48,28 +48,36 @@ function expectedScoreDelta(a) {
 const DECIDED_LINES = { soft: 65, strong: 110 };
 
 const strip = s => s.replace(/^export\s*\{[\s\S]*?\};?\s*$/m, '').replace(/^export (function|const)/gm, '$1');
+// A scorer before version 3 priced with the old getLivePrice (dailyBar.c first); it is run with exactly that, so what
+// these tests proved about versions 1 and 2 they still prove (2026-11-23). Version 3 reads sessionInputs (needs clock.js).
+const LEGACY_GET_LIVE_PRICE = '\n;getLivePrice = function (snap) { if (!snap) return 0; return snap.dailyBar?.c || snap.latestTrade?.p || 0; };';
 function context(scoringSrc) {
-  const c = { console, Math, Date, JSON, Number, String, Array, Object, Infinity, NaN, isFinite, state: { settings: {}, macroContext: null } };
+  const c = { console, Math, Date, JSON, Number, String, Array, Object, Infinity, NaN, isFinite, Intl, state: { settings: {}, macroContext: null } };
   vm.createContext(c);
-  for (const f of ['core/indicators.js', 'core/market-data.js']) vm.runInContext(strip(readSource(f)), c);
+  for (const f of ['core/indicators.js', 'core/clock.js', 'core/market-data.js']) vm.runInContext(strip(readSource(f)), c);
+  if (!/sessionInputs\(/.test(scoringSrc)) vm.runInContext(LEGACY_GET_LIVE_PRICE, c);
   vm.runInContext(strip(scoringSrc) + '\n;globalThis.__scoreStock = scoreStock; globalThis.__scoreComponents = typeof scoreComponents === "function" ? scoreComponents : null;', c);
   return c;
 }
 
-let OLD = null;
+// V2_REV: the last commit whose formula is version 2. The step-2 equivalence below is a fact about version 2, so it is
+// checked on version 2 itself; version 3 has its own test against version 2 further down.
+const V2_REV = '840e819';
+let OLD = null, V2 = null;
 try {
   OLD = context(execSync(`git show ${BASE_COMMIT}:core/edge-scoring.js`, { cwd: REPO_ROOT, maxBuffer: 1e8 }).toString());
+  V2 = context(execSync(`git show ${V2_REV}:core/edge-scoring.js`, { cwd: REPO_ROOT, maxBuffer: 1e8 }).toString());
 } catch (e) {
-  console.log(`SKIP equivalence: cannot read ${BASE_COMMIT} from git (${e.message.split('\n')[0]})`);
+  console.log(`SKIP equivalence: cannot read ${BASE_COMMIT} or ${V2_REV} from git (${e.message.split('\n')[0]})`);
 }
 const NEW = context(readSource('core/edge-scoring.js'));
 
 function compare(args, macro, disable) {
-  for (const c of [OLD, NEW]) {
+  for (const c of [OLD, V2]) {
     c.state.macroContext = macro ? { condition: macro, changes: null } : null;
     c.state.settings.disableMacroOverlay = disable;
   }
-  const a = OLD.__scoreStock(...args), b = NEW.__scoreStock(...args);
+  const a = OLD.__scoreStock(...args), b = V2.__scoreStock(...args);
   if (a === null || b === null) { assert.strictEqual(a, b, `${args[0]}: null-ness differs`); return; }
   const delta = expectedScoreDelta(a);
   assert.strictEqual(b.score, Math.max(0, a.score + delta), `${args[0]}: score ${a.score} -> ${b.score}, expected delta ${delta}`);
@@ -88,7 +96,7 @@ function compare(args, macro, disable) {
 
 const CONDS = [null, 'RISK_OFF', 'BROAD_RALLY', 'CHOPPY', 'MOMENTUM_DAY', 'TECH_ROTATION_OUT'];
 
-run('score formula: scoreStock identical to pre-refactor on every committed EDGE snapshot', async () => {
+run('score formula: version 2 (as of 840e819) identical to pre-refactor on every committed EDGE snapshot', async () => {
   const { readBackupRows } = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/lib/backup-shards.mjs')).href);
   const signalLogRows = readBackupRows(path.join(REPO_ROOT, 'data/backups'), 'signal_log');
   if (!OLD) return;
@@ -103,7 +111,7 @@ run('score formula: scoreStock identical to pre-refactor on every committed EDGE
   console.log(`  ${rows.length} real snapshots x ${CONDS.length} macro conditions`);
 });
 
-run('score formula: scoreStock identical to pre-refactor on 10,000 generated inputs', () => {
+run('score formula: version 2 (as of 840e819) identical to pre-refactor on 10,000 generated inputs', () => {
   if (!OLD) return;
   let seed = 20261021;
   const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
@@ -193,6 +201,7 @@ run('score formula: no evaluative RSI or volume copy left in the display', () =>
 const SCORING_HISTORY = {
   1: 'ce367ebf81eb4741a52f6b845b1ddada7962e450bdba892f3282e82ffb54ab86', // b63ef1b's formula via scoreLabel (1d)
   2: '8e10b278942271cdfb1944320de39b969a4585748edf9130c294545a9e7515e2', // phase-10 step 2
+  3: 'da4d9f42ddf4e7169cfae56355d660dc9b267714c788d349d54e784257b8cb03', // 2026-11-23: the session's inputs read together
 };
 run('scoring identity: SCORING_HASH matches the source, and the version history is pinned', async () => {
   const { scoringHash } = await import('../scripts/lib/scoring-hash.mjs');

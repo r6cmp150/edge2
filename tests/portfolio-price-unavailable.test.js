@@ -82,7 +82,8 @@ async function testAvailablePriceStillPrefillsNormally() {
 // earlier session's close is never put in it.
 async function testEarlierCloseIsWithheldAndNamed() {
   const { openMarkSoldModal, getHtml } = loadOpenMarkSoldModal();
-  openMarkSoldModal('pos1', null, '2026-10-30');
+  // 2026-11-23: the caller passes the date AND what the price was ("close" or "last trade"), from displayQuoteAge
+  openMarkSoldModal('pos1', null, '2026-10-30 close');
   const html = getHtml();
   assert.ok(/id="sold-price"[^>]*value=""/.test(html), 'EMPTY, never the earlier close');
   assert.ok(html.includes('The only price available is the 2026-10-30 close (no trade on the feed yet today), so it isn\'t filled in'), 'names the withheld close');
@@ -95,8 +96,10 @@ async function testEarlierCloseIsWithheldAndNamed() {
 async function testGetLivePriceRealBehaviorMatchesWhatPriceUnavailableAssumes() {
   evalModule(readSource('core/market-data.js'), { expose: ['getLivePrice'] });
   const getLivePrice = global.getLivePrice;
-  assert.strictEqual(getLivePrice(undefined), 0, 'a missing snapshot entry (the exact gap this bug lived in) must be falsy');
-  assert.strictEqual(getLivePrice({}), 0, 'a snapshot object with neither dailyBar nor latestTrade must be falsy');
+  // 2026-11-23: null, not 0 (a missing price is absent, never a number); still falsy, which is all priceUnavailable reads
+  assert.strictEqual(getLivePrice(undefined), null, 'a missing snapshot entry (the exact gap this bug lived in) must be falsy');
+  assert.strictEqual(getLivePrice({}), null, 'a snapshot object with neither dailyBar nor latestTrade must be falsy');
+  assert.ok(!getLivePrice(undefined) && !getLivePrice({}), 'falsy, as priceUnavailable relies on');
   assert.strictEqual(getLivePrice({ dailyBar: { c: 14.37 } }), 14.37, 'a real snapshot must return its real price (sanity check, not this fix\'s concern)');
 }
 

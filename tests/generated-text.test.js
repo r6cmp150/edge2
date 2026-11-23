@@ -59,7 +59,7 @@ run('the label bands come from the version\'s thresholds', () => {
 
 run('the detection thresholds the report states are the literals scoreStock uses', () => {
   const c = ctx();
-  const vb = scorer.match(/if \(vols\.length >= 2 && volRatio >= ([\d.]+)\)/);
+  const vb = scorer.match(/if \(vols\.length >= 2 && volRatio != null && volRatio >= ([\d.]+)\)/); // v3: an unmeasured volRatio never builds
   const mr = scorer.match(/if \(maPct <= -(\d+) && maPct >= -(\d+) && rsi < (\d+)/);
   assert.ok(vb && mr, 'scoreStock detection lines found');
   assert.strictEqual(c.VOL_BUILD_TODAY_MIN, Number(vb[1]));

@@ -153,14 +153,16 @@ function calcRiskScore(price, atr, rsi, volRatio, hasNegNews) {
 //       catalystSetup, consUpDays, rsVsSPY }
 function scoreComponents(x) {
   // Volume (−10 to +20). Change 9 (Scoring Formula v2).
-  let volPts = 0, volBucket = 'under-0.5x';
-  if (x.volRatio >= 3) { volPts = -10; volBucket = '3x+'; }
+  // A volRatio that was not measured (null) earns nothing and names no bucket (scoring version 3; it was 1, the top).
+  let volPts = 0, volBucket = x.volRatio == null ? null : 'under-0.5x';
+  if (x.volRatio == null) { /* not measured */ }
+  else if (x.volRatio >= 3) { volPts = -10; volBucket = '3x+'; }
   else if (x.volRatio >= 2) { volPts = 10; volBucket = '2-3x'; }
   else if (x.volRatio >= 1) { volPts = 20; volBucket = '1-2x'; }
   else if (x.volRatio >= 0.5) { volPts = 15; volBucket = '0.5-1x'; }
 
   // Price momentum (0–20).
-  const momPts = x.todayChange >= 4 ? 20 : x.todayChange >= 2 ? 10 : 0;
+  const momPts = x.todayChange == null ? 0 : x.todayChange >= 4 ? 20 : x.todayChange >= 2 ? 10 : 0; // not measured: 0
 
   // RSI (−10 to +20). Change 8 (Scoring Formula v2). A NaN RSI matches no
   // bucket and scores 0, exactly as the inline chain always did.
@@ -208,7 +210,7 @@ function consUpPoints(days) {
   return days >= 4 ? 15 : days === 3 ? 10 : days === 2 ? 5 : 0;
 }
 function relStrengthPoints(rsVsSPY) {
-  return rsVsSPY >= 2 ? 15 : rsVsSPY >= 1 ? 10 : rsVsSPY > 0 ? 5 : 0;
+  return rsVsSPY == null ? 0 : rsVsSPY >= 2 ? 15 : rsVsSPY >= 1 ? 10 : rsVsSPY > 0 ? 5 : 0;
 }
 
 // Formula identity (phase-10 spec §7.6 step 1d, db/028 code_version).
@@ -223,8 +225,15 @@ function relStrengthPoints(rsVsSPY) {
 //   1 = the formula through b63ef1b (before phase-10 step 2)
 //   2 = phase-10 step 2: RSI < 35 and the sub-$10 bonuses neutralised;
 //       lines re-derived (scripts/derive-step2-thresholds.mjs)
-const SCORING_VERSION = 2;
-const SCORING_HASH = '8e10b278942271cdfb1944320de39b969a4585748edf9130c294545a9e7515e2';
+//   3 = 2026-11-23: the session's inputs read together (core/market-data.js
+//       sessionInputs). A stale daily bar no longer sets the price; the
+//       previous close comes from the bar's own session; volume, volRatio,
+//       todayChange and rsVsSPY are null with a reason when not measured,
+//       and earn no points (volRatio was 1, the top of the ladder). The point
+//       values and the label lines are v2's, unchanged: declared, not
+//       re-derived, because only unmeasured inputs score differently.
+const SCORING_VERSION = 3;
+const SCORING_HASH = 'da4d9f42ddf4e7169cfae56355d660dc9b267714c788d349d54e784257b8cb03';
 
 // The label thresholds of each scoring version (spec §7.7: a label derived
 // from a threshold must record which threshold produced it). A score is
@@ -236,6 +245,7 @@ const SCORING_HASH = '8e10b278942271cdfb1944320de39b969a4585748edf9130c294545a9e
 const SCORE_THRESHOLDS_BY_VERSION = {
   1: { watch: 29, soft: 73, strong: 116 },
   2: { watch: 20, soft: 65, strong: 110 },
+  3: { watch: 20, soft: 65, strong: 110 }, // v2's lines, declared unchanged (see SCORING_VERSION)
 };
 
 // 'STRONG BUY' | 'SOFT BUY' | 'WATCH', or null when the score or the
@@ -250,12 +260,18 @@ function scoreThresholds(version = SCORING_VERSION) {
   return SCORE_THRESHOLDS_BY_VERSION[version] || null;
 }
 
-function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = null) {
-  const price = getLivePrice(snap);
-  const prevClose = snap.prevDailyBar?.c || price;
-  const volume = snap.dailyBar?.v || 0;
+function scoreStock(ticker, snap, bars, newsItem, spyChangePct = null, category = null) {
+  // The session's inputs, decided together from the daily bar's age (core/market-data.js sessionInputs, 2026-11-23,
+  // scoring version 3): each a value with its source, or null with the reason. Before: the price preferred a stale
+  // daily bar, prevClose fell back to the price (todayChange exactly 0), volume to 0, and volRatio to 1 (the TOP of the
+  // volume ladder) -- paths (a), (b) and (c) of the 2026-11-20 count.
+  const inputs = sessionInputs(snap);
+  const price = inputs.price.value;
+  const prevClose = inputs.prevClose.value;
+  const volume = inputs.volume.value;
 
   if (bars.length < 15) return null;
+  if (price == null) return null; // no trade and no daily bar: there is nothing to score
 
   const sorted = [...bars].sort((a,b) => new Date(a.t) - new Date(b.t));
   const closes = sorted.map(b => b.c);
@@ -266,8 +282,11 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
   const trimmedAtr = calcTrimmedATR(sorted); // feeds target/stop only
   const ma20 = calcMA(closes, 20);
   const avgVol10 = calcAvgVolume(vols, 10);
-  const volRatio = avgVol10 > 0 ? volume / avgVol10 : 1;
-  const todayChange = prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0;
+  // Not measured is null, never 1: no volume for today, or no 10-day average to divide by, earns no volume score.
+  const volRatio = volume == null || !(avgVol10 > 0) ? null : volume / avgVol10;
+  const volRatioNotMeasured = volume == null ? inputs.volume.reason : !(avgVol10 > 0) ? 'no 10-day average volume to compare with' : null;
+  const todayChange = inputs.todayChange.value;
+  const todayChangeNotMeasured = todayChange == null ? inputs.todayChange.reason : null;
 
   const duration = classifyDuration(rsi, volRatio, closes);
   // Resistance levels for target capping (Change 6). Window is whatever bars are
@@ -310,7 +329,7 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
     else break;
   }
   let volBuild = false;
-  if (vols.length >= 2 && volRatio >= 1.3) {
+  if (vols.length >= 2 && volRatio != null && volRatio >= 1.3) {
     const n = vols.length;
     if (vols[n-1] > vols[n-2]) {
       volBuild = true;
@@ -350,14 +369,15 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
   }
 
   // Relative strength vs SPY (0–15 pts)
-  const rsVsSPY = todayChange - spyChangePct;
+  // null when either side was not measured (a missing SPY change used to default to 0)
+  const rsVsSPY = todayChange == null || spyChangePct == null ? null : todayChange - spyChangePct;
 
   const signalsFired = [];
   if (volBuild) signalsFired.push('VOL_BUILD');
   if (meanReversion) signalsFired.push('MEAN_REVERSION');
   if (consUpDays >= 3) signalsFired.push('CONS_UP');
 
-  const volTrend = volBuild ? 'building' : volRatio >= 1.5 ? 'spike' : 'normal';
+  const volTrend = volBuild ? 'building' : volRatio == null ? null : volRatio >= 1.5 ? 'spike' : 'normal';
 
   // Sub-$10 early entry timing (Change C) — RSI/volume-based adjustment layered
   // on top of the existing formula, tier-specific to sub-$10 stocks only (both
@@ -397,6 +417,9 @@ function scoreStock(ticker, snap, bars, newsItem, spyChangePct = 0, category = n
   return {
     ticker, company: COMPANY_NAMES[ticker] || ticker,
     price, prevClose, todayChange, volume, volRatio,
+    priceSource: inputs.price.source, priceAsOf: inputs.price.asOf,
+    prevCloseNotMeasured: inputs.prevClose.reason ?? null, volumeNotMeasured: inputs.volume.reason ?? null,
+    volRatioNotMeasured, todayChangeNotMeasured,
     rsi, atr, trimmedAtr, ma20, duration, entry, target, stop, cappedBy,
     score, risk, signal, priceRange, news: newsItem, hasNegNews,
     volBuild, meanReversion, maPct, volTrend, signalsFired,

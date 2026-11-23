@@ -280,13 +280,17 @@ async function _getMoversUniverse(session, client = _coreClient) {
   const activeSnaps = activeSymbols.length ? await fetchSnapshots(activeSymbols, undefined, client) : {};
   const actives = activeRows.map((a, i) => {
     const snap = activeSnaps[a.symbol];
-    const price = getLivePrice(snap) || null;
-    const prevClose = snap?.prevDailyBar?.c || null;
+    // The session's inputs together (core/market-data.js sessionInputs, 2026-11-23): with the price now the latest
+    // trade, prevDailyBar is the close TWO sessions back whenever the daily bar is the previous session's, so the
+    // previous close and the change come from the same reading as the price, or are null with no change computed.
+    const inputs = snap ? sessionInputs(snap) : null;
+    const price = inputs?.price.value ?? null;
+    const prevClose = inputs?.prevClose.value ?? null;
     return {
       symbol: a.symbol,
       price,
       prevClose,
-      changePct: (prevClose && price) ? ((price - prevClose) / prevClose) * 100 : null,
+      changePct: inputs?.todayChange.value ?? null,
       volume: typeof a.volume === 'number' ? a.volume : null,
       source: 'actives',
       rank: i + 1,

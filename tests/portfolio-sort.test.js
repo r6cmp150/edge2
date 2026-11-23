@@ -141,8 +141,10 @@ const dailyBars = (last, upTo = '2026-10-30') => {
 };
 const snapAt = (c, day = '2026-11-02') => ({ dailyBar: { t: `${day}T05:00:00Z`, c, v: 1e6 }, latestTrade: { p: c } });
 const SCORING_HASH_REAL = readSource('core/edge-scoring.js').match(/const SCORING_HASH = '([0-9a-f]+)'/)[1];
-const sig = (score, scannedAt, extra = {}) => ({ score, label: 'SOFT BUY', scoringVersion: 2, scannedAt,
-  signal: { ticker: 'x', score, signal: 'SOFT BUY', scoringVersion: 2, scoringHash: SCORING_HASH_REAL, ...extra } });
+// the CURRENT version, read from the source (2026-11-23: a hard-coded 2 went stale the day version 3 landed)
+const SCORING_VERSION_REAL = Number(readSource('core/edge-scoring.js').match(/^const SCORING_VERSION = (\d+);/m)[1]);
+const sig = (score, scannedAt, extra = {}) => ({ score, label: 'SOFT BUY', scoringVersion: SCORING_VERSION_REAL, scannedAt,
+  signal: { ticker: 'x', score, signal: 'SOFT BUY', scoringVersion: SCORING_VERSION_REAL, scoringHash: SCORING_HASH_REAL, ...extra } });
 
 function fixture() {
   const pos = (id, ticker, o) => ({ id, ticker, company: ticker + ' Inc', engineSource: 'EDGE', shares: 10, stop: 1, target: 99,
@@ -364,7 +366,7 @@ run('wiring: the stale-close state never reaches priceUnavailable or exit dispat
   }
   // CHANGED 2026-11-13, declared: the call also carries rsiNotMeasured (the RSI is measured or null, with its reason).
   assert.ok(code.includes("calcUnifiedRecommendation({ ...p, currentPrice, rsi, rsiNotMeasured, priceFetchFailed: priceUnavailable }, currentSignal, state.macroContext, snap);"), 'recommendation call unchanged');
-  assert.ok(code.includes("openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf}'` : 'null'})"), 'Mark as Sold: withheld on an earlier close, never pre-filled from it');
+  assert.ok(code.includes("openMarkSoldModal('${p.id}', ${(priceUnavailable || showsEarlierSessionClose) ? 'null' : currentPrice}, ${showsEarlierSessionClose ? `'${quoteAge.asOf} ${quoteAge.what}'` : 'null'})"), 'Mark as Sold: withheld on an earlier close, never pre-filled from it');
   // The verdict is computed whatever the quote's age: the exit dispatch
   // conditions mention priceUnavailable only.
   assert.ok(code.includes("const exitResult = priceUnavailable\n        ? { status: 'CANNOT_EVALUATE',"), 'exit dispatch gated on priceUnavailable alone');
@@ -382,13 +384,13 @@ run('portfolioScoreState: version, hash and scan time decide known vs unknown; t
   const ctx = renderCtx();
   ctx.state = { settings: {} };
   vm.runInContext('globalThis.__ss = portfolioScoreState;', ctx);
-  const s = (o) => ctx.__ss({ score: 80, scoringVersion: 2, scoringHash: SCORING_HASH_REAL, scannedAt: NOW - HOUR, ...o });
+  const s = (o) => ctx.__ss({ score: 80, scoringVersion: SCORING_VERSION_REAL, scoringHash: SCORING_HASH_REAL, scannedAt: NOW - HOUR, ...o });
   assert.deepStrictEqual({ ...s({}) }, { score: 80, unknown: null });
   assert.deepStrictEqual({ ...s({ score: 0 }) }, { score: 0, unknown: null }, 'a real 0 is known');
   // Absent and different are different facts, and say so.
   assert.strictEqual(s({ scoringVersion: undefined }).unknown, 'scoring version not recorded', 'absent');
   assert.strictEqual(s({ scoringVersion: null }).unknown, 'scoring version not recorded', 'absent (null)');
-  assert.deepStrictEqual({ ...s({ scoringVersion: 1 }) }, { score: null, unknown: 'scored by scoring v1, current is v2' }, 'present and different');
+  assert.deepStrictEqual({ ...s({ scoringVersion: 1 }) }, { score: null, unknown: `scored by scoring v1, current is v${SCORING_VERSION_REAL}` }, 'present and different');
   assert.strictEqual(s({ scoringHash: 'deadbeef00112233' }).unknown, `scored by formula deadbeef0011, current is ${SCORING_HASH_REAL.slice(0, 12)}`, 'a recorded hash that differs');
   assert.strictEqual(s({ scoringHash: null }).score, 80, 'no hash recorded (stored before 2026-11-02): judged by version');
   assert.strictEqual(s({ scannedAt: null }).unknown, 'scan time not recorded');
@@ -405,7 +407,7 @@ run("displayQuoteAge: yesterday's close is marked during and after the session o
   ctx.state = { settings: {} };
   vm.runInContext('globalThis.__qa = displayQuoteAge;', ctx);
   const fri = snapAt(10, '2026-10-30');
-  assert.deepStrictEqual({ ...ctx.__qa(fri, NOW) }, { state: 'EARLIER_SESSION_CLOSE', asOf: '2026-10-30' }, 'Monday 10:00');
+  assert.deepStrictEqual({ ...ctx.__qa(fri, NOW) }, { state: 'EARLIER_SESSION_CLOSE', asOf: '2026-10-30', what: 'close' }, 'Monday 10:00');
   assert.strictEqual(ctx.__qa(fri, Date.parse('2026-11-02T14:00:00Z')).state, 'CURRENT', 'Monday 06:00, pre-market: Friday is the newest close there is');
   assert.strictEqual(ctx.__qa(fri, Date.parse('2026-10-31T18:00:00Z')).state, 'CURRENT', 'Saturday');
   assert.strictEqual(ctx.__qa(snapAt(10), NOW).state, 'CURRENT');
@@ -552,11 +554,11 @@ run('exit side, display: the verdict is computed and carries the same tag as the
   assert.ok(wddd.includes('data-status="HOLDING"'), 'its verdict is shown, not CANNOT_EVALUATE');
   assert.strictEqual(decodeURIComponent(wddd.match(/data-tag="([^"]*)"/)[1]), DDD_TAG);
   // Mark as Sold: withheld (null) with the close named; a current price pre-fills.
-  assert.ok(card('DDD').includes(`openMarkSoldModal('1003', null, '2026-10-30')`), card('DDD'));
+  assert.ok(card('DDD').includes(`openMarkSoldModal('1003', null, '2026-10-30 close')`), card('DDD')); // date and what it was (2026-11-23)
   assert.ok(card('AAA').includes(`openMarkSoldModal('1000', 10.5, null)`));
   assert.ok(card('FFF').includes(`openMarkSoldModal('0999', null, null)`), 'unavailable: null, no close to name');
   // The badge's cache carries the card's own state.
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(ctx.state.portfolioPrices.DDD)), { price: 11, quoteAge: { state: 'EARLIER_SESSION_CLOSE', asOf: '2026-10-30' } });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(ctx.state.portfolioPrices.DDD)), { price: 11, quoteAge: { state: 'EARLIER_SESSION_CLOSE', asOf: '2026-10-30', what: 'close' } });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(ctx.state.portfolioPrices.AAA)), { price: 10.5, quoteAge: { state: 'CURRENT' } });
   assert.ok(!('FFF' in ctx.state.portfolioPrices), 'no price, no cache entry (unchanged)');
 });

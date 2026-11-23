@@ -30,7 +30,7 @@ function load(alpacaGet, cache) {
   global.state = { universeAssetCache: cache, edgeLiquidityCache: null, settings: {} };
   global.persist = () => {};
   // eslint-disable-next-line no-eval
-  eval(readSource('core/clock.js') + '\nglobal.getPT = getPT; global.ptDateStr = ptDateStr; global.previousTradingDay = previousTradingDay; global.isTradingDay = isTradingDay;');
+  eval(readSource('core/clock.js') + '\nglobal.getPT = getPT; global.ptDateStr = ptDateStr; global.previousTradingDay = previousTradingDay; global.isTradingDay = isTradingDay; global.ptDateTimeOf = ptDateTimeOf; global.scanFreshness = scanFreshness;');
   global.getMarketStatus = () => ({ status: 'PRE' }); // the diagnostics ask the session first
   global.fetchSnapshots = async syms => Object.fromEntries(syms.map(s => [s, { latestTrade: { p: 5 }, dailyBar: { c: 5, v: 9e6 }, prevDailyBar: { c: 4 } }]));
   global.sipSafeEndParams = d => ({ end: d }); // core/api-client.js's, for a past window
@@ -41,7 +41,9 @@ function load(alpacaGet, cache) {
   global._coreClient = global.createApiClient('CORE');
   global.assertPageNotSuspiciouslyFull = () => {};
   global.HISTORICAL_BAR_ADJUSTMENT = 'all';
-  global.getLivePrice = snap => snap.dailyBar?.c || snap.latestTrade?.p;
+  // the REAL price and session reading (2026-11-23: universe.js's actives read sessionInputs), not a stub of the old order
+  // eslint-disable-next-line no-eval
+  eval(readSource('core/market-data.js') + '\nglobal.getLivePrice = getLivePrice; global.sessionInputs = sessionInputs;');
   // eslint-disable-next-line no-eval
   eval(readSource('core/universe.js') + `
     global._getAssetIndex = _getAssetIndex; global.getAssetListing = getAssetListing; global.getUniverse = getUniverse;

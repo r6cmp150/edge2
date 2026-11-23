@@ -106,6 +106,11 @@ function entryGatePriorSession(signal) {
 // reads (2026-11-02).
 function entryGateStaleDailyBar(signal) {
   if (dailyBarSessionAge(signal).state !== 'EARLIER_SESSION') return null; // CURRENT or UNJUDGED
+  // Since scoring version 3 (2026-11-23) the price is the latest trade, so it can be today's even when the daily bar is
+  // not: then the price is current, but today's volume (and so the volume score) was not measured. Say which.
+  const scanDate = signal.scannedAt != null ? ptDateTimeOf(signal.scannedAt).date : null;
+  const pricedToday = signal.priceSource === 'latestTrade' && signal.priceAsOf && scanDate && ptDateTimeOf(Date.parse(signal.priceAsOf)).date === scanDate;
+  if (pricedToday) return { gated: true, rule: 'STALE_DAILY_BAR', logged: null, label: `No daily bar for today yet when scanned (the last is ${signal.dailyBarAsOf}): today's volume not measured — not buyable` };
   return { gated: true, rule: 'STALE_DAILY_BAR', logged: null, label: `Scored on ${signal.dailyBarAsOf}'s price, not today's: no trade on the feed yet when scanned — not buyable` };
 }
 

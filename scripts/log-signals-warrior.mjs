@@ -153,9 +153,9 @@ async function main() {
   // failure shape as core/edge-scoring.js's extraction verification and
   // the EDGAR CORS gap: a Node harness proves the code it exercises, not
   // the code it doesn't reach.
-  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'ptWallClockToInstant', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession']);
+  loadReal('core/clock.js', ['getPT', 'ptDateStr', 'ptWallClockToInstant', 'getMarketStatus', 'hoursSincePreviousClose', 'classifySession', 'ptDateTimeOf', 'scanFreshness']);
   loadReal('core/api-client.js', ['chunk', 'sanitizeTickerBatch', 'alpacaGet', '_coreClient', 'createApiClient', 'assertPageNotSuspiciouslyFull']);
-  loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'HISTORICAL_BAR_ADJUSTMENT']);
+  loadReal('core/market-data.js', ['fetchSnapshots', 'getLivePrice', 'sessionInputs', 'HISTORICAL_BAR_ADJUSTMENT']);
   loadReal('core/universe.js', [
     '_getAssetIndex', '_assetIndexBySymbol', '_inPriceRange', 'getUniverse',
     '_fetchCumulativeMinuteVolume', '_getSip30DayAvgVolume',
