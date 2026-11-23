@@ -112,6 +112,13 @@ These are product facts that bear on every field above.
   - Their `buy_price` is Friday 09-25's close. The SIP reference was 2,319 to 3,038 minutes old, with a median gap of
     0.000% (84d161a).
   - None of them is in the 513 priced at the quote: 23 had no buy quote, 1 none at either end.
+- **What was available but not picked is unrecorded before 2026-11-12** (found 2026-11-23, testing Roman's "two good
+  days").
+  - Before 11-12 the app saved only scan rows scoring 60 or more (`rating_snapshots`, `RATING_SNAPSHOT_MIN_SCORE`), and
+    nothing at all from 10-13 to 10-22. The logger's ~80 symbols a day are not what Roman scanned.
+  - So for every day of the 586, the universe of stocks EDGE scanned is NOT ESTABLISHED, and no picks-versus-universe
+    selection differential can be computed for them. That is the counterfactual any selection claim needs.
+  - From 11-12 the app saves every scored row (minimum score 0), so the differential is computable going forward.
 - **The stale daily bar, three states:** stale 2, fresh 154, not recorded 88, of the 244 snapshot trades. There is
   nothing on the other 342 (7dd8248).
 - **The pre-fill limit:** a price left at its pre-fill is the live price at the recording moment. So a tape check at
