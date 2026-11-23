@@ -147,6 +147,42 @@ declared), on data/backups/trades_v2.json @ 314f6e0 (608 rows, sells 2026-08-17 
   bought. Before it: re-derivable since 10-29 only, as a labelled hypothesis, with a pre-registered falsification
   test (spec: first 5 buy days of overlap; any disagreement voids it).
 
+## THE HURDLE: the bar, not a result (recorded 2026-11-22)
+**Any future strategy trading this universe the way Roman trades it must clear this on paper, before costs, or it does
+not need building to be rejected.** It is the cost of crossing the spread: commissions are zero at Robinhood, and the
+spread is paid on both sides of every round trip, whoever executes it.
+
+**Source:** `node scripts/spread-hurdle.mjs`, on the 513 of the pre-registered 586 trades quoted at both ends.
+- **The data:** trades_v2 @ 314f6e0 with SIP NBBO.
+- **The moments and quotes:** prereg-costs.mjs's own, and the functions are measure-spread-net.mjs's (ece5bdd), imported.
+- **The check:** it reproduces ece5bdd's spread cost, $744.75.
+
+**The arithmetic:**
+- **Position value** V = shares x the buy's mid.
+- **Round-trip spread cost** C = shares x (half the buy spread + half the sale spread), which equals MID - NET.
+- **The hurdle in percent** is dollar-weighted, SUM(C) / SUM(V), because that is what a dollar of gross return has to
+  beat. In dollars it is that percent at the median position.
+
+| | Trades | SUM(C) / SUM(V) x 100 | Median position x that | Median RT% | Mean RT% |
+|---|---|---|---|---|---|
+| **All** | 513 | **$744.75 / $255,861.76 x 100 = 0.291%** | **$513.50 x 0.291% = $1.49 a trade** | 0.202% | 0.304% |
+| Buy mid under $5 | 204 | $459.82 / $93,284.40 x 100 = 0.493% | $482.02 x 0.493% = $2.38 a trade | 0.372% | 0.503% |
+| Buy mid $5 or more | 309 | $284.93 / $162,577.36 x 100 = 0.175% | $534.00 x 0.175% = $0.94 a trade | 0.136% | 0.173% |
+
+**Reading the table:**
+- **The hurdle is NOT uniform:** under $5 it is about 2.8 times the $5-and-up figure (0.493 / 0.175).
+- **It is not one trade's doing:** the 5 costliest trades carry $76.57 of the $744.75, and the rest $668.17.
+- **What it is measured against:** EDGE's measured gross at the quote was +$0.03 a trade (ece5bdd) against this $1.49.
+
+**THE MEDIAN UNDERSTATES THE BAR.** The 0.20% quoted on 2026-11-20 is the median round trip. Weighted by dollars it is
+0.29%, because the costliest round trips are on the cheapest stocks. So on the measure that sets the hurdle, the
+reviewer's predicted 0.3%-1% was right at its lower edge, not below it. "Below the range" held for the median only.
+
+**Scope:**
+- One historical sample, at Roman's position sizes and in his universe.
+- The 73 unquoted trades are not in it.
+- A strategy that trades other names, or other sizes, has its own bar.
+
 ## After realistic costs: pre-registered, answered 2026-11-11
 **"Costs" in the 2026-11-08 analysis means SPREAD, measured, not commission; Robinhood's zero commission does not
 reduce it** (the reviewer, 2026-11-17, after Roman said his trades are free). The bid-ask gap is paid on both sides
