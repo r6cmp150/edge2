@@ -25,6 +25,8 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const REV = '98bcc07', FROM = '2026-10-23';
 export const LIMITS = 'SAME WINDOW (entry to that session\'s close) for both, DESCRIPTIVE, no bar. The sets are different stocks (the logger never saw most of Roman\'s tickers), and the logger\'s entry is its own reading at the time, not a SIP reference.';
 export const fractionToPct = v => 100 * Number(v);
+// sample standard deviation of per-trade returns; null under two
+export const sd = xs => { if (xs.length < 2) return null; const m = xs.reduce((a, b) => a + b, 0) / xs.length; return Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / (xs.length - 1)); };
 export const win = xs => (xs.length ? 100 * xs.filter(x => x > 0).length / xs.length : null);
 // the daily bar whose date is the given day; null when none
 export const closeOn = (bars, day) => (bars || []).find(b => String(b.t).slice(0, 10) === day)?.c ?? null;
@@ -54,6 +56,9 @@ async function main() {
     console.log(`  ${d}  Roman ${String(r.length).padStart(3)} mean ${fmt(mean(r)).padStart(7)} win ${win(r).toFixed(1).padStart(5)}%   |   logger shown ${String(l.length).padStart(3)} mean ${fmt(mean(l)).padStart(7)} win ${win(l).toFixed(1).padStart(5)}%`);
   }
   console.log(`\nPOOLED  Roman ${allR.length} mean ${fmt(mean(allR))} win ${win(allR).toFixed(1)}%   |   logger shown ${allL.length} mean ${fmt(mean(allL))} win ${win(allL).toFixed(1)}%`);
+  // ADDED 2026-11-23 (the reviewer: "his picks swing harder in both directions ... he has never been shown what he is
+  // actually taking"): the spread of per-trade returns on the same window, each side; descriptive, no bar
+  console.log(`SPREAD  Roman SD ${sd(allR).toFixed(2)} points   |   logger shown SD ${sd(allL).toFixed(2)} points   (per trade, entry to that session's close)`);
   console.log(`\n${LIMITS}`);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

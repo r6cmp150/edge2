@@ -21,6 +21,10 @@ await run('the logger\'s ret_close is a fraction and is put in percent before it
   assert.ok(readSource('scripts/measure-same-window-days.mjs').includes('.map(x => fractionToPct(x.ret_close));'));
 });
 
+await run('the spread: the sample standard deviation, none under two returns', () => {
+  assert.ok(Math.abs(M.sd([1, 2, 3]) - 1) < 1e-12); assert.strictEqual(M.sd([5]), null);
+});
+
 await run('win rate: strictly positive returns, of all; none for no returns', () => {
   assert.strictEqual(M.win([1, -1, 0, 2]), 50); assert.strictEqual(M.win([]), null);
 });
