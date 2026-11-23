@@ -27,7 +27,7 @@ const PREFILLS = {
   'mf-time':    { carriers: ['fillTime'], sources: ['hhmm'] },
   'mf-price':   { carriers: ['fillPrice'], sources: ['p\\.buyPrice'] },
   'sold-price': { carriers: ['salePrice'], sources: ['currentPrice'] },
-  'sold-date':  { carriers: ['saleDate', 'this\\.value'], sources: ['today', 'todayPT', "'\\$\\{today\\}'"] },
+  'sold-date':  { carriers: ['saleDate', 'this\\.value'], sources: ['today', 'todayPT', 'defaultDate', "'\\$\\{today\\}'"] },
   'sold-time':  { carriers: ['saleTime', 'soldTimeEl\\.value'], sources: ['defaultTime', 'hhmm', 'soldTimeEl\\.dataset\\.default'] },
 };
 const EXEMPT = { // settings fields: the form shows the current value so it can be edited; it is not a measurement
@@ -39,7 +39,8 @@ const ALLOWED = [
   ["source: saleTime === defaultTime ? 'default' : 'entered'", 'DETECTS the default: the correct use (core/orders.js readSaleFill)'],
   ["oninput=\"if (this.value !== '${today}')", 'DETECTS an edit of the date, to clear the time: the correct use (openMarkSoldModal)'],
   ['((price - sig.price) / sig.price) * 100', 'KNOWN VIOLATION, the sweep\'s #1: entry_vs_signal_price_pct measures only an edit (docs/field-provenance.md: can be fabricated). Remove this line when it is fixed.'],
-  ['if (!capture || saleDate !== todayPT) return', 'KNOWN, found by this guard 2026-11-22: the "same-day display" gate compares the sale date with today, its default, so a late recording left at the default reads as same-day. Flagged to the reviewer; remove when ruled on.'],
+  ["if (saleFill.dateSource === 'entered' && saleDate !== todayPT) return", 'FIXED 2026-11-23 (found by this guard 2026-11-22): the same-day gate compares only a TYPED date with today; a date left at its default cannot establish same-day (core/orders.js saleDisplayFields)'],
+  ["const dateSource = defaultDate != null && saleDate === defaultDate ? 'default' : 'entered';", 'DETECTS the default date: the correct use (core/orders.js readSaleFill)'],
 ];
 
 function prefilledInputs(src) {

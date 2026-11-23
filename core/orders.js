@@ -169,14 +169,18 @@ function readOrderEntry(prefix, buyDate) {
 // Three states, never a guess: entered, the default accepted, or not known. Requiring
 // a time would force a guess, and a guess stored as a fill is the defect this fixes.
 // defaultTime is what the form started at.
-function readSaleFill(saleDate, saleTime, buyFilledAt, { notKnown = false, defaultTime = null } = {}) {
-  if (notKnown) return { filledAt: null, at: null, source: 'not_known' };
+// dateSource (2026-11-23): 'entered' when the sale date differs from the form's default (today), 'default' when it was
+// left: a default date is the recording day, so it cannot place the sale on a day (tests/prefill-guard.test.js found the
+// same-day gate reading it as if it could). With no default to compare, it was typed.
+function readSaleFill(saleDate, saleTime, buyFilledAt, { notKnown = false, defaultTime = null, defaultDate = null } = {}) {
+  const dateSource = defaultDate != null && saleDate === defaultDate ? 'default' : 'entered';
+  if (notKnown) return { filledAt: null, at: null, source: 'not_known', dateSource };
   if (!saleDate || !/^\d{2}:\d{2}$/.test(saleTime || '')) return { error: 'Enter the time the sale filled (PT), or tick "Time not known".' };
   const [h, m] = saleTime.split(':').map(Number);
   const at = ptWallClockToInstant(saleDate, h, m).getTime();
   if (at > Date.now() + 60000) return { error: "The sale's fill time can't be in the future." };
   if (buyFilledAt && at < Date.parse(buyFilledAt)) return { error: "The sale's fill time can't be before the buy filled." };
-  return { filledAt: new Date(at).toISOString(), at, source: saleTime === defaultTime ? 'default' : 'entered' };
+  return { filledAt: new Date(at).toISOString(), at, source: saleTime === defaultTime ? 'default' : 'entered', dateSource };
 }
 
 // Verdict A (phase-10, "The verdict saved with a sale"): what the card showed, captured, never recomputed.
@@ -188,9 +192,14 @@ function capturedDisplay(verdict, inputs, renderedAtIso) {
 
 // Which kind of capture a sale holds. Only a typed fill can place the card against the fill: a default
 // starts when the form opens, after the card rendered, so comparing with it would always say BEFORE.
+// 2026-11-23: the same rule for the DATE. A sale date left at its default is today by construction, so comparing it with
+// today cannot establish that the sale was on the day the card was shown (a late recording reads as same-day). Only a
+// TYPED date that is not today proves a later recording (NOT_DISPLAYED); a default date keeps the capture, which is what
+// was on screen when the sale was recorded, as not placed against the fill.
 function saleDisplayFields(capture, saleDate, todayPT, saleFill) {
-  if (!capture || saleDate !== todayPT) return { verdictDisplayedAtSale: null, verdictDisplayState: 'NOT_DISPLAYED' };
-  const state = saleFill.source !== 'entered' ? 'CAPTURED_FILL_UNKNOWN'
+  if (!capture) return { verdictDisplayedAtSale: null, verdictDisplayState: 'NOT_DISPLAYED' };
+  if (saleFill.dateSource === 'entered' && saleDate !== todayPT) return { verdictDisplayedAtSale: null, verdictDisplayState: 'NOT_DISPLAYED' };
+  const state = saleFill.source !== 'entered' || saleFill.dateSource !== 'entered' ? 'CAPTURED_FILL_UNKNOWN'
     : Date.parse(capture.rendered_at) <= saleFill.at ? 'CAPTURED_BEFORE_FILL' : 'CAPTURED_AFTER_FILL';
   return { verdictDisplayedAtSale: capture, verdictDisplayState: state };
 }

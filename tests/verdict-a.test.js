@@ -10,7 +10,7 @@ const { capturedDisplay, saleDisplayFields } = global;
 const app = readSource('app.js');
 const grab = name => { const i = app.search(new RegExp(`^(async )?function ${name}\\(`, 'm')); assert.ok(i >= 0, name); return app.slice(i, app.indexOf('\n}\n', i) + 3); };
 const capture = capturedDisplay({ label: 'HOLD' }, { rsi: 50 }, '2026-10-08T14:30:00.000Z');
-const fill = (source, iso = '2026-10-08T14:31:00.000Z') => ({ source, at: Date.parse(iso), filledAt: iso });
+const fill = (source, iso = '2026-10-08T14:31:00.000Z', dateSource = 'entered') => ({ source, at: Date.parse(iso), filledAt: iso, dateSource });
 
 run('it is what the card showed, verbatim, errors included', () => {
   const v = { label: 'SELL SOON', composite: -40, factors: [{ name: 'RSI declining from peak (92 → 92)', points: -30 }] };
@@ -44,6 +44,10 @@ run('four states; only a typed fill can place the card', () => {
   assert.strictEqual(s(capture, { source: 'not_known', at: null, filledAt: null }), 'CAPTURED_FILL_UNKNOWN', 'the card was on screen, so NOT_DISPLAYED would be false');
   assert.strictEqual(s(null, fill('entered')), 'NOT_DISPLAYED');
   assert.strictEqual(s(capture, fill('entered'), '2026-10-07'), 'NOT_DISPLAYED', 'recorded on a later day');
+  // 2026-11-23: a date LEFT AT ITS DEFAULT cannot establish same-day: the capture is kept, not placed, even with a typed time
+  assert.strictEqual(s(capture, fill('entered', undefined, 'default')), 'CAPTURED_FILL_UNKNOWN', 'a default date cannot place the card');
+  assert.strictEqual(s(capture, fill('entered', undefined, 'default'), '2026-10-07'), 'CAPTURED_FILL_UNKNOWN', 'nor prove a later day');
+  assert.strictEqual(s(null, fill('entered', undefined, 'default')), 'NOT_DISPLAYED', 'nothing captured is still NOT_DISPLAYED');
   assert.strictEqual(saleDisplayFields(null, '2026-10-08', '2026-10-08', fill('entered')).verdictDisplayedAtSale, null);
   assert.strictEqual(saleDisplayFields(capture, '2026-10-08', '2026-10-08', fill('default')).verdictDisplayedAtSale, capture, 'verbatim');
 });

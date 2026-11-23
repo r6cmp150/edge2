@@ -34,6 +34,11 @@ run('three states: entered, the default accepted, not known', atNine(() => {
   assert.strictEqual(unknown.source, 'not_known');
   assert.strictEqual(unknown.error, undefined, 'and it is never blocked');
   assert.strictEqual(global.readSaleFill('2026-10-08', '09:10', null, { notKnown: true }).filledAt, null, 'not known wins over a time left in the box');
+  // the DATE's source too (2026-11-23): left at the form's default, or typed
+  assert.strictEqual(global.readSaleFill('2026-10-08', '07:31', null, { defaultTime: '09:00', defaultDate: '2026-10-08' }).dateSource, 'default');
+  assert.strictEqual(global.readSaleFill('2026-10-07', '07:31', null, { defaultTime: '09:00', defaultDate: '2026-10-08' }).dateSource, 'entered');
+  assert.strictEqual(global.readSaleFill('2026-10-08', '', null, { notKnown: true, defaultDate: '2026-10-08' }).dateSource, 'default', 'reported on the not-known path too');
+  assert.strictEqual(global.readSaleFill('2026-10-08', '07:31', null).dateSource, 'entered', 'no default to compare: it was typed');
 }));
 
 run('only a TYPED fill time can place a scan against the fill: a default or not-known gives null (2026-11-22)', atNine(() => {
@@ -56,7 +61,7 @@ run('the form asks for it, and a date other than today clears the time', () => {
 
 run('the fill goes in its own column; sell_time stays the clock at recording', () => {
   const confirm = grab('confirmMarkSold');
-  assert.ok(confirm.includes("readSaleFill(saleDate, soldTimeEl.value, pos.filledAt, { notKnown: document.getElementById('sold-time-unknown').checked, defaultTime: soldTimeEl.dataset.default })"), 'reads the form');
+  assert.ok(confirm.includes("readSaleFill(saleDate, soldTimeEl.value, pos.filledAt, { notKnown: document.getElementById('sold-time-unknown').checked, defaultTime: soldTimeEl.dataset.default, defaultDate: document.getElementById('sold-date').dataset.default })"), 'reads the form');
   assert.ok(/if \(saleFill\.error\) \{ showAlert\(saleFill\.error\); return; \}/.test(confirm), 'a refusal stops the sale');
   assert.ok(confirm.includes('sellFilledAt: saleFill.filledAt'), 'stored');
   assert.ok(confirm.includes('sellFilledAtSource: saleFill.source'), 'with how it was decided');

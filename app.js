@@ -7075,7 +7075,7 @@ function openMarkSoldModal(posId, currentPrice, withheldCloseAsOf = null) {
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Date Sold</label>
-          <input id="sold-date" class="form-input" type="date" value="${today}" oninput="if (this.value !== '${today}') document.getElementById('sold-time').value = ''">
+          <input id="sold-date" class="form-input" type="date" value="${today}" data-default="${today}" oninput="if (this.value !== '${today}') document.getElementById('sold-time').value = ''">
         </div>
         <div class="form-group">
           <label class="form-label">Fill time (PT)</label>
@@ -7620,7 +7620,7 @@ async function confirmMarkSold(posId, btn) {
   // (db/027 header): the sale can't be dated before the buy filled.
   const hold = holdSpan(pos, saleDate);
   const soldTimeEl = document.getElementById('sold-time');
-  const saleFill = readSaleFill(saleDate, soldTimeEl.value, pos.filledAt, { notKnown: document.getElementById('sold-time-unknown').checked, defaultTime: soldTimeEl.dataset.default });
+  const saleFill = readSaleFill(saleDate, soldTimeEl.value, pos.filledAt, { notKnown: document.getElementById('sold-time-unknown').checked, defaultTime: soldTimeEl.dataset.default, defaultDate: document.getElementById('sold-date').dataset.default });
   if (saleFill.error) { showAlert(saleFill.error); return; }
   if (saleDate < hold.startDate) { showAlert(`The sale date (${saleDate}) can't be before the buy ${hold.basis === 'fill' ? 'filled' : 'order date'} (${hold.startDate}).`); return; }
 
@@ -8046,8 +8046,8 @@ function buildVerdictCaptureSection(sold) {
 What the card showed, recorded as shown, including anything it got wrong. ${withState.length} of ${sold.length} sales carry a capture state; earlier sales predate this.
   Card rendered before the fill: ${count(STATES[0])}
   Card rendered after the fill: ${count(STATES[1])}${after.length ? ` (${quartiles(after)})` : ''}
-  On screen, not placed against the fill (no typed fill time): ${count(STATES[2])}
-  Not displayed, or recorded on a later day: ${count(STATES[3])}
+  On screen, not placed against the fill (its time or its date was not typed: a default cannot place it): ${count(STATES[2])}
+  Not displayed, or recorded on a later day (a TYPED earlier date): ${count(STATES[3])}
 
 Recording minus fill: ${entered.length ? `${quartiles(entered)}, on typed fill times only. Selection bias: Roman is likeliest to type a time when the default looks wrong, so this is a cautious upper bound on default rows, not a measurement of them.` : 'not shown yet. It needs typed fill times, and accepted defaults would sit near zero by construction, making it look better than it is.'}`;
 }
