@@ -16,6 +16,11 @@ await run('the close is the buy day\'s own bar; another day\'s is not used', () 
   assert.strictEqual(M.closeOn(undefined, '2026-10-28'), null);
 });
 
+await run('the logger\'s ret_close is a fraction and is put in percent before it meets Roman\'s side', () => {
+  assert.strictEqual(M.fractionToPct('0.0123'), 1.23);
+  assert.ok(readSource('scripts/measure-same-window-days.mjs').includes('.map(x => fractionToPct(x.ret_close));'));
+});
+
 await run('win rate: strictly positive returns, of all; none for no returns', () => {
   assert.strictEqual(M.win([1, -1, 0, 2]), 50); assert.strictEqual(M.win([]), null);
 });

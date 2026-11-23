@@ -24,6 +24,7 @@ import { mean, ret } from './measure-good-days.mjs';
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const REV = '98bcc07', FROM = '2026-10-23';
 export const LIMITS = 'SAME WINDOW (entry to that session\'s close) for both, DESCRIPTIVE, no bar. The sets are different stocks (the logger never saw most of Roman\'s tickers), and the logger\'s entry is its own reading at the time, not a SIP reference.';
+export const fractionToPct = v => 100 * Number(v);
 export const win = xs => (xs.length ? 100 * xs.filter(x => x > 0).length / xs.length : null);
 // the daily bar whose date is the given day; null when none
 export const closeOn = (bars, day) => (bars || []).find(b => String(b.t).slice(0, 10) === day)?.c ?? null;
@@ -46,7 +47,9 @@ async function main() {
       const e = await sipRef(headers, t.ticker, pacificMinuteUtc(d, t.buy_time)), c = closeOn(bars[t.ticker], d);
       if (e && c != null) r.push(ret(e.price, c));
     }
-    const l = logged.filter(x => x.signal_date === d).map(x => Number(x.ret_close));
+    // ret_close is a FRACTION ((close - reference) / reference, fill-outcomes.mjs), Roman's side a percent: x 100.
+    // (Corrected 2026-11-23 after the first run printed the logger's means 100 times too small; win rates unaffected.)
+    const l = logged.filter(x => x.signal_date === d).map(x => fractionToPct(x.ret_close));
     allR.push(...r); allL.push(...l);
     console.log(`  ${d}  Roman ${String(r.length).padStart(3)} mean ${fmt(mean(r)).padStart(7)} win ${win(r).toFixed(1).padStart(5)}%   |   logger shown ${String(l.length).padStart(3)} mean ${fmt(mean(l)).padStart(7)} win ${win(l).toFixed(1).padStart(5)}%`);
   }
