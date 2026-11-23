@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-11-22T13:41:18.531Z",
+  "run_at": "2026-11-23T16:40:08.296Z",
   "floors": {
     "trades": 37,
     "trades_v2": 451,
@@ -65,7 +65,7 @@
     "rating_snapshots": {
       "floor": 2944,
       "mode": "daily",
-      "read": 14406,
+      "read": 14270,
       "live": 18325,
       "prior": 18325,
       "fetched": 18325,
