@@ -82,6 +82,11 @@ run('signal_before_sale: the last scan signal that PREDATES the sale (by PT date
   assert.strictEqual(r.scanned_at, '2026-10-30T21:00:00.000Z');
   assert.deepStrictEqual([r.scan_date, r.scan_hhmm, r.score, r.label, r.scoring_version, r.scoring_hash], ['2026-10-30', '14:00', 80, 'SOFT BUY', 2, 'h']);
   assert.strictEqual(r.signal.score, 80, 'the signal itself is kept');
+  // 2026-11-23: the same scan, but the sale date was LEFT AT ITS DEFAULT and no fill time typed: the date cannot place it
+  const d = plain(saleCtx({ sig: sigAt(at('2026-10-30T21:00:00Z')) }).__s(pos, '2026-11-02', null, false));
+  assert.strictEqual(d.state, 'NOT_ESTABLISHED');
+  assert.strictEqual(d.reason, 'the sale date was left at its default (the day it was recorded), so a scan cannot be placed before the sale');
+  assert.strictEqual(plain(saleCtx({ sig: sigAt(at('2026-10-30T21:00:00Z')) }).__s(pos, '2026-11-02', at('2026-11-02T16:00:00Z'), false)).state, 'PREDATES_SALE', 'a placeable instant still places it (placeableSaleAt only gives one on a typed date)');
   // Same day, the sale's time not known: it can't be placed before the fill.
   for (const iso of ['2026-11-02T14:00:00Z', '2026-11-02T23:59:00Z']) {
     const s = saleCtx({ sig: sigAt(at(iso)) }).__s(pos, '2026-11-02');

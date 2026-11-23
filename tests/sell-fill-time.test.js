@@ -49,6 +49,9 @@ run('only a TYPED fill time can place a scan against the fill: a default or not-
   assert.strictEqual(global.placeableSaleAt(global.readSaleFill('2026-10-08', '09:00', null, { defaultTime: '09:00' })), null, 'the default left in place');
   assert.strictEqual(global.placeableSaleAt(global.readSaleFill('2026-10-08', '', null, { notKnown: true })), null, 'not known');
   assert.strictEqual(global.placeableSaleAt(null), null);
+  // 2026-11-23: a typed time on a date left at its default is not placeable either
+  assert.strictEqual(global.placeableSaleAt(global.readSaleFill('2026-10-08', '07:31', null, { defaultTime: '09:00', defaultDate: '2026-10-08' })), null, 'a default date');
+  assert.strictEqual(global.placeableSaleAt(global.readSaleFill('2026-10-07', '07:31', null, { defaultTime: '09:00', defaultDate: '2026-10-08' })), Date.parse('2026-10-07T14:31:00Z'), 'a typed date and time');
 }));
 
 run('the form asks for it, and a date other than today clears the time', () => {
@@ -71,7 +74,7 @@ run('the fill goes in its own column; sell_time stays the clock at recording', (
   assert.ok(write.includes('sell_filled_at_source: record.sellFilledAtSource ?? null'), 'written');
   const start = confirm.indexOf('readSaleFill('), firstWrite = confirm.indexOf('deletePositionFromSupabase');
   assert.ok(firstWrite < 0 || start < firstWrite, 'refused before anything is written');
-  assert.ok(confirm.includes('computeSaleVerdictFields(pos, saleDate, placeableSaleAt(saleFill))'), 'the last scan is placed against the fill');
+  assert.ok(confirm.includes("computeSaleVerdictFields(pos, saleDate, placeableSaleAt(saleFill), saleFill.dateSource === 'entered')"), 'the last scan is placed against the fill');
   assert.ok(grab('signalBeforeSale').includes('sig.scannedAt < saleAt'), 'by its own instant');
 });
 

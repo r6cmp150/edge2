@@ -208,8 +208,9 @@ function saleDisplayFields(capture, saleDate, todayPT, saleFill) {
 // self-referential-guard sweep). A default is the moment the form opened, which comes after any scan or card the form
 // was opened from, so placing against it would nearly always say "before": the rule saleDisplayFields above already
 // applied, and signalBeforeSale did not. null: the fill is placed by its date alone (as for "Time not known").
+// 2026-11-23: and only on a TYPED date -- a typed time on a date left at its default is still placed by the default.
 function placeableSaleAt(saleFill) {
-  return saleFill && saleFill.source === 'entered' ? saleFill.at : null;
+  return saleFill && saleFill.source === 'entered' && saleFill.dateSource === 'entered' ? saleFill.at : null;
 }
 
 // Shared by the add forms and Mark filled. A fill can't precede the order

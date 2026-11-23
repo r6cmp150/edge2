@@ -21,7 +21,7 @@ const app = readSource('app.js');
 const code = { 'app.js': app, 'core/orders.js': readSource('core/orders.js'), 'core/store.js': readSource('core/store.js'), 'core/edge-scoring.js': readSource('core/edge-scoring.js') };
 
 const PREFILLS = {
-  'pf-price':   { carriers: ['price'], sources: ['sig\\??\\.price'] },
+  'pf-price':   { carriers: ['price'], sources: ['sig\\??\\.price', 'prefilledPrice'] },
   'pf-date':    { carriers: ['date'], sources: ['today'] },
   'mf-date':    { carriers: ['fillDate'], sources: ['today'] },
   'mf-time':    { carriers: ['fillTime'], sources: ['hhmm'] },
@@ -36,11 +36,12 @@ const EXEMPT = { // settings fields: the form shows the current value so it can 
 };
 // each: [the exact text that must appear once, the reason it is allowed or why it stands]
 const ALLOWED = [
-  ["source: saleTime === defaultTime ? 'default' : 'entered'", 'DETECTS the default: the correct use (core/orders.js readSaleFill)'],
-  ["oninput=\"if (this.value !== '${today}')", 'DETECTS an edit of the date, to clear the time: the correct use (openMarkSoldModal)'],
-  ['((price - sig.price) / sig.price) * 100', 'KNOWN VIOLATION, the sweep\'s #1: entry_vs_signal_price_pct measures only an edit (docs/field-provenance.md: can be fabricated). Remove this line when it is fixed.'],
-  ["if (saleFill.dateSource === 'entered' && saleDate !== todayPT) return", 'FIXED 2026-11-23 (found by this guard 2026-11-22): the same-day gate compares only a TYPED date with today; a date left at its default cannot establish same-day (core/orders.js saleDisplayFields)'],
-  ["const dateSource = defaultDate != null && saleDate === defaultDate ? 'default' : 'entered';", 'DETECTS the default date: the correct use (core/orders.js readSaleFill)'],
+  ["source: saleTime === defaultTime ? 'default' : 'entered'", 'PERMANENT: DETECTS the default fill time, which is the correct use of the comparison (core/orders.js readSaleFill)'],
+  ["oninput=\"if (this.value !== '${today}')", 'PERMANENT: DETECTS an edit of the date, to clear the time, the correct use (openMarkSoldModal)'],
+  ['((price - sig.price) / sig.price) * 100', 'PERMANENT: computed ONLY when the price was typed (price !== prefilledPrice), so it is the real gap to the signal; an unedited pre-fill stores null (fixed 2026-11-23; was the sweep\'s #1)'],
+  ['(sig && sig.price && price !== prefilledPrice)', 'PERMANENT: DETECTS whether the pre-fill was edited, the correct use (computeEntryMeasurementFields)'],
+  ["if (saleFill.dateSource === 'entered' && saleDate !== todayPT) return", 'PERMANENT: compares only a TYPED date with today, which proves a later recording; a default date never reaches it (fixed 2026-11-23, core/orders.js saleDisplayFields)'],
+  ["const dateSource = defaultDate != null && saleDate === defaultDate ? 'default' : 'entered';", 'PERMANENT: DETECTS the default sale date, the correct use (core/orders.js readSaleFill)'],
 ];
 
 function prefilledInputs(src) {
@@ -74,7 +75,9 @@ function comparisons() {
       lines.forEach((l, i) => { if (re.test(l) && !/^\s*\/\//.test(l)) hits.push({ id, file, line: i + 1, text: l.trim() }); });
     }
   }
-  return hits;
+  // one hit per LINE: a line holding two comparisons of one pre-fill is one place to judge, not two
+  const seen = new Set();
+  return hits.filter(h => { const k = `${h.file}:${h.line}`; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
 run('THE RULE: no carrier is compared with its source, except the allowed uses', () => {
@@ -85,6 +88,9 @@ run('each allowed use matches exactly once: an allowance that matches nothing fa
   const hits = comparisons();
   for (const [t, why] of ALLOWED) {
     assert.ok(why.length > 20, 'every allowance has its reason');
+    // an allowance is PERMANENT with its reason, or it is not here: a KNOWN violation is a to-do list wearing a guard's
+    // clothes (the reviewer, 2026-11-23). A new violation is fixed, not allowed.
+    assert.ok(why.startsWith('PERMANENT: '), `an allowance that is not permanent: ${why.slice(0, 60)}`);
     assert.strictEqual(hits.filter(h => h.text.includes(t)).length, 1, `allowed use not found exactly once: ${t}`);
   }
 });

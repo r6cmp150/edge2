@@ -4798,7 +4798,11 @@ async function computeEntryMeasurementFields(ticker, price, sig) {
   // no signal behind this buy at all (an "Own Decision" trade) -- there
   // is nothing for either to measure staleness or slippage against.
   const barsSinceSignal = (sig && state.lastScanTime) ? Math.floor((Date.now() - state.lastScanTime) / 60000) : null;
-  const entryVsSignalPricePct = (sig && sig.price) ? ((price - sig.price) / sig.price) * 100 : null;
+  // 2026-11-23 (the self-referential-guard sweep's #1): the form's price is PRE-FILLED with sig.price, to 2 dp. Left as
+  // pre-filled, this compared the value with itself: 0 by construction, never a measurement of slippage. It is stored
+  // only when the price was TYPED (differs from the pre-fill), where it is the real gap to the signal; otherwise null.
+  const prefilledPrice = sig && sig.price ? Number(sig.price.toFixed(2)) : null;
+  const entryVsSignalPricePct = (sig && sig.price && price !== prefilledPrice) ? ((price - sig.price) / sig.price) * 100 : null;
 
   return { spreadAtBuy, minutesFromOpen, barsSinceSignal, entryVsSignalPricePct };
 }
@@ -7566,7 +7570,7 @@ function dismissSaleNotice(posId) {
 // What IS recorded: the facts (price, dates; the hold is derived on read),
 // and the last scan signal that predates the sale (signalBeforeSale).
 const VERDICT_PROVENANCE = ['sale_moment', 'mixed_moment', 'not_recorded'];
-function computeSaleVerdictFields(pos, saleDate, saleAt = null) {
+function computeSaleVerdictFields(pos, saleDate, saleAt = null, dateTyped = true) {
   return {
     verdictProvenance: 'not_recorded',
     unifiedRecommendationAtSale: null,
@@ -7586,7 +7590,7 @@ function computeSaleVerdictFields(pos, saleDate, saleAt = null) {
     peakRsiDuringHold: pos.peakRsi ?? null,
     peakRsiProvenance: pos.peakRsi != null ? 'sampled_since' : 'not_sampled',
     peakRsiSampledFrom: pos.peakRsi != null ? (pos.peakRsiSampledFrom ?? null) : null,
-    signalBeforeSale: signalBeforeSale(pos, saleDate, saleAt),
+    signalBeforeSale: signalBeforeSale(pos, saleDate, saleAt, dateTyped),
   };
 }
 
@@ -7598,7 +7602,7 @@ function computeSaleVerdictFields(pos, saleDate, saleAt = null) {
 // the sale, the earlier ones are gone. Both are said, not guessed. -> { state: 'PREDATES_SALE', scanned_at, scan_date, scan_hhmm,
 //   score, label, scoring_version, scoring_hash, signal }
 //  | { state: 'NOT_ESTABLISHED', reason }
-function signalBeforeSale(pos, saleDate, saleAt = null) {
+function signalBeforeSale(pos, saleDate, saleAt = null, dateTyped = true) {
   const none = reason => ({ state: 'NOT_ESTABLISHED', reason });
   if (pos.engineSource && pos.engineSource !== 'EDGE') return none('not an EDGE position: no EDGE scan signal applies');
   if (parseableDay(saleDate) == null) return none('the sale date is not a date');
@@ -7606,6 +7610,9 @@ function signalBeforeSale(pos, saleDate, saleAt = null) {
   if (!sig) return none('no scan has scored this ticker');
   if (sig.notEvaluatedReason) return none(`the retained score was not evaluated (${sig.notEvaluatedReason})`);
   if (sig.scannedAt == null) return none('the retained scan has no recorded scan time');
+  // 2026-11-23, the third instance of the default-date shape: with no typed fill time, only the DATE can place the scan,
+  // and a date left at its default is the recording day, not necessarily the sale's (a late recording reads as today)
+  if (saleAt == null && !dateTyped) return none('the sale date was left at its default (the day it was recorded), so a scan cannot be placed before the sale');
   const scan = ptDateTimeOf(sig.scannedAt);
   if (saleAt != null ? !(sig.scannedAt < saleAt) : !(scan.date < saleDate)) {
     return none(saleAt != null
@@ -7663,7 +7670,7 @@ async function confirmMarkSold(posId, btn) {
     : null;
   // Rule 5: did the position actually exit via the trailing stop threshold?
   const trailingStopTriggered = !!pos.momentumProtectionActivated && salePrice <= pos.peakPrice * 0.85;
-  const saleVerdictFields = computeSaleVerdictFields(pos, saleDate, placeableSaleAt(saleFill)); // a typed fill only (core/orders.js)
+  const saleVerdictFields = computeSaleVerdictFields(pos, saleDate, placeableSaleAt(saleFill), saleFill.dateSource === 'entered'); // a typed fill and date only (core/orders.js)
 
   const record = {
     id: Date.now().toString(),

@@ -34,11 +34,11 @@ function clockRegistry(text) {
 const REG = clockRegistry(doc);
 
 const ALLOWED = [
-  ["Math.floor(Number(r.position_id) / 60000) * 60000 === buyMinuteUtc(", 'scripts/measure-entry-price-gap.mjs: printed as a CONVERSION check, "not when the buy was decided" (5104c49)'],
-  ['Math.abs(Date.parse(r.created_at) - sellMs(r)) <= 2 * 60000', 'scripts/measure-exit-price-gap.mjs: printed as a CONVERSION check, "not when the sale was made" (5104c49)'],
-  ['sellLate = xs.filter(x => x.saleRec !== x.sd)', 'scripts/audit-recording-lag.cjs: counts an EDITED sell_date; its output says recording lag is not measured (7f32ffa)'],
-  ["const inB = b.filter(x => !x.buyRec || x.buyRec !== x.bd || x.saleRec !== x.sd);", 'scripts/audit-recording-lag.cjs: the same edited-date counts within the 07:00 bucket (7f32ffa)'],
-  ['if (rec === sd) lag.same++; else if (sd < rec)', 'scripts/audit-sell-dates-vs-tape.mjs test 1: sell_date against the recording date; its header already says "the default or a same-day sale (can\'t tell which)"'],
+  ["Math.floor(Number(r.position_id) / 60000) * 60000 === buyMinuteUtc(", 'PERMANENT: scripts/measure-entry-price-gap.mjs prints it as a CONVERSION check, "not when the buy was decided" (5104c49); a pre-registered script, kept as run'],
+  ['Math.abs(Date.parse(r.created_at) - sellMs(r)) <= 2 * 60000', 'PERMANENT: scripts/measure-exit-price-gap.mjs prints it as a CONVERSION check, "not when the sale was made" (5104c49); a pre-registered script, kept as run'],
+  ['sellLate = xs.filter(x => x.saleRec !== x.sd)', 'PERMANENT: scripts/audit-recording-lag.cjs counts an EDITED sell_date, and its output says recording lag is not measured (retracted, 7f32ffa)'],
+  ["const inB = b.filter(x => !x.buyRec || x.buyRec !== x.bd || x.saleRec !== x.sd);", 'PERMANENT: scripts/audit-recording-lag.cjs, the same edited-date counts within the 07:00 bucket (retracted, 7f32ffa)'],
+  ['if (rec === sd) lag.same++; else if (sd < rec)', 'PERMANENT: scripts/audit-sell-dates-vs-tape.mjs test 1 compares sell_date with the recording date, and its header says "the default or a same-day sale (can\'t tell which)"'],
 ];
 // KNOWN BLIND SPOT, named rather than allowed: audit-recording-lag.cjs's buy half (x.buyRec !== x.bd) is the same
 // shape, but buyRec comes from position_id through a Map (addRec.set(k, t)), which is not an assignment this guard
@@ -98,7 +98,7 @@ run('THE RULE: no analysis script compares two fields of one clock, except the a
 
 run('each allowed use matches exactly once: an allowance that matches nothing fails', () => {
   const hs = hits();
-  for (const [t, why] of ALLOWED) { assert.ok(why.length > 20); assert.strictEqual(hs.filter(h => h.text.includes(t)).length, 1, `allowed use not found exactly once: ${t}`); }
+  for (const [t, why] of ALLOWED) { assert.ok(why.length > 20); assert.ok(why.startsWith('PERMANENT: '), `an allowance that is not permanent: ${why.slice(0, 60)}`); assert.strictEqual(hs.filter(h => h.text.includes(t)).length, 1, `allowed use not found exactly once: ${t}`); }
 });
 
 run('it sees the shapes it exists for: direct, through a variable, and through an arrow function', () => {

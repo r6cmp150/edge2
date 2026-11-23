@@ -31,7 +31,7 @@ was counted, the count is given beside it.
 **What the list does not cover:** it lists the fields this audit actually read, so "not established" is a minority of
 the rows. Every column NOT listed here is **not established**. That includes trades_v2's exit-model and outcome-window
 columns (`unified_*_at_sale`, `*_factors_at_sale`, `best_exit_*`, `price_at_plus*`, `peak_*`, `target_drift_pct`,
-`distance_from_target`, `minutes_late` and the rest). Counted: 43 rows, 19 can be fabricated, 18 provenanced, 6 not
+`distance_from_target`, `minutes_late` and the rest). Counted: 43 rows, 18 can be fabricated, 19 provenanced, 6 not
 established, plus every unlisted column.
 
 ## trades_v2 (the outcome record)
@@ -56,7 +56,7 @@ established, plus every unlisted column.
 | `macro_condition` | provenanced | — | null when the context had not loaded, never a guessed condition. |
 | `macro_adjustment_pts` | can be fabricated | — | `MACRO_ADJUSTMENTS[c]?.[k] ?? 0`: a lookup miss becomes 0. 0 of 244 visible; overlay off on the newest 156. |
 | the `*_pts` components (`price_momentum_pts` ... `rel_strength_pts`) | can be fabricated | — | Before 2026-10-22 three of them hold the stock modal's recompute, not the scored values (`MODAL_COMPONENTS_FIXED_FROM`; written off, counted). |
-| `entry_vs_signal_price_pct` | can be fabricated | — | It compares the form price, pre-filled from `sig.price`, with `sig.price` itself. It measures only Roman editing the field, and emits 0 for every unedited pre-fill, a plausible value no one measured (the self-referential sweep). |
+| `entry_vs_signal_price_pct` | provenanced | — | Since 2026-11-23: computed ONLY when the price was typed (it differs from the pre-fill, `sig.price` to 2 dp), where it is the real gap to the signal; an unedited pre-fill stores null. Until then it compared the pre-fill with itself and emitted 0 for every unedited add, a value nobody measured (the self-referential sweep's #1). Rows before 2026-11-23 carry that 0. |
 | `spread_at_buy` | provenanced | — | A real `ap - bp` from the add's snapshot quote, or null. Never a default. |
 | `buy_session` | not established | the add | It is classified from the add's clock, so it is the session of the recording. The 24 Sunday 09-27 buys are CLOSED (af9d788). |
 | `position_id` | provenanced | the add | Date.now() at the add (app.js `finalizeAddPortfolio`), a real stamp. It is the SAME clock as `buy_time`, so the two agreeing is never evidence about timing (5104c49). |

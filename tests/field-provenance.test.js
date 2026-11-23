@@ -28,7 +28,7 @@ run('each cited default still reads that way in the code (a fix must update its 
   // 2026-11-23 (scoring version 3): the latest trade first, null when none; the rows that cited the stale-first order
   // were rewritten in the same change
   assert.ok(readSource('core/market-data.js').includes("const price = trade ? { value: trade.p, source: 'latestTrade', asOf: trade.t }"), 'getLivePrice: the latest trade first');
-  for (const s of ["target:   sig?.target || price * 1.10,", "stop:     sig?.stop   || price * 0.92,", "duration: sig?.duration || '3-DAY',", 'const currentPrice = getLivePrice(snap) || p.buyPrice;', 'const entryVsSignalPricePct = (sig && sig.price) ? ((price - sig.price) / sig.price) * 100 : null;'])
+  for (const s of ["target:   sig?.target || price * 1.10,", "stop:     sig?.stop   || price * 0.92,", "duration: sig?.duration || '3-DAY',", 'const currentPrice = getLivePrice(snap) || p.buyPrice;', 'const entryVsSignalPricePct = (sig && sig.price && price !== prefilledPrice) ? ((price - sig.price) / sig.price) * 100 : null;'])
     assert.ok(app.includes(s), s);
   // version 3: null with a reason, never 1 (volume_ratio_at_buy moved to provenanced with this line); the modal's
   // display-only fallback still builds a 1, cited in that row
