@@ -328,7 +328,27 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   `developer_tools`): the (c) build saves them to Supabase when he saves Settings; until then it reads the phone copy
   only for a value Supabase lacks, and the banner says which are phone-only (tests/settings-sources.test.js).
 
-## The macro sign-test (pre-registered; its clock starts when Roman reloads onto the (c) build)
+## The macro sign-test (pre-registered; STOPPED 2026-11-20 before its declared ending -- a stop, NOT a result)
+- **STOPPED, declared 2026-11-22 (ruled by the reviewer 2026-11-20, CC-verdict-accepted-stop-the-macro-experiment-and-
+  declare-it.md). THIS IS A STOP, NOT A RESULT. The macro hypothesis was NOT tested and NOT rejected:** nobody may read
+  this registration as though the macro reading was found not to vary, or not to predict. It was not tested.
+  - **When and where it stood:** stopped on 2026-11-20, before its declared ending (20 labelled days, extended to at
+    most 40), at **2 labelled days of 20 on the current instrument (without headlines)**: + 0, - 2, 0 0; away from the
+    most common sign 0 of 5; not met. The closed instrument (with headlines, until 2026-11-16): 2 labelled days, + 0,
+    - 2, 0 0. Pooled, NOT the bar: 4. Unchanged at the stop's declaration (backup run 45028765183, 2026-11-22T13:41Z:
+    178 observations on 5 trading days, the newest 2026-11-19T15:43Z; headline-state changes: only the declared one).
+  - **The reason, in full:** not that the instrument failed, but that the system it informs has no demonstrated edge.
+    signal_score shows no relationship to realised return (ef99790: rho -0.0368, one-sided p 0.5618, 586 trades,
+    shuffled within buy days), and none on corrected entry prices either (84d161a: rho -0.0506, p 0.6016, the last
+    re-run). A macro overlay adjusts a score that does not rank, so there is no decision left for the sign-test to feed.
+  - **The instrument's own characterisation stands as recorded and is not a verdict on it:** the capability test's
+    arm 1 (an up day without headlines labelled BROAD_RALLY 3 of 3; flat days mostly "-"; nondeterministic at
+    temperature 0). Arm 3 was not run (the reviewer, 2026-11-20: free, and not a reason to run it).
+  - **What keeps running, because it costs nothing:** the daily count (scripts/count-macro-observations.mjs in
+    backup-tables.yml) and the headline-state detector. Their line still prints "not met": read it as the stopped
+    test's standing, not as a test in progress. The app still writes observations whenever Roman scans; nothing reads
+    them for a decision.
+  - Everything below is the registration as it stood at the stop, unchanged.
 - **(c) is 0c60fbf** (pushed 2026-11-13, Tests run 43351284464 green). GitHub Pages served `app.js?v=20261112232800` at
   2026-11-13T02:20Z, read by Claude only: the reviewer's shells cannot reach the host, so that is ONE witness. **The
   confirming observation is Roman's:** "Disable macro overlay" is gone from Settings only in the (c) build, so if he
