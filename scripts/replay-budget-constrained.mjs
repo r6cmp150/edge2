@@ -47,6 +47,10 @@ export function replay(rows, { budget = BUDGET } = {}) {
   const taken = new Set(), skipped = new Set();
   // A recorded exit EARLIER than its entry (declared before the first run): if the trade is taken, it closes the moment
   // it is entered, so its cost is held for no time; the count is printed.
+  // CORRECTED 2026-11-22 (scripts/audit-temporal.mjs): this also counts a trade whose exit and entry share their
+  // recorded MINUTE, because exits sort first at a minute. The one trade it counted on the 586 is that case: APPS
+  // 11-05 08:37, added 16:37:18Z and its sale saved 16:37:37Z, 19 seconds AFTER. No trade records an exit before its
+  // entry. The replay's result is unchanged (a 19-second hold is the "held for no time" it was given).
   let minAvailable = budget, maxOpen = 0, open = 0;
   const closed = new Set(), exitFirst = new Set();
   for (const e of events) {
@@ -82,7 +86,7 @@ async function main() {
   console.log(`  at most ${r.maxOpen} position(s) open at once; the lowest Available reached $${r.minAvailable.toFixed(2)}.`);
   console.log(`  ORDER: ${r.inTies} of ${rows.length} trades entered at a minute shared with another entry, and were ordered by signal_score;`);
   console.log(`  the other ${rows.length - r.inTies} were ordered by ARRIVAL (time), which is a weaker test of conviction than a ranking.`);
-  if (r.exitBeforeEntry) console.log(`  DATA: ${r.exitBeforeEntry} trade(s) record an exit earlier than their entry (taken or skipped by entry, as above).`);
+  if (r.exitBeforeEntry) console.log(`  DATA: ${r.exitBeforeEntry} trade(s) record an exit at or before their entry's minute (a same-minute round trip sorts exit-first; on the 586 that is APPS, sold 19 s after it was added: no exit precedes its entry; taken or skipped by entry, as above).`);
   console.log('\nREADING (declared before the first run): one comparison on one historical sample establishes nothing. A constrained');
   console.log('result better than the full set would justify a FORWARD test, declared in advance, and nothing stronger. A flat');
   console.log('constrained result is the finding: the strategy is flat at the size Roman intended.');
