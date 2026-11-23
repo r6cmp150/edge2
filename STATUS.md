@@ -175,7 +175,25 @@ deleted every open position (RUN-ME-21).**
 - **One start date in the record.** 11-12 is not a second start: it is only the earliest day a universe was saved. The
   reading below, 11-12 up to the start line, is HISTORY (`--history`). It may have generated the hypothesis, so it is
   never part of the test.
-- **What the forward test still needs:** its duration and its bar, declared before it runs, from the power calculation.
+- **THE FORWARD TEST, ONE DECLARATION (2026-11-23, before the first position after the start line):**
+  - **Population:** every position opened after the start line. Nothing earlier; no subset.
+  - **Duration:** 60 trading days, counted from the first such position's buy day. The power calculation (00223aa)
+    gives about 0.44% to 0.52% as the smallest detectable effect at that horizon, depending on trades a day; that is
+    about the spread hurdle, so 60 days answers whether there is an edge large enough to survive costs.
+  - **Measure A, picking:** the selection differential (scripts/measure-selection-differential.mjs): each closed
+    position against every stock scanned that day, over its own window.
+  - **Measure B, holding:** from each position's ENTRY (its SIP reference at the buy minute), its return to that
+    day's close and to the closes 1, 2 and 5 trading days after the BUY, each minus the benchmark's over the identical
+    window. Measured from the entry, so his own exit plays no part.
+  - **Benchmark:** the scanned universe, which exists for every day after the start line. IWM is reported beside it as
+    the weaker proxy, in its own column, never blended.
+  - **The bar:** one-sided 0.05, with 95% intervals resampling whole days.
+    - Picking is SHOWN only if A's interval lies above zero.
+    - Holding decay is SPECIFIC only if B's excess at +1, +2 and +5 falls monotonically and all three intervals lie
+      below zero.
+    - Each result is reported gross and net of the spread hurdle.
+  - **PRE-COMMITTED:** if a measure is flat over the 60 days, it is closed. No re-cut, no extension, no subset.
+- **Nothing in the history below, and nothing measured on the 586, counts toward it.**
 
 **Read back after the delete, live, 2026-11-23T21:04Z (read only):**
 - **Portfolio:** 0 rows.
@@ -185,6 +203,24 @@ deleted every open position (RUN-ME-21).**
 - **peak_corrections:** the publishable key cannot read it, so whether it references any is NOT ESTABLISHED.
 - **The app booted against the empty book as an ESTABLISHED empty** (the trades_v2 control read answered; no error
   screen), with Live $0.00 and Available $1,500.00, and tried no write.
+
+**History, also before the start line (2026-11-23):**
+- **The post-exit decay, against the market** (7e136f2 / d6990ce): 526 trades, all sold 10-27 to 11-13.
+  - **Raw:** his stocks went exit +0.27%, +1 −0.16%, +2 −1.83%, +5 −5.78%. IWM over the same windows went −0.07%,
+    −0.39%, −0.78%, −2.19%.
+  - **Excess decay against IWM:** +1 −0.11% (−1.45% to +1.45%), +2 −1.38% (−2.69% to +0.10%), +5 −3.92% (−6.42% to
+    −1.35%).
+  - **Reading: NOT ESTABLISHED.**
+  - **Against the scanned universe, on the only two covered days that have one** (11-12/13, 66 trades): the excess
+    decay is POSITIVE (+1.34%, +0.48%, +4.98%). The universe fell further than his picks, so IWM may understate what
+    EDGE's universe does.
+- **His picks against the logger's shown signals on the same window** (entry to close, 9b78e48 / 2765f44 / 56fba6e):
+  - **Returns:** 616 trades at −0.28% mean and 45.3% wins, against 1,015 at +0.08% and 50.9%.
+  - **Spread:** a per-trade standard deviation of **3.99 points against 1.88**. That is worse on both axes, and it is
+    what "medium to high risk" has actually meant.
+  - **Caveat:** different stocks, so not a picking test.
+  - **On 11-02** his intraday exits won 79% while the same picks held to the close won 25.6%: that day was entirely when
+    he sold.
 
 **History, before the start line, @ 98bcc07: 155 closed picks on 4 days.**
 
