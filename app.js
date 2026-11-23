@@ -1365,17 +1365,29 @@ function backgroundSavePosition(p) {
 // reuses this exact formula instead of computing a second, parallel
 // notion of availability that could silently drift from what the budget
 // bar itself shows.
-// Deployed = holdings at cost. Committed = pending buy orders at their
-// order price -- the broker really does reserve that cash, so hiding it
-// would overstate what's available (phase-9 spec §4.8). Reported
-// separately, never folded into "deployed".
-function getCommittedToOpenOrders() {
-  return getPendingOrders().reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
+// Holdings at cost, and pending buy orders at their order price -- the
+// broker really does reserve that cash, so hiding it would overstate what's
+// available (phase-9 spec §4.8). Both are split by execution mode below
+// (getCommittedToOpenOrders, which pooled the modes, is gone with its
+// last reader, 2026-11-23).
+// BY EXECUTION MODE (2026-11-23; deferred since 11-20). Deployed used to sum EVERY open position at cost against the
+// budget, paper and live alike: with 40 paper positions the bar read "Available -$23,264" in red, money that did not
+// exist, and it misled the reviewer for two days. A paper position is a simulation and consumes no cash, so it is shown
+// apart and never counted against the budget. A position whose mode is not recorded (not_known, or none) might be real
+// money, so it IS counted, conservatively, and the bar says so. Warrior's sizing cap reads this same figure, which is
+// the right one for sizing real money.
+function costByMode(positions) {
+  const out = { live: 0, paper: 0, unknown: 0, n: { live: 0, paper: 0, unknown: 0 } };
+  for (const p of positions) {
+    const k = p.executionMode === 'live' ? 'live' : p.executionMode === 'paper' ? 'paper' : 'unknown';
+    out[k] += p.shares * p.buyPrice; out.n[k]++;
+  }
+  return out;
 }
 function getAvailableBudget() {
   const budget = parseFloat(state.settings.budget) || 0;
-  const deployed = getHoldings().reduce((sum, p) => sum + (p.shares * p.buyPrice), 0);
-  return budget - deployed - getCommittedToOpenOrders();
+  const held = costByMode(getHoldings()), ordered = costByMode(getPendingOrders());
+  return budget - held.live - held.unknown - ordered.live - ordered.unknown;
 }
 
 function updateBudgetBar() {
@@ -1390,16 +1402,21 @@ function updateBudgetBar() {
 
   const budget = parseFloat(state.settings.budget) || 0;
   const avail = getAvailableBudget();
-  const committed = getCommittedToOpenOrders();
-  const deployed = budget - avail - committed;
+  const held = costByMode(getHoldings()), ordered = costByMode(getPendingOrders());
   const availClass = avail >= 0 ? 'pos' : 'neg';
+  const money = n => `$${n.toFixed(2)}`;
+  const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  const paperCost = held.paper + ordered.paper, paperN = held.n.paper + ordered.n.paper;
+  const unknownCost = held.unknown + ordered.unknown, unknownN = held.n.unknown + ordered.n.unknown;
 
   el.classList.remove('hidden');
   el.innerHTML = `
-    <span>Budget: <strong class="mono">$${budget.toFixed(2)}</strong></span>
-    <span>Deployed: <strong class="mono">$${deployed.toFixed(2)}</strong></span>${committed > 0 ? `
-    <span>In open orders: <strong class="mono">$${committed.toFixed(2)}</strong></span>` : ''}
-    <span>Available: <strong class="mono ${availClass}">$${avail.toFixed(2)}</strong></span>
+    <span>Budget: <strong class="mono">${money(budget)}</strong></span>
+    <span>Live: <strong class="mono">${money(held.live)}</strong></span>${ordered.live > 0 ? `
+    <span>In live orders: <strong class="mono">${money(ordered.live)}</strong></span>` : ''}${unknownN ? `
+    <span>Mode not recorded: <strong class="mono">${money(unknownCost)}</strong> (${count(unknownN, 'position')}, counted as real money)</span>` : ''}
+    <span>Available: <strong class="mono ${availClass}">${money(avail)}</strong></span>${paperN ? `
+    <span class="budget-paper">Paper, a simulation, not money: <strong class="mono">${money(paperCost)}</strong> in ${count(paperN, 'position')}, not counted against the budget</span>` : ''}
   `;
 }
 
@@ -3204,7 +3221,7 @@ function buildScBadges(s) {
   const riskCls = s.risk <= 3 ? 'sc-badge-green' : s.risk <= 6 ? 'sc-badge-neutral' : 'sc-badge-red';
 
   const badges = [
-    { value: s.volRatio == null ? '—' : `${s.volRatio.toFixed(1)}×`, label: s.volRatio == null ? 'VOLUME N/M' : 'VOLUME', cls: 'sc-badge-neutral' },
+    { value: s.volRatio == null ? '—' : `${s.volRatio.toFixed(1)}×`, label: s.volRatio == null ? 'VOLUME NOT MEASURED' : 'VOLUME', cls: 'sc-badge-neutral' },
     { value: `${s.rsi.toFixed(0)}`, label: 'RSI', cls: 'sc-badge-neutral' },
     { value: durBadgeText(s.duration), label: 'TIMING', cls: isDayExit ? 'sc-badge-amber' : 'sc-badge-neutral' },
     { value: `${s.score}`, label: s.signal, cls: isBuySignal ? 'sc-badge-green' : 'sc-badge-neutral' },
@@ -3259,7 +3276,7 @@ function renderStockCard(s, marketClosed) {
         <div class="sc-header-row">
           <span class="sc-ticker">${s.ticker}</span>
           <span class="sc-price ${priceCls}">$${s.price.toFixed(2)}</span>
-          <span class="sc-pct ${priceCls}"${s.todayChange == null ? ` title="${s.todayChangeNotMeasured || 'not measured'}"` : ''}>${s.todayChange == null ? 'change n/m' : `${chgSign}${Math.abs(s.todayChange).toFixed(1)}%`}</span>
+          <span class="sc-pct ${priceCls}"${s.todayChange == null ? ` title="${s.todayChangeNotMeasured || 'not measured'}"` : ''}>${s.todayChange == null ? 'change not measured' : `${chgSign}${Math.abs(s.todayChange).toFixed(1)}%`}</span>
         </div>
         <div class="sc-company">${s.company}</div>
         ${scanHistoryCardHtml(s.ticker, 'signals')}
