@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-11-23T16:40:08.296Z",
+  "run_at": "2026-11-24T16:36:16.191Z",
   "floors": {
     "trades": 37,
     "trades_v2": 451,
@@ -27,16 +27,16 @@
     "signal_log": {
       "floor": 1938,
       "mode": "daily",
-      "read": 2172,
-      "live": 3910,
+      "read": 2083,
+      "live": 3928,
       "prior": 3910,
-      "fetched": 3910,
+      "fetched": 3928,
       "written": true,
       "reason": null,
       "shards": {
         "2026-09": 373,
         "2026-10": 1565,
-        "2026-11": 1972
+        "2026-11": 1990
       },
       "last_full_month": "2026-11",
       "changed_outside_window": null
@@ -49,11 +49,11 @@
       "reason": null
     },
     "portfolio": {
-      "fetched": 46,
+      "fetched": 0,
       "prior": 46,
       "floor": 0,
-      "written": true,
-      "reason": null
+      "written": false,
+      "reason": "read back EMPTY with 46 holding(s) in the last backup and only 0 new sale(s) in trades_v2 since -- that is an empty read (a permission or RLS denial returns an empty list, not an error), not 46 sales"
     },
     "signal_snapshot_at_buy": {
       "fetched": 590,
@@ -65,17 +65,17 @@
     "rating_snapshots": {
       "floor": 2944,
       "mode": "daily",
-      "read": 14270,
-      "live": 18325,
+      "read": 14752,
+      "live": 19161,
       "prior": 18325,
-      "fetched": 18325,
+      "fetched": 19161,
       "written": true,
       "reason": null,
       "shards": {
         "2026-08": 762,
         "2026-09": 1208,
         "2026-10": 974,
-        "2026-11": 15381
+        "2026-11": 16217
       },
       "last_full_month": "2026-11",
       "changed_outside_window": null
