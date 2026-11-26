@@ -72,7 +72,7 @@ await run('reclassified IN at the restart: the scan-history line, the choice scr
   for (const n of ['scanHistoryCardText', 'scanHistoryModalHtml', 'renderSignalsTab', 'renderStockCard', 'buildModalScoreBreakdown', 'renderAIResult',
     'addFormSessionAdviceHtml', 'renderPreMarketSection', 'computePreMarketMovers', 'calcPeakRiskScore', 'sigToggleKey', 'knownNumber']) assert.ok(frozen.has(n), `${n} is frozen`);
   assert.ok('core/scan-history.js' in manifest.files && !('core/scan-history.js' in spec.files.out));
-  assert.strictEqual(Object.keys(manifest.app_js).length, 199);
+  assert.strictEqual(Object.keys(manifest.app_js).length, 205, '199 at the restart, +6 by the standing check amendment');
 });
 
 await run('the detector: a frozen change, a new declaration, a new file and a setting are each named; display, comments and stamps are not', () => {

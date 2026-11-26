@@ -203,6 +203,21 @@ beat the stocks EDGE scanned that day and he did not buy.
   the pre-market section), `calcPeakRiskScore` and `knownNumber` (the third of the three, `sigToggleKey`, is among the
   82), and **`computePreMarketMovers`, beyond the ruling, named:** it computes the movers the pre-market section shows,
   and freezing the section's rendering without its list would leave the list free. Detector at the restart: INTACT.
+- **THE STANDING CHECK (the reviewer's §1.4; tests/frozen-references-out.test.js, mutants 5 of 5):** every OUT name a
+  frozen declaration references must be listed in the spec (`out_referenced_by_frozen`, 48 names in 12 reasons:
+  dialog plumbing, redraws of other screens, status lines, health, boot, security, recorded-and-unused, the budget bar,
+  the store, the execution-mode choices, analysis periods, the build stamp), and nothing else may be. A new reference
+  fails until the name is frozen or listed with a reason; a listed name no longer referenced fails too.
+  - **Its first run caught six, frozen by AMENDMENT 2026-11-26 (205 declarations):** `listingWarningText` (the Add
+    flow's not-tradable warning), `openLotsMessage`, `OPEN_LOT_CHOICES` and `friendlyBuyWhen` (the dialog asking
+    whether to record another buy of a held stock), and `loadSoldFromSupabase` and `mapTradesV2ToSoldShape` (they fill
+    `state.sold`, which the frozen after-hours warning on the Add form quotes). **No restart:** app.js is
+    byte-identical to b86d5c3 and each hash was taken from that tree and checked equal (the precedent: the two
+    amendments of 2026-11-26 under the first attempt, "content_changed: none"). The baseline and the start line are
+    unchanged.
+  - **Held for the reviewer, not acted on:** `renderPortfolioTab` is listed as a redraw, but it renders the holdings'
+    exit advice, whose COMPUTATION was frozen deliberately because it shapes when he sells. The definition ruled is about
+    selection, so I left its rendering out; if exit timing should be read the same way, it moves in.
 - **Not moved, and why:** `renderWarriorTab` stays OUT. Its own text is the tab header and an engine-not-loaded
   message; the Warrior cards come from `engine.renderTab()` in the Warrior engine files, frozen whole since 11-25.
 
