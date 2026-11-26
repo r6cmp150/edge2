@@ -326,6 +326,17 @@ deleted every open position (RUN-ME-21).**
     - **peak_price:** only ever understated, because a missing price leaves the peak un-raised. Two routes to his
       exits: the trailing stop fires later, or protection never switches on.
     - **risk_score:** understates risk when news was not retrieved; the +2 is missing.
+    - **Scan history at every scan (Roman, 2026-11-27): ruled NO capture change during the test.** The line already
+      shows every scan of the stock's own universe list: 778 of 784 left a row (99.2%), which was 13.4% of all his
+      scans (5,798), because a scan covers only the selected list and he taps through nine (backups at b786b78; since
+      2026-11-13 02:35Z every scored row is written, any score). A point at EVERY scan needs a price the scan does
+      not fetch, so it changes what the frozen scan fetches (`runScreener` root 0; `writeRatingSnapshots` root 2), not
+      only what it writes: a frozen-root amendment and a restart. Figures, JSON bytes (on-disk size not measured):
+      - **every symbol, thin row** (ticker, captured_at, price; 77 B): 4,047 symbols x ~60 scans a day = ~240k rows,
+        ~19 MB a day, the 500 MB quota in about a month, plus a 4,000-symbol fetch per scan. Not workable.
+      - **held stocks outside the scanned list only:** ~10 positions x ~60 scans = ~600 rows, ~46 KB a day. Cheap,
+        but still the frozen fetch changed, for stocks he holds and can see priced elsewhere. Not worth it in the test.
+      - today's writer, for comparison: 3,562-5,855 rows per scan day at 437 B (~2-2.5 MB a day).
   - **Same-day round trips, both windows:** 616 of 908 pre-start sales (68%); 537 of 626 verified trades bought from
     10-23 (85.8%). The 86% belongs to the second window only.
   - **Measure A, picking:** the selection differential (scripts/measure-selection-differential.mjs): each closed
