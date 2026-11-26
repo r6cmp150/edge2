@@ -218,6 +218,48 @@ deleted every open position (RUN-ME-21).**
       stop for insufficiency, not a finding of zero.
     - **Mechanised** (scripts/lib/forward-declaration.mjs): its result can only be FUTILE or CONTINUE. The comparison is
       printed only when the fixed set is complete. A FUTILE result overrides every later state.
+  - **THE INSTRUMENT IS FROZEN (declared 2026-11-25, at 2 qualifying days, before anything else touched the path):**
+    - **The rule:** no change to the scan, the universe, the scoring formula or its inputs, the entry gates, or the price
+      path, from the start line until EVALUATE or FUTILE.
+    - **A change to any of those ENDS THE TEST and restarts it** from a new start line. No partial credit, no splicing of
+      two segments: a measurement across two instruments is of neither.
+    - **Exempt,** because they cannot reach a measured quantity: display text, the budget bar, tests, guards,
+      documentation, the measurement scripts, and anything recorded and unused.
+    - **A defect found on the frozen path goes to the reviewer.** It is not fixed on the spot: shipping the fix restarts
+      the test, not shipping measures a known defect, and either may be right.
+    - **THE FROZEN SET, ENUMERATED** (data/forward-test/instrument-freeze-spec.json; the detector reads the manifest
+      generated from it, data/forward-test/instrument-freeze.json):
+      - **19 files whole:** 12 core files (clock, indicators, api-client, market-data, news, store, orders, entry-gate,
+        float-table, universe, edge-scoring, macro), shell/registry.js, the 4 Warrior engine files, index.html (its
+        script list, with ?v= stamps removed), and data/float-table.json.
+      - **114 of app.js's 442 top-level declarations,** by hash: everything reachable from the scan, the snapshot write,
+        the stock screen and Add, the sale and fill forms, the holdings' exit advice and its live prices, the AI
+        analysis, settings load and save, and the price alerts.
+      - **The other 328 are declared OUT in 12 groups, each with its reason:** display, dialogs, analytics, health,
+        budget, portfolio view, recorded and unused, security, boot, the store's initial values, pre-market movers,
+        and dead code.
+      - **7 settings by VALUE:** include_under2, show_watch, min_volume, force_pre_market_mode, disable_macro_overlay,
+        float_threshold_shares, max_loss_pct. A setting changed on the phone changes the scan as surely as a commit.
+      - **Declared OUT, with reasons:** core/execution-mode-count.js (the budget bar), core/scan-history.js (display),
+        core/edgar.js (not loaded by the app), sw.js (the cache).
+    - **NO HOLE:** every file under core/, engines/ and shell/, app.js, index.html and sw.js, and every top-level
+      declaration in app.js, is frozen or declared out. A new one fails the guard until it is classified.
+    - **BEYOND THE RULING'S LIST, FROZEN DELIBERATELY:**
+      - **The holdings' exit advice, its live prices and the price alerts:** they shape when he sells, and the sale is
+        measure A's window.
+      - **The stock screen's AI analysis:** advice shown at the moment of choice, not display text.
+      - **The Warrior engine:** every position counts, whichever engine's card it came from.
+    - **SINCE THE START LINE (6dabe14), ONE FROZEN DIFFERENCE, AUDITED:** finalizeAddPortfolio gained the single line that
+      attaches appListAtBuy (3d462e5). It is recorded and unused, exempt by the rule, and the standing test pins it as
+      the only one.
+    - **NOT DETECTABLE BY A HASH, NAMED:** what third parties serve (Alpaca's bars and quotes, the news provider's
+      headlines, the universe endpoints). That is the macro test's 11-17 failure mode, outside our code.
+    - **THE DETECTOR:** scripts/check-instrument-freeze.mjs, on the daily backup run after the backup. It prints
+      INTACT, or turns the run red and names each CHANGED or UNCLASSIFIED item. The same check is a CI test (the
+      tripwire), so a frozen change also turns CI red on its own commit.
+    - **OPEN, FOR THE REVIEWER:** data/float-table.json is REBUILT AND COMMITTED EVERY SUNDAY 08:00 UTC
+      (build-float-table.yml; last 11-22). The next rebuild, 2026-11-29, changes the frozen instrument by itself unless
+      something is decided before then.
   - **Measure A, picking:** the selection differential (scripts/measure-selection-differential.mjs): each closed
     position against every stock scanned that day, over its own window.
   - **Measure B, holding:** from each position's ENTRY (its SIP reference at the buy minute), its return to that
