@@ -2819,6 +2819,7 @@ function renderSignalsTab() {
   // Filters
   html += renderFilterButtons();
 
+  let listedCards = []; // the cards this render puts on screen, for appListOnScreen below
   if (!state.signals.length && !state.lastScanTime) {
     html += `<div class="empty-state">
       <div class="empty-icon">📊</div>
@@ -2848,9 +2849,15 @@ function renderSignalsTab() {
       html += `<div class="empty-state"><p>No signals match current filters.</p></div>`;
     } else {
       filtered.forEach(s => { html += renderStockCard(s, ms.status === 'CLOSED'); });
+      listedCards = filtered;
     }
   }
 
+  // THE LIST ON SCREEN (2026-11-25, the reviewer: "nothing in this system records what was on his screen").
+  // CAPTURE-NOT-CONSUME: the signal cards this render displays, symbols and scores and nothing more, kept for the buy
+  // to record as appListAtBuy. RECORDED AND UNUSED: no measure reads it; the forward test's C keeps the watch line.
+  // Taken from the cards as rendered, never recomputed. An empty list is a real record that nothing was listed.
+  state.appListOnScreen = { renderedAt: new Date().toISOString(), items: listedCards.map(c => ({ ticker: c.ticker, score: c.score ?? null })) };
   container.innerHTML = html;
   ensureScanHistory();
   refreshScanHistoryDom();
@@ -4827,6 +4834,15 @@ function captureSignalSnapshot(sig) {
 //   NOT_SHOWN    no verdict was shown for this buy, with the reason
 // Lives in signal_snapshot_at_buy.snapshot (jsonb; its CHECK only requires an object), so
 // no column. A buy with no signal has no snapshot at all (absent_reason 'no_signal').
+// THE SIGNALS LIST AT THE BUY (2026-11-25), recorded inside the buy's snapshot as `appListAtBuy`: the cards the
+// signals tab last rendered (state.appListOnScreen), with when. RECORDED AND UNUSED: capture-not-consume, read by no
+// measure. Two states, never absent: RECORDED (the list, possibly empty, and renderedAt) or NOT_RECORDED (with why).
+function appListAtBuy() {
+  const a = state.appListOnScreen;
+  if (!a) return { state: 'NOT_RECORDED', reason: 'the signals list had not rendered in this session' };
+  return { state: 'RECORDED', renderedAt: a.renderedAt, items: a.items.map(x => ({ ticker: x.ticker, score: x.score })) };
+}
+
 function appShowedAtBuy(ticker) {
   const a = state.appShowedOnScreen;
   if (!a) return { state: 'NOT_SHOWN', reason: 'no stock screen had rendered a verdict in this session' };
@@ -4928,6 +4944,7 @@ async function finalizeAddPortfolio(ticker, shares, price, date, btn, order, exe
   // Copied before any await: what was on screen at the click, not after.
   const signalSnapshotAtBuy = captureSignalSnapshot(sig);
   if (signalSnapshotAtBuy) signalSnapshotAtBuy.appShowedAtBuy = appShowedAtBuy(ticker);
+  if (signalSnapshotAtBuy) signalSnapshotAtBuy.appListAtBuy = appListAtBuy(); // recorded and unused (capture-not-consume)
   // Every *Pts field below comes from the one formula the score was summed
   // from (core/edge-scoring.js scoreComponents), never a local copy.
   const sigComps = sig ? scoreComponents({

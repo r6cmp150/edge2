@@ -68,6 +68,7 @@ established, plus every unlisted column.
 | `code_version` | not established | — | Set from db/028 on. Earlier rows: not checked. |
 | `threshold_at_buy` | not established | — | Not checked. |
 | `signal_snapshot` / `signal_snapshot_at_buy.snapshot` | provenanced | the scan | A JSON copy of the signal at the click, with `scannedAt` (156 of 244) and the bar's age (156 of 244) where recorded. `appShowedAtBuy` only from 11-10 (4e71a4a). |
+| `signal_snapshot_at_buy.snapshot.appListAtBuy` | provenanced | the render | RECORDED AND UNUSED (capture-not-consume, from 2026-11-25). The cards the signals tab last rendered (ticker and score only) and its `renderedAt`, or NOT_RECORDED with why. Only on buys that have a snapshot. If the stock screen was opened from another tab, this list may be older than the tap: `renderedAt` says how old. No measure reads it: the forward test's C keeps the watch line. |
 | `source` ('App Signal') | can be fabricated | — | It is the sale form's pre-selected label, not derived. The derived answer would be `signal_log.taken_resolution`, which cannot see most trades (below). |
 
 ## portfolio (the open positions)
