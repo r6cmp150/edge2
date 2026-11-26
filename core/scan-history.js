@@ -3,14 +3,24 @@
 // no arrow, no trend word. It is what the APP showed at each scan, a quote at that moment, never a traded price.
 // Pure: no DOM, no network; every time-dependent function takes `nowMs`. Classic script (shared global scope).
 //
-// SOURCE: rating_snapshots, one row per ticker per scan that scored 60 or more. A scan = a distinct captured_at for
-// the ticker (measured 2026-11-12 on the backup at 9d3325a: 627 scans, none holding a ticker twice; de-duplicated
-// here anyway). A scan in which the ticker scored under 60 leaves NO row, and browser scans write no scan_runs row,
-// so a gap between two points may hide scans: the modal says so.
+// SOURCE: rating_snapshots, one row per ticker per scan that SCORED it. A scan = a distinct captured_at for the
+// ticker (measured 2026-11-12 on the backup at 9d3325a: 627 scans, none holding a ticker twice; de-duplicated here
+// anyway). Which scans leave a row for a ticker (corrected 2026-11-27; this header said "scored 60 or more", true
+// when written and false from 2026-11-13 02:35Z, when writeRatingSnapshots began writing every scored row, any score,
+// with its tier):
+//   - a scan covers ONE universe list, the one selected (setUniverse runs a scan of that list only), so a ticker gets
+//     a row only in scans of a list it is on. Scans of his other lists never fetch its price: there is nothing to
+//     record. Measured on the backup at b786b78: across 95 ticker-days he bought on from 11-13, 778 of 784 scans of
+//     the stock's own list left a row (99.2%), and that was 13.4% of all his scans (5,798), since he taps through
+//     nine lists seconds apart. This, not a score filter, is why the points are spaced as they are.
+//   - in a scan of its list, only if it passed the price/volume prefilter and could be scored (6 of the 784 missed).
+//   - before 2026-11-13 02:35Z, only shown rows scoring 60 or more were written (those rows have tier NULL).
+// Browser scans write no scan_runs row, so a gap between two points may hide scans: the modal says so.
 //
-// NO SCORE: rating_snapshots.scoring_version / scoring_hash are NULL on all 4,431 backed-up rows (the writer is on
-// the gated branch), and v2 shipped 2026-10-22 inside that range, so no row can say which scoring produced its
-// score. A score column would look comparable and not be (reviewer's condition, 2026-11-12): dropped.
+// NO SCORE: rows before 2026-11-13 02:35Z carry no scoring_version / scoring_hash (4,431 of them NULL at 9d3325a),
+// and v2 shipped 2026-10-22 inside that range, so those rows cannot say which scoring produced their score; rows
+// since then carry it (2 or 3, every row at b786b78). A score column mixing the two would look comparable and not
+// be (reviewer's condition, 2026-11-12): dropped. (Comment facts corrected 2026-11-27; the decision is unchanged.)
 
 // rows: [{ ticker, captured_at, price }] -> Map(ticker -> [{ at: ms, price }]), newest first, one per captured_at.
 function scanPointsByTicker(rows) {

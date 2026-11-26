@@ -164,11 +164,38 @@ await run('the not_known count uses the same mechanism: read once per session, a
   assert.ok(w.indexOf("invalidateSessionRead('notKnown');") >= 0 && w.indexOf("invalidateSessionRead('notKnown');") < w.indexOf("return noteSaleWrite(pos, 'WRITTEN'"), 'a sale recorded');
 });
 
-await run('the read: one chunked helper for every ticker on screen, price and time only (no score: no row records its scoring version)', () => {
+await run('the read: one chunked helper for every ticker on screen, price and time only (no score: rows before Nov 13 cannot say their scoring version)', () => {
   const e = fn('ensureScanHistory');
   assert.ok(e.includes('selectRatingSnapshotsByTickers(tickers)') && e.includes('scanPointsByTicker(data)'));
   const store = readSource('core/store.js');
   assert.ok(store.includes(".select('id, ticker, captured_at, price', { count: 'exact' })"), 'no score column read');
-  assert.ok(/NO SCORE: rating_snapshots\.scoring_version \/ scoring_hash are NULL/.test(readSource('core/scan-history.js')));
+  assert.ok(/NO SCORE: rows before 2026-11-13 02:35Z carry no scoring_version/.test(readSource('core/scan-history.js')));
+});
+
+// 2026-11-27 (the reviewer): the modal told Roman for two weeks that a stock is recorded "only in scans where it scored
+// 60 or more", false since 2026-11-13 02:35Z, when the writer began writing every scored row. The text and the writer
+// are pinned TOGETHER here, so a change to either one that makes the text false fails this test.
+await run('what the modal says about which scans are recorded is what the writer and the scan do', () => {
+  const modal = fn('scanHistoryModalHtml');
+  const live = modal.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+  // the writer: every scored row, no score floor (the claim "only 60 or more" would be true again if it gained one)
+  const w = fn('writeRatingSnapshots');
+  assert.ok(w.includes('(scored || []).filter(r => r.signal)'), 'the writer keeps every row the scan scored');
+  assert.ok(!/RATING_SNAPSHOT_MIN_SCORE|score\s*>=|\.score\s*</.test(w.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n')), 'the writer has no score floor');
+  // the scan: one universe list, the one selected
+  assert.ok(fn('setUniverse').includes('const baseList = STOCK_UNIVERSES[name] || MASTER_TICKERS;'), 'a list is scanned on its own');
+  // so the modal: no score rule given as the current one, the list rule given, in the empty case and the footer both
+  assert.ok(!/RATING_SNAPSHOT_MIN_SCORE/.test(live), 'the modal states no score floor from the constant');
+  assert.ok(!/records a stock only (when|in scans where) it score/.test(live), 'the false rule is gone');
+  const rule = /const whenRecorded = '([^\n]*)';/.exec(live);
+  assert.ok(rule, 'one sentence says which scans are recorded');
+  assert.ok(/covers only that list/.test(rule[1]) && /in scans of a list it is on/.test(rule[1]), 'the list rule');
+  assert.ok(/const before13 = 'Before Nov 13, only scans where it scored 60 or more were recorded\.';/.test(live), 'the old rule only as history');
+  assert.ok(live.includes('No recorded scans of ${ticker}. ${whenRecorded} ${before13}</div>'), 'the empty case says both');
+  assert.ok(live.includes('not a traded price. ${whenRecorded} So scans of your other lists leave no point here, and the gaps between these times vary. ${before13}</div>'), 'the footer says both, history last');
+  // the module header: the same rule, never the old one
+  const header = readSource('core/scan-history.js').split('\n').filter(l => /^\/\//.test(l)).join('\n');
+  assert.ok(!/one row per ticker per scan that scored 60 or more/.test(header), 'the header\'s old rule is gone');
+  assert.ok(/a scan covers ONE universe list/.test(header));
 });
 })();

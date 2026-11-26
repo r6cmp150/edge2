@@ -10390,11 +10390,16 @@ function scanHistoryEscape(t) {
   return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 function scanHistoryModalHtml(ticker) {
+  // Which scans leave a point (corrected 2026-11-27: this said "only in scans where it scored 60 or more", false since
+  // 2026-11-13 02:35Z, when every scored row began to be written; core/scan-history.js's header has the measurement).
+  // A scan covers the one universe list selected; before Nov 13 only scores of 60 or more were written.
+  const whenRecorded = 'A scan happens when you open or refresh the app or pick a universe list, and it covers only that list: EDGE records a stock in scans of a list it is on, when it passes that scan\'s price and volume filter.';
+  const before13 = 'Before Nov 13, only scans where it scored 60 or more were recorded.';
   const e = _sessionReads.get('scanHistory');
   if (!e || e.status === 'loading') return `<div class="settings-hint">Loading…</div>`;
   if (e.status === 'failed') return `<div class="settings-hint" style="color:var(--red)">Scan history could not be read (${scanHistoryEscape(e.error)}). Nothing is shown rather than a partial list.</div>`;
   const points = e.value.get(ticker) || [];
-  if (!points.length) return `<div class="settings-hint">No recorded scans of ${ticker}. EDGE records a stock only when it scores ${RATING_SNAPSHOT_MIN_SCORE} or more.</div>`;
+  if (!points.length) return `<div class="settings-hint">No recorded scans of ${ticker}. ${whenRecorded} ${before13}</div>`;
   const onScreen = (state.signals || []).some(s => s.ticker === ticker) ? (state.lastScanTime ?? null) : null;
   const { rows, total, first } = scanModalRows(points, onScreen);
   const now = Date.now();
@@ -10410,7 +10415,7 @@ function scanHistoryModalHtml(ticker) {
   const countLine = total > rows.length ? `${total} recorded scans of ${ticker} since ${new Date(first).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' })}.`
     : earlier < SCAN_HISTORY_SHOWN ? `Only ${total} recorded scan${total === 1 ? '' : 's'} of ${ticker}.` : `${total} recorded scans of ${ticker}.`;
   return `${items}
-    <div class="settings-hint" style="margin-top:6px">${countLine} The price EDGE was showing at each scan: a quote at that moment, not a traded price. Scans happen when you open or refresh the app, and EDGE records a stock only in scans where it scored ${RATING_SNAPSHOT_MIN_SCORE} or more, so the gaps between these times vary and may hide scans.</div>`;
+    <div class="settings-hint" style="margin-top:6px">${countLine} The price EDGE was showing at each scan: a quote at that moment, not a traded price. ${whenRecorded} So scans of your other lists leave no point here, and the gaps between these times vary. ${before13}</div>`;
 }
 function scanHistoryModalSection(ticker) {
   return `<div class="section-label">Your recent scans of ${ticker}</div>
