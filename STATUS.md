@@ -223,7 +223,7 @@ beat the stocks EDGE scanned that day and he did not buy.
   82), and **`computePreMarketMovers`, beyond the ruling, named:** it computes the movers the pre-market section shows,
   and freezing the section's rendering without its list would leave the list free. Detector at the restart: INTACT.
 - **THE STANDING CHECK (the reviewer's §1.4; tests/frozen-references-out.test.js, mutants 5 of 5):** every OUT name a
-  frozen declaration references must be listed in the spec (`out_referenced_by_frozen`, 48 names in 12 reasons:
+  frozen declaration references must be listed in the spec (`out_referenced_by_frozen`, 48 names in 12 reasons; 60 after the faithfulness amendment below:
   dialog plumbing, redraws of other screens, status lines, health, boot, security, recorded-and-unused, the budget bar,
   the store, the execution-mode choices, analysis periods, the build stamp), and nothing else may be. A new reference
   fails until the name is frozen or listed with a reason; a listed name no longer referenced fails too.
@@ -234,9 +234,42 @@ beat the stocks EDGE scanned that day and he did not buy.
     byte-identical to b86d5c3 and each hash was taken from that tree and checked equal (the precedent: the two
     amendments of 2026-11-26 under the first attempt, "content_changed: none"). The baseline and the start line are
     unchanged.
-  - **Held for the reviewer, not acted on:** `renderPortfolioTab` is listed as a redraw, but it renders the holdings'
-    exit advice, whose COMPUTATION was frozen deliberately because it shapes when he sells. The definition ruled is about
-    selection, so I left its rendering out; if exit timing should be read the same way, it moves in.
+  - **THE FAITHFULNESS READ, frozen by AMENDMENT 2026-11-26 (218 declarations)** (the reviewer, CC-the-date-was-mine-
+    and-three-rulings §3: "A renderer is outside the freeze only if it is faithful to its input"; a choice about what he
+    reads can change when he sells, and his sale closes measure A's window). The read was of app.js at b86d5c3, which
+    is byte-identical to this tree.
+    - **`renderPortfolioTab` is NOT FAITHFUL, and is more than a renderer.** It is the frozen advice's CALLER:
+      - it computes the advice's inputs: RSI from the daily bars (15 closes or none), the live price, the live target;
+      - it writes position fields that the frozen advice and the records read, and saves them: `peakPrice` (the
+        trailing stop), `momentumProtectionActivated` (at 1.20x), `rsiSuspendedAtGainPct` (RSI 72), `peakRsi`,
+        `prevRSI`;
+      - it hands the frozen sale dialog its price (or withholds it on an earlier session's close).
+
+      Freezing `calcUnifiedRecommendation` alone left its inputs free. **IN.**
+    - **In with it, each because it chooses or computes:**
+      - `buildUnifiedPortfolioBanner`: on LOCK IN PROFITS it hides the composite factors and adds its own "This is
+        the exit window — consider selling now";
+      - `buildFridayFlag` and `buildWeekendBanner`: they author sell advice ("EXIT TODAY", "strongly consider
+        exiting", "Consider taking profits") from price, stop and P&L;
+      - `displayQuoteAge`: it decides whether a price is shown and whether the sale dialog gets one;
+      - the card order: `PORTFOLIO_SORTS`, `PORTFOLIO_SORT_DEFAULT` (closest to the time limit first),
+        `PORTFOLIO_SORT_STORAGE_KEY`, `comparePortfolioCards`, `currentPortfolioSort`, `isPortfolioSort`,
+        `comparePositionIds`;
+      - **`updateNavBadges`, beyond the ruling's redraw list (it was a status entry), named:** it chooses which
+        verdicts light the Portfolio badge (SELL NOW, SELL SOON, CONSIDER SELLING, LOCK IN PROFITS, the hard floor).
+    - **FAITHFUL, stay out, each with its reason in `out_referenced_by_frozen`:**
+      - the other redraws: `renderSoldTab` and `renderAnalyticsTab` (recorded trades, after the fact),
+        `renderSettingsTab` (each setting's value; the settings that matter are frozen by value), `renderLiveBand`
+        (one fixed line);
+      - the 14 OUT names the newly frozen code references, among them `buildRegisteredEngineExitBanner` (an engine's
+        reasons verbatim), `filterByEngine` (his filter, default ALL) and `buildPortfolioSortControl` (the frozen
+        options verbatim).
+      - **The closest call:** `renderIntradayLineCard`. It derives one figure, the distance to his floor, as the
+        difference of two values it is passed, and drops nothing.
+    - **No restart:** app.js was compared in full with b86d5c3 and is identical, and each hash comes from that tree.
+      The baseline and the start line are unchanged. Tests: tests/instrument-freeze.test.js (the amendment, and a
+      mutant of the card's own RSI-72 rule that the detector names as `app.js renderPortfolioTab`) and
+      tests/frozen-references-out.test.js; mutants 6 of 6.
 - **Not moved, and why:** `renderWarriorTab` stays OUT. Its own text is the tab header and an engine-not-loaded
   message; the Warrior cards come from `engine.renderTab()` in the Warrior engine files, frozen whole since 11-25.
 

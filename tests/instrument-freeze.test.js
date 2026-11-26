@@ -72,7 +72,26 @@ await run('reclassified IN at the restart: the scan-history line, the choice scr
   for (const n of ['scanHistoryCardText', 'scanHistoryModalHtml', 'renderSignalsTab', 'renderStockCard', 'buildModalScoreBreakdown', 'renderAIResult',
     'addFormSessionAdviceHtml', 'renderPreMarketSection', 'computePreMarketMovers', 'calcPeakRiskScore', 'sigToggleKey', 'knownNumber']) assert.ok(frozen.has(n), `${n} is frozen`);
   assert.ok('core/scan-history.js' in manifest.files && !('core/scan-history.js' in spec.files.out));
-  assert.strictEqual(Object.keys(manifest.app_js).length, 205, '199 at the restart, +6 by the standing check amendment');
+  assert.strictEqual(Object.keys(manifest.app_js).length, 218, '199 at the restart, +6 by the standing check amendment, +13 by the faithfulness amendment');
+});
+
+await run('THE FAITHFULNESS AMENDMENT (2026-11-26): the Portfolio card computes and chooses, so it is frozen; a change to it is named', () => {
+  const frozen = new Set(Object.keys(manifest.app_js));
+  for (const n of ['renderPortfolioTab', 'buildUnifiedPortfolioBanner', 'buildFridayFlag', 'buildWeekendBanner', 'displayQuoteAge', 'PORTFOLIO_SORTS',
+    'PORTFOLIO_SORT_DEFAULT', 'PORTFOLIO_SORT_STORAGE_KEY', 'comparePortfolioCards', 'currentPortfolioSort', 'isPortfolioSort', 'comparePositionIds', 'updateNavBadges'])
+    assert.ok(frozen.has(n), `${n} is frozen`);
+  const outNames = Object.values(spec.app_js.out).flatMap(g => g.names);
+  for (const n of ['renderSoldTab', 'renderAnalyticsTab', 'renderSettingsTab', 'renderLiveBand', 'renderIntradayLineCard', 'buildRegisteredEngineExitBanner'])
+    assert.ok(outNames.includes(n) && /^FAITHFUL \(read 2026-11-26/.test(spec.out_referenced_by_frozen.names[n]), `${n} stays out, with its faithfulness reason`);
+  const a = spec.amended.find(x => /faithfulness test/.test(x.ruling));
+  assert.ok(a && a.date === '2026-11-26' && /^none: app\.js is byte-identical to b86d5c3/.test(a.content_changed));
+  // what it guards: the card's own computation of an advice input (the peak that the trailing stop reads)
+  const t = D.treeReader(REPO_ROOT), row = D.settingsRow(readSource(D.SETTINGS));
+  const peak = app.replace('if (!priceUnavailable && p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi != null && rsi >= 72) {',
+    'if (!priceUnavailable && p.momentumProtectionActivated && p.rsiSuspendedAtGainPct == null && rsi != null && rsi >= 70) {');
+  assert.notStrictEqual(peak, app);
+  const r = L.checkFreeze({ read: p => (p === 'app.js' ? peak : t.read(p)), list: () => t.list(), manifest, spec, settingsRow: row });
+  assert.deepStrictEqual(r.changed, ['app.js renderPortfolioTab']);
 });
 
 await run('the detector: a frozen change, a new declaration, a new file and a setting are each named; display, comments and stamps are not', () => {
