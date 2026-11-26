@@ -506,18 +506,19 @@
    "force_pre_market_mode",
    "disable_macro_overlay",
    "float_threshold_shares",
-   "max_loss_pct"
+   "max_loss_pct",
+   "execution_mode",
+   "execution_mode_set_at"
   ],
   "out": {
    "budget": "BUDGET BAR",
    "risk_per_trade_pct": "SIZING: shares do not enter a per-share return",
    "developer_tools": "HEALTH",
-   "execution_mode": "PAPER OR LIVE: recorded with each trade; does not change a scan, a score, a gate or a price",
-   "execution_mode_set_at": "its timestamp",
    "id": "row id",
    "created_at": "row timestamp",
    "updated_at": "row timestamp"
-  }
+  },
+  "why_execution_mode": "FROZEN 2026-11-26 (the reviewer): on paper there is no broker, so the recording IS the trade and every app-recorded minute the measures read (buy_date/buy_time, sell_date/sell_time) is exact. Under live, a broker sits between the decision and the fill, every recorded minute becomes an approximation of unknown size, and sell_filled_at has never once been typed (0 entered, 125 default, 783 empty), so nothing would record the difference. A switch to live ENDS THE TEST and restarts it. execution_mode_set_at is frozen with it, so a switch and a switch back cannot pass unseen."
  },
  "amended": [
   {
@@ -525,6 +526,12 @@
    "ruling": "CC-the-float-table-is-data-not-instrument-freeze-the-builder",
    "change": "data/float-table.json frozen -> out (data); the builder (build-float-table.yml, scripts/build-float-table.mjs, scripts/lib/workflow-instrumentation.mjs, core/edgar.js) -> frozen",
    "content_changed": "none: no frozen file changed, and no builder file changed since the start line (git log, verified)"
+  },
+  {
+   "date": "2026-11-26",
+   "ruling": "CC-no-restart-but-resolve-the-peak-price-contradiction",
+   "change": "execution_mode and execution_mode_set_at: settings out -> frozen by value",
+   "content_changed": "none: paper since 2026-11-12T15:24:10Z, unchanged"
   }
  ]
 }

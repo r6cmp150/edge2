@@ -77,6 +77,11 @@ await run('the detector: a frozen change, a new declaration, a new file and a se
   const newFile = chk(withApp(app, ['core/new-thing.js']));
   assert.deepStrictEqual(newFile.unclassified, ['core/new-thing.js']); assert.strictEqual(newFile.intact, false);
   assert.deepStrictEqual(chk(withApp(app), { ...row, min_volume: 50000 }).changed, ['setting min_volume: 100000 -> 50000']);
+  // execution_mode, frozen 2026-11-26: a switch to live ends the test; a switch and a switch back moves its timestamp
+  assert.strictEqual(manifest.settings.execution_mode, 'paper');
+  assert.deepStrictEqual(chk(withApp(app), { ...row, execution_mode: 'live' }).changed, ['setting execution_mode: "paper" -> "live"']);
+  assert.deepStrictEqual(chk(withApp(app), { ...row, execution_mode_set_at: '2026-12-01T15:00:00Z' }).changed, ['setting execution_mode_set_at: "2026-11-12T15:24:10.854+00:00" -> "2026-12-01T15:00:00Z"']);
+  assert.ok(!('execution_mode' in spec.settings.out) && /recording IS the trade/.test(spec.settings.why_execution_mode));
   const displayOnly = app.replace("<p>Tap Refresh to run your first scan.</p>", "<p>Tap Refresh to scan.</p>");
   assert.notStrictEqual(displayOnly, app); assert.ok(chk(withApp(displayOnly)).intact, 'renderSignalsTab is display');
   const commentOnly = app.replace('async function runScreener() {', 'async function runScreener() { // a comment');

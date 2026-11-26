@@ -239,8 +239,16 @@ deleted every open position (RUN-ME-21).**
       - **The other 328 are declared OUT in 12 groups, each with its reason:** display, dialogs, analytics, health,
         budget, portfolio view, recorded and unused, security, boot, the store's initial values, pre-market movers,
         and dead code.
-      - **7 settings by VALUE:** include_under2, show_watch, min_volume, force_pre_market_mode, disable_macro_overlay,
+      - **9 settings by VALUE:** include_under2, show_watch, min_volume, force_pre_market_mode, disable_macro_overlay,
         float_threshold_shares, max_loss_pct. A setting changed on the phone changes the scan as surely as a commit.
+      - **EXECUTION_MODE, FROZEN 2026-11-26 (the reviewer), with execution_mode_set_at:**
+        - **Why:** on paper there is no broker, so the recording IS the trade, and every app-recorded minute the
+          measures read is exact.
+        - **Under live** each of those minutes becomes an approximation of unknown size. sell_filled_at has never once
+          been typed (0 entered, 125 default, 783 empty), so nothing would record the difference.
+        - **A SWITCH TO LIVE ENDS THE TEST and restarts it** from a new start line.
+        - **The timestamp is frozen with it,** so a switch and a switch back cannot pass unseen.
+        - **Value at the freeze:** paper, set 2026-11-12T15:24:10Z. No restart: nothing has changed.
       - **Declared OUT, with reasons:** core/execution-mode-count.js (the budget bar), core/scan-history.js (display),
         sw.js (the cache), and data/float-table.json (data: below).
     - **NO HOLE:** every file under core/, engines/ and shell/, app.js, index.html and sw.js, and every top-level
@@ -784,6 +792,16 @@ Roman did not answer the Retry and two-places questions directly; the data answe
 ## Figures quoted to Roman, and how they are labelled
 - The +$2.25-a-trade bar for an exit rule, and the v2 figures (249 trades, 59.6%, ratio 1.04): all-trades, includes 2
   UNRECORDED; never quote as an EDGE figure.
+- **NOT TO BE QUOTED (the reviewer, 2026-11-26):** signal_log.taken_resolution / matched_trade_id, and any figure built
+  on them.
+  - "Taken" counts ANY buy of the same ticker within 9 calendar days of the signal. 82 of its 92 matches were bought 1
+    to 8 days after the signal, so it overstates "taken" by an amount we can see.
+  - Deferred, not fixed: a fix needs a new state and a migration. It reaches neither the forward test nor the screen.
+- **NOT TO BE QUOTED (the reviewer, 2026-11-26):** signal_log.reference_price, and any logger figure built on it.
+  - It is the latest trade, which can be days old, and the row does not carry that trade's date. How often it is stale
+    is not countable.
+  - Deferred, not fixed: a fix needs a column, or a design choice to skip such rows. It reaches neither the forward
+    test nor the screen.
 
 ## Sale queue on Roman's phone (2026-11-08)
 - The expanded banner: 13 lines, 0 `sale NOT recorded`, 11 `sale was already recorded`, 1 storage-full, 1 scan
