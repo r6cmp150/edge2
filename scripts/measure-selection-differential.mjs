@@ -34,6 +34,7 @@ import { buyMinuteUtc as pacificMinuteUtc } from './measure-entry-price-gap.mjs'
 import { sipRef } from './lib/sip-ref.mjs';
 import { dayInterval } from './measure-change-split.mjs';
 import { mean, ret } from './measure-good-days.mjs';
+import { qualifying, QUALIFYING_DAYS } from './lib/forward-declaration.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const FIRST_DAY = '2026-11-12', LOOKBACK_MIN = 15, BENCH = 'IWM';
@@ -61,6 +62,34 @@ export function universeReturn(barsAt1, barsAt2, symbols, ms1, ms2) {
   return { value: rs.length ? mean(rs) : null, covered: rs.length, of: symbols.length };
 }
 
+// minute bars near an instant for many symbols, cached per instant, with a retry on rate limits and dropped sockets
+export function makeBarsNear(headers) {
+  const barsCache = new Map();
+  return async (symbols, ms) => {
+    const key = `${ms}`; if (barsCache.has(key)) return barsCache.get(key);
+    const start = new Date(ms - LOOKBACK_MIN * 60000).toISOString(), end = new Date(ms).toISOString();
+    let b; for (let i = 0; ; i++) { try { b = await fetchBars(headers, symbols, { timeframe: '1Min', start, end, feed: 'sip' }); break; } catch (e) { if (!(/HTTP 429/.test(e.message) || e instanceof TypeError) || i >= 6) throw e; await new Promise(r => setTimeout(r, 3000 * (i + 1))); } }
+    barsCache.set(key, b); await new Promise(r => setTimeout(r, 400)); return b;
+  };
+}
+// measure A's rows: each closed position, buy minute to sell minute, against that day's scanned universe over the same
+// window (moved here from main unchanged, 2026-11-25, so the forward test's futility look uses the same rows)
+export async function differentialRows({ headers, closed, uni, fullDays, barsNear }) {
+  const rows = [], notFull = [];
+  for (const t of closed) {
+    const d = String(t.buy_date).slice(0, 10);
+    if (!fullDays.has(d)) { notFull.push(`${t.ticker} ${d}`); continue; }
+    const b = pacificMinuteUtc(d, t.buy_time), s = pacificMinuteUtc(String(t.sell_date).slice(0, 10), t.sell_time);
+    const [pb, ps, ib, is] = [await sipRef(headers, t.ticker, b), await sipRef(headers, t.ticker, s), await sipRef(headers, BENCH, b), await sipRef(headers, BENCH, s)];
+    const symbols = [...uni.get(d).t];
+    const u = universeReturn(await barsNear(symbols, b), await barsNear(symbols, s), symbols, b, s);
+    if (!pb || !ps || u.value == null) { notFull.push(`${t.ticker} ${d} (no price)`); continue; }
+    const pick = ret(pb.price, ps.price);
+    rows.push({ day: d, position_id: t.position_id, pick, universe: u.value, iwm: ib && is ? ret(ib.price, is.price) : null, diff: pick - u.value, covered: u.covered, of: u.of });
+  }
+  return { rows, notFull };
+}
+
 async function main() {
   const arg = k => (i => (i < 0 ? null : process.argv[i + 1]))(process.argv.indexOf(k));
   const headers = alpacaHeaders(arg('--env-root') || ROOT);
@@ -73,31 +102,20 @@ async function main() {
   for (const r of scans) { const d = ptDate(r.captured_at); (uni.get(d) || uni.set(d, { t: new Set(), min: Infinity }).get(d)).t.add(r.ticker); uni.get(d).min = Math.min(uni.get(d).min, r.score); }
   const history = process.argv.includes('--history');
   const inScope = r => (history ? String(r.buy_date).slice(0, 10) >= FIRST_DAY && !afterStart(r) : afterStart(r));
-  const closed = show('trades_v2.json').filter(r => r.sell_price_unverified === false && inScope(r));
-  const open = show('portfolio.json').filter(inScope);
+  let closed = show('trades_v2.json').filter(r => r.sell_price_unverified === false && inScope(r));
+  let open = show('portfolio.json').filter(inScope);
   console.log(BEGINS + ' ' + BEGINS_DATA + '\n');
   console.log(history ? `HISTORY, BEFORE THE START LINE (${FIRST_DAY} to ${START_LINE}): descriptive only, NOT the forward test.` : `THE FORWARD TEST, from the start line ${START_LINE}.`);
   console.log(`DATA @ ${rev}: ${closed.length} closed picks and ${open.length} open positions in scope (${history ? `bought ${FIRST_DAY} up to the start line` : "added after the start line"}).`);
-  const fullDays = new Set([...uni].filter(([, u]) => u.min === 0).map(([d]) => d));
-  const barsCache = new Map();
-  const barsNear = async (symbols, ms) => {
-    const key = `${ms}`; if (barsCache.has(key)) return barsCache.get(key);
-    const start = new Date(ms - LOOKBACK_MIN * 60000).toISOString(), end = new Date(ms).toISOString();
-    let b; for (let i = 0; ; i++) { try { b = await fetchBars(headers, symbols, { timeframe: '1Min', start, end, feed: 'sip' }); break; } catch (e) { if (!(/HTTP 429/.test(e.message) || e instanceof TypeError) || i >= 6) throw e; await new Promise(r => setTimeout(r, 3000 * (i + 1))); } }
-    barsCache.set(key, b); await new Promise(r => setTimeout(r, 400)); return b;
-  };
-  const rows = [], notFull = [];
-  for (const t of closed) {
-    const d = String(t.buy_date).slice(0, 10);
-    if (!fullDays.has(d)) { notFull.push(`${t.ticker} ${d}`); continue; }
-    const b = pacificMinuteUtc(d, t.buy_time), s = pacificMinuteUtc(String(t.sell_date).slice(0, 10), t.sell_time);
-    const [pb, ps, ib, is] = [await sipRef(headers, t.ticker, b), await sipRef(headers, t.ticker, s), await sipRef(headers, BENCH, b), await sipRef(headers, BENCH, s)];
-    const symbols = [...uni.get(d).t];
-    const u = universeReturn(await barsNear(symbols, b), await barsNear(symbols, s), symbols, b, s);
-    if (!pb || !ps || u.value == null) { notFull.push(`${t.ticker} ${d} (no price)`); continue; }
-    const pick = ret(pb.price, ps.price);
-    rows.push({ day: d, pick, universe: u.value, iwm: ib && is ? ret(ib.price, is.price) : null, diff: pick - u.value, covered: u.covered, of: u.of });
+  if (!history) {
+    // THE FORWARD TEST'S UNIT (30ef1ac): qualifying days, from every position after the start line, open or closed;
+    // only the first 60 are in the test. The state, and the futility look, are scripts/measure-forward-test.mjs's.
+    const q = qualifying([...closed, ...open]), inTest = new Set(q.positions);
+    closed = closed.filter(r => inTest.has(r)); open = open.filter(r => inTest.has(r));
+    console.log(`${q.days.length} of ${QUALIFYING_DAYS} QUALIFYING DAYS. Below ${QUALIFYING_DAYS} every figure here is INTERIM progress, not a reading; the test's state is scripts/measure-forward-test.mjs's.`);
   }
+  const fullDays = new Set([...uni].filter(([, u]) => u.min === 0).map(([d]) => d));
+  const { rows, notFull } = await differentialRows({ headers, closed, uni, fullDays, barsNear: makeBarsNear(headers) });
   const fmt = x => (x == null ? '-' : `${x >= 0 ? '+' : ''}${x.toFixed(2)}%`);
   console.log(`MEASURED: ${rows.length} closed picks; not measured: ${notFull.length}${notFull.length ? ` (${notFull.slice(0, 8).join(', ')}${notFull.length > 8 ? ', ...' : ''})` : ''}.`);
   for (const d of [...new Set(rows.map(r => r.day))].sort()) {
