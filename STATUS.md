@@ -204,6 +204,16 @@ deleted every open position (RUN-ME-21).**
     - **It stops the test as FUTILE** if, for A and for B at +0 (entry to the buy day's close) both, the point estimate
       is at or below zero AND the upper end of its 95% interval is below the 0.291% hurdle: even the optimistic end is
       too small to pay for the spread. Otherwise CONTINUE.
+    - **WHY B AT +0 (confirmed by the reviewer, 2026-11-26):**
+      - It is the trade he actually makes. Same-day round trips (sell date equal to buy date, @ 28610fb) are 537 of
+        626 verified trades bought from 10-23 (85.8%), and 623 of 896 across all verified trades (69.5%).
+      - It is also the MOST FAVOURABLE horizon under our own decay hypothesis, which says longer holds are worse. So
+        futility at +0 implies futility at +1, +2 and +5.
+      - Stopping when the best available case is insufficient errs in the conservative direction. A FUTILE at +5 would
+        have said nothing about the trade he makes.
+    - **WHY A FIXED SET, NOT "AT COUNT 30" (confirmed):** the 30th day's +5 close comes five trading days later, by when
+      day 31 has usually qualified, so a literal count could never see complete data: a dead rule, not a conservative
+      one. A fixed set cannot grow, gives identical numbers on every later run, and prints nothing until complete.
     - **It can only stop.** It never concludes a positive, never extends the test, never changes the bar. FUTILE is a
       stop for insufficiency, not a finding of zero.
     - **Mechanised** (scripts/lib/forward-declaration.mjs): its result can only be FUTILE or CONTINUE. The comparison is
