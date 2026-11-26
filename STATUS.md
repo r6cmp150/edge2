@@ -231,6 +231,27 @@ deleted every open position (RUN-ME-21).**
       two segments: a measurement across two instruments is of neither.
     - **Exempt,** because they cannot reach a measured quantity: display text, the budget bar, tests, guards,
       documentation, the measurement scripts, and anything recorded and unused.
+    - **"DISPLAY TEXT" DEFINED (the reviewer, 2026-11-27): text that does not inform stock selection.** Measure C is
+      his choice among shown stocks, so text on the Signals tab, the stock screen or the Add form at the moment of
+      choice is NOT display text. **The scan-history line is ruled INSIDE** (its order change would restart the test).
+      - **The re-classification is PROPOSED, NOT APPLIED** (a name moved in needs its baseline hash, written only at a
+        declared restart). Until then the detector does not enforce it: the scanHistory* declarations,
+        core/scan-history.js and the proposed names below are held unchanged BY HAND.
+      - **Proposed in (2026-11-27, method: the detector's own call closure from renderSignalsTab, openStockModal and
+        openAddPortfolioModal, not passing through other tabs, tab switching, the frozen path or dialog plumbing;
+        over-includes):** 73 of the display group's 168 (the cards, banners, filters, legend, score breakdown, news,
+        chart, intraday panel, the AI result's rendering, the Add form's advice and the scan-history line) and 9 of the
+        pre-market group's 11 (a section above the scan list with its own AI read), listed by name in the spec's
+        amended entry of 2026-11-27 (`proposed_in`). The other groups reach the choice screens with nothing but budget
+        (the bar and sizing, exempt by the rule) and analytics' calcPeakRiskScore (below).
+      - **SINCE THE START LINE, ONE CHANGE TO AN ITEM NOW RULED INSIDE:** scanHistoryModalHtml's text (d334a50,
+        2026-11-26T17:25Z; which scans leave a point; the points themselves unchanged). Taken to the reviewer.
+      - **THREE OUT NAMES CARRY VALUES INTO FROZEN CODE (audit 2026-11-27: every OUT name a frozen declaration
+        references):** `calcPeakRiskScore` (analytics) decides LOCK IN PROFITS vs HOLD STRONG inside
+        calcUnifiedRecommendation; `sigToggleKey` (display) decides which signals pass the filter toggles in
+        getFilteredSignals; `knownNumber` (display) turns non-numbers to null in portfolioScoreState. Holes by the
+        freeze's original standard, not only the new one. None changed since the start line. Taken to the reviewer,
+        not fixed.
     - **A defect found on the frozen path goes to the reviewer.** It is not fixed on the spot: shipping the fix restarts
       the test, not shipping measures a known defect, and either may be right.
     - **THE FROZEN SET, ENUMERATED** (data/forward-test/instrument-freeze-spec.json; the detector reads the manifest
@@ -563,7 +584,10 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   cache (`edge_ownedScores`) is bounded by PRUNING to open positions and pending orders (P1, shape A); its records keep
   their bars, so `trades_v2.signal_before_sale` (which copies the record at a sale) is unchanged. Measured: one record
   ~13,200 characters, 92-93% bars; 132 of 132 PREDATES_SALE rows carry bars, 88% of their size; `signal_log`'s
-  snapshots 87.3% bars, the buy snapshots 85.8%. Database 46.2 MB of 500 MB (9.2%, read 2026-11-14). **Revisit if
+  snapshots 87.3% bars, the buy snapshots 85.8%. Database 46.2 MB of 500 MB (9.2%, read 2026-11-14); **65.1 MB read
+  2026-11-26, ~1.6 MB a day, 40% around mid-to-late February 2027** (the measurements section). **That meets condition
+  (1)'s second half below** (measured growth puts it at 40% inside two years); the reviewer ruled no action on 11-27
+  without naming the trigger, so whether the revisit is now owed is taken to the reviewer. **Revisit if
   either holds:** (1) the database passes ~40% of the free quota, or its measured growth puts it there inside two
   years; (2) something starts reading `signal_before_sale` and establishes what it needs from it. **When revisited,
   all three are reasoned about together** (the phone record, `signal_before_sale`, the buy snapshot): one field,
@@ -880,6 +904,24 @@ and phone storage (already here). Each item: when, what unit, how taken, and the
 
   `signal_log`'s `table_bytes` is 2.57 MB, so ~20 MB of it is TOAST (large JSON columns). Its growth rate was never
   measured; RUN-ME-22 (same query) is the fresh read. (`CC-044-applied-probe-wrong-and-the-size-answer.md` §5.)
+- **Database size, 2026-11-26 18:22Z.** RUN-ME-22 (the same query, body sha b188fd27), run by Roman. Units as above.
+  **Figures as the reviewer transcribed them from his output; I have not seen the raw output.** This database
+  **65.1 MB**; cluster total 80.3 MB against the 500 MB organisation quota (16%). Not comparable with 11-14's 9.2%,
+  which was this database over the quota.
+
+  | table | rows | total | per row | of which TOAST |
+  |---|---|---|---|---|
+  | `signal_log` | 4,202 | **32.1 MB** | 7,628 B | ~27.8 MB |
+  | `rating_snapshots` | 29,398 | 8.1 MB | 276 B | small |
+  | `signal_snapshot_at_buy` | 603 | 5.0 MB | 8,368 B | ~4.8 MB |
+  | `trades_v2` | 920 | 4.9 MB | 5,289 B | -- |
+
+  **Growth, measured across the two reads (12 days):** this database 46.2 -> 65.1 MB, **~1.6 MB a day** (above the
+  1.2 estimated from the writer); cluster 61.3 -> 80.3 MB, also ~1.6. At that rate this database reaches 40% of the
+  quota (200 MB) around mid-to-late February 2027 and the quota around late August 2027. **`signal_log` is half the
+  database, almost all TOAST: its `bars` field (87.3% of its snapshots, 11-17) is the whole question if it ever needs
+  cutting. `rating_snapshots` at 276 B a row (239 on 11-14) is a red herring. No action** (the reviewer).
+  (`CC-my-reassuring-reading-is-withdrawn-and-the-order-reverses.md` §4.)
 - **What the logger saw of his trades (reported 2026-11-20 18:30 PT; commits c0d0a12..05969ca).** Counts in that
   report: `signal_log` holds 96 distinct EDGE symbols; Roman traded 310 distinct tickers; 72 of the 547 trades from
   09-11 on have a ticker that ever appears in the log. The log is the scheduled logger's view, not his phone's scans:
@@ -899,9 +941,24 @@ and phone storage (already here). Each item: when, what unit, how taken, and the
     Two causes give "no recorded rise", unseparated: the stock genuinely never rose above the buy, or it rose and the
     tracking missed it. Separating them needs intraday highs, which were ruled out. Never quote the 23% as how often
     the peak tracking fails.
-  - Held for a ruling, not recorded as a finding: whether the 23% is reassuring against the win rate. The win rate
-    caps the share that genuinely never rose (a trade sold above its buy rose above it) but sets no floor under it,
-    so the comparison does not bound the defect from below.
+  - **OFFERED AND WITHDRAWN (the reviewer, 2026-11-27): "the 23% is reassuring against a win rate near 45%."** Do not
+    reinvent it. The win rate is a CEILING on the share that genuinely never rose (a trade sold above its buy rose
+    above it), not a floor, so the true share could be 5% with tracking misses making up the rest, and the figures
+    would look the same.
+  - **THE FLOOR, COUNTED 2026-11-27 (pre-registered before the run: population, strict sale > buy as primary, a 1%
+    margin as sensitivity; backup `9d3325a`, the rev that reproduces 154 of 670 with 37 null; recorded `sell_price` vs `buy_price`):** of the 154,
+    **1** sold above its buy (AIXI, peak = buy 1.93, sold 2.19), 17 sold at the buy, 136 below. So **1/670 (0.1%) <=
+    stored-peak miss share <= 154/670 (23%)**; the 1%-margin sensitivity gives the same 1.
+  - **The floor is near zero BY CONSTRUCTION, not because misses are rare (post-hoc, labelled).** Of the 348 trades sold
+    above their buy, 143 carry a peak EXACTLY equal to the sale price, dated the sale day: the sale-time quote
+    routinely becomes the peak (consistent with the Portfolio render, app.js's `currentPrice > peakPrice` update, seeing
+    the same quote the sale prefill used; that mechanism is not verified). A trade that rose between refreshes and sold
+    above its buy is therefore pulled out of the 154 at the sale, so the 154 hold almost only trades sold at or below
+    the buy, where a missed rise leaves no trace. The between-refresh miss, which is the defect, is not bounded from
+    below by this count. My own caveat before the run assumed the opposite (that the sale quote does NOT feed the
+    peak); the data say it usually does.
+  - **A second by-construction count, post-hoc:** 57 of 670 trades carry a peak BELOW their own sale price (all 57 sold
+    above the buy; median gap 0.11%, 4 at 1% or more). Each is a price he sold at that the stored peak never recorded.
 - **Exits corrected to bar prices (run 2026-11-20 14:20 PT, commit 8bc7432).** The constrained book: recorded -$0.82,
   corrected **+$16.27 over 123 trades** (about zero; it shows the recorded figure was not a measurement, not that the
   strategy makes money). Of the $202.25 shift over 586 trades, five trades carry $201.07 (IPST alone $118.42) and the
