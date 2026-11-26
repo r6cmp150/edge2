@@ -177,14 +177,34 @@ deleted every open position (RUN-ME-21).**
   never part of the test.
 - **THE FORWARD TEST, ONE DECLARATION (2026-11-23, before the first position after the start line):**
   - **Population:** every position opened after the start line. Nothing earlier; no subset.
-  - **Duration:** 60 trading days, counted from the first such position's buy day. The power calculation (00223aa)
-    gives about 0.44% to 0.52% as the smallest detectable effect at that horizon, depending on trades a day; that is
-    about the spread hurdle, so 60 days answers whether there is an edge large enough to survive costs.
+  - **AMENDED 2026-11-25, AFTER 13 POSITIONS HAD LANDED BUT BEFORE ANY WAS LOOKED AT:**
+    - 10 positions on 11-24 (the first added 17:17Z) and 3 on 11-25.
+    - Only their buy dates were read: no price, return or exit of any of them.
+    - The amendment changes the horizon's unit (the reviewer: the power calculation's unit is days on which positions
+      are opened, and Roman bought on 22 days of about 60 last time) and adds measure C. Nothing else changed.
+  - **Duration: 60 QUALIFYING DAYS,** a qualifying day being a trading day on which at least one position is opened
+    after the start line. Counting began 11-24; 2 have qualified so far.
+    - The power calculation (00223aa) gives about 0.44% to 0.52% as the smallest detectable effect over 60 such days,
+      about the spread hurdle.
+    - **Backstop:** if 60 qualifying days have not arrived within 180 trading days of 11-24, the test reports **NOT
+      ESTABLISHED FOR WANT OF DAYS.** That is a third outcome, not a null.
+    - **Every interim line reports the qualifying-day count,** so how far along the test is is visible, not inferred.
   - **Measure A, picking:** the selection differential (scripts/measure-selection-differential.mjs): each closed
     position against every stock scanned that day, over its own window.
   - **Measure B, holding:** from each position's ENTRY (its SIP reference at the buy minute), its return to that
     day's close and to the closes 1, 2 and 5 trading days after the BUY, each minus the benchmark's over the identical
     window. Measured from the entry, so his own exit plays no part.
+  - **Measure C, his choice (added 2026-11-25):** among the signals SHOWN on a day, do the ones he opens differ from
+    the ones he does not, in return and in dispersion?
+    - **Shown:** a row of that day's scans scoring at least its scoring version's watch line (20 in v3). That is what
+      the app displays: `getDisplayThreshold` returns the watch line, and his `include_under2` is true, so there is no
+      price filter. If he changes that setting, the day's settings backup decides.
+    - **Opened against not opened:** for each position, the shown stocks he did not open that day, over the identical
+      windows of B. The mean difference, and the ratio of their per-trade standard deviations.
+    - **The reading:** he SELECTS FOR MOVEMENT if the standard-deviation ratio's interval lies above 1. His choice ADDS
+      RETURN if the mean difference's interval lies above zero, and COSTS RETURN if it lies below.
+    - **The first window onto the one judgement in the workflow that is his.** Every earlier picking test was of the
+      score. Uses no data beyond what A already collects.
   - **Benchmark:** the scanned universe, which exists for every day after the start line. IWM is reported beside it as
     the weaker proxy, in its own column, never blended.
   - **The bar:** one-sided 0.05, with 95% intervals resampling whole days.
@@ -192,7 +212,8 @@ deleted every open position (RUN-ME-21).**
     - Holding decay is SPECIFIC only if B's excess at +1, +2 and +5 falls monotonically and all three intervals lie
       below zero.
     - Each result is reported gross and net of the spread hurdle.
-  - **PRE-COMMITTED:** if a measure is flat over the 60 days, it is closed. No re-cut, no extension, no subset.
+  - **PRE-COMMITTED:** if a measure is flat over the 60 qualifying days, it is closed. No re-cut, no extension, no
+    subset.
 - **Nothing in the history below, and nothing measured on the 586, counts toward it.**
 
 **Read back after the delete, live, 2026-11-23T21:04Z (read only):**
@@ -216,8 +237,12 @@ deleted every open position (RUN-ME-21).**
     EDGE's universe does.
 - **His picks against the logger's shown signals on the same window** (entry to close, 9b78e48 / 2765f44 / 56fba6e):
   - **Returns:** 616 trades at −0.28% mean and 45.3% wins, against 1,015 at +0.08% and 50.9%.
-  - **Spread:** a per-trade standard deviation of **3.99 points against 1.88**. That is worse on both axes, and it is
-    what "medium to high risk" has actually meant.
+  - **Spread:** a per-trade standard deviation of **3.99 points against 1.88**.
+    - **This is the first number that measures ROMAN'S OWN CHOICE** (which cards he taps among those shown), not the
+      score. Every earlier picking test was of the score.
+    - **It says he selects for movement:** twice the dispersion with a worse mean, which costs on both axes at once.
+      It is also what "medium to high risk" has actually meant.
+    - Measure C of the forward test asks the same question cleanly, on the same stocks.
   - **Caveat:** different stocks, so not a picking test.
   - **On 11-02** his intraday exits won 79% while the same picks held to the close won 25.6%: that day was entirely when
     he sold.
