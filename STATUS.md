@@ -182,6 +182,14 @@ deleted every open position (RUN-ME-21).**
     - Only their buy dates were read: no price, return or exit of any of them.
     - The amendment changes the horizon's unit (the reviewer: the power calculation's unit is days on which positions
       are opened, and Roman bought on 22 days of about 60 last time) and adds measure C. Nothing else changed.
+    - **THE 13 ARE INCLUDED (the reviewer's ruling, 2026-11-26).** The reasoning, so it survives:
+      - The amendment's content came from the reviewer, written from the power calculation, without knowing any
+        position had landed. It was not derived from these 13 or from anything about them.
+      - It changed the horizon's unit and added a third measure. Neither touches what counts as a position, how returns
+        are computed, or the bar.
+      - No outcome of the 13 was observed by anyone before the amendment, and none has been since.
+      - Amending after seeing their returns would not have been acceptable, and did not happen. Excluding them would be
+        worse: the declaration says every position after the start line, no subset.
   - **Duration: 60 QUALIFYING DAYS,** a qualifying day being a trading day on which at least one position is opened
     after the start line. Counting began 11-24; 2 have qualified so far.
     - The power calculation (00223aa) gives about 0.44% to 0.52% as the smallest detectable effect over 60 such days,
@@ -189,6 +197,17 @@ deleted every open position (RUN-ME-21).**
     - **Backstop:** if 60 qualifying days have not arrived within 180 trading days of 11-24, the test reports **NOT
       ESTABLISHED FOR WANT OF DAYS.** That is a third outcome, not a null.
     - **Every interim line reports the qualifying-day count,** so how far along the test is is visible, not inferred.
+  - **THE FUTILITY LOOK (declared 2026-11-25, at 2 qualifying days, before any reading existed):**
+    - **One look, on one fixed set:** the positions of the first 30 qualifying days. It is taken at the first run on
+      which every one of them has every horizon closed (A: sold; B: its +5 close has happened). A position whose data
+      is missing for good is named and does not hold the look up.
+    - **It stops the test as FUTILE** if, for A and for B at +0 (entry to the buy day's close) both, the point estimate
+      is at or below zero AND the upper end of its 95% interval is below the 0.291% hurdle: even the optimistic end is
+      too small to pay for the spread. Otherwise CONTINUE.
+    - **It can only stop.** It never concludes a positive, never extends the test, never changes the bar. FUTILE is a
+      stop for insufficiency, not a finding of zero.
+    - **Mechanised** (scripts/lib/forward-declaration.mjs): its result can only be FUTILE or CONTINUE. The comparison is
+      printed only when the fixed set is complete. A FUTILE result overrides every later state.
   - **Measure A, picking:** the selection differential (scripts/measure-selection-differential.mjs): each closed
     position against every stock scanned that day, over its own window.
   - **Measure B, holding:** from each position's ENTRY (its SIP reference at the buy minute), its return to that
@@ -198,7 +217,16 @@ deleted every open position (RUN-ME-21).**
     the ones he does not, in return and in dispersion?
     - **Shown:** a row of that day's scans scoring at least its scoring version's watch line (20 in v3). That is what
       the app displays: `getDisplayThreshold` returns the watch line, and his `include_under2` is true, so there is no
-      price filter. If he changes that setting, the day's settings backup decides.
+      price filter. If the settings backup ever shows `include_under2` not true, C is NOT COMPUTED (it says so) until
+      a per-day price filter is built and declared. It is never quietly run on the wrong set.
+    - **DEFINITION FIXED 2026-11-25, ON WHAT THE FIELD HOLDS:**
+      - `appShowedAtBuy` (4e71a4a) records only the tapped stock's own verdict: gate state, DAY suppression, score,
+        label and score source. It holds no list of what was on screen.
+      - `signal_log` is written by the scheduled logger (scripts/log-signals-edge.mjs), not from his screen.
+      - So nothing records the displayed list at the tap. "Shown" stays the watch line, with the limit stated: C
+        compares his picks against everything that passed it, mixing "saw it and skipped it" with "never scrolled that
+        far".
+      - The not-opened stocks are measured from his entry minute: the same clock on both sides, by design.
     - **Opened against not opened:** for each position, the shown stocks he did not open that day, over the identical
       windows of B. The mean difference, and the ratio of their per-trade standard deviations.
     - **The reading:** he SELECTS FOR MOVEMENT if the standard-deviation ratio's interval lies above 1. His choice ADDS
