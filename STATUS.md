@@ -297,6 +297,37 @@ deleted every open position (RUN-ME-21).**
       - A Sunday that moves hundreds across the line is a shock to the universe, and it will be seen that day.
     - **AMENDED WITHOUT A RESTART:** the table moved out and the builder moved in. No frozen item's hash changed (checked
       item by item against the previous manifest), and no builder file has changed since the start line.
+  - **RULED 2026-11-27 (the reviewer): NO RESTART over the fabricable fields.** The test continues from the start line,
+    uninterrupted. So nobody re-opens this from the field list alone:
+    - **The question:** two frozen-path fields reach measure A, whose window ends at his recorded sale
+      (differentialRows, measure-selection-differential.mjs:82). They reach it THROUGH HIS SALE: peak_price, and
+      target/stop. The sale is an ENDOGENOUS window, closed when his own stock has fallen far enough, so a
+      same-window difference does NOT cancel a defect in it. (The reviewer's cancellation argument failed on exactly
+      this.)
+    - **Route 1, the trailing stop** (a pullback from position.peakPrice, inside `if (inProtection)`, app.js:6259):
+      momentum protection was active at 0 of 908 pre-start sales (recorded as
+      `momentum_protection: !!pos.momentumProtectionActivated`, app.js:7244). The trailing stop triggered on 0 (871
+      false, 37 older than the field).
+    - **Route 2, protection never switching on** (it activates at peakPrice >= buyPrice * 1.20, app.js:5723, and an
+      understated peak can keep it off): no sale at +20% or better and no recorded peak at 1.20x the buy, 0 of 908.
+      8 rows show the peak untracked (it sits below their own sale price); none was near +20%.
+    - **Target and stop defaults:** fired 0 of 46.
+    - **So the route has carried nothing, ever.** Figures: trades_v2 @ 28610fb, pre-start rows; read 2026-11-27.
+  - **THE ASYMMETRY, how to read A whatever comes back.** The understated-peak bias can only run AGAINST him, and a
+    future position could trigger it.
+    - A POSITIVE A is stronger than it looks: it cleared a known headwind.
+    - A FLAT OR NEGATIVE A cannot distinguish "no selection skill" from "skill masked by a bias of unmeasured size".
+  - **THE FORWARD TRIGGER (replacing a historical bound, which was ruled out as mined data):** every run of
+    scripts/measure-forward-test.mjs prints the PEAK-BIAS WATCH.
+    - It checks whether any position's intraday high after its entry has reached 1.20x its tape entry. That is the
+      moment the bias stops being theoretical, and a warning names the position.
+    - It errs toward flagging: the sale day's whole high counts.
+  - **AFTER THE TEST, not during it (product defects, not measurement defects):**
+    - **peak_price:** only ever understated, because a missing price leaves the peak un-raised. Two routes to his
+      exits: the trailing stop fires later, or protection never switches on.
+    - **risk_score:** understates risk when news was not retrieved; the +2 is missing.
+  - **Same-day round trips, both windows:** 616 of 908 pre-start sales (68%); 537 of 626 verified trades bought from
+    10-23 (85.8%). The 86% belongs to the second window only.
   - **Measure A, picking:** the selection differential (scripts/measure-selection-differential.mjs): each closed
     position against every stock scanned that day, over its own window.
   - **Measure B, holding:** from each position's ENTRY (its SIP reference at the buy minute), its return to that
