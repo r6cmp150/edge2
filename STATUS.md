@@ -3,6 +3,12 @@
 The open list, kept in the repo so nobody carries it from memory. Updated with every push; each line says where its
 evidence is. Last updated 2026-11-11 with the 2026-11-11 capture (db/042 applied).
 
+**STANDING (the reviewer, 2026-11-27): a measurement recorded in a review note (`CC-*.md`) is also recorded HERE**,
+with its date, its units and how it was taken. The note is the argument; STATUS is the record. If a figure is worth
+quoting later, it does not live only in a letter. (Why: twice in a week a figure we both believed the project knew was
+in a note nobody searched -- the grants baseline, and the 239-byte row. The first pass is "Measurements first recorded
+in review notes", below.)
+
 > **THE HURDLE (2026-11-22, the bar, not a result). Roman's universe skews under $5, and that is where crossing the
 > spread costs nearly three times as much:**
 >
@@ -331,12 +337,21 @@ deleted every open position (RUN-ME-21).**
       scans (5,798), because a scan covers only the selected list and he taps through nine (backups at b786b78; since
       2026-11-13 02:35Z every scored row is written, any score). A point at EVERY scan needs a price the scan does
       not fetch, so it changes what the frozen scan fetches (`runScreener` root 0; `writeRatingSnapshots` root 2), not
-      only what it writes: a frozen-root amendment and a restart. Figures, JSON bytes (on-disk size not measured):
-      - **every symbol, thin row** (ticker, captured_at, price; 77 B): 4,047 symbols x ~60 scans a day = ~240k rows,
-        ~19 MB a day, the 500 MB quota in about a month, plus a 4,000-symbol fetch per scan. Not workable.
-      - **held stocks outside the scanned list only:** ~10 positions x ~60 scans = ~600 rows, ~46 KB a day. Cheap,
-        but still the frozen fetch changed, for stocks he holds and can see priced elsewhere. Not worth it in the test.
-      - today's writer, for comparison: 3,562-5,855 rows per scan day at 437 B (~2-2.5 MB a day).
+      only what it writes: a frozen-root amendment and a restart. Two units, NOT interchangeable (corrected
+      2026-11-27; this line first said "on-disk size not measured", which was false):
+      - **On disk, measured 2026-11-14 19:05Z** (RUN-ME-16, `pg_total_relation_size` / rows, table + indexes +
+        TOAST; see "Measurements first recorded in review notes"): a full `rating_snapshots` row is **239 B**.
+      - **JSON, measured 2026-11-27** on the backup at b786b78 (`Buffer.byteLength` of the backed-up rows): a full row
+        is 437 B, a thin row (ticker, captured_at, price) 77 B. JSON is ~1.8x the on-disk size for a full row; the
+        on-disk size of a thin row is not measured.
+      - **today's writer:** 3,562-5,855 rows per scan day, mean 4,859 over the five full scan days 11-13 to 11-25:
+        **about 1.2 MB a day on disk** (x 239 B). In JSON it would read ~2-2.5 MB; that is not the database's growth.
+      - **every symbol, thin row:** 4,047 symbols x ~60 scans a day = ~240k rows a day; ~19 MB a day in JSON, the
+        500 MB quota in about a month. Even at a third of the JSON size on disk, the 453.8 MB headroom of 11-14 goes
+        inside three months, plus a 4,000-symbol fetch per scan. Not workable.
+      - **held stocks outside the scanned list only:** ~10 positions x ~60 scans = ~600 rows a day, ~46 KB in JSON.
+        Cheap, but still the frozen fetch changed, for stocks he holds and can see priced elsewhere. Not worth it in
+        the test.
   - **Same-day round trips, both windows:** 616 of 908 pre-start sales (68%); 537 of 626 verified trades bought from
     10-23 (85.8%). The 86% belongs to the second window only.
   - **Measure A, picking:** the selection differential (scripts/measure-selection-differential.mjs): each closed
@@ -844,6 +859,59 @@ Roman did not answer the Retry and two-places questions directly; the data answe
     is not countable.
   - Deferred, not fixed: a fix needs a column, or a design choice to skip such rows. It reaches neither the forward
     test nor the screen.
+
+## Measurements first recorded in review notes (copied here 2026-11-27, one bounded pass)
+The pass: every `CC-*.md` line (197 notes) stating a figure, kept when none of its numbers appeared here, then read.
+**Copied:** measurements still worth quoting. **Left out, by kind:** byte sizes of capture files, row limits, error
+codes, figures the reviewer retracted (the five-minute drift, 0.172% / 0.255%, and its EDGE-only recount; the 79.1% /
+25.2% day), the reviewer's arithmetic (break-even ratios, runway tables), db/044's backfill counts (in its migration),
+and phone storage (already here). Each item: when, what unit, how taken, and the note it was in.
+- **Database size, 2026-11-14 19:05Z.** RUN-ME-16 (`db/inspect-sizes-read-only.sql`), run by Roman in the Supabase SQL
+  editor. On-disk bytes, `pg_total_relation_size` (table + indexes + TOAST); per row = that / exact row count.
+  This database 46,206,099 B (46.2 MB, 9.2% of the 500 MB free quota; headroom 453.8 MB); cluster 61,321,393 B. The
+  organisation total, which the quota is counted on, was never sent.
+
+  | table | rows | total | per row | share |
+  |---|---|---|---|---|
+  | `signal_log` | 3,233 | 23.33 MB | **7,216 B** | **50.5%** |
+  | `signal_snapshot_at_buy` | 461 | 3.87 MB | 8,405 B | 8.4% |
+  | `trades_v2` | 819 | 2.76 MB | 3,371 B | 6.0% |
+  | `rating_snapshots` | 8,523 | 2.04 MB | 239 B | 4.4% |
+
+  `signal_log`'s `table_bytes` is 2.57 MB, so ~20 MB of it is TOAST (large JSON columns). Its growth rate was never
+  measured; RUN-ME-22 (same query) is the fresh read. (`CC-044-applied-probe-wrong-and-the-size-answer.md` §5.)
+- **What the logger saw of his trades (reported 2026-11-20 18:30 PT; commits c0d0a12..05969ca).** Counts in that
+  report: `signal_log` holds 96 distinct EDGE symbols; Roman traded 310 distinct tickers; 72 of the 547 trades from
+  09-11 on have a ticker that ever appears in the log. The log is the scheduled logger's view, not his phone's scans:
+  for trades before `appShowedAtBuy` (11-10) there is no record of what EDGE showed him. The lag that report
+  measured: median 21.9 h on 57 trades, against a declared bar of 293 -- NOT ESTABLISHED (the 57 are the tickers the
+  log happened to cover, a selected subset). The lag's exact definition is in that report, not re-read for this pass.
+  (`CC-the-log-never-saw-his-trades-measure-lag-from-the-snapshot.md`.)
+- **Buy prefill freshness (reported 2026-11-11).** Minutes from the scan to the Add tap, on the 268 buys carrying a
+  scan time: median 0.4, 90% under 1.6, the longest 135; 88 buys carry no scan time. The sale prefill's age is not
+  stored; the gap between a broker fill and Roman recording it is unmeasured, with no fixed sign.
+  (`CC-robinhood-csv-is-the-route.md`.)
+- **The stored peak is sparse and biased low (reported 2026-11-11), counted on trades_v2.** 37 trades have no peak;
+  154 of 670 never record a rise above the buy; mark-filled sets the "peak" to the fill price; 163 of 257 positions
+  appear in a single snapshot. Every peak figure quoted to Roman came from SIP bars, not the stored peak. Beside
+  `peak_price` on the after-the-test list. (`CC-peak-before-or-after-the-sale.md`.)
+- **Exits corrected to bar prices (run 2026-11-20 14:20 PT, commit 8bc7432).** The constrained book: recorded -$0.82,
+  corrected **+$16.27 over 123 trades** (about zero; it shows the recorded figure was not a measurement, not that the
+  strategy makes money). Of the $202.25 shift over 586 trades, five trades carry $201.07 (IPST alone $118.42) and the
+  other 581 net +$1.18; corrections 267 up, 273 down. The 11-02 guard is visible: exits off by 1% or more were 38 of
+  429 before `3f15225` and 6 of 157 after. (`CC-flat-before-costs-now-measure-the-spread-and-be-done.md`.)
+- **RSI exactly 50 (rating_snapshots read 2026-11-14 02:05Z).** 24 of 6,371 rows (0.38%); 18 of the 24 on 11-13, on
+  14 tickers. A genuine 50 happens (the 14 up-moves summing to the 14 down-moves), so a plausible true rate is not
+  zero; the bars settle it per row. (`CC-yes-do-the-fetch-and-three-free-questions.md`.)
+- **The macro sign-test's yield (read 2026-11-19 10:37 PT).** The logger fired in 17 of 17 sessions; 3 of the 17 ran
+  with 2-32 minutes of session left, with mean |close return| 0.67 against the registered minimum interesting effect of
+  1.00 (diluted days, not lost ones). The test is STOPPED. (`CC-the-instrument-may-be-constant-read-the-178.md`.)
+- **ALIVE, partial and NOT to be believed (2026-11-23 09:34 PT, commit 0e27942).** Post-change picks against IWM over
+  nine days: interval +0.02% to +1.14%, 7 of 9 positive (about p 0.09); the one real good day, 10-27 at +2.13%, sits
+  inside the "after" bucket, and the split date came from Roman's memory of good days. The reviewer's four reasons
+  against it: (a) the benchmark is the wrong object, the liquidity gate having changed the universe; (b) circular;
+  (c) nine days; (d) one edge-of-significance result across many analyses. They led to the selection differential and
+  the forward test. (`CC-alive-is-not-true-four-reasons-and-a-power-calculation.md`.)
 
 ## Sale queue on Roman's phone (2026-11-08)
 - The expanded banner: 13 lines, 0 `sale NOT recorded`, 11 `sale was already recorded`, 1 storage-full, 1 scan
