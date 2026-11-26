@@ -13,7 +13,7 @@ const M = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/measure-forwa
 const iv = (lo, hi) => ({ lo, hi });
 
 await run('the declared constants, and the watch line read from the scorer (v3: 20)', () => {
-  assert.deepStrictEqual([M.QUALIFYING_DAYS, M.BACKSTOP_TRADING_DAYS, M.FIRST_QUALIFYING, M.HORIZONS, M.HURDLE], [60, 180, '2026-11-24', [0, 1, 2, 5], 0.291]);
+  assert.deepStrictEqual([M.QUALIFYING_DAYS, M.BACKSTOP_TRADING_DAYS, M.FIRST_QUALIFYING, M.HORIZONS, M.HURDLE], [60, 180, '2026-11-27', [0, 1, 2, 5], 0.291]);
   assert.strictEqual(M.watchLine(readSource('core/edge-scoring.js')), 20);
   assert.throws(() => M.watchLine('no table'), /no version-3 watch line/);
 });

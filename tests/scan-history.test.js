@@ -184,7 +184,7 @@ await run('the read: one chunked helper for every ticker on screen, price and ti
   assert.ok(/NO SCORE: rows before 2026-11-13 02:35Z carry no scoring_version/.test(readSource('core/scan-history.js')));
 });
 
-// 2026-11-27 (the reviewer): the modal told Roman for two weeks that a stock is recorded "only in scans where it scored
+// 2026-11-26 (the reviewer): the modal told Roman for two weeks that a stock is recorded "only in scans where it scored
 // 60 or more", false since 2026-11-13 02:35Z, when the writer began writing every scored row. The text and the writer
 // are pinned TOGETHER here, so a change to either one that makes the text false fails this test.
 await run('what the modal says about which scans are recorded is what the writer and the scan do', () => {

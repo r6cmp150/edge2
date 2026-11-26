@@ -13,7 +13,10 @@ const { run, REPO_ROOT, readSource } = require('./_lib');
 const SD = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/measure-selection-differential.mjs')).href);
 const REV = '28610fb';
 const show = f => (j => (Array.isArray(j) ? j : j.rows))(JSON.parse(execFileSync('git', ['show', `${REV}:${f}`], { cwd: REPO_ROOT, maxBuffer: 1e9 }).toString()));
-const T = show('data/backups/trades_v2.json').filter(r => SD.addedAt(r) <= Date.parse(SD.START_LINE));
+// the reads were taken against the FIRST start line (2026-11-23T20:42:43.124Z); the restart of 2026-11-26 moved the
+// line, not these measurements, so they keep the line they were taken on
+const FIRST_START_LINE = '2026-11-23T20:42:43.124Z';
+const T = show('data/backups/trades_v2.json').filter(r => SD.addedAt(r) <= Date.parse(FIRST_START_LINE));
 const doc = readSource('docs/field-provenance.md');
 const cnt = (xs, f) => xs.filter(f).length;
 const ptClock = ms => new Date(ms).toLocaleString('en-CA', { timeZone: 'America/Los_Angeles', hour12: false });

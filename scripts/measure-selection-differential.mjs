@@ -4,9 +4,10 @@
 // always have had -- the number any future idea gets judged on".) Everything measured before was absolute return
 // ("did money come in"); this is the only figure about picking.
 //
-// THE START LINE (declared 2026-11-23, after RUN-ME-21 deleted every open position): the FORWARD differential counts only
-// positions opened after 2026-11-23T20:42:43Z, the first opened after the delete, so no trade that could have generated
-// a hypothesis is in it. That is the one start date. Separately, as a fact about the data: before 2026-11-12 the app
+// THE START LINE, RESTARTED 2026-11-26 (the first line, 2026-11-23T20:42:43Z after RUN-ME-21's delete, ended when the
+// scan-history line, ruled inside the frozen instrument, changed: d334a50 and b86d5c3; STATUS). The FORWARD differential
+// counts only positions opened after 2026-11-26T20:31:43Z, the first moment the shipped build (b86d5c3) was served. That
+// is the one start date. The 13 positions opened under the first line are OUTSIDE the test, by the start line. Separately, as a fact about the data: before 2026-11-12 the app
 // saved only scan rows scoring 60 or more, so nothing earlier can be computed at all; --history reports 11-12 up to the
 // start line, labelled as history, never as the test (its first reading, 2026-11-23: +0.31% over 4 days, STATUS).
 //
@@ -38,16 +39,16 @@ import { qualifying, QUALIFYING_DAYS } from './lib/forward-declaration.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const FIRST_DAY = '2026-11-12', LOOKBACK_MIN = 15, BENCH = 'IWM';
-// THE START LINE (declared 2026-11-23, the reviewer: "one start date in the record, not two"): the forward selection
-// differential begins with the first position opened after Roman's delete of every open position (RUN-ME-21). The
-// export was read at this instant and RUN-ME-21's guard proved nothing was added between that read and the delete, so a
-// position added after it was opened after the delete. FIRST_DAY is not a second start: it is only the earliest day a
-// universe was saved, and rows from it up to the start line are reported apart, as history, never as the test.
-export const START_LINE = '2026-11-23T20:42:43.124Z';
+// THE START LINE (restarted 2026-11-26; "one start date in the record, not two"): the instant GitHub Pages was first
+// seen serving b86d5c3's build (sw.js CACHE_NAME edge2-20261126210000). The first line (2026-11-23T20:42:43.124Z, the
+// export read before RUN-ME-21's delete) ended when the frozen instrument changed; its 13 positions are history now.
+// FIRST_DAY is not a second start: it is only the earliest day a universe was saved, and rows from it up to the start
+// line are reported apart, as history, never as the test.
+export const START_LINE = '2026-11-26T20:31:43.000Z';
 // the moment a position was added: its position_id (Date.now() at the add) when present, else its Pacific buy minute
 export const addedAt = r => (r.position_id != null && Number(r.position_id) > 1.7e12 ? Number(r.position_id) : pacificMinuteUtc(String(r.buy_date).slice(0, 10), r.buy_time));
 export const afterStart = r => addedAt(r) > Date.parse(START_LINE);
-export const BEGINS = 'THE FORWARD SELECTION DIFFERENTIAL BEGINS AT THE START LINE, 2026-11-23T20:42:43Z: the first position opened after Roman\'s delete. The --history run (from 2026-11-12, the earliest day a universe was saved) is before the start line: descriptive, never the test.'; export const BEGINS_DATA = 'Before 2026-11-12 the universe (what was available but not picked) was not saved, and nothing earlier can be computed.';
+export const BEGINS = 'THE FORWARD SELECTION DIFFERENTIAL BEGINS AT THE START LINE, 2026-11-26T20:31:43Z (restarted: the first line, 2026-11-23, ended when the frozen instrument changed; its 13 positions are history). The --history run (from 2026-11-12, the earliest day a universe was saved) is before the start line: descriptive, never the test.'; export const BEGINS_DATA = 'Before 2026-11-12 the universe (what was available but not picked) was not saved, and nothing earlier can be computed.';
 
 // the close of the latest bar starting at or before ms, within the lookback; null when none
 export function priceAt(bars, ms, lookbackMin = LOOKBACK_MIN) {

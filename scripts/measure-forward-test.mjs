@@ -5,10 +5,11 @@
 // Read only.
 //
 //   POPULATION: every position (verified trades_v2 and portfolio) added after the start line (START_LINE,
-//     2026-11-23T20:42:43Z), the 13 that landed before the amendment INCLUDED (STATUS records why). No subset.
+//     2026-11-26T20:31:43Z, the restart). No subset. The 13 opened under the first line (2026-11-23T20:42:43Z) are
+//     OUTSIDE the test, excluded by the start line, not by judgement (STATUS, the restart of 2026-11-26).
 //   QUALIFYING DAYS: trading days with at least one such position opened. The first 60 are the test.
 //   STATE (scripts/lib/forward-declaration.mjs): INTERIM below 60 (progress only, no interval compared with any bar);
-//     EVALUATE at 60; NOT ESTABLISHED FOR WANT OF DAYS past 180 trading days from 2026-11-24; FUTILE if the one
+//     EVALUATE at 60; NOT ESTABLISHED FOR WANT OF DAYS past 180 trading days from 2026-11-27; FUTILE if the one
 //     futility look returns it.
 //   THE FUTILITY LOOK: one, on the positions of the first 30 qualifying days, taken at the first run on which all of
 //     them have every horizon closed (A: sold; B: the +5 close has happened). FUTILE if A and B +0 both have a point
@@ -77,7 +78,7 @@ export function readingB(intervals, means) {
 export function readingC(meanIv, ratioIv) {
   return { movement: ratioIv.lo > 1 ? 'SELECTS FOR MOVEMENT' : 'NOT SHOWN TO SELECT FOR MOVEMENT', ret: meanIv.lo > 0 ? 'ADDS RETURN' : meanIv.hi < 0 ? 'COSTS RETURN' : 'NO RETURN DIFFERENCE SHOWN' };
 }
-// THE PEAK-BIAS WATCH (the reviewer, 2026-11-27): the understated-peak defect can only act on measure A once a position
+// THE PEAK-BIAS WATCH (the reviewer, 2026-11-26): the understated-peak defect can only act on measure A once a position
 // runs up to 1.20x its buy price (momentum protection switches on at peakPrice >= buyPrice * 1.20, app.js; until then
 // the trailing stop cannot run). It never did in 908 pre-start sales. So every run reports whether any forward-test
 // position's intraday high, after its entry, has reached RUN_UP x its tape entry. Highs: the buy day's minute bars

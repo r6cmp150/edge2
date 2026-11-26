@@ -3,7 +3,7 @@
 The open list, kept in the repo so nobody carries it from memory. Updated with every push; each line says where its
 evidence is. Last updated 2026-11-11 with the 2026-11-11 capture (db/042 applied).
 
-**STANDING (the reviewer, 2026-11-27): a measurement recorded in a review note (`CC-*.md`) is also recorded HERE**,
+**STANDING (the reviewer, 2026-11-26): a measurement recorded in a review note (`CC-*.md`) is also recorded HERE**,
 with its date, its units and how it was taken. The note is the argument; STATUS is the record. If a figure is worth
 quoting later, it does not live only in a letter. (Why: twice in a week a figure we both believed the project knew was
 in a note nobody searched -- the grants baseline, and the 239-byte row. The first pass is "Measurements first recorded
@@ -174,8 +174,40 @@ beat the stocks EDGE scanned that day and he did not buy.
   scanned that day over the same window.
 - **It begins 2026-11-12. Nothing earlier can be computed:** before that the app saved only scan rows scoring 60+.
 
-**THE START LINE, declared 2026-11-23: the forward differential begins with the first position opened after Roman
-deleted every open position (RUN-ME-21).**
+**THE FORWARD TEST RESTARTED, 2026-11-26. THE START LINE IS NOW 2026-11-26T20:31:43Z; 0 OF 60 QUALIFYING DAYS.**
+- **Why (both reasons, so the record shows the restart was owed before it was chosen):**
+  - **Owed:** `d334a50` (2026-11-26T17:25Z) changed in-freeze text, scanHistoryModalHtml's account of which scans are
+    recorded. Under the corrected definition (display text = text that does not inform stock selection; the reviewer,
+    2026-11-26) the scan-history line is inside the freeze, so that change already ended the first attempt.
+  - **Chosen:** `b86d5c3` changes it deliberately, as ONE batch so the restart is paid once: the scan-history line
+    oldest on the left (card) and oldest at the top (modal); two points today in the same hour carry their times;
+    Portfolio's lead "Recent scans" (was "Last scans", which would sit over the oldest point); no "now $X" (Roman
+    chose A: the line is history). Roman decided to spend the restart.
+- **The instant:** 2026-11-26T20:31:43Z, the first moment GitHub Pages was seen serving b86d5c3's build (sw.js
+  CACHE_NAME edge2-20261126210000; the Pages deploy and the tests both passed on b86d5c3). `start_line_commit` and the
+  freeze baseline are b86d5c3. 11-26 is Thanksgiving (closed); the first possible qualifying day is **2026-11-27**, and
+  the backstop counts 180 trading days from it.
+- **A residual, named:** his phone runs the old build until its service worker updates. A position opened after the line
+  on the old build is identifiable: the buy snapshot copies the signal, which carries `buildVersion` (the scan's app
+  stamp). At the first reading, any position after the line whose snapshot is not stamped 20261126210000 or later is
+  named, not silently counted.
+- **THE FIRST ATTEMPT'S POSITIONS ARE OUTSIDE THE TEST, excluded by the start line, not by judgement (dated
+  2026-11-26):** the 13 opened after 2026-11-23T20:42:43Z (10 on 11-24, 3 on 11-25; at backup b786b78: 12 in trades_v2,
+  1 open), and any opened before 2026-11-26T20:31:43Z. They are history (`--history`), like 11-12 to 11-23. The ruling
+  that included the 13 (2026-11-26, below) applied to the first attempt and ends with it.
+- **The futility look's fixed set** is the positions of the first 30 qualifying days from the new line.
+- **Unchanged:** the declaration below (population rule, measures A, B and C, the 60 days, the backstop's length, the
+  futility rule, the hurdle). Only the line, the first qualifying day and the frozen set moved.
+- **THE FROZEN SET AT THE RESTART:** 23 files whole (core/scan-history.js in), 199 of app.js's declarations (114 + 85),
+  9 settings. The 85: the 82 proposed (73 display names on the Signals tab, the stock screen and the Add form, and 9 of
+  the pre-market section), `calcPeakRiskScore` and `knownNumber` (the third of the three, `sigToggleKey`, is among the
+  82), and **`computePreMarketMovers`, beyond the ruling, named:** it computes the movers the pre-market section shows,
+  and freezing the section's rendering without its list would leave the list free. Detector at the restart: INTACT.
+- **Not moved, and why:** `renderWarriorTab` stays OUT. Its own text is the tab header and an engine-not-loaded
+  message; the Warrior cards come from `engine.renderTab()` in the Warrior engine files, frozen whole since 11-25.
+
+**THE FIRST START LINE (2026-11-23 to 2026-11-26, ENDED BY THE RESTART ABOVE), declared 2026-11-23: the forward
+differential begins with the first position opened after Roman deleted every open position (RUN-ME-21).**
 - **The instant:** 2026-11-23T20:42:43Z, the export read. RUN-ME-21's guard proved nothing was added between that read
   and the delete, so a position added after it was opened after the delete.
 - **One start date in the record.** 11-12 is not a second start: it is only the earliest day a universe was saved. The
@@ -197,10 +229,11 @@ deleted every open position (RUN-ME-21).**
       - Amending after seeing their returns would not have been acceptable, and did not happen. Excluding them would be
         worse: the declaration says every position after the start line, no subset.
   - **Duration: 60 QUALIFYING DAYS,** a qualifying day being a trading day on which at least one position is opened
-    after the start line. Counting began 11-24; 2 have qualified so far.
+    after the start line. **RESTARTED 2026-11-26: counting begins 2026-11-27; 0 have qualified** (the first attempt
+    reached 2, 11-24 and 11-25, now history).
     - The power calculation (00223aa) gives about 0.44% to 0.52% as the smallest detectable effect over 60 such days,
       about the spread hurdle.
-    - **Backstop:** if 60 qualifying days have not arrived within 180 trading days of 11-24, the test reports **NOT
+    - **Backstop:** if 60 qualifying days have not arrived within 180 trading days of the first qualifying day (11-27 since the restart; 11-24 before), the test reports **NOT
       ESTABLISHED FOR WANT OF DAYS.** That is a third outcome, not a null.
     - **Every interim line reports the qualifying-day count,** so how far along the test is is visible, not inferred.
   - **THE FUTILITY LOOK (declared 2026-11-25, at 2 qualifying days, before any reading existed):**
@@ -231,39 +264,40 @@ deleted every open position (RUN-ME-21).**
       two segments: a measurement across two instruments is of neither.
     - **Exempt,** because they cannot reach a measured quantity: display text, the budget bar, tests, guards,
       documentation, the measurement scripts, and anything recorded and unused.
-    - **"DISPLAY TEXT" DEFINED (the reviewer, 2026-11-27): text that does not inform stock selection.** Measure C is
+    - **"DISPLAY TEXT" DEFINED (the reviewer, 2026-11-26): text that does not inform stock selection.** Measure C is
       his choice among shown stocks, so text on the Signals tab, the stock screen or the Add form at the moment of
       choice is NOT display text. **The scan-history line is ruled INSIDE** (its order change would restart the test).
-      - **The re-classification is PROPOSED, NOT APPLIED** (a name moved in needs its baseline hash, written only at a
-        declared restart). Until then the detector does not enforce it: the scanHistory* declarations,
-        core/scan-history.js and the proposed names below are held unchanged BY HAND.
-      - **Proposed in (2026-11-27, method: the detector's own call closure from renderSignalsTab, openStockModal and
+      - **APPLIED AT THE RESTART (2026-11-26, b86d5c3):** the names below and core/scan-history.js are frozen, with
+        baseline hashes, and the detector enforces them. (Proposed first and held by hand until the restart.)
+      - **Proposed in (2026-11-26, method: the detector's own call closure from renderSignalsTab, openStockModal and
         openAddPortfolioModal, not passing through other tabs, tab switching, the frozen path or dialog plumbing;
         over-includes):** 73 of the display group's 168 (the cards, banners, filters, legend, score breakdown, news,
         chart, intraday panel, the AI result's rendering, the Add form's advice and the scan-history line) and 9 of the
         pre-market group's 11 (a section above the scan list with its own AI read), listed by name in the spec's
-        amended entry of 2026-11-27 (`proposed_in`). The other groups reach the choice screens with nothing but budget
+        amended entry of 2026-11-26 (`proposed_in`). The other groups reach the choice screens with nothing but budget
         (the bar and sizing, exempt by the rule) and analytics' calcPeakRiskScore (below).
       - **SINCE THE START LINE, ONE CHANGE TO AN ITEM NOW RULED INSIDE:** scanHistoryModalHtml's text (d334a50,
-        2026-11-26T17:25Z; which scans leave a point; the points themselves unchanged). Taken to the reviewer.
-      - **THREE OUT NAMES CARRY VALUES INTO FROZEN CODE (audit 2026-11-27: every OUT name a frozen declaration
+        2026-11-26T17:25Z; which scans leave a point; the points themselves unchanged). It ended the first attempt (the restart, above).
+      - **THREE OUT NAMES CARRY VALUES INTO FROZEN CODE (audit 2026-11-26: every OUT name a frozen declaration
         references):** `calcPeakRiskScore` (analytics) decides LOCK IN PROFITS vs HOLD STRONG inside
         calcUnifiedRecommendation; `sigToggleKey` (display) decides which signals pass the filter toggles in
         getFilteredSignals; `knownNumber` (display) turns non-numbers to null in portfolioScoreState. Holes by the
-        freeze's original standard, not only the new one. None changed since the start line. Taken to the reviewer,
-        not fixed.
+        freeze's original standard, not only the new one. None changed under the first attempt. **Frozen at the
+        restart.**
     - **A defect found on the frozen path goes to the reviewer.** It is not fixed on the spot: shipping the fix restarts
       the test, not shipping measures a known defect, and either may be right.
     - **THE FROZEN SET, ENUMERATED** (data/forward-test/instrument-freeze-spec.json; the detector reads the manifest
       generated from it, data/forward-test/instrument-freeze.json):
-      - **22 files whole (amended 2026-11-26):** 12 core files (clock, indicators, api-client, market-data, news, store,
+      - **23 files whole (amended 2026-11-26; core/scan-history.js in at the restart):** 13 core files (scan-history, clock, indicators, api-client, market-data, news, store,
         orders, entry-gate, float-table, universe, edge-scoring, macro), shell/registry.js, the 4 Warrior engine files,
         index.html (its script list, with ?v= stamps removed), and THE FLOAT BUILDER: build-float-table.yml,
         scripts/build-float-table.mjs, scripts/lib/workflow-instrumentation.mjs and core/edgar.js.
-      - **114 of app.js's 442 top-level declarations,** by hash: everything reachable from the scan, the snapshot write,
-        the stock screen and Add, the sale and fill forms, the holdings' exit advice and its live prices, the AI
-        analysis, settings load and save, and the price alerts.
-      - **The other 328 are declared OUT in 12 groups, each with its reason:** display, dialogs, analytics, health,
+      - **199 of app.js's 442 top-level declarations (114 + 85 at the restart),** by hash: everything reachable from the
+        scan, the snapshot write, the stock screen and Add, the sale and fill forms, the holdings' exit advice and its
+        live prices, the AI analysis, settings load and save, and the price alerts; since the restart also the Signals
+        tab's cards and banners, the stock screen's display, the Add form's advice, the scan-history line and the
+        pre-market section.
+      - **The other 243 are declared OUT in 12 groups, each with its reason:** display, dialogs, analytics, health,
         budget, portfolio view, recorded and unused, security, boot, the store's initial values, pre-market movers,
         and dead code.
       - **9 settings by VALUE:** include_under2, show_watch, min_volume, force_pre_market_mode, disable_macro_overlay,
@@ -276,7 +310,7 @@ deleted every open position (RUN-ME-21).**
         - **A SWITCH TO LIVE ENDS THE TEST and restarts it** from a new start line.
         - **The timestamp is frozen with it,** so a switch and a switch back cannot pass unseen.
         - **Value at the freeze:** paper, set 2026-11-12T15:24:10Z. No restart: nothing has changed.
-      - **Declared OUT, with reasons:** core/execution-mode-count.js (the budget bar), core/scan-history.js (display),
+      - **Declared OUT, with reasons:** core/execution-mode-count.js (the budget bar),
         sw.js (the cache), and data/float-table.json (data: below).
     - **NO HOLE:** every file under core/, engines/ and shell/, app.js, index.html and sw.js, and every top-level
       declaration in app.js, is frozen or declared out. A new one fails the guard until it is classified.
@@ -285,9 +319,9 @@ deleted every open position (RUN-ME-21).**
         measure A's window.
       - **The stock screen's AI analysis:** advice shown at the moment of choice, not display text.
       - **The Warrior engine:** every position counts, whichever engine's card it came from.
-    - **SINCE THE START LINE (6dabe14), ONE FROZEN DIFFERENCE, AUDITED:** finalizeAddPortfolio gained the single line that
-      attaches appListAtBuy (3d462e5). It is recorded and unused, exempt by the rule, and the standing test pins it as
-      the only one.
+    - **UNDER THE FIRST ATTEMPT (6dabe14), ONE FROZEN DIFFERENCE, AUDITED:** finalizeAddPortfolio gained the single line
+      that attaches appListAtBuy (3d462e5), recorded and unused. **Since the restart the baseline IS the start line's
+      tree (b86d5c3), and the standing test pins that nothing frozen differs from it.**
     - **NOT DETECTABLE BY A HASH, NAMED:** what third parties serve (Alpaca's bars and quotes, the news provider's
       headlines, the universe endpoints). That is the macro test's 11-17 failure mode, outside our code.
     - **THE DETECTOR:** scripts/check-instrument-freeze.mjs, on the daily backup run after the backup. It prints
@@ -324,7 +358,7 @@ deleted every open position (RUN-ME-21).**
       - A Sunday that moves hundreds across the line is a shock to the universe, and it will be seen that day.
     - **AMENDED WITHOUT A RESTART:** the table moved out and the builder moved in. No frozen item's hash changed (checked
       item by item against the previous manifest), and no builder file has changed since the start line.
-  - **RULED 2026-11-27 (the reviewer): NO RESTART over the fabricable fields.** The test continues from the start line,
+  - **RULED 2026-11-26 (the reviewer): NO RESTART over the fabricable fields.** The test continues from the start line,
     uninterrupted. So nobody re-opens this from the field list alone:
     - **The question:** two frozen-path fields reach measure A, whose window ends at his recorded sale
       (differentialRows, measure-selection-differential.mjs:82). They reach it THROUGH HIS SALE: peak_price, and
@@ -339,7 +373,7 @@ deleted every open position (RUN-ME-21).**
       understated peak can keep it off): no sale at +20% or better and no recorded peak at 1.20x the buy, 0 of 908.
       8 rows show the peak untracked (it sits below their own sale price); none was near +20%.
     - **Target and stop defaults:** fired 0 of 46.
-    - **So the route has carried nothing, ever.** Figures: trades_v2 @ 28610fb, pre-start rows; read 2026-11-27.
+    - **So the route has carried nothing, ever.** Figures: trades_v2 @ 28610fb, pre-start rows; read 2026-11-26.
   - **THE ASYMMETRY, how to read A whatever comes back.** The understated-peak bias can only run AGAINST him, and a
     future position could trigger it.
     - A POSITIVE A is stronger than it looks: it cleared a known headwind.
@@ -353,16 +387,16 @@ deleted every open position (RUN-ME-21).**
     - **peak_price:** only ever understated, because a missing price leaves the peak un-raised. Two routes to his
       exits: the trailing stop fires later, or protection never switches on.
     - **risk_score:** understates risk when news was not retrieved; the +2 is missing.
-    - **Scan history at every scan (Roman, 2026-11-27): ruled NO capture change during the test.** The line already
+    - **Scan history at every scan (Roman, 2026-11-26): ruled NO capture change during the test.** The line already
       shows every scan of the stock's own universe list: 778 of 784 left a row (99.2%), which was 13.4% of all his
       scans (5,798), because a scan covers only the selected list and he taps through nine (backups at b786b78; since
       2026-11-13 02:35Z every scored row is written, any score). A point at EVERY scan needs a price the scan does
       not fetch, so it changes what the frozen scan fetches (`runScreener` root 0; `writeRatingSnapshots` root 2), not
       only what it writes: a frozen-root amendment and a restart. Two units, NOT interchangeable (corrected
-      2026-11-27; this line first said "on-disk size not measured", which was false):
+      2026-11-26; this line first said "on-disk size not measured", which was false):
       - **On disk, measured 2026-11-14 19:05Z** (RUN-ME-16, `pg_total_relation_size` / rows, table + indexes +
         TOAST; see "Measurements first recorded in review notes"): a full `rating_snapshots` row is **239 B**.
-      - **JSON, measured 2026-11-27** on the backup at b786b78 (`Buffer.byteLength` of the backed-up rows): a full row
+      - **JSON, measured 2026-11-26** on the backup at b786b78 (`Buffer.byteLength` of the backed-up rows): a full row
         is 437 B, a thin row (ticker, captured_at, price) 77 B. JSON is ~1.8x the on-disk size for a full row; the
         on-disk size of a thin row is not measured.
       - **today's writer:** 3,562-5,855 rows per scan day, mean 4,859 over the five full scan days 11-13 to 11-25:
@@ -884,7 +918,7 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   - Deferred, not fixed: a fix needs a column, or a design choice to skip such rows. It reaches neither the forward
     test nor the screen.
 
-## Measurements first recorded in review notes (copied here 2026-11-27, one bounded pass)
+## Measurements first recorded in review notes (copied here 2026-11-26, one bounded pass)
 The pass: every `CC-*.md` line (197 notes) stating a figure, kept when none of its numbers appeared here, then read.
 **Copied:** measurements still worth quoting. **Left out, by kind:** byte sizes of capture files, row limits, error
 codes, figures the reviewer retracted (the five-minute drift, 0.172% / 0.255%, and its EDGE-only recount; the 79.1% /
@@ -937,15 +971,15 @@ and phone storage (already here). Each item: when, what unit, how taken, and the
   154 of 670 never record a rise above the buy; mark-filled sets the "peak" to the fill price; 163 of 257 positions
   appear in a single snapshot. Every peak figure quoted to Roman came from SIP bars, not the stored peak. Beside
   `peak_price` on the after-the-test list. (`CC-peak-before-or-after-the-sale.md`.)
-  - **The 154 of 670 (23%) is an UPPER BOUND on the tracking defect, NOT its frequency** (the reviewer, 2026-11-27).
+  - **The 154 of 670 (23%) is an UPPER BOUND on the tracking defect, NOT its frequency** (the reviewer, 2026-11-26).
     Two causes give "no recorded rise", unseparated: the stock genuinely never rose above the buy, or it rose and the
     tracking missed it. Separating them needs intraday highs, which were ruled out. Never quote the 23% as how often
     the peak tracking fails.
-  - **OFFERED AND WITHDRAWN (the reviewer, 2026-11-27): "the 23% is reassuring against a win rate near 45%."** Do not
+  - **OFFERED AND WITHDRAWN (the reviewer, 2026-11-26): "the 23% is reassuring against a win rate near 45%."** Do not
     reinvent it. The win rate is a CEILING on the share that genuinely never rose (a trade sold above its buy rose
     above it), not a floor, so the true share could be 5% with tracking misses making up the rest, and the figures
     would look the same.
-  - **THE FLOOR, COUNTED 2026-11-27 (pre-registered before the run: population, strict sale > buy as primary, a 1%
+  - **THE FLOOR, COUNTED 2026-11-26 (pre-registered before the run: population, strict sale > buy as primary, a 1%
     margin as sensitivity; backup `9d3325a`, the rev that reproduces 154 of 670 with 37 null; recorded `sell_price` vs `buy_price`):** of the 154,
     **1** sold above its buy (AIXI, peak = buy 1.93, sold 2.19), 17 sold at the buy, 136 below. So **1/670 (0.1%) <=
     stored-peak miss share <= 154/670 (23%)**; the 1%-margin sensitivity gives the same 1.

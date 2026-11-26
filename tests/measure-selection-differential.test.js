@@ -32,13 +32,16 @@ await run('the universe mean leaves out a stock without a price at either end, a
 });
 
 await run('the start line: one declared instant; a position counts only if it was added after it; history is apart', () => {
-  assert.strictEqual(M.START_LINE, '2026-11-23T20:42:43.124Z');
-  assert.strictEqual(M.afterStart({ position_id: String(Date.parse('2026-11-23T20:42:44Z')) }), true);
-  assert.strictEqual(M.afterStart({ position_id: String(Date.parse('2026-11-23T20:42:43Z')) }), false, 'not after: at or before the export read');
+  assert.strictEqual(M.START_LINE, '2026-11-26T20:31:43.000Z', 'the restart of 2026-11-26 (b86d5c3 served)');
+  assert.strictEqual(M.afterStart({ position_id: String(Date.parse('2026-11-26T20:31:44Z')) }), true);
+  assert.strictEqual(M.afterStart({ position_id: String(Date.parse('2026-11-26T20:31:42Z')) }), false, 'not after: before the build was served');
   assert.strictEqual(M.afterStart({ position_id: String(Date.parse(M.START_LINE)) }), false, 'the instant itself is not after it');
-  assert.strictEqual(M.afterStart({ position_id: null, buy_date: '2026-11-24', buy_time: '07:00' }), true, 'no position_id: the Pacific buy minute');
+  assert.strictEqual(M.afterStart({ position_id: null, buy_date: '2026-11-27', buy_time: '07:00' }), true, 'no position_id: the Pacific buy minute');
+  // the first attempt's positions are OUTSIDE the test, by the start line (the reviewer, 2026-11-26)
+  assert.strictEqual(M.afterStart({ position_id: String(Date.parse('2026-11-24T17:17:00Z')) }), false, 'the first add under the first line (11-24 17:17Z) is outside');
+  assert.strictEqual(M.afterStart({ position_id: null, buy_date: '2026-11-25', buy_time: '12:59' }), false, 'an 11-25 add is outside');
   assert.strictEqual(M.afterStart({ position_id: '1795000000000', buy_date: '2026-11-17', buy_time: '07:00' }), false, 'a 11-17 add is before the line');
-  assert.ok(M.BEGINS.startsWith('THE FORWARD SELECTION DIFFERENTIAL BEGINS AT THE START LINE, 2026-11-23T20:42:43Z'));
+  assert.ok(M.BEGINS.startsWith('THE FORWARD SELECTION DIFFERENTIAL BEGINS AT THE START LINE, 2026-11-26T20:31:43Z'));
   assert.ok(M.BEGINS.includes('never the test'));
   const src = readSource('scripts/measure-selection-differential.mjs');
   assert.ok(src.includes("NO CLOSED POSITION opened after the start line yet: nothing to report, which is not zero."));

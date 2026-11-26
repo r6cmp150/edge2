@@ -1,7 +1,9 @@
 // scripts/lib/forward-declaration.mjs -- the forward test's declared numbers and its state machine, in one place, so
 // measure A (measure-selection-differential.mjs) and measures B and C (measure-forward-test.mjs) cannot disagree on them.
 // Declared in STATUS: 4428ed0, amended 30ef1ac (qualifying days, backstop, measure C), and the futility look (2026-11-25).
-export const QUALIFYING_DAYS = 60, FUTILITY_AT = 30, BACKSTOP_TRADING_DAYS = 180, FIRST_QUALIFYING = '2026-11-24', HURDLE = 0.291;
+export const QUALIFYING_DAYS = 60, FUTILITY_AT = 30, BACKSTOP_TRADING_DAYS = 180, FIRST_QUALIFYING = '2026-11-27', HURDLE = 0.291;
+// RESTARTED 2026-11-26 (b86d5c3): FIRST_QUALIFYING is the first trading day after the new start line (11-26 is
+// Thanksgiving, closed); the count is 0 of 60 again and the futility look's fixed set is the first 30 from the new line.
 
 const dayOf = p => String(p.buy_date).slice(0, 10);
 // the qualifying days (a day with at least one position opened after the start line), in order, and the positions on

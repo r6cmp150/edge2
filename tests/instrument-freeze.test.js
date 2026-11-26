@@ -44,7 +44,7 @@ await run('every file on the scan path is classified, and every script index.htm
   const scripts = [...readSource('index.html').matchAll(/<script src="([^"?]+)/g)].map(m => m[1]).filter(s => !/^https?:/.test(s));
   assert.ok(scripts.length >= 15);
   for (const s of scripts) assert.ok(known.has(s), `${s} is loaded by the app but classified nowhere`);
-  assert.deepStrictEqual(scripts.filter(s => s in spec.files.out).sort(), ['core/execution-mode-count.js', 'core/scan-history.js'], 'the loaded scripts declared out: the budget bar and the scan-history line, no others');
+  assert.deepStrictEqual(scripts.filter(s => s in spec.files.out).sort(), ['core/execution-mode-count.js'], 'the loaded scripts declared out: the budget bar, no other (the scan-history line is in since the restart of 2026-11-26)');
   for (const p of Object.keys(spec.files.frozen)) assert.ok(fs.existsSync(path.join(REPO_ROOT, p)), `${p} exists`);
   for (const [p, why] of Object.entries(spec.files.out)) assert.ok(why.length > 20, `${p} carries its reason`);
 });
@@ -55,14 +55,24 @@ await run('THE TRIPWIRE: the frozen instrument is intact in this tree (a frozen 
   assert.ok(r.intact, D.report(r, manifest).join('\n'));
 });
 
-await run('since the start line, the only frozen difference is the audited recorded-and-unused line (3d462e5)', () => {
+await run('THE RESTART (2026-11-26): the baseline is the start line\'s own tree, and nothing frozen differs from it', () => {
+  assert.strictEqual(spec.start_line, '2026-11-26T20:31:43.000Z');
+  assert.strictEqual(spec.start_line_commit, 'b86d5c3'); assert.strictEqual(manifest.baseline_commit, 'b86d5c3');
+  assert.strictEqual(manifest.start_line, spec.start_line);
   const r = D.revReader(spec.start_line_commit, REPO_ROOT);
-  const res = L.checkFreeze({ read: r.read, list: r.list, manifest, spec, settingsRow: D.settingsRow(r.read(D.SETTINGS)) });
-  assert.deepStrictEqual(res.changed, ['app.js finalizeAddPortfolio']);
-  const before = L.chunks(r.read('app.js')).find(c => c.name === 'finalizeAddPortfolio').text.split('\n');
-  const now = L.chunks(app).find(c => c.name === 'finalizeAddPortfolio').text.split('\n');
-  assert.deepStrictEqual(before.filter(l => !now.includes(l)), [], 'nothing removed');
-  assert.deepStrictEqual(now.filter(l => !before.includes(l)), ['  if (signalSnapshotAtBuy) signalSnapshotAtBuy.appListAtBuy = appListAtBuy(); // recorded and unused (capture-not-consume)']);
+  const res = L.checkFreeze({ read: r.read, list: r.list, manifest, spec, settingsRow: D.settingsRow(readSource(D.SETTINGS)) });
+  assert.deepStrictEqual([res.changed, res.unclassified], [[], []], 'the start line\'s tree is the baseline');
+  // the restart is recorded with both reasons and the previous line, so the record shows it was owed before chosen
+  assert.strictEqual(spec.restart.previous.start_line, '2026-11-23T20:42:43.124Z');
+  assert.ok(spec.restart.why.some(w => w.startsWith('d334a50')) && spec.restart.why.some(w => w.startsWith('b86d5c3')));
+});
+
+await run('reclassified IN at the restart: the scan-history line, the choice screens, and the three that carried values', () => {
+  const frozen = new Set(Object.keys(manifest.app_js));
+  for (const n of ['scanHistoryCardText', 'scanHistoryModalHtml', 'renderSignalsTab', 'renderStockCard', 'buildModalScoreBreakdown', 'renderAIResult',
+    'addFormSessionAdviceHtml', 'renderPreMarketSection', 'computePreMarketMovers', 'calcPeakRiskScore', 'sigToggleKey', 'knownNumber']) assert.ok(frozen.has(n), `${n} is frozen`);
+  assert.ok('core/scan-history.js' in manifest.files && !('core/scan-history.js' in spec.files.out));
+  assert.strictEqual(Object.keys(manifest.app_js).length, 199);
 });
 
 await run('the detector: a frozen change, a new declaration, a new file and a setting are each named; display, comments and stamps are not', () => {
@@ -82,8 +92,13 @@ await run('the detector: a frozen change, a new declaration, a new file and a se
   assert.deepStrictEqual(chk(withApp(app), { ...row, execution_mode: 'live' }).changed, ['setting execution_mode: "paper" -> "live"']);
   assert.deepStrictEqual(chk(withApp(app), { ...row, execution_mode_set_at: '2026-12-01T15:00:00Z' }).changed, ['setting execution_mode_set_at: "2026-11-12T15:24:10.854+00:00" -> "2026-12-01T15:00:00Z"']);
   assert.ok(!('execution_mode' in spec.settings.out) && /recording IS the trade/.test(spec.settings.why_execution_mode));
-  const displayOnly = app.replace("<p>Tap Refresh to run your first scan.</p>", "<p>Tap Refresh to scan.</p>");
-  assert.notStrictEqual(displayOnly, app); assert.ok(chk(withApp(displayOnly)).intact, 'renderSignalsTab is display');
+  // the Signals tab's text informs his choice: frozen since the restart (display text = text that does not inform it)
+  const signalsText = app.replace("<p>Tap Refresh to run your first scan.</p>", "<p>Tap Refresh to scan.</p>");
+  assert.notStrictEqual(signalsText, app); assert.deepStrictEqual(chk(withApp(signalsText)).changed, ['app.js renderSignalsTab'], 'the Signals tab is in');
+  const scanLine = { read: p => (p === 'core/scan-history.js' ? t.read(p).replace("'Recent scans'", "'Last scans'") : t.read(p)), list: t.list };
+  assert.deepStrictEqual(chk(scanLine).changed, ['core/scan-history.js'], 'the scan-history line is in');
+  const displayOnly = app.replace('<h1 class="tab-title">WARRIOR</h1>', '<h1 class="tab-title">Warrior</h1>');
+  assert.notStrictEqual(displayOnly, app); assert.ok(chk(withApp(displayOnly)).intact, 'renderWarriorTab\'s own text is display (its cards are the frozen engine\'s)');
   const commentOnly = app.replace('async function runScreener() {', 'async function runScreener() { // a comment');
   assert.notStrictEqual(commentOnly, app); assert.ok(chk(withApp(commentOnly)).intact, 'a comment is not a change of instrument');
   const stamp = { read: p => (p === 'index.html' ? t.read(p).replace(/\?v=\d+/g, '?v=29991231000000') : t.read(p)), list: t.list };
