@@ -895,6 +895,13 @@ and phone storage (already here). Each item: when, what unit, how taken, and the
   154 of 670 never record a rise above the buy; mark-filled sets the "peak" to the fill price; 163 of 257 positions
   appear in a single snapshot. Every peak figure quoted to Roman came from SIP bars, not the stored peak. Beside
   `peak_price` on the after-the-test list. (`CC-peak-before-or-after-the-sale.md`.)
+  - **The 154 of 670 (23%) is an UPPER BOUND on the tracking defect, NOT its frequency** (the reviewer, 2026-11-27).
+    Two causes give "no recorded rise", unseparated: the stock genuinely never rose above the buy, or it rose and the
+    tracking missed it. Separating them needs intraday highs, which were ruled out. Never quote the 23% as how often
+    the peak tracking fails.
+  - Held for a ruling, not recorded as a finding: whether the 23% is reassuring against the win rate. The win rate
+    caps the share that genuinely never rose (a trade sold above its buy rose above it) but sets no floor under it,
+    so the comparison does not bound the defect from below.
 - **Exits corrected to bar prices (run 2026-11-20 14:20 PT, commit 8bc7432).** The constrained book: recorded -$0.82,
   corrected **+$16.27 over 123 trades** (about zero; it shows the recorded figure was not a measurement, not that the
   strategy makes money). Of the $202.25 shift over 586 trades, five trades carry $201.07 (IPST alone $118.42) and the
