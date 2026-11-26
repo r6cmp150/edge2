@@ -35,7 +35,7 @@ import { buyMinuteUtc as pacificMinuteUtc } from './measure-entry-price-gap.mjs'
 import { sipRef } from './lib/sip-ref.mjs';
 import { dayInterval } from './measure-change-split.mjs';
 import { mean, ret } from './measure-good-days.mjs';
-import { qualifying, QUALIFYING_DAYS } from './lib/forward-declaration.mjs';
+import { qualifying, QUALIFYING_DAYS, byBuild, buildLine } from './lib/forward-declaration.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const FIRST_DAY = '2026-11-12', LOOKBACK_MIN = 15, BENCH = 'IWM';
@@ -105,9 +105,17 @@ async function main() {
   const inScope = r => (history ? String(r.buy_date).slice(0, 10) >= FIRST_DAY && !afterStart(r) : afterStart(r));
   let closed = show('trades_v2.json').filter(r => r.sell_price_unverified === false && inScope(r));
   let open = show('portfolio.json').filter(inScope);
+  let buildNote = null;
+  if (!history) {
+    // THE BUILD RULE (2026-11-26): the test's positions are those on build START_BUILD or later (forward-declaration.mjs)
+    const split = byBuild([...closed, ...open], new Map(show('signal_snapshot_at_buy.json').map(x => [String(x.position_id), x])));
+    const inBuild = new Set(split.in); closed = closed.filter(r => inBuild.has(r)); open = open.filter(r => inBuild.has(r));
+    buildNote = buildLine(split);
+  }
   console.log(BEGINS + ' ' + BEGINS_DATA + '\n');
   console.log(history ? `HISTORY, BEFORE THE START LINE (${FIRST_DAY} to ${START_LINE}): descriptive only, NOT the forward test.` : `THE FORWARD TEST, from the start line ${START_LINE}.`);
-  console.log(`DATA @ ${rev}: ${closed.length} closed picks and ${open.length} open positions in scope (${history ? `bought ${FIRST_DAY} up to the start line` : "added after the start line"}).`);
+  console.log(`DATA @ ${rev}: ${closed.length} closed picks and ${open.length} open positions in scope (${history ? `bought ${FIRST_DAY} up to the start line` : "added after the start line, on build 20261126210000 or later"}).`);
+  if (buildNote) console.log(buildNote);
   if (!history) {
     // THE FORWARD TEST'S UNIT (30ef1ac): qualifying days, from every position after the start line, open or closed;
     // only the first 60 are in the test. The state, and the futility look, are scripts/measure-forward-test.mjs's.

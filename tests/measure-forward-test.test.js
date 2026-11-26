@@ -141,4 +141,36 @@ await run('A reads SHOWN only above zero; the differential is cut to the first 6
   assert.ok(d.includes('${q.days.length} of ${QUALIFYING_DAYS} QUALIFYING DAYS'));
   assert.ok(d.includes('closed = closed.filter(r => inTest.has(r)); open = open.filter(r => inTest.has(r));'), 'both lists cut to the first 60 qualifying days');
 });
+
+await run('THE BUILD RULE (2026-11-26): b86d5c3\'s build or later is in; an earlier build is out by fact; no buildVersion is NOT ESTABLISHED and named', () => {
+  // the stamp is b86d5c3's, read from the shipped tree (index.html ?v= and sw.js CACHE_NAME), not re-typed
+  assert.strictEqual(M.START_BUILD, '20261126210000');
+  assert.ok(/app\.js\?v=(\d{14})/.exec(readSource('index.html'))[1] >= M.START_BUILD, 'the shipped build is the start build or later');
+  assert.ok(/app\.js\?v=20261126210000/.test(require('child_process').execSync('git show b86d5c3:index.html', { cwd: REPO_ROOT }).toString()), 'START_BUILD is b86d5c3\'s stamp');
+  const snap = bv => ({ snapshot: bv === undefined ? {} : { buildVersion: bv } });
+  const ps = [
+    { position_id: 1, ticker: 'NEW', buy_date: '2026-11-27', buy_time: '07:00' },
+    { position_id: 2, ticker: 'OLD', buy_date: '2026-11-27', buy_time: '07:01' },
+    { position_id: 3, ticker: 'NOSNAP', buy_date: '2026-11-27', buy_time: '07:02' },
+    { position_id: 4, ticker: 'NOBV', buy_date: '2026-11-27', buy_time: '07:03' },
+    { position_id: 5, ticker: 'UNAV', buy_date: '2026-11-27', buy_time: '07:04' },
+    { position_id: 6, ticker: 'LATER', buy_date: '2026-11-30', buy_time: '07:05' },
+    { position_id: 7, ticker: 'SHORT', buy_date: '2026-11-30', buy_time: '07:06' },
+  ];
+  const snaps = new Map([['1', snap('20261126210000')], ['2', snap('20261123180000')], ['4', snap(undefined)], ['5', snap('unavailable')],
+    ['6', snap('20261201090000')], ['7', snap('2026112621')]]);
+  const s = M.byBuild(ps, snaps);
+  assert.deepStrictEqual(s.in.map(p => p.ticker), ['NEW', 'LATER'], 'the start build itself and a later one are in');
+  assert.deepStrictEqual(s.oldBuild.map(p => p.ticker), ['OLD'], 'the cached old build is out');
+  assert.deepStrictEqual(s.notEstablished.map(p => p.ticker), ['NOSNAP', 'NOBV', 'UNAV', 'SHORT'], 'absent or unreadable is neither in nor out');
+  const line = M.buildLine(s);
+  assert.ok(line.includes('2 in; 1 opened after the start line on an earlier build, OUTSIDE by that fact: OLD 2026-11-27 07:01 (position 2)'), line);
+  assert.ok(line.includes('4 NOT ESTABLISHED') && line.includes('NOSNAP 2026-11-27 07:02 (position 3)') && line.includes('SHORT'), 'each one named');
+  // both measures apply it, and print the line, so the exclusion is never silent
+  const t = readSource('scripts/measure-forward-test.mjs'), d = readSource('scripts/measure-selection-differential.mjs');
+  assert.ok(t.includes('const closedAll = closedPast.filter(r => inBuild.has(r)), openAll = openPast.filter(r => inBuild.has(r));') && t.includes('console.log(buildLine(split));'));
+  assert.ok(d.includes('closed = closed.filter(r => inBuild.has(r)); open = open.filter(r => inBuild.has(r));') && d.includes('if (buildNote) console.log(buildNote);'));
+  assert.ok(t.indexOf('const split = byBuild(') < t.indexOf('const q = qualifying(['), 'the rule is applied before qualifying days are counted');
+  assert.ok(d.indexOf('const split = byBuild(') < d.indexOf('const q = qualifying(['), 'in measure A too');
+});
 })();

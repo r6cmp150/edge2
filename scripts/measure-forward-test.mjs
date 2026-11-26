@@ -5,7 +5,9 @@
 // Read only.
 //
 //   POPULATION: every position (verified trades_v2 and portfolio) added after the start line (START_LINE,
-//     2026-11-26T20:31:43Z, the restart). No subset. The 13 opened under the first line (2026-11-23T20:42:43Z) are
+//     2026-11-26T20:31:43Z, the restart) AND opened on build 20261126210000 (b86d5c3) or later, read from the buy
+//     snapshot's buildVersion (THE BUILD RULE, 2026-11-26: an earlier build is outside by that fact; no buildVersion is
+//     NOT ESTABLISHED, held out and named every run). No subset. The 13 opened under the first line (2026-11-23T20:42:43Z) are
 //     OUTSIDE the test, excluded by the start line, not by judgement (STATUS, the restart of 2026-11-26).
 //   QUALIFYING DAYS: trading days with at least one such position opened. The first 60 are the test.
 //   STATE (scripts/lib/forward-declaration.mjs): INTERIM below 60 (progress only, no interval compared with any bar);
@@ -41,9 +43,9 @@ import { mean, ret } from './measure-good-days.mjs';
 import { priceAt, afterStart, START_LINE, differentialRows, makeBarsNear } from './measure-selection-differential.mjs';
 import { closeAfter, endCapped } from './measure-decay-control.mjs';
 import { rng } from './score-vs-return.mjs';
-import { QUALIFYING_DAYS, FUTILITY_AT, BACKSTOP_TRADING_DAYS, FIRST_QUALIFYING, HURDLE, qualifying, futility, lookState, testState } from './lib/forward-declaration.mjs';
+import { QUALIFYING_DAYS, FUTILITY_AT, BACKSTOP_TRADING_DAYS, FIRST_QUALIFYING, HURDLE, qualifying, futility, lookState, testState, START_BUILD, byBuild, buildLine } from './lib/forward-declaration.mjs';
 
-export { QUALIFYING_DAYS, FUTILITY_AT, BACKSTOP_TRADING_DAYS, FIRST_QUALIFYING, HURDLE, qualifying, futility, lookState, testState };
+export { START_BUILD, byBuild, buildLine, QUALIFYING_DAYS, FUTILITY_AT, BACKSTOP_TRADING_DAYS, FIRST_QUALIFYING, HURDLE, qualifying, futility, lookState, testState };
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const HORIZONS = [0, 1, 2, 5];
 
@@ -107,8 +109,13 @@ async function main() {
   const headers = alpacaHeaders(arg('--env-root') || ROOT);
   const rev = arg('--rev') || execSync('git log -1 --format=%h -- data/backups/trades_v2.json', { cwd: ROOT }).toString().trim();
   const show = f => (j => (Array.isArray(j) ? j : j.rows))(JSON.parse(execSync(`git show ${rev}:data/backups/${f}`, { cwd: ROOT, maxBuffer: 4e9 }).toString()));
-  const closedAll = show('trades_v2.json').filter(r => r.sell_price_unverified === false).filter(afterStart);
-  const openAll = show('portfolio.json').filter(afterStart);
+  // THE BUILD RULE (2026-11-26): past the start line by the clock, then IN only on build START_BUILD or later
+  const snaps = new Map(show('signal_snapshot_at_buy.json').map(x => [String(x.position_id), x]));
+  const closedPast = show('trades_v2.json').filter(r => r.sell_price_unverified === false).filter(afterStart);
+  const openPast = show('portfolio.json').filter(afterStart);
+  const split = byBuild([...closedPast, ...openPast], snaps), inBuild = new Set(split.in);
+  const closedAll = closedPast.filter(r => inBuild.has(r)), openAll = openPast.filter(r => inBuild.has(r));
+  console.log(buildLine(split));
   const q = qualifying([...closedAll, ...openAll]), lookSet = qualifying([...closedAll, ...openAll], FUTILITY_AT).positions;
   const spy = ((await fetchBars(headers, ['SPY'], { timeframe: '1Day', start: `${FIRST_QUALIFYING}T00:00:00Z`, end: endCapped(Date.now()), feed: 'sip' })).SPY || []).map(b => String(b.t).slice(0, 10));
   const tradingAfter = day => spy.filter(d => d > day).length;

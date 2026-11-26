@@ -187,10 +187,29 @@ beat the stocks EDGE scanned that day and he did not buy.
   CACHE_NAME edge2-20261126210000; the Pages deploy and the tests both passed on b86d5c3). `start_line_commit` and the
   freeze baseline are b86d5c3. 11-26 is Thanksgiving (closed); the first possible qualifying day is **2026-11-27**, and
   the backstop counts 180 trading days from it.
-- **A residual, named:** his phone runs the old build until its service worker updates. A position opened after the line
-  on the old build is identifiable: the buy snapshot copies the signal, which carries `buildVersion` (the scan's app
-  stamp). At the first reading, any position after the line whose snapshot is not stamped 20261126210000 or later is
-  named, not silently counted.
+- **THE BUILD RULE, DECLARED 2026-11-26 (the reviewer, CC-the-date-was-mine-and-three-rulings §2), before any
+  position after the start line existed:** "The test includes positions opened on the build shipped at b86d5c3 or
+  later, read from the buy snapshot's `buildVersion`. A position opened after the start line on an earlier build is
+  outside it, by that fact and not by judgement. If `buildVersion` is absent on any position, it is NOT ESTABLISHED and
+  named, never assumed either way." The start line was always about the instrument; the timestamp stood in for it, and
+  his phone's cache can break that (it runs the old build until its service worker updates).
+  - **Mechanised** in scripts/lib/forward-declaration.mjs (`START_BUILD = '20261126210000'`, `byBuild`, `buildLine`),
+    applied in measure A (measure-selection-differential.mjs) and measures B and C (measure-forward-test.mjs) BEFORE
+    qualifying days are counted. Test: tests/measure-forward-test.test.js; mutants 8 of 8.
+  - **Read from:** `signal_snapshot_at_buy.snapshot.buildVersion`, joined by position_id. The stamp is the `?v=` of the
+    app.js the page actually loaded (core/store.js `currentCodeVersion`), so a cached old build reports its old stamp.
+    A missing snapshot row, a missing field, `'unavailable'` or anything not 14 digits is NOT ESTABLISHED.
+  - **Premise checked 2026-11-26 at backup ca79153:** all 168 positions bought since 2026-11-12 have a snapshot with
+    `buildVersion`, and on all 168 it equals the row's own `code_version.app`. The first attempt's 13 are on
+    20261123180000.
+  - **NOT ESTABLISHED positions are held out of every computed figure and named on every run**; whether one belongs
+    is the reviewer's (my reading of "never assumed either way": neither counted in nor dropped silently).
+  - **Every run prints the counts** (in / earlier build, named / NOT ESTABLISHED, named); the first reading reports
+    them.
+- **Three comments in frozen files still say "2026-11-27"** (the date I copied from the notes): core/scan-history.js
+  lines 8 and 23, and app.js line 10394 (in `scanHistoryModalHtml`), all as of b86d5c3. Read them as 2026-11-26. Left
+  unchanged on the reviewer's ruling: a comment is not worth a restart, and the frozen tree stays byte-identical to the
+  baseline. Correct them at the next deliberate change of those files.
 - **THE FIRST ATTEMPT'S POSITIONS ARE OUTSIDE THE TEST, excluded by the start line, not by judgement (dated
   2026-11-26):** the 13 opened after 2026-11-23T20:42:43Z (10 on 11-24, 3 on 11-25; at backup b786b78: 12 in trades_v2,
   1 open), and any opened before 2026-11-26T20:31:43Z. They are history (`--history`), like 11-12 to 11-23. The ruling
