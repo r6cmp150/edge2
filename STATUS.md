@@ -229,9 +229,10 @@ deleted every open position (RUN-ME-21).**
       the test, not shipping measures a known defect, and either may be right.
     - **THE FROZEN SET, ENUMERATED** (data/forward-test/instrument-freeze-spec.json; the detector reads the manifest
       generated from it, data/forward-test/instrument-freeze.json):
-      - **19 files whole:** 12 core files (clock, indicators, api-client, market-data, news, store, orders, entry-gate,
-        float-table, universe, edge-scoring, macro), shell/registry.js, the 4 Warrior engine files, index.html (its
-        script list, with ?v= stamps removed), and data/float-table.json.
+      - **22 files whole (amended 2026-11-26):** 12 core files (clock, indicators, api-client, market-data, news, store,
+        orders, entry-gate, float-table, universe, edge-scoring, macro), shell/registry.js, the 4 Warrior engine files,
+        index.html (its script list, with ?v= stamps removed), and THE FLOAT BUILDER: build-float-table.yml,
+        scripts/build-float-table.mjs, scripts/lib/workflow-instrumentation.mjs and core/edgar.js.
       - **114 of app.js's 442 top-level declarations,** by hash: everything reachable from the scan, the snapshot write,
         the stock screen and Add, the sale and fill forms, the holdings' exit advice and its live prices, the AI
         analysis, settings load and save, and the price alerts.
@@ -241,7 +242,7 @@ deleted every open position (RUN-ME-21).**
       - **7 settings by VALUE:** include_under2, show_watch, min_volume, force_pre_market_mode, disable_macro_overlay,
         float_threshold_shares, max_loss_pct. A setting changed on the phone changes the scan as surely as a commit.
       - **Declared OUT, with reasons:** core/execution-mode-count.js (the budget bar), core/scan-history.js (display),
-        core/edgar.js (not loaded by the app), sw.js (the cache).
+        sw.js (the cache), and data/float-table.json (data: below).
     - **NO HOLE:** every file under core/, engines/ and shell/, app.js, index.html and sw.js, and every top-level
       declaration in app.js, is frozen or declared out. A new one fails the guard until it is classified.
     - **BEYOND THE RULING'S LIST, FROZEN DELIBERATELY:**
@@ -257,9 +258,33 @@ deleted every open position (RUN-ME-21).**
     - **THE DETECTOR:** scripts/check-instrument-freeze.mjs, on the daily backup run after the backup. It prints
       INTACT, or turns the run red and names each CHANGED or UNCLASSIFIED item. The same check is a CI test (the
       tripwire), so a frozen change also turns CI red on its own commit.
-    - **OPEN, FOR THE REVIEWER:** data/float-table.json is REBUILT AND COMMITTED EVERY SUNDAY 08:00 UTC
-      (build-float-table.yml; last 11-22). The next rebuild, 2026-11-29, changes the frozen instrument by itself unless
-      something is decided before then.
+    - **THE FLOAT TABLE IS DATA, NOT INSTRUMENT (the reviewer, 2026-11-26).** The reasoning, so the next cached
+      third-party file can be classified without re-deriving it:
+      - **Freezing the table would not freeze the instrument; it would change it.** The rule is "exclude stocks whose
+        float exceeds X". With the table frozen, it silently becomes "whose float ON 2026-11-22 exceeded X": a different
+        rule, further from the intended one every week.
+      - **The error has a direction here.** Micro-caps issue shares constantly, so a float frozen in November is wrong by
+        February in the direction that lets diluted names through.
+      - **It belongs with prices and bars.** It is third-party data that happens to be cached in the repository, and
+        being a file in git is an implementation detail, not a change of category. Nobody says the instrument changed
+        because SPY moved.
+      - **THE PRINCIPLE: freeze the rule and the mechanism; let measured properties of the world refresh.**
+    - **THE THREE CONDITIONS, mechanised:**
+      - **The builder is frozen:** the workflow and every file it runs, by hash. A test fails if the builder imports or
+        evals a file that is not frozen, or if the workflow runs anything else.
+      - **Rebuilds stay scheduled and mechanical.** A commit to the table by anyone but float-table-bot (with its
+        subject), or a run of build-float-table.yml after the start line that the schedule did not trigger, is an
+        INTERVENTION: red on the daily line, named, and treated as a frozen-path change.
+      - **Every rebuild is recorded on the daily line:** its date, how many tickers' floats changed, and how many
+        crossed the float line each way (now pass, no longer pass; the line is the frozen float_threshold_shares, the
+        Warrior float pillar's impliedFloatShares < X).
+    - **FOR SCALE, the last three rebuilds, all before the start line** (by the same code):
+      - 11-22: 277 floats changed; 15 now pass, 16 no longer pass.
+      - 11-15: 622 changed; 17 and 19.
+      - 11-08: 1,123 changed; 10 and 9.
+      - A Sunday that moves hundreds across the line is a shock to the universe, and it will be seen that day.
+    - **AMENDED WITHOUT A RESTART:** the table moved out and the builder moved in. No frozen item's hash changed (checked
+      item by item against the previous manifest), and no builder file has changed since the start line.
   - **Measure A, picking:** the selection differential (scripts/measure-selection-differential.mjs): each closed
     position against every stock scanned that day, over its own window.
   - **Measure B, holding:** from each position's ENTRY (its SIP reference at the buy minute), its return to that

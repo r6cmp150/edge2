@@ -23,7 +23,10 @@
    "engines/warrior/replay.js": "the Warrior engine",
    "engines/warrior/setups.js": "the Warrior engine",
    "index.html": "which scripts load, in what order (hashed with its ?v= stamps removed: a stamp is not a change of code)",
-   "data/float-table.json": "the float table the float filter reads (DATA: rebuilt by build-float-table.yml every Sunday 08:00 UTC; see STATUS)"
+   "core/edgar.js": "THE FLOAT BUILDER: the derivation and shares-outstanding guard scripts/build-float-table.mjs evals; how floats are computed is the rule",
+   "scripts/build-float-table.mjs": "THE FLOAT BUILDER: changing how the table is built changes the rule",
+   "scripts/lib/workflow-instrumentation.mjs": "THE FLOAT BUILDER: a module the builder imports",
+   ".github/workflows/build-float-table.yml": "THE FLOAT BUILDER: its schedule and what it runs (hashed raw: YAML is whitespace-significant)"
   },
   "partial": {
    "app.js": "frozen by declaration, below"
@@ -31,8 +34,8 @@
   "out": {
    "core/execution-mode-count.js": "BUDGET BAR: counts positions by execution mode for the bar (exempt: the budget bar)",
    "core/scan-history.js": "DISPLAY: the earlier-scans line on each card",
-   "core/edgar.js": "NOT LOADED BY THE APP: used by scripts/build-float-table.mjs; the table it helps build is frozen as data",
-   "sw.js": "THE CACHE: which files the service worker caches, by version; computes nothing"
+   "sw.js": "THE CACHE: which files the service worker caches, by version; computes nothing",
+   "data/float-table.json": "THIRD-PARTY DATA CACHED IN THE REPO (the reviewer, 2026-11-26): the rule is \"float under X\", and freezing the table would silently make it \"float on 2026-11-22 under X\", a different rule that drifts further every week. It refreshes on schedule like prices and bars; its BUILDER is frozen; every rebuild is recorded on the daily line, and an unscheduled one is an intervention"
   }
  },
  "app_js": {
@@ -515,5 +518,13 @@
    "created_at": "row timestamp",
    "updated_at": "row timestamp"
   }
- }
+ },
+ "amended": [
+  {
+   "date": "2026-11-26",
+   "ruling": "CC-the-float-table-is-data-not-instrument-freeze-the-builder",
+   "change": "data/float-table.json frozen -> out (data); the builder (build-float-table.yml, scripts/build-float-table.mjs, scripts/lib/workflow-instrumentation.mjs, core/edgar.js) -> frozen",
+   "content_changed": "none: no frozen file changed, and no builder file changed since the start line (git log, verified)"
+  }
+ ]
 }

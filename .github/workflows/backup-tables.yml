@@ -39,6 +39,7 @@ on:
 
 permissions:
   contents: write
+  actions: read # 2026-11-26: the frozen-instrument check reads how build-float-table.yml runs were triggered
 
 jobs:
   backup:
@@ -64,6 +65,8 @@ jobs:
           echo "id=$(echo "$ROW" | jq -r 'if type=="array" then (.[0].id // empty) else empty end' 2>/dev/null || echo)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 2026-11-26: the float-table rebuild record compares each rebuild with the version before it
 
       - uses: actions/setup-node@v4
         with:
@@ -143,6 +146,8 @@ jobs:
         id: instrument_freeze
         if: always()
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }} # read-only here: lists build-float-table.yml runs and their triggers
         run: |
           set +e
           node scripts/check-instrument-freeze.mjs
