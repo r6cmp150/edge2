@@ -73,23 +73,26 @@ function scanShortTime(ms) {
   return t.replace(/\s?AM$/, 'a').replace(/\s?PM$/, 'p');
 }
 
-// The card labels for the points shown, newest first. Same PT day as now: '41m', '3h'. An earlier day: its weekday or
-// date -- and when two or more shown points share an earlier day (Roman scans in bursts), each carries its time, the
-// day written once on the newest: 'Nov 2 12:55p · 9:40a · 9:14a' (ruled 2026-11-12: three identical labels hid the
-// order). Points are newest first, so a day's first point is its newest.
+// The card labels for the points shown, in DISPLAY order: OLDEST FIRST, left to right (Roman, 2026-11-26: oldest on
+// the left, newest on the right, so a rise reads as a rise). Same PT day as now: '41m', '3h'. An earlier day: its
+// weekday or date. When two or more shown points would carry the same label -- several on one earlier day (Roman scans
+// in bursts; ruled 2026-11-12: three identical labels hid the order), or two today in the same hour ('1h · 1h' for
+// points thirty minutes apart; the reviewer, 2026-11-26) -- each carries its time, the shared label written once, on
+// the leftmost: 'Nov 2 9:14a · 9:40a · 12:55p', '1h 10:05a · 10:35a'.
 function scanCardLabels(shown, nowMs) {
   const today = scanPtDate(nowMs);
-  const day = p => scanPtDate(p.at);
-  const perDay = {};
-  for (const p of shown) if (day(p) !== today) perDay[day(p)] = (perDay[day(p)] || 0) + 1;
+  const base = shown.map(p => scanAgeLabel(p.at, nowMs, 'card'));
+  // today's points collide only when their labels are equal; an earlier day's always share the day's label
+  const key = (p, i) => (scanPtDate(p.at) === today ? `today ${base[i]}` : scanPtDate(p.at));
+  const count = {};
+  shown.forEach((p, i) => { count[key(p, i)] = (count[key(p, i)] || 0) + 1; });
   const seen = new Set();
-  return shown.map(p => {
-    const base = scanAgeLabel(p.at, nowMs, 'card');
-    const d = day(p);
-    if (d === today || perDay[d] < 2) return base;
-    const first = !seen.has(d);
-    seen.add(d);
-    return first ? `${base} ${scanShortTime(p.at)}` : scanShortTime(p.at);
+  return shown.map((p, i) => {
+    const k = key(p, i);
+    if (count[k] < 2) return base[i];
+    const first = !seen.has(k);
+    seen.add(k);
+    return first ? `${base[i]} ${scanShortTime(p.at)}` : scanShortTime(p.at);
   });
 }
 
@@ -116,11 +119,14 @@ function scanCardLine(status, points, beforeMs, nowMs) {
     const t = beforeMs == null ? 'No scans recorded' : 'No earlier scans recorded';
     return { full: t, agesOnly: t };
   }
-  const lead = eligible >= SCAN_HISTORY_SHOWN ? (beforeMs == null ? 'Last scans' : 'Earlier scans')
+  // "Recent", not "Last" (2026-11-26): with the oldest on the left, "Last scans" would put the least recent point
+  // where the eye reads "last". "Earlier" (Signals) still says what it means: these came before the scan on screen.
+  const lead = eligible >= SCAN_HISTORY_SHOWN ? (beforeMs == null ? 'Recent scans' : 'Earlier scans')
     : `Only ${eligible} ${beforeMs == null ? '' : 'earlier '}scan${eligible === 1 ? '' : 's'}`;
-  const labels = scanCardLabels(shown, nowMs);
+  const ordered = [...shown].reverse(); // oldest on the left, newest on the right
+  const labels = scanCardLabels(ordered, nowMs);
   return {
-    full: `${lead}  ${shown.map((p, i) => `${fmtScanPrice(p.price)} ${labels[i]}`).join(' · ')}`,
+    full: `${lead}  ${ordered.map((p, i) => `${fmtScanPrice(p.price)} ${labels[i]}`).join(' · ')}`,
     agesOnly: `${lead}  ${labels.join(' · ')}`,
   };
 }
@@ -135,6 +141,7 @@ function scanChangeText(newer, older) {
 
 // The MODAL's rows: the scan on screen (if this ticker has a row from it), marked, then up to 3 before it, each with
 // its change from the scan before it (the oldest shown has none: the one before it isn't shown). Plus the total.
+// Returned newest first; the modal DISPLAYS them oldest at the top (app.js scanHistoryModalHtml, 2026-11-26).
 function scanModalRows(points, beforeMs) {
   const all = points || [];
   // the scan on screen wrote its row just after it finished: the OLDEST row at or after that moment (a newer one is a

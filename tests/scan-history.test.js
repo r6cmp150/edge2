@@ -49,26 +49,38 @@ await run('the card: every state says something; Signals compares with the scans
   assert.strictEqual(scanCardLine('ready', [], null, NOW).full, 'No scans recorded');
   assert.strictEqual(scanCardLine('ready', p.slice(0, 1), onScreen, NOW).full, 'No earlier scans recorded', 'only the scan on screen: nothing earlier');
   const three = scanCardLine('ready', p, onScreen, NOW);
-  assert.strictEqual(three.full, 'Earlier scans  $5.10 41m · $5.00 3h · $4.80 Fri', 'the on-screen scan ($5.20) is not one of the three');
-  assert.strictEqual(three.agesOnly, 'Earlier scans  41m · 3h · Fri', 'if it does not fit, the ages stay');
-  assert.strictEqual(scanCardLine('ready', p.slice(0, 3), onScreen, NOW).full, 'Only 2 earlier scans  $5.10 41m · $5.00 3h', 'never padded');
+  assert.strictEqual(three.full, 'Earlier scans  $4.80 Fri · $5.00 3h · $5.10 41m', 'oldest on the left; the on-screen scan ($5.20) is not one of the three');
+  assert.strictEqual(three.agesOnly, 'Earlier scans  Fri · 3h · 41m', 'if it does not fit, the ages stay');
+  assert.strictEqual(scanCardLine('ready', p.slice(0, 3), onScreen, NOW).full, 'Only 2 earlier scans  $5.00 3h · $5.10 41m', 'never padded');
   assert.strictEqual(scanCardLine('ready', p.slice(3, 4), null, NOW).full, 'Only 1 scan  $4.80 Fri');
-  assert.strictEqual(scanCardLine('ready', p, null, NOW).full, 'Last scans  $5.20 <1m · $5.10 41m · $5.00 3h', 'Portfolio: no scan on screen, the latest three');
+  assert.strictEqual(scanCardLine('ready', p, null, NOW).full, 'Recent scans  $5.00 3h · $5.10 41m · $5.20 <1m', 'Portfolio: no scan on screen, the latest three, oldest on the left; "Recent", not "Last", which would sit over the oldest');
 });
 
-await run('a burst of scans on one earlier day: every point carries its time, the day once, newest first (the p1 defect)', () => {
+await run('a burst of scans on one earlier day: every point carries its time, the day once, on the leftmost (the p1 defect)', () => {
   // Mon 2026-11-02, PST: 20:55Z = 12:55p, 17:40Z = 9:40a, 17:14Z = 9:14a; viewed 14 days later
   const burst = pts(['2026-11-02T20:55:00Z', 5.96], ['2026-11-02T17:40:00Z', 5.95], ['2026-11-02T17:14:00Z', 6.21]);
   const line = scanCardLine('ready', burst, null, NOW);
-  assert.strictEqual(line.full, 'Last scans  $5.96 Nov 2 12:55p · $5.95 9:40a · $6.21 9:14a');
-  assert.strictEqual(line.agesOnly, 'Last scans  Nov 2 12:55p · 9:40a · 9:14a');
-  const labels = scanCardLabels(burst, NOW);
+  assert.strictEqual(line.full, 'Recent scans  $6.21 Nov 2 9:14a · $5.95 9:40a · $5.96 12:55p');
+  assert.strictEqual(line.agesOnly, 'Recent scans  Nov 2 9:14a · 9:40a · 12:55p');
+  const labels = scanCardLabels([...burst].reverse(), NOW);
   assert.strictEqual(new Set(labels).size, labels.length, 'no two points on one earlier day share a label');
   // two on one earlier day, one on another: only the shared day carries times
   const mixed = pts(['2026-11-13T21:00:00Z', 4.8], ['2026-11-13T17:30:00Z', 4.7], ['2026-11-12T21:00:00Z', 4.6]);
-  assert.deepStrictEqual(scanCardLabels(mixed, NOW), ['Fri 1:00p', '9:30a', 'Thu']);
+  assert.deepStrictEqual(scanCardLabels([...mixed].reverse(), NOW), ['Thu', 'Fri 9:30a', '1:00p']);
   // today's points keep minutes/hours; a single point on an earlier day keeps its bare day
-  assert.deepStrictEqual(scanCardLabels(pts(['2026-11-16T17:19:00Z', 5.1], ['2026-11-16T15:00:00Z', 5.0], ['2026-11-13T21:00:00Z', 4.8]), NOW), ['41m', '3h', 'Fri']);
+  assert.deepStrictEqual(scanCardLabels(pts(['2026-11-13T21:00:00Z', 4.8], ['2026-11-16T15:00:00Z', 5.0], ['2026-11-16T17:19:00Z', 5.1]), NOW), ['Fri', '3h', '41m']);
+});
+
+await run('two scans today in the same hour carry their times (the reviewer, 2026-11-26: "1h · 1h" for points thirty minutes apart)', () => {
+  // NOW is Mon 2026-11-16 18:00Z = 10:00 PST. 16:35Z = 8:35a (1h 25m ago), 16:05Z = 8:05a (1h 55m ago): both "1h"
+  const same = pts(['2026-11-16T16:35:00Z', 5.58], ['2026-11-16T16:05:00Z', 5.25], ['2026-11-13T21:00:00Z', 5.28]);
+  assert.strictEqual(scanCardLine('ready', same, null, NOW).full, 'Recent scans  $5.28 Fri · $5.25 1h 8:05a · $5.58 8:35a', 'a rise reads as a rise, and the two 1h points are told apart');
+  const labels = scanCardLabels([...same].reverse(), NOW);
+  assert.strictEqual(new Set(labels).size, labels.length, 'no two shown points share a label');
+  // different hours today: no times, as before
+  assert.deepStrictEqual(scanCardLabels(pts(['2026-11-16T15:00:00Z', 5.0], ['2026-11-16T17:19:00Z', 5.1]), NOW), ['3h', '41m']);
+  // three today, all in one hour: every one timed, the age once
+  assert.deepStrictEqual(scanCardLabels(pts(['2026-11-16T16:05:00Z', 1], ['2026-11-16T16:20:00Z', 1], ['2026-11-16T16:35:00Z', 1]), NOW), ['1h 8:05a', '8:20a', '8:35a']);
   assert.strictEqual(scanShortTime(T('2026-11-02T20:55:00Z')), '12:55p');
 });
 
@@ -152,7 +164,7 @@ await run('a line wraps to two lines; past two it drops the prices and keeps the
   // eslint-disable-next-line no-eval
   eval([app.match(/^const SCAN_HISTORY_MAX_HEIGHT = .*$/m)[0], fn('scanHistoryCardText'), fn('refreshScanHistoryDom')].join('\n') + '\nglobal.__refresh = refreshScanHistoryDom;');
   global.__refresh();
-  assert.ok(/^Last scans  [^$]*$/.test(els[0].textContent) && !els[0].textContent.includes('$'), `ages only: ${els[0].textContent}`);
+  assert.ok(/^Recent scans  [^$]*$/.test(els[0].textContent) && !els[0].textContent.includes('$'), `ages only: ${els[0].textContent}`);
   els[0].clientWidth = 200; global.__refresh();
   assert.ok(els[0].textContent.includes('$1234.56'), 'two lines are room enough: the prices stay');
 });
@@ -197,5 +209,11 @@ await run('what the modal says about which scans are recorded is what the writer
   const header = readSource('core/scan-history.js').split('\n').filter(l => /^\/\//.test(l)).join('\n');
   assert.ok(!/one row per ticker per scan that scored 60 or more/.test(header), 'the header\'s old rule is gone');
   assert.ok(/a scan covers ONE universe list/.test(header));
+});
+
+await run('the modal reads the same way as the card: oldest at the top, the scan on screen at the bottom (2026-11-26)', () => {
+  const m = fn('scanHistoryModalHtml');
+  assert.ok(m.includes('const items = [...rows].reverse().map(r => `'), 'the rows are displayed reversed from scanModalRows\' newest-first order');
+  assert.ok(m.includes('from the scan before</span>'), 'each change is from the row above it, which is the scan before');
 });
 })();

@@ -10383,7 +10383,8 @@ function refreshScanHistoryDom() {
   const m = document.getElementById('scan-hist-modal');
   if (m) m.innerHTML = scanHistoryModalHtml(m.getAttribute('data-scan-modal'));
 }
-// The modal: the scan on screen (when this ticker is in it), marked, then up to 3 before it, with exact PT times,
+// The modal, OLDEST AT THE TOP (2026-11-26): up to 3 scans before the one on screen, then the scan on screen (when
+// this ticker is in it), marked, at the bottom, with exact PT times,
 // the session each fell in, the price shown, and the change from the scan before, as text. Then what the number is.
 // An error message is untrusted text going into markup.
 function scanHistoryEscape(t) {
@@ -10406,7 +10407,9 @@ function scanHistoryModalHtml(ticker) {
   const when = ms => new Date(ms).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const hhmm = ms => new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Los_Angeles', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
   const SESSION_WORDS = { PRE_MARKET: 'pre-market', REGULAR: 'regular session', AFTER_HOURS: 'after-hours', CLOSED: 'market closed' };
-  const items = rows.map(r => `
+  // OLDEST AT THE TOP, the scan on screen at the bottom (2026-11-26): the card reads oldest to newest left to right,
+  // and the modal reads the same way down, so the two views never disagree. Each row's change is from the row above.
+  const items = [...rows].reverse().map(r => `
     <div style="padding:6px 0;border-bottom:1px solid var(--border)">
       <div style="font-size:12px;color:var(--muted)">${when(r.at)} PT · ${scanAgeLabel(r.at, now, 'modal')} · ${SESSION_WORDS[classifySession(scanPtDate(r.at), hhmm(r.at))] || 'session unknown'}${r.current ? ' · <strong>the scan on screen</strong>' : ''}</div>
       <div class="price-mono" style="font-size:14px">$${r.price.toFixed(2)}${r.change ? ` <span style="font-size:12px;color:var(--muted)">${r.change} from the scan before</span>` : ''}</div>
