@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-11-25T16:18:37.667Z",
+  "run_at": "2026-11-26T15:54:47.778Z",
   "floors": {
     "trades": 37,
     "trades_v2": 451,
@@ -18,8 +18,8 @@
       "reason": null
     },
     "trades_v2": {
-      "fetched": 918,
-      "prior": 908,
+      "fetched": 920,
+      "prior": 918,
       "floor": 451,
       "written": true,
       "reason": null
@@ -27,16 +27,16 @@
     "signal_log": {
       "floor": 1938,
       "mode": "daily",
-      "read": 2093,
-      "live": 4068,
-      "prior": 3928,
-      "fetched": 4068,
+      "read": 2092,
+      "live": 4202,
+      "prior": 4068,
+      "fetched": 4202,
       "written": true,
       "reason": null,
       "shards": {
         "2026-09": 373,
         "2026-10": 1565,
-        "2026-11": 2130
+        "2026-11": 2264
       },
       "last_full_month": "2026-11",
       "changed_outside_window": null
@@ -49,15 +49,15 @@
       "reason": null
     },
     "portfolio": {
-      "fetched": 0,
+      "fetched": 1,
       "prior": 46,
       "floor": 0,
-      "written": false,
-      "reason": "read back EMPTY with 46 holding(s) in the last backup and only 10 new sale(s) in trades_v2 since -- that is an empty read (a permission or RLS denial returns an empty list, not an error), not 46 sales"
+      "written": true,
+      "reason": null
     },
     "signal_snapshot_at_buy": {
-      "fetched": 600,
-      "prior": 590,
+      "fetched": 603,
+      "prior": 600,
       "floor": 88,
       "written": true,
       "reason": null
@@ -65,17 +65,17 @@
     "rating_snapshots": {
       "floor": 2944,
       "mode": "daily",
-      "read": 20968,
-      "live": 25471,
-      "prior": 19161,
-      "fetched": 25471,
+      "read": 24649,
+      "live": 29398,
+      "prior": 25471,
+      "fetched": 29398,
       "written": true,
       "reason": null,
       "shards": {
         "2026-08": 762,
         "2026-09": 1208,
         "2026-10": 974,
-        "2026-11": 22527
+        "2026-11": 26454
       },
       "last_full_month": "2026-11",
       "changed_outside_window": null

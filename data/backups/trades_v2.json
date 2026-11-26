@@ -5488,17 +5488,17 @@
     "peak_price_date": "2026-11-17",
     "trailing_stop_triggered": false,
     "rsi_suspended_at_gain_pct": null,
-    "sell_timing_resolved": false,
-    "best_exit_price": null,
-    "best_exit_date": null,
-    "best_exit_timing": null,
-    "price_at_plus5_days": null,
+    "sell_timing_resolved": true,
+    "best_exit_price": 14.67,
+    "best_exit_date": "2026-11-17",
+    "best_exit_timing": "BEFORE",
+    "price_at_plus5_days": 12.75,
     "created_at": "2026-11-18T14:52:54.249397+00:00",
     "signal_snapshot": null,
     "exit_rule_id": null,
     "minutes_late": null,
-    "price_at_plus1_day": null,
-    "price_at_plus2_days": null,
+    "price_at_plus1_day": 12.97,
+    "price_at_plus2_days": 11.76,
     "spread_at_buy": 0.009999999999999787,
     "minutes_from_open": 291,
     "bars_since_signal": 1,
@@ -34720,6 +34720,195 @@
     "execution_mode_source": null,
     "peak_rsi_provenance": "not_established",
     "peak_rsi_sampled_from": null,
+    "peak_rsi_correction_id": null
+  },
+  {
+    "id": "22f509fc-f300-4045-b483-0eacc0318987",
+    "signal_log_id": null,
+    "engine_source": "EDGE",
+    "ticker": "COMP",
+    "company": "COMP",
+    "buy_date": "2026-11-25",
+    "buy_time": "11:27",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-11-25",
+    "sell_time": "12:43",
+    "sell_day_of_week": "Wednesday",
+    "shares": 50,
+    "buy_price": 10.77,
+    "sell_price": 10.53,
+    "pnl_dollars": -12.00000000000001,
+    "pnl_pct": -2.2284122562674114,
+    "signal_score": 100,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 63.70826010544814,
+    "volume_ratio_at_buy": 1.327831407767876,
+    "risk_score": 3,
+    "duration_classification": "3-DAY",
+    "price_tier": "$10–$20",
+    "macro_condition": "TECH_ROTATION_OUT",
+    "catalyst_setup": false,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": null,
+    "news_at_buy": "Uniserve Completes Operational Initiatives to Support Growth",
+    "signals_fired_at_buy": [
+      "VOL_BUILD"
+    ],
+    "vol_build_near_miss_consecutive_days": null,
+    "vol_build_near_miss_vol_ratio": null,
+    "mean_reversion_near_miss_pct_below_ma": 8.686328430506824,
+    "mean_reversion_near_miss_rsi": 63.70826010544814,
+    "capped_by_at_buy": null,
+    "raw_atr_at_buy": 0.601785714285714,
+    "trimmed_atr_at_buy": 0.5473076923076922,
+    "threshold_at_buy": 20,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 20,
+    "ma_pts": 10,
+    "vol_build_pts": 15,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 1,
+    "cons_up_pts": 0,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 8.686328430506824,
+    "raw_score_at_buy": 100,
+    "distance_from_target": 11.2,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "unified_recommendation_at_sale": null,
+    "unified_composite_at_sale": null,
+    "top_exit_factors_at_sale": null,
+    "top_hold_factors_at_sale": null,
+    "full_ure_factors_at_sale": null,
+    "lock_in_profits_fired": null,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 63.86701662292212,
+    "top_peak_risk_factors_at_sale": null,
+    "full_peak_risk_factors_at_sale": null,
+    "target_drift_pct": -2.022821576763487,
+    "peak_price": 10.815,
+    "peak_price_date": "2026-11-25",
+    "trailing_stop_triggered": false,
+    "rsi_suspended_at_gain_pct": null,
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "created_at": "2026-11-25T20:43:24.771105+00:00",
+    "signal_snapshot": null,
+    "exit_rule_id": null,
+    "minutes_late": null,
+    "price_at_plus1_day": null,
+    "price_at_plus2_days": null,
+    "spread_at_buy": 0.009999999999999787,
+    "minutes_from_open": 297,
+    "bars_since_signal": 0,
+    "entry_vs_signal_price_pct": null,
+    "sell_price_unverified": false,
+    "order_type": "market",
+    "filled_at": "2026-11-25T19:27:28.186+00:00",
+    "sell_order_type": "market",
+    "code_version": {
+      "app": "20261123180000",
+      "scoring": 3,
+      "scoring_hash": "da4d9f42ddf4e7169cfae56355d660dc9b267714c788d349d54e784257b8cb03"
+    },
+    "sale_code_version": {
+      "app": "20261123180000",
+      "scoring": 3,
+      "scoring_hash": "da4d9f42ddf4e7169cfae56355d660dc9b267714c788d349d54e784257b8cb03"
+    },
+    "bars_as_of_at_buy": "2026-11-25",
+    "position_id": "1795634848919",
+    "verdict_provenance": "not_recorded",
+    "signal_before_sale": {
+      "state": "NOT_ESTABLISHED",
+      "reason": "the sale date was left at its default (the day it was recorded), so a scan cannot be placed before the sale"
+    },
+    "macro_path": "groq",
+    "sell_filled_at": "2026-11-25T20:43:00+00:00",
+    "sell_filled_at_source": "default",
+    "verdict_displayed_at_sale": {
+      "inputs": {
+        "rsi": 62.075298438934794,
+        "price": 10.53,
+        "score": 100,
+        "prev_rsi": 62.144821264894574,
+        "peak_price": 10.815,
+        "scanned_at": 1795639353650,
+        "hold_closes": 0,
+        "macro_condition": "TECH_ROTATION_OUT",
+        "rsi_not_measured": null,
+        "price_unavailable": false,
+        "momentum_protection": false,
+        "earlier_session_close": false
+      },
+      "verdict": {
+        "label": "HOLD STRONG",
+        "pnlPct": -2.2284122562674114,
+        "factors": [
+          {
+            "name": "Within intended 2–3 market-day window",
+            "points": 20
+          },
+          {
+            "name": "Early in hold window",
+            "points": 10
+          },
+          {
+            "name": "RSI 62 — band 55–65",
+            "points": 20
+          },
+          {
+            "name": "Current score 100 — support signal",
+            "points": 30
+          },
+          {
+            "name": "Volume 1.5× — band 1.0–2.0× (middle)",
+            "points": 15
+          },
+          {
+            "name": "Above 20-day MA",
+            "points": 15
+          },
+          {
+            "name": "Price tier $10–$20 (best win rate)",
+            "points": 10
+          }
+        ],
+        "peakRisk": {
+          "score": 0,
+          "factors": [],
+          "topFactors": []
+        },
+        "composite": 120,
+        "hardFloor": false,
+        "topFactors": [
+          {
+            "name": "Current score 100 — support signal",
+            "points": 30
+          },
+          {
+            "name": "Within intended 2–3 market-day window",
+            "points": 20
+          },
+          {
+            "name": "RSI 62 — band 55–65",
+            "points": 20
+          }
+        ]
+      },
+      "rendered_at": "2026-11-25T20:43:18.693Z"
+    },
+    "verdict_display_state": "CAPTURED_FILL_UNKNOWN",
+    "execution_mode": "paper",
+    "execution_mode_source": "copied_from_position",
+    "peak_rsi_provenance": "sampled_since",
+    "peak_rsi_sampled_from": "2026-11-25T19:27:30.57+00:00",
     "peak_rsi_correction_id": null
   },
   {
@@ -207903,17 +208092,17 @@
     "peak_price_date": "2026-11-17",
     "trailing_stop_triggered": false,
     "rsi_suspended_at_gain_pct": null,
-    "sell_timing_resolved": false,
-    "best_exit_price": null,
-    "best_exit_date": null,
-    "best_exit_timing": null,
-    "price_at_plus5_days": null,
+    "sell_timing_resolved": true,
+    "best_exit_price": 6.28,
+    "best_exit_date": "2026-11-18",
+    "best_exit_timing": "ON",
+    "price_at_plus5_days": 5.69,
     "created_at": "2026-11-18T14:52:49.110929+00:00",
     "signal_snapshot": null,
     "exit_rule_id": null,
     "minutes_late": null,
-    "price_at_plus1_day": null,
-    "price_at_plus2_days": null,
+    "price_at_plus1_day": 5.76,
+    "price_at_plus2_days": 5.3,
     "spread_at_buy": 0.010000000000000675,
     "minutes_from_open": 292,
     "bars_since_signal": 2,
@@ -293853,6 +294042,209 @@
     "execution_mode_source": "copied_from_position",
     "peak_rsi_provenance": "not_established",
     "peak_rsi_sampled_from": null,
+    "peak_rsi_correction_id": null
+  },
+  {
+    "id": "f62000f3-4cac-4c9e-962f-6fb80b7fb0e1",
+    "signal_log_id": null,
+    "engine_source": "EDGE",
+    "ticker": "XRAY",
+    "company": "XRAY",
+    "buy_date": "2026-11-25",
+    "buy_time": "11:23",
+    "buy_day_of_week": "Wednesday",
+    "buy_session": "REGULAR",
+    "sell_date": "2026-11-25",
+    "sell_time": "12:52",
+    "sell_day_of_week": "Wednesday",
+    "shares": 55,
+    "buy_price": 9.86,
+    "sell_price": 9.77,
+    "pnl_dollars": -4.949999999999992,
+    "pnl_pct": -0.912778904665313,
+    "signal_score": 100,
+    "signal_label": "SOFT BUY",
+    "rsi_at_buy": 47.455470737913494,
+    "volume_ratio_at_buy": 1.1285412339815502,
+    "risk_score": 4,
+    "duration_classification": "WEEK",
+    "price_tier": "$10–$20",
+    "macro_condition": "TECH_ROTATION_OUT",
+    "catalyst_setup": true,
+    "sub10_adjustment": 0,
+    "groq_at_purchase": null,
+    "news_at_buy": "Dentsply Sirona to Participate in the Piper Sandler 38th Annual Healthcare Conference",
+    "signals_fired_at_buy": [
+      "CONS_UP"
+    ],
+    "vol_build_near_miss_consecutive_days": 2,
+    "vol_build_near_miss_vol_ratio": 1.1285412339815502,
+    "mean_reversion_near_miss_pct_below_ma": 5.3306613226453035,
+    "mean_reversion_near_miss_rsi": 47.455470737913494,
+    "capped_by_at_buy": null,
+    "raw_atr_at_buy": 0.5660714285714284,
+    "trimmed_atr_at_buy": 0.46923076923076923,
+    "threshold_at_buy": 20,
+    "price_momentum_pts": 20,
+    "vol_spike_pts": 20,
+    "rsi_pts": 15,
+    "ma_pts": 10,
+    "vol_build_pts": 0,
+    "mean_reversion_pts": 0,
+    "cons_up_days": 3,
+    "cons_up_pts": 10,
+    "rel_strength_pts": 15,
+    "macro_adjustment_pts": 0,
+    "ma_pct_at_buy": 5.3306613226453035,
+    "raw_score_at_buy": 100,
+    "distance_from_target": 15,
+    "momentum_protection": false,
+    "source": "App Signal",
+    "unified_recommendation_at_sale": null,
+    "unified_composite_at_sale": null,
+    "top_exit_factors_at_sale": null,
+    "top_hold_factors_at_sale": null,
+    "full_ure_factors_at_sale": null,
+    "lock_in_profits_fired": null,
+    "peak_risk_score_at_sale": null,
+    "peak_rsi_during_hold": 47.455470737913494,
+    "top_peak_risk_factors_at_sale": null,
+    "full_peak_risk_factors_at_sale": null,
+    "target_drift_pct": -0.7827919579834731,
+    "peak_price": 9.86,
+    "peak_price_date": "2026-11-25",
+    "trailing_stop_triggered": false,
+    "rsi_suspended_at_gain_pct": null,
+    "sell_timing_resolved": false,
+    "best_exit_price": null,
+    "best_exit_date": null,
+    "best_exit_timing": null,
+    "price_at_plus5_days": null,
+    "created_at": "2026-11-25T20:52:49.177645+00:00",
+    "signal_snapshot": null,
+    "exit_rule_id": null,
+    "minutes_late": null,
+    "price_at_plus1_day": null,
+    "price_at_plus2_days": null,
+    "spread_at_buy": 0.009999999999999787,
+    "minutes_from_open": 293,
+    "bars_since_signal": 0,
+    "entry_vs_signal_price_pct": null,
+    "sell_price_unverified": false,
+    "order_type": "market",
+    "filled_at": "2026-11-25T19:23:49.871+00:00",
+    "sell_order_type": "market",
+    "code_version": {
+      "app": "20261123180000",
+      "scoring": 3,
+      "scoring_hash": "da4d9f42ddf4e7169cfae56355d660dc9b267714c788d349d54e784257b8cb03"
+    },
+    "sale_code_version": {
+      "app": "20261123180000",
+      "scoring": 3,
+      "scoring_hash": "da4d9f42ddf4e7169cfae56355d660dc9b267714c788d349d54e784257b8cb03"
+    },
+    "bars_as_of_at_buy": "2026-11-25",
+    "position_id": "1795634630842",
+    "verdict_provenance": "not_recorded",
+    "signal_before_sale": {
+      "state": "NOT_ESTABLISHED",
+      "reason": "the sale date was left at its default (the day it was recorded), so a scan cannot be placed before the sale"
+    },
+    "macro_path": "groq",
+    "sell_filled_at": "2026-11-25T20:52:00+00:00",
+    "sell_filled_at_source": "default",
+    "verdict_displayed_at_sale": {
+      "inputs": {
+        "rsi": 46.293888166449925,
+        "price": 9.765,
+        "score": 115,
+        "prev_rsi": 46.293888166449925,
+        "peak_price": 9.86,
+        "scanned_at": 1795639353206,
+        "hold_closes": 0,
+        "macro_condition": "TECH_ROTATION_OUT",
+        "rsi_not_measured": null,
+        "price_unavailable": false,
+        "momentum_protection": false,
+        "earlier_session_close": false
+      },
+      "verdict": {
+        "label": "HOLD STRONG",
+        "pnlPct": -0.963488843813376,
+        "factors": [
+          {
+            "name": "Within intended 4–5 market-day window",
+            "points": 20
+          },
+          {
+            "name": "Early in hold window",
+            "points": 10
+          },
+          {
+            "name": "RSI 46 — band 35–55",
+            "points": 15
+          },
+          {
+            "name": "Current score 115 — support signal",
+            "points": 50
+          },
+          {
+            "name": "Score improved from 100 → 115",
+            "points": 20
+          },
+          {
+            "name": "Volume 1.5× — band 1.0–2.0× (middle)",
+            "points": 15
+          },
+          {
+            "name": "Above 20-day MA",
+            "points": 15
+          },
+          {
+            "name": "Catalyst setup active",
+            "points": 20
+          }
+        ],
+        "peakRisk": {
+          "score": -20,
+          "factors": [
+            {
+              "name": "Within 3% of 10-day swing high ($9.85)",
+              "points": -20
+            }
+          ],
+          "topFactors": [
+            {
+              "name": "Within 3% of 10-day swing high ($9.85)",
+              "points": -20
+            }
+          ]
+        },
+        "composite": 165,
+        "hardFloor": false,
+        "topFactors": [
+          {
+            "name": "Current score 115 — support signal",
+            "points": 50
+          },
+          {
+            "name": "Within intended 4–5 market-day window",
+            "points": 20
+          },
+          {
+            "name": "Score improved from 100 → 115",
+            "points": 20
+          }
+        ]
+      },
+      "rendered_at": "2026-11-25T20:52:45.760Z"
+    },
+    "verdict_display_state": "CAPTURED_FILL_UNKNOWN",
+    "execution_mode": "paper",
+    "execution_mode_source": "copied_from_position",
+    "peak_rsi_provenance": "sampled_since",
+    "peak_rsi_sampled_from": "2026-11-25T19:23:52.08+00:00",
     "peak_rsi_correction_id": null
   },
   {
