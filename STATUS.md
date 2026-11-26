@@ -278,6 +278,10 @@ deleted every open position (RUN-ME-21).**
       - **Every rebuild is recorded on the daily line:** its date, how many tickers' floats changed, and how many
         crossed the float line each way (now pass, no longer pass; the line is the frozen float_threshold_shares, the
         Warrior float pillar's impliedFloatShares < X).
+    - **THE STAKES WERE LOW, and the record says so** (the reviewer, 2026-11-26): the float table is read only by the
+      Warrior gate (engines/warrior/gate.js, through core/float-table.js). EDGE's scan does not read it, and Roman's
+      positions are EDGE's. So the drift the ruling weighed reaches almost nothing he buys. The ruling stands, on its
+      principle, and because a Warrior position would count if one were opened.
     - **FOR SCALE, the last three rebuilds, all before the start line** (by the same code):
       - 11-22: 277 floats changed; 15 now pass, 16 no longer pass.
       - 11-15: 622 changed; 17 and 19.
@@ -658,6 +662,17 @@ Roman did not answer the Retry and two-places questions directly; the data answe
   Pooling, if ever proposed, is argued here first, never discovered afterwards to be convenient. **So the clock did not
   stall on 11-17: it restarted.** The current instrument stands at 1 labelled day. The headline source stays as it is
   (the reviewer, 2026-11-19): changing the labeller's input while testing whether it can vary would confound the test.
+  - **ORDERED 2026-11-19, NEVER BUILT, WITHDRAWN 2026-11-26.**
+    - **The order:** capture the unfiltered feed's headlines alongside each macro ask, recorded and not consumed. It
+      was to keep an option open on changing the headline source.
+    - **What happened:** it was designed as db/047 and deferred on 11-20 as "likely moot". No migration, column, code
+      or draft exists on any branch (checked 2026-11-26).
+    - **Withdrawn by the reviewer:** the sign test is STOPPED (c0d0a12), so the decision it preserved an option on
+      will not be made. Building it now would cost a migration Roman runs by hand, plus a new network call on the
+      forward test's frozen path (observeMacro, core/macro.js). DO NOT BUILD IT.
+    - **How it nearly got built:** a "not done" line in a report ("the headline capture ... enforcement") asserted
+      that the capture existed, and was read as fact. An item on a pending list asserts its own premise, and the
+      premise is a claim like any other: verify it before acting on it.
   **Declared 2026-11-17.** The result states which contrast carried the minority. A bar met with CHOPPY days as the
   minority is reported as a test of *whether a move occurred*, not of *its direction*, and the two are never pooled
   into a single claim. (- against + tests direction, the claim the overlay was built on; - against 0 tests the
