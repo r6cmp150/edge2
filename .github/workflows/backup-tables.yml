@@ -135,6 +135,25 @@ jobs:
           node scripts/count-macro-observations.mjs
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
+      # 2026-11-25, the forward test's frozen instrument (STATUS, "THE INSTRUMENT IS FROZEN"). Read-only, no secrets: hashes
+      # the frozen files, app.js declarations and settings (the settings file this run just backed up) against
+      # data/forward-test/instrument-freeze.json, and names anything on the scan path classified nowhere. Exit 1 = a
+      # frozen item CHANGED or an item UNCLASSIFIED, named; 2 = could not read. The next step turns the run red.
+      - name: Check the forward test's frozen instrument (read-only)
+        id: instrument_freeze
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          node scripts/check-instrument-freeze.mjs
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Fail the run if the frozen instrument changed, or could not be checked
+        if: always() && steps.instrument_freeze.outputs.exit_code != '0'
+        run: |
+          echo "THE FROZEN INSTRUMENT CHANGED, or could not be checked -- see the 'Check the forward test's frozen instrument' step's log above, which names the item. A change ends the forward test if it stands; take it to the reviewer." >&2
+          exit 1
+
       - name: Fail the run if the macro writer is not writing, or the count could not be read
         if: always() && steps.macro_obs.outputs.exit_code != '0'
         run: |
