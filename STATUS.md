@@ -635,8 +635,8 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   ~13,200 characters, 92-93% bars; 132 of 132 PREDATES_SALE rows carry bars, 88% of their size; `signal_log`'s
   snapshots 87.3% bars, the buy snapshots 85.8%. Database 46.2 MB of 500 MB (9.2%, read 2026-11-14); **65.1 MB read
   2026-11-26, ~1.6 MB a day, 40% around mid-to-late February 2027** (the measurements section). **That meets condition
-  (1)'s second half below** (measured growth puts it at 40% inside two years); the reviewer ruled no action on 11-27
-  without naming the trigger, so whether the revisit is now owed is taken to the reviewer. **Revisit if
+  (1)'s second half below** (measured growth puts it at 40% inside two years); the reviewer ruled the revisit owed
+  (CC-option-A §4); done 2026-11-26, below. **Revisit if
   either holds:** (1) the database passes ~40% of the free quota, or its measured growth puts it there inside two
   years; (2) something starts reading `signal_before_sale` and establishes what it needs from it. **When revisited,
   all three are reasoned about together** (the phone record, `signal_before_sale`, the buy snapshot): one field,
@@ -645,6 +645,36 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   27-31, max 86 shown per scan since (c), ~14 KB each). Its bars are load-bearing: the buy snapshot copies the cached
   signal whole into `signal_snapshot_at_buy`, so stripping them would silently break re-scoring of any buy made
   after a reload. Left as is; a revisit covers all four.
+  **REVISITED 2026-11-26 (owed: condition (1) met by measured growth; the reviewer, CC-option-A §4). DECISION: NO CUT
+  NOW. RECHECK 2027-01-11**, a fresh run of the same size query (RUN-ME, Roman). At the recheck: if the measured rate
+  still puts this database at 40% of the quota before 2027-03-01, bring option C below against B; otherwise recheck
+  again in six weeks.
+  - **Where the growth is (from the two reads, 11-14 19:05Z and 11-26 18:22Z, ~12 days; the 11-26 figures as the
+    reviewer transcribed them):** `signal_log` +8.8 MB (+969 rows; ~0.73 MB/day, 46%); `rating_snapshots` +6.1 MB
+    (+20,875 rows; ~0.5 MB/day, 32%); `trades_v2` +2.1 MB on +101 rows (its per-row size went 3,371 -> 5,289 B, which
+    101 new rows alone do not explain: updated rows or dead tuples, not separated); `signal_snapshot_at_buy` +1.1 MB.
+    **So `rating_snapshots` is small per row but is a third of the growth;** "a red herring" holds for its row size,
+    not for its share. It is also what the forward test reads (measure A's universe, measure C), so it is not cut
+    during the test.
+  - **What `signal_log` holds (backup data/backups/signal_log/2026-11.json at 8f3e891, rows through 11-25):** ~135
+    rows a trading day; 1,620 of 2,264 carry `signal_snapshot.bars`, median 125 daily bars each; the bars are 79.7% of
+    the rows' JSON bytes, and each (symbol, bar) is stored **14.2 times** (every day re-stores the same window).
+    **Nothing in the app reads `signal_log`, and no forward-test measure does;** the readers of its bars are one-off
+    audits and the step-2 derivation, which read the git backups. **Every row is already in git** (monthly files).
+  - **The options, and what each loses:**
+    - **A. Nothing now (chosen), dated recheck.** Loses nothing. The quota itself is ~August 2027 at this rate.
+    - **B. The logger stops writing `bars` into new rows** (`bars_as_of` stays). Saves ~80% of `signal_log`'s growth,
+      ~0.6 MB/day. Loses, for new rows only, the as-of window the logger scored on: 14x duplicated, so the unique
+      content is about one new bar per symbol per day, re-fetchable from Alpaca except where Alpaca later revises a
+      bar. Audits of what the logger saw (unparseable bar dates, step-2 thresholds) could not run on new rows.
+    - **C. Bars stored once per (symbol, bar), referenced from the snapshot.** Loses nothing; divides the bars' bytes
+      by ~14. Costs a migration (Roman runs it), a logger change, and every bars reader rewritten.
+    - **D. Delete (or strip bars from) old `signal_log` rows already in git and with outcomes filled.** Loses nothing
+      the repo does not hold; DB-history reads move to the backups. A production write Roman runs; Postgres reuses the
+      space for new rows but does not shrink the reported size without VACUUM FULL.
+  - **Why A:** no measure reads what is growing, the repo holds all of it, and the binding date (40%, ~Feb 9-19 2027 by
+    basis: the cluster or this database) is ten weeks out. Touching the logger now changes a record during the
+    test's first weeks for no measured need. C is the structural answer if a cut is ever needed.
 - **CLOSED 2026-11-18 (the reviewer): P3, the same-tier eviction policy, is not built.** It was deferred on the chance
   that bounding the cache would remove the question, and it did: every large key on the phone now has a bound
   (`ownedScores` by the prune, `signals` by the scan, `universeAssetCache` by its 24-hour replace). Measured on
