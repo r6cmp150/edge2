@@ -31,8 +31,11 @@ was counted, the count is given beside it.
 **What the list does not cover:** it lists the fields this audit actually read, so "not established" is a minority of
 the rows. Every column NOT listed here is **not established**. That includes trades_v2's exit-model and outcome-window
 columns (`unified_*_at_sale`, `*_factors_at_sale`, `best_exit_*`, `price_at_plus*`, `peak_*`, `target_drift_pct`,
-`distance_from_target`, `minutes_late` and the rest). Counted: 43 rows, 18 can be fabricated, 19 provenanced, 6 not
-established, plus every unlisted column.
+`distance_from_target`, `minutes_late` and the rest). Counted (2026-11-26): 45 rows, 19 can be fabricated, 25
+provenanced, 1 not established, plus every unlisted column. On 11-26 the 6 not established were read: 5 became
+provenanced, 1 became can-be-fabricated (taken_resolution), and buy_time split into a paper row (provenanced) and a
+live-or-unknown row (not established, and no record can establish it). (Was 43 / 18 / 19 / 6; the appListAtBuy row
+of 11-25 had made it 44 / 18 / 20 / 6 without this line being updated.)
 
 ## trades_v2 (the outcome record)
 
@@ -44,13 +47,14 @@ established, plus every unlisted column.
 | `shares` | provenanced | — | Typed. The field has a placeholder and no value (app.js `pf-shares`), and is never re-sized. |
 | `buy_date` | can be fabricated | the add | A date field that defaults to today. A late recording with the default left stores the recording day (the retraction, 7f32ffa). |
 | `sell_date` | can be fabricated | the save | The same: it defaults to today. |
-| `buy_time` | not established | the add | As the BUY's time. It is the add's clock (`getPT()` at the add, app.js:4957), so it is honest only as "recorded at". The decision is not recorded anywhere. |
+| `buy_time` on a PAPER trade | provenanced | the add | ESTABLISHED 2026-11-26. It is the add's clock: 616 of 616 rows with an add stamp have buy_time equal to `position_id`'s minute. On a paper trade (execution_mode paper: the setting since 2026-11-12, 155 pre-start rows) there is no broker fill, so the recording IS the trade and this is the trade's minute. The forward test reads it. |
+| `buy_time` on a live trade or one of unknown mode | not established | the add | The recording minute, not a fill: no broker fill time is recorded. Bounds, not an establishment: none of 616 was recorded outside 06:30-13:00 PT or on a weekend, and the scan-to-recording lag is 0.4 min median (155 of 156 within 5 minutes, b86069c). 753 pre-start rows are of unknown mode (750 not_known, 3 not_known copied). No record can establish more. |
 | `sell_time` | provenanced | the save | As what it is named for since 5cf9863: "recorded at". It is not the sale's time; that is `sell_filled_at`. |
 | `sell_filled_at` with `sell_filled_at_source` | provenanced | typed, or the form opening | entered / default / not_known, each stored with its source (db/038). A default is no longer used to place anything against the fill (7d8cf22). |
 | `filled_at` (buy) | can be fabricated | typed, or the form opening | The mark-filled form pre-fills the fill time with NOW and the fill price with the order's price (app.js `mf-time` / `mf-price`, found by tests/prefill-guard.test.js 2026-11-22), and no source column records whether either was typed. (Was: not established.) |
 | `signal_score` | can be fabricated | — | Paths (a), (b) and (c) of the 2026-11-20 count are FIXED in scoring version 3 (a missing previous close, volume or 10-day average is null with a reason and earns no points). Still open: (d) the default multipliers (target/stop only) and (e) `MACRO_ADJUSTMENTS[c]?.[k] ?? 0`. On the 586 (version 1/2): 0 established (7dd8248). |
 | `volume_ratio_at_buy` | provenanced | — | Since scoring version 3 (2026-11-23): measured, or null with the reason (`volRatioNotMeasured`, in the signal snapshot); never the substituted 1. Rows from versions 1 and 2 could carry the 1: 0 of 586 did (7dd8248). The stock modal's no-card fallback (app.js:3730) still builds a display-only `: 1`; it is never stored. |
-| `rsi_at_buy` | not established | — | A NaN RSI scores 0 by design, and the null path was fixed 11-14 ("0 of 817 sales held a 0 or null"). Not re-checked in this audit. |
+| `rsi_at_buy` | provenanced | — | ESTABLISHED 2026-11-26 (pre-start rows): 908 of 908 lie strictly between 0 and 100; none null or 0. The one exact 50 (LUNL, 11-10) earned 15 RSI points, a scored value, not a default. |
 | `risk_score` | can be fabricated | — | `calcRiskScore(..., hasRecentNegNews)`. With news not retrieved, the +2 is missing. The screen says so ("News not retrieved (risk may be understated)"); the stored number does not. |
 | `duration_classification` | can be fabricated | — | `sig?.duration \|\| '3-DAY'` for a buy with no signal (app.js `finalizeAddPortfolio`). classifyDuration itself returns only DAY / 3-DAY / WEEK (586 of 586). |
 | `macro_condition` | provenanced | — | null when the context had not loaded, never a guessed condition. |
@@ -58,15 +62,15 @@ established, plus every unlisted column.
 | the `*_pts` components (`price_momentum_pts` ... `rel_strength_pts`) | can be fabricated | — | Before 2026-10-22 three of them hold the stock modal's recompute, not the scored values (`MODAL_COMPONENTS_FIXED_FROM`; written off, counted). |
 | `entry_vs_signal_price_pct` | provenanced | — | Since 2026-11-23: computed ONLY when the price was typed (it differs from the pre-fill, `sig.price` to 2 dp), where it is the real gap to the signal; an unedited pre-fill stores null. Until then it compared the pre-fill with itself and emitted 0 for every unedited add, a value nobody measured (the self-referential sweep's #1). Rows before 2026-11-23 carry that 0. |
 | `spread_at_buy` | provenanced | — | A real `ap - bp` from the add's snapshot quote, or null. Never a default. |
-| `buy_session` | not established | the add | It is classified from the add's clock, so it is the session of the recording. The 24 Sunday 09-27 buys are CLOSED (af9d788). |
+| `buy_session` | provenanced | the add | ESTABLISHED 2026-11-26: recomputed from buy_date and buy_time, it agrees on 908 of 908 pre-start rows. So it is the session of the RECORDING, and inherits buy_time's meaning: the trade's session on a paper trade. The 33 AFTER_HOURS rows are August-September, before the add stamp. The 24 Sunday 09-27 buys are CLOSED (af9d788). |
 | `position_id` | provenanced | the add | Date.now() at the add (app.js `finalizeAddPortfolio`), a real stamp. It is the SAME clock as `buy_time`, so the two agreeing is never evidence about timing (5104c49). |
 | `created_at` | provenanced | the save | The database insert stamp at the save. It is the SAME clock as `sell_time` (5104c49). |
 | `signal_before_sale` | provenanced | — | A state with a reason, never a guess. Only a typed fill places it (7d8cf22). |
 | `verdict_display_state`, `verdict_displayed_at_sale` | provenanced | — | Three states. It refuses the default fill time, with the reason in the code (core/orders.js `saleDisplayFields`). |
 | `peak_rsi_during_hold` with its provenance | provenanced | the render | sampled_since / not_sampled / not_established / corrected (db/044). |
 | `sell_price_unverified` | provenanced | — | A flag on the 22 rows the `buyPrice` fallback produced (db/026). |
-| `code_version` | not established | — | Set from db/028 on. Earlier rows: not checked. |
-| `threshold_at_buy` | not established | — | Not checked. |
+| `code_version` | provenanced | — | ESTABLISHED 2026-11-26: 616 rows carry {app, scoring, scoring_hash}. All 16 distinct app stamps occur in index.html's history; every scoring_hash is the known v2 hash and agrees with its scoring field (616 of 616). The 292 rows without one were all bought before 10-27: absent, not invented. |
+| `threshold_at_buy` | provenanced | — | ESTABLISHED 2026-11-26: every value is a line of its scoring version. 29 and 73 are v1's watch and soft lines (09-02 to 10-06); 20 and 65 are v2's (10-27 to 11-17; the soft line is ELEVATED_SCORE_THRESHOLD). No score is below its threshold (0 of 871). The 37 empty rows (08-17 to 09-03) predate the field. |
 | `signal_snapshot` / `signal_snapshot_at_buy.snapshot` | provenanced | the scan | A JSON copy of the signal at the click, with `scannedAt` (156 of 244) and the bar's age (156 of 244) where recorded. `appShowedAtBuy` only from 11-10 (4e71a4a). |
 | `signal_snapshot_at_buy.snapshot.appListAtBuy` | provenanced | the render | RECORDED AND UNUSED (capture-not-consume, from 2026-11-25). The cards the signals tab last rendered (ticker and score only) and its `renderedAt`, or NOT_RECORDED with why. Only on buys that have a snapshot. If the stock screen was opened from another tab, this list may be older than the tap: `renderedAt` says how old. No measure reads it: the forward test's C keeps the watch line. |
 | `source` ('App Signal') | can be fabricated | — | It is the sale form's pre-selected label, not derived. The derived answer would be `signal_log.taken_resolution`, which cannot see most trades (below). |
@@ -91,7 +95,7 @@ established, plus every unlisted column.
 | `reference_price` | can be fabricated | — | `getLivePrice(snapshot)` in the logger: the latest trade since 2026-11-23, and a row with NO price is no longer written with a fabricated $0 (it is skipped and named in the run's log). A last trade can still be days old, and the row does not carry its date. |
 | `ret_5m` ... `ret_5d` | provenanced | — | null when no bar or price exists, "never a defaulted 0" (db/016). |
 | `tier` | provenanced | — | SHOWN / BELOW_THRESHOLD / NOT_EVALUATED, a column rather than a filter (db/001). |
-| `taken_resolution`, `matched_trade_id` | not established | — | Not checked in this audit. It cannot match the trades the log never saw. |
+| `taken_resolution`, `matched_trade_id` | can be fabricated | — | ESTABLISHED 2026-11-26. "Taken" means ANY buy of the same ticker within 9 calendar days of the signal (scripts/fill-outcomes.mjs TAKEN_WINDOW_CALENDAR_DAYS). Of the 92 matches, 10 were bought on the signal's own date; 82 were bought 1 to 8 days later, possibly on a different signal or none. No trade links to its signal (trades_v2.signal_log_id empty on 918 of 918). The state name says "by-fallback"; the column it feeds reads as "taken". It cannot match the trades the log never saw. |
 
 ## The app, not a column: what reaches Roman's screen
 
