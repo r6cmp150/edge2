@@ -27,9 +27,9 @@ buys or when he sells), or only the screen.
 |---|---|---|---|---|---|---|
 | 1 | `buy_date` (trades_v2) | yes (add form default) | **FT: yes.** It sets qualifying days and the entry minute of A, B and C. | **Not detectable from the record.** 616 of 616 equal the add's day. On paper the recording is the trade, so it cannot be wrong while the mode stays paper. | A late recording moves the window later. Either sign on returns. | c |
 | 2 | `sell_date` (trades_v2) | yes (sale form default) | **FT: yes.** Measure A's exit minute. | **Not detectable.** No sale time was ever typed (`sell_filled_at_source` entered 0, default 125, empty 783). On paper the recording is the sale. | Either sign. | c |
-| 3 | `peak_price` (portfolio) | yes (refreshPortfolio) | **Decision:** the exit advice and the trailing stop, so when he sells (A's window). | **Not countable.** 10 of 46 equal the buy price, which a position that never rose also does. | Understates the peak, so a trailing stop fires later or never. One way. | c |
+| 3 | `peak_price` (portfolio) | yes (refreshPortfolio) | **FT: yes, THROUGH HIS SALE.** It feeds the trailing stop in calcUnifiedRecommendation (the pullback from `position.peakPrice`), the advice shapes when he sells, and his recorded sale closes measure A's window. | **Not countable.** 10 of 46 equal the buy price, which a position that never rose also does. | Understates the peak, so a trailing stop fires later or never. One way. | c |
 | 4 | `risk_score` (trades_v2) | yes (core/edge-scoring.js calcRiskScore) | Screen. The stored number feeds analytics; the screen says "may be understated". | **Not countable:** an empty `news_at_buy` (463) does not tell "no news" from "not retrieved". | **Understates risk** (the +2 is missing). One way. | c |
-| 5 | `target`, `stop` (portfolio) | yes (finalizeAddPortfolio) | **Decision:** exit warnings and alerts, so his sale. | **0 of 46** carry the 1.10× / 0.92× default. The default needs a buy with no signal, and none exists. | Either. | c |
+| 5 | `target`, `stop` (portfolio) | yes (finalizeAddPortfolio) | **FT: yes, THROUGH HIS SALE.** `price <= position.stop` returns "SELL NOW — Stop-loss hit", and checkPriceAlerts tells him to sell at the target. Both shape his sale, which closes A's window. | **0 of 46** carry the 1.10× / 0.92× default. The default needs a buy with no signal, and none exists. | Either. | c |
 | 6 | `duration_classification` (trades_v2), `duration` (portfolio) | yes (finalizeAddPortfolio) | Decision: hold advice. | **0 of 908.** No buy without a signal. | Either. | c |
 | 7 | `signal_score` | yes (core/edge-scoring.js) | Decision and screen (what shows), and C's shown set. | Paths a-c fixed in v3. Path (e), the macro lookup, **0 of 908**: overlay off. Path (d) touches only target and stop. | Either. | c |
 | 8 | `macro_adjustment_pts` | yes | Score, hence screen and decision. | **0 nonzero of 908** (overlay off). | Either. | c |
@@ -41,6 +41,21 @@ buys or when he sells), or only the screen.
 | 14 | `taken_resolution`, `matched_trade_id` | **no** (scripts/fill-outcomes.mjs) | Logger analyses (history). FT: no. | **82 of 92** matches are later-day buys. | Overstates "taken". | b |
 | 15 | `reference_price` (signal_log) | **no** (scripts/log-signals-edge.mjs) | Logger comparisons (history). FT: no. | **Not countable:** the row does not carry the trade's date. | A stale last trade, either sign. | b |
 | 16 | the `*_pts` components before 10-22 | **no** (historical rows only; the code is fixed) | History analytics; already written off and counted. | Every row before 10-22 for three components. | Either. | b (nothing to fix in code) |
+
+## CORRECTION (2026-11-26, the reviewer's §2): two bucket (c) fields DO reach a forward-test measurement
+
+The first version of this triage's summary said that nothing in bucket (c) reaches a forward-test measurement while
+the mode stays paper. **That was wrong, and rows 3 and 5 of this table said so.**
+- **Measure A's window ends at his recorded sale.** scripts/measure-selection-differential.mjs differentialRows reads
+  the tape from `buy_date`/`buy_time` to `sell_date`/`sell_time`, and scripts/measure-forward-test.mjs computes A with
+  that same function.
+- **So a field that shapes when he sells reaches A, through him:**
+  - `peak_price`: the trailing stop. It can only be understated, because a missing price leaves the peak un-raised.
+    How often is not countable.
+  - `target` and `stop`: the stop-loss SELL NOW and the target alerts. Their default has fired 0 of 46 times.
+- **B and C are measured from the entry,** with his exit playing no part, so neither field reaches them.
+- **One consideration, not a ruling:** under the freeze these defects are CONSTANT. A measures the system as it
+  stands, defect included, the same way on every day of the test. It does not measure a moving object.
 
 ## §5: does the forward test read an app price?
 
