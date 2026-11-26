@@ -77,6 +77,24 @@ export function readingB(intervals, means) {
 export function readingC(meanIv, ratioIv) {
   return { movement: ratioIv.lo > 1 ? 'SELECTS FOR MOVEMENT' : 'NOT SHOWN TO SELECT FOR MOVEMENT', ret: meanIv.lo > 0 ? 'ADDS RETURN' : meanIv.hi < 0 ? 'COSTS RETURN' : 'NO RETURN DIFFERENCE SHOWN' };
 }
+// THE PEAK-BIAS WATCH (the reviewer, 2026-11-27): the understated-peak defect can only act on measure A once a position
+// runs up to 1.20x its buy price (momentum protection switches on at peakPrice >= buyPrice * 1.20, app.js; until then
+// the trailing stop cannot run). It never did in 908 pre-start sales. So every run reports whether any forward-test
+// position's intraday high, after its entry, has reached RUN_UP x its tape entry. Highs: the buy day's minute bars
+// after the entry minute, then each later day's daily high through the sale day (the whole sale day, so a high after
+// the sale can raise a flag: it errs toward flagging, never toward missing one).
+export const RUN_UP = 1.2;
+export function runUp(entry, highs, mult = RUN_UP) {
+  const hs = highs.filter(h => typeof h === 'number' && h > 0);
+  const max = hs.length ? Math.max(...hs) : null;
+  return { reached: !!entry && max != null && max >= entry * mult, max, pct: entry && max != null ? (max / entry - 1) * 100 : null };
+}
+export function watchLines(flags) {
+  const hit = flags.filter(f => f.reached);
+  if (!hit.length) return [`PEAK-BIAS WATCH (intraday high >= ${RUN_UP.toFixed(2)}x entry): no forward-test position has reached it (${flags.length} checked). The understated-peak route to measure A has not been live.`];
+  return hit.map(f => `::warning::PEAK-BIAS WATCH: ${f.ticker} bought ${f.day} reached +${f.pct.toFixed(1)}% intraday (high ${f.max} vs entry ${f.entry}). The understated-peak route to measure A is now LIVE for this position: take it to the reviewer.`);
+}
+
 // is the look's fixed set complete? every position sold (A) and with its +5 close happened (B). A position whose data
 // is missing for good (UNPRICED) is named and does not hold the look up forever; one still OPEN or PENDING does.
 export function lookSetComplete(lookIds, status) {
@@ -125,6 +143,17 @@ async function main() {
       });
     }
   }
+  // THE PEAK-BIAS WATCH, on every position in the test, open or closed, pending or not
+  const flags = [];
+  for (const p of q.positions) {
+    const day = String(p.buy_date).slice(0, 10), ms = pacificMinuteUtc(day, p.buy_time), e = await sipRef(headers, p.ticker, ms);
+    if (!e) { flags.push({ ticker: p.ticker, day, reached: false, unpriced: true }); continue; }
+    const sold = closedAll.includes(p) ? String(p.sell_date).slice(0, 10) : null;
+    const dayEnd = Date.parse(`${day}T21:00:00Z`) + 3 * 3600000; // through the buy day's after-hours, in UTC
+    const mins = (await fetchBars(headers, [p.ticker], { timeframe: '1Min', start: new Date(ms).toISOString(), end: endCapped(dayEnd), feed: 'sip' }))[p.ticker] || [];
+    const later = Date.parse(day) + 864e5 <= Date.now() - 20 * 60000 ? (await fetchBars(headers, [p.ticker], { timeframe: '1Day', start: new Date(Date.parse(day) + 864e5).toISOString(), end: endCapped(sold ? Date.parse(sold) + 864e5 : Date.now()), feed: 'sip', adjustment: 'all' }))[p.ticker] || [] : [];
+    flags.push({ ticker: p.ticker, day, entry: e.price, ...runUp(e.price, [...mins.map(b => b.h), ...later.map(b => b.h)]) });
+  }
   // A, by the differential's own function
   const fullDays = new Set([...uni].filter(([, u]) => u.min === 0).map(([d]) => d));
   const closedIn = q.positions.filter(p => closedAll.includes(p));
@@ -163,6 +192,7 @@ async function main() {
     console.log(`  C +${n}: opened minus shown-not-opened ${fmt(mean(rs.map(r => r.diff)))} (${fmt(iv.lo)} to ${fmt(iv.hi)}); SD ratio ${ratio.toFixed(2)} (${riv.lo?.toFixed(2)} to ${riv.hi?.toFixed(2)})${evaluating ? ` -> ${Object.values(readingC(iv, riv)).join(', ')}` : ''}`);
   }
   if (evaluating && [1, 2, 5].every(n => ivB[n])) console.log(`B READING (declared): ${readingB(ivB, mB)}.`);
+  for (const l of watchLines(flags)) console.log(l);
   console.log(`\n${q.days.length} of ${QUALIFYING_DAYS} QUALIFYING DAYS. STATE: ${state}.`);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

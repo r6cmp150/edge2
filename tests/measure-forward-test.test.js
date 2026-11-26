@@ -110,6 +110,22 @@ await run('C is computed only while include_under2 is true; otherwise it says so
   assert.ok(readSource('scripts/measure-forward-test.mjs').includes('for (const n of cGuard.ok ? HORIZONS : [])'));
 });
 
+await run('THE PEAK-BIAS WATCH: a run-up to 1.20x the entry is flagged; just under is not; no price is not a pass', () => {
+  assert.strictEqual(M.RUN_UP, 1.2);
+  assert.deepStrictEqual(M.runUp(10, [10.5, 12, 11]).reached, true, 'exactly 1.20x reaches it');
+  assert.strictEqual(M.runUp(10, [11.99, 9]).reached, false);
+  assert.strictEqual(M.runUp(10, []).reached, false); assert.strictEqual(M.runUp(10, []).max, null);
+  assert.ok(Math.abs(M.runUp(10, [12.5]).pct - 25) < 1e-9);
+  assert.ok(/no forward-test position has reached it \(2 checked\)/.test(M.watchLines([{ reached: false }, { reached: false }])[0]));
+  const hit = M.watchLines([{ reached: false }, { ticker: 'ABC', day: '2026-12-01', reached: true, pct: 23.4, max: 12.34, entry: 10 }]);
+  assert.deepStrictEqual(hit.length, 1);
+  assert.ok(/^::warning::PEAK-BIAS WATCH: ABC bought 2026-12-01 reached \+23\.4% .*LIVE/.test(hit[0]));
+  const src = readSource('scripts/measure-forward-test.mjs');
+  assert.ok(src.includes('for (const l of watchLines(flags)) console.log(l);'), 'printed on every run, not only at EVALUATE');
+  assert.ok(src.includes('for (const p of q.positions) {\n    const day = String(p.buy_date).slice(0, 10), ms = pacificMinuteUtc(day, p.buy_time), e = await sipRef(headers, p.ticker, ms);'), 'every position, open or closed, pending or not');
+  assert.ok(readSource('app.js').includes('p.peakPrice >= p.buyPrice * 1.20'), 'the protection threshold the watch mirrors');
+});
+
 await run('FUTILE is final: it overrides EVALUATE and the backstop; CONTINUE changes nothing', () => {
   assert.strictEqual(M.testState(60, 100, 'FUTILE'), 'FUTILE');
   assert.strictEqual(M.testState(30, 200, 'FUTILE'), 'FUTILE');
