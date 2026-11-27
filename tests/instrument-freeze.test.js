@@ -72,7 +72,7 @@ await run('reclassified IN at the restart: the scan-history line, the choice scr
   for (const n of ['scanHistoryCardText', 'scanHistoryModalHtml', 'renderSignalsTab', 'renderStockCard', 'buildModalScoreBreakdown', 'renderAIResult',
     'addFormSessionAdviceHtml', 'renderPreMarketSection', 'computePreMarketMovers', 'calcPeakRiskScore', 'sigToggleKey', 'knownNumber']) assert.ok(frozen.has(n), `${n} is frozen`);
   assert.ok('core/scan-history.js' in manifest.files && !('core/scan-history.js' in spec.files.out));
-  assert.strictEqual(Object.keys(manifest.app_js).length, 218, '199 at the restart, +6 by the standing check amendment, +13 by the faithfulness amendment');
+  assert.strictEqual(Object.keys(manifest.app_js).length, 221, '199 at the restart, +6 by the standing check amendment, +13 by the faithfulness amendment, +3 by the second check\'s (2026-11-27)');
 });
 
 await run('THE FAITHFULNESS AMENDMENT (2026-11-26): the Portfolio card computes and chooses, so it is frozen; a change to it is named', () => {

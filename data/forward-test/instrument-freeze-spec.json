@@ -221,7 +221,6 @@
      "_swRegistration",
      "checkBuildStatus",
      "checkLayout",
-     "clearSnapshotFailure",
      "confirmForceUpdate",
      "dismissSaleNotice",
      "forceUpdateApp",
@@ -230,8 +229,6 @@
      "loadNotKnownCount",
      "loadWorkflowHealth",
      "noteLayoutEvent",
-     "noteSaleWrite",
-     "noteSnapshotFailure",
      "noteSnapshotWrite",
      "persistFailureDetail",
      "readNotKnownCount",
@@ -535,6 +532,12 @@
    "ruling": "CC-the-date-was-mine-and-three-rulings (§3, the faithfulness test: a renderer is outside the freeze only if it is faithful to its input)",
    "change": "thirteen app.js declarations out -> frozen. renderPortfolioTab is not a renderer of the frozen exit advice but its caller: it computes the advice's inputs (RSI from the daily bars, the live price, the live target), writes position fields the frozen advice reads and saves them (peakPrice, momentumProtectionActivated, rsiSuspendedAtGainPct, peakRsi, prevRSI), and hands the sale dialog its price. buildUnifiedPortfolioBanner chooses (LOCK IN PROFITS hides the composite factors and adds its own \"consider selling now\"); buildFridayFlag and buildWeekendBanner author sell advice from price, stop and P&L; displayQuoteAge decides whether a price is shown and whether the sale dialog is given one; PORTFOLIO_SORTS, PORTFOLIO_SORT_DEFAULT, PORTFOLIO_SORT_STORAGE_KEY, comparePortfolioCards, currentPortfolioSort, isPortfolioSort and comparePositionIds order the cards (default: closest to the time limit first); updateNavBadges (beyond the ruling's redraw list: it was a status entry) chooses which verdicts light the Portfolio badge. Hashes taken from the baseline tree b86d5c3 itself; the baseline and the start line are unchanged",
    "content_changed": "none: app.js is byte-identical to b86d5c3 (compared in full by this script), and each hash was checked equal in both"
+  },
+  {
+   "date": "2026-11-27",
+   "ruling": "CC-the-inputs-were-free-and-the-check-only-covers-one-direction (§1, the second standing check: OUT names that write state a frozen reader consumes)",
+   "change": "three app.js declarations out -> frozen, the second check's first catch. noteSaleWrite keeps a failed or pending sale's own arguments in state.saleWriteFailures, and the frozen retrySaleWrite re-sends exactly those as the sale record (measure A's sell price and time); noteSnapshotFailure keeps the buy snapshot's row in state.snapshotWriteFailures, and the frozen retrySnapshotWrite writes that row to signal_snapshot_at_buy (where the build rule reads buildVersion); clearSnapshotFailure removes a row from that queue. They were classed as health bookkeeping. Hashes taken from the baseline tree b86d5c3 itself; the baseline and the start line are unchanged",
+   "content_changed": "none: app.js is byte-identical to b86d5c3 (compared in full by this script), and each hash was checked equal in both"
   }
  ],
  "restart": {
@@ -569,7 +572,6 @@
    "checkBuildStatus": "HEALTH: build, layout, write-failure and notification bookkeeping; nothing it does reaches a measured quantity or a choice screen",
    "clearDataReadProblem": "STATUS AND PROGRESS: a banner, badge, spinner or read-problem line; changes what a screen says about the app, not about a stock",
    "clearLegacyPortfolioSettingsStorage": "BOOT: loading and error screens and legacy-key cleanup before any scan",
-   "clearSnapshotFailure": "HEALTH: build, layout, write-failure and notification bookkeeping; nothing it does reaches a measured quantity or a choice screen",
    "closeModal": "DIALOG AND NAVIGATION PLUMBING: shows, closes or switches a screen; returns nothing the frozen caller uses",
    "computeTradeMetrics": "FAITHFUL (read 2026-11-26, the faithfulness test): realized P&L of recorded sales for the summary line, after the fact; says nothing about a held position",
    "durHoldLabel": "FAITHFUL (read 2026-11-26, the faithfulness test): the hold-window label read from HOLD_RANGE_LABEL (core/clock.js, frozen), verbatim",
@@ -580,8 +582,6 @@
    "loadAnalysisPeriodsFromSupabase": "ANALYSIS PERIODS: the Analytics tab's saved periods; state.analysisPeriods is read by no frozen declaration (verified 2026-11-26)",
    "macroConditionForRecord": "RECORDED AND UNUSED: the macro condition captured beside the displayed verdict, read by no measure",
    "noteDataReadProblem": "STATUS AND PROGRESS: a banner, badge, spinner or read-problem line; changes what a screen says about the app, not about a stock",
-   "noteSaleWrite": "HEALTH: build, layout, write-failure and notification bookkeeping; nothing it does reaches a measured quantity or a choice screen",
-   "noteSnapshotFailure": "HEALTH: build, layout, write-failure and notification bookkeeping; nothing it does reaches a measured quantity or a choice screen",
    "noteSnapshotWrite": "HEALTH: build, layout, write-failure and notification bookkeeping; nothing it does reaches a measured quantity or a choice screen",
    "openPositionSnapshotModal": "DIALOG AND NAVIGATION PLUMBING: opens openStockModal (frozen) for an EDGE holding, or the engine's own snapshot view; computes nothing",
    "portfolioRefreshLine": "STATUS AND PROGRESS: says the database refresh failed and when this device last read it; changes what a screen says about the app, not about a stock",
@@ -614,6 +614,263 @@
    "updateBudgetBar": "THE BUDGET BAR (exempt by the rule): sizing, and shares enter no per-share return",
    "updateMarketBanner": "STATUS AND PROGRESS: a banner, badge, spinner or read-problem line; changes what a screen says about the app, not about a stock",
    "updateScanProgress": "STATUS AND PROGRESS: a banner, badge, spinner or read-problem line; changes what a screen says about the app, not about a stock"
+  }
+ },
+ "out_writes_read_by_frozen": {
+  "note": "THE SECOND STANDING CHECK (the reviewer, 2026-11-27): every key an OUT declaration writes that frozen code reads, with its writers and why it may stay out (tests/frozen-inputs-out.test.js, scripts/lib/frozen-inputs.mjs). A new writer or key fails until it is frozen or listed; a listed one no longer found fails too.",
+  "names": {
+   ".classList": {
+    "writers": [
+     "_showNextDialog",
+     "updateBudgetBar"
+    ],
+    "why": "NAME COLLISION, A PAGE ELEMENT: the write is to a DOM element of its own (a toast, a dialog, a band, a button); frozen code reads a same-named property of other objects (its own element's classes; frozen classList reads are of the pre-market rows, breakdowns and chart buttons)"
+   },
+   ".disabled": {
+    "writers": [
+     "analyticsConfirmStartPeriod",
+     "exportAllData",
+     "generateClaudeReport"
+    ],
+    "why": "NAME COLLISION, A PAGE ELEMENT: the write is to a DOM element of its own (a toast, a dialog, a band, a button); frozen code reads a same-named property of other objects (a button disabled while its own export or report runs; frozen code mentions disabled only on the Warrior engine's own Run and replay buttons)"
+   },
+   ".failed": {
+    "writers": [
+     "noteSnapshotWrite"
+    ],
+    "why": "NAME COLLISION, A COUNTER: the same log's failure count; frozen .failed reads are of the macro read, the asset status and the execution-mode re-read"
+   },
+   ".id": {
+    "writers": [
+     "_showNextDialog",
+     "renderLiveBand",
+     "showGlobalErrorToast"
+    ],
+    "why": "NAME COLLISION, A PAGE ELEMENT: the write is to a DOM element of its own (a toast, a dialog, a band, a button); frozen code reads a same-named property of other objects (frozen .id reads are of positions, rows and orders)"
+   },
+   ".saved": {
+    "writers": [
+     "noteSnapshotWrite"
+    ],
+    "why": "NAME COLLISION, A COUNTER: noteSnapshotWrite counts snapshot writes in its own localStorage log for the Settings readout; frozen code passes the outcome word 'saved' to it and reads no count"
+   },
+   ".type": {
+    "writers": [
+     "togglePw"
+    ],
+    "why": "NAME COLLISION, A PAGE ELEMENT: the write is to a DOM element of its own (a toast, a dialog, a band, a button); frozen code reads a same-named property of other objects (the API-key box shown or hidden; frozen .type reads are of date parts and the intraday recency note)"
+   },
+   "state.activeTab": {
+    "writers": [
+     "switchTab"
+    ],
+    "why": "NAVIGATION, HIS: which tab he opened. Frozen handleRefresh reads it to decide what a refresh does (a scan of his selected list on Signals, a redraw elsewhere); the tab is his choice, and what each does is frozen"
+   },
+   "state.notifications": {
+    "writers": [
+     "requestNotificationPermission",
+     "toggleNotifications"
+    ],
+    "why": "HIS CONTROL: notifications on or off, his choice in Settings; which alerts fire and when (checkPriceAlerts, checkTimeLimitAlerts, sendNotification) is frozen"
+   },
+   "state.portfolioSort": {
+    "writers": [
+     "setPortfolioSort"
+    ],
+    "why": "HIS CONTROL: the sort he picks from the frozen PORTFOLIO_SORTS; the sorts, their order and the default are frozen"
+   },
+   "state.saleWriteFailures": {
+    "writers": [
+     "dismissSaleNotice"
+    ],
+    "why": "GUARDED: dismissSaleNotice deletes an entry only when its code is SALE_DUPLICATE (the sale is already recorded), its first line; reached only from the banner's button, so it cannot be frozen through a root"
+   },
+   "state.settings.alpacaKey": {
+    "writers": [
+     "saveApiKeys",
+     "testConnections",
+     "testFundKeywordCandidates",
+     "testInstrumentFilter",
+     "testPremarketGap",
+     "testPrevDailyBarCoverage",
+     "testUniverseEndpoints"
+    ],
+    "why": "CREDENTIALS, HIS: the API keys he types in Settings (the test buttons save the box first). They choose the account, not the data: every request's feed, window and rule is set in frozen code"
+   },
+   "state.settings.alpacaSecret": {
+    "writers": [
+     "saveApiKeys",
+     "testConnections",
+     "testFundKeywordCandidates",
+     "testInstrumentFilter",
+     "testPremarketGap",
+     "testPrevDailyBarCoverage",
+     "testUniverseEndpoints"
+    ],
+    "why": "CREDENTIALS, HIS: the API keys he types in Settings (the test buttons save the box first). They choose the account, not the data: every request's feed, window and rule is set in frozen code"
+   },
+   "state.settings.groqKey": {
+    "writers": [
+     "saveApiKeys",
+     "testConnections"
+    ],
+    "why": "CREDENTIALS, HIS: the AI key he types in Settings; whether the AI read can run. Its model, prompt, temperature and display are frozen"
+   },
+   "state.sold": {
+    "writers": [
+     "resolveSellTimingForSoldTrades"
+    ],
+    "why": "AFTER THE SALE: persists state.sold after the sell-timing fill (price_at_plus*, best_exit*), fields no frozen code reads (this check finds none of them); the sale fields themselves are untouched"
+   },
+   "storage:PORTFOLIO_SORT_STORAGE_KEY": {
+    "writers": [
+     "setPortfolioSort"
+    ],
+    "why": "HIS CONTROL: the sort he picked, remembered on this phone; read back only through the frozen currentPortfolioSort"
+   },
+   "var:TICKERS": {
+    "writers": [
+     "clearAllData"
+    ],
+    "why": "HIS WIPE: clearAllData, his explicit Clear all data, resets the scanned list to MASTER_TICKERS (frozen), the value a fresh install starts with; reached only from its button, so it cannot be frozen through a root"
+   },
+   "var:_priceChart": {
+    "writers": [
+     "closeModal"
+    ],
+    "why": "DIALOG PLUMBING: closeModal destroys the stock screen's chart object; openStockModal makes a new one"
+   },
+   "var:_swRegistration": {
+    "writers": [
+     "registerServiceWorker"
+    ],
+    "why": "HEALTH: the service-worker registration, for the update check; reaches no measured quantity"
+   },
+   "var:state": {
+    "writers": [
+     "setEngineFilter"
+    ],
+    "why": "HIS CONTROL: setEngineFilter writes state[portfolioEngineFilter | soldEngineFilter], the engine filter he taps (default ALL)"
+   }
+  }
+ },
+ "out_calls_frozen": {
+  "note": "THE CALL CHANNEL (added beyond the ruling, 2026-11-27): every OUT declaration that calls a frozen function, with the callees and why it may stay out; values passed as arguments are inputs too. Same test, same two directions.",
+  "names": {
+   "buildPendingOrdersHtml": {
+    "calls": [
+     "openMarkFilledModal",
+     "cancelPendingOrder"
+    ],
+    "why": "BUTTONS: Mark filled and Cancel order call the frozen handlers with the order id only"
+   },
+   "clearAllData": {
+    "calls": [
+     "loadState",
+     "updateNavBadges"
+    ],
+    "why": "HIS WIPE: after his Clear all data, reloads state through the frozen loadState and redraws the badge; passes no value"
+   },
+   "loadNotKnownCount": {
+    "calls": [
+     "sessionRead"
+    ],
+    "why": "A READ: the frozen sessionRead fetches a count for the Settings readout; it writes nothing"
+   },
+   "openPositionSnapshotModal": {
+    "calls": [
+     "getOwnedPosition",
+     "openStockModal"
+    ],
+    "why": "DIALOG PLUMBING: opens the frozen stock screen with the ticker, or an engine's own snapshot"
+   },
+   "renderIntradayLineCard": {
+    "calls": [
+     "intradayFmtPct",
+     "intradayFmtTime"
+    ],
+    "why": "FORMATTERS: the frozen intradayFmtPct and intradayFmtTime applied to values of the frozen panel it was given"
+   },
+   "renderSettingsTab": {
+    "calls": [
+     "saveFloatThreshold",
+     "saveMaxLossPct",
+     "savePref",
+     "changeExecutionMode",
+     "toggleForcePreMarketMode"
+    ],
+    "why": "HIS SETTINGS: each control hands its own value to its frozen saver; the settings that reach the frozen path are frozen by value"
+   },
+   "retryDataLoad": {
+    "calls": [
+     "runDataLoadAndInit"
+    ],
+    "why": "BOOT: the Retry on the load-error screen reruns the frozen boot load; passes no value"
+   },
+   "saveBudget": {
+    "calls": [
+     "saveSetting",
+     "readSettingNumber"
+    ],
+    "why": "THE BUDGET (exempt by the rule): sizing, through the frozen saver; shares enter no per-share return"
+   },
+   "saveRiskPerTrade": {
+    "calls": [
+     "saveSetting",
+     "readSettingNumber"
+    ],
+    "why": "THE BUDGET (exempt by the rule): risk per trade sizes positions; shares enter no per-share return"
+   },
+   "scanHistoryChanged": {
+    "calls": [
+     "invalidateSessionRead",
+     "ensureScanHistory",
+     "refreshScanHistoryDom"
+    ],
+    "why": "CACHE PLUMBING: tells the frozen scan-history cache to re-read and redraw; passes no value"
+   },
+   "setEngineFilter": {
+    "calls": [
+     "renderPortfolioTab"
+    ],
+    "why": "REDRAW: after his filter choice, the frozen renderPortfolioTab, no arguments"
+   },
+   "setPortfolioSort": {
+    "calls": [
+     "renderPortfolioTab"
+    ],
+    "why": "REDRAW: after his sort choice, the frozen renderPortfolioTab, no arguments"
+   },
+   "startClock": {
+    "calls": [
+     "updateNavBadges"
+    ],
+    "why": "REDRAW: the clock tick redraws the frozen badge; passes no value"
+   },
+   "switchTab": {
+    "calls": [
+     "renderSignalsTab",
+     "refreshPortfolio",
+     "renderPortfolioTab"
+    ],
+    "why": "NAVIGATION: draws the tab he opened through the frozen renderers, no values of its own"
+   },
+   "toggleDeveloperTools": {
+    "calls": [
+     "saveSetting"
+    ],
+    "why": "HIS SETTING, READ BY NOTHING FROZEN: developerTools appears only in the store's defaults, the labels and its own checkbox"
+   },
+   "updateMarketBanner": {
+    "calls": [
+     "retryRatingWrites",
+     "retrySnapshotWrite",
+     "retrySaleWrite",
+     "removePositionAgain",
+     "saveSettingsNow"
+    ],
+    "why": "BUTTONS: the banner's Retry and Remove buttons call the frozen retries with the position id only; what is re-sent is the frozen queue's record"
+   }
   }
  }
 }

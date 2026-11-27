@@ -202,8 +202,18 @@ beat the stocks EDGE scanned that day and he did not buy.
   - **Premise checked 2026-11-26 at backup ca79153:** all 168 positions bought since 2026-11-12 have a snapshot with
     `buildVersion`, and on all 168 it equals the row's own `code_version.app`. The first attempt's 13 are on
     20261123180000.
-  - **NOT ESTABLISHED positions are held out of every computed figure and named on every run**; whether one belongs
-    is the reviewer's (my reading of "never assumed either way": neither counted in nor dropped silently).
+  - **NOT ESTABLISHED positions are held out of every computed figure and named on every run** (ruled correct by the
+    reviewer, 2026-11-27: "a position that cannot be assigned to an instrument cannot be counted in a test of that
+    instrument").
+  - **THE CAPTURE TRIPWIRE, DECLARED 2026-11-27** (the reviewer, §2), on the first possible qualifying day, before any
+    position after the start line was read. If NOT ESTABLISHED exceeds **10%** of the positions in the test, every
+    run prints `::error::CAPTURE FAILURE`. That is a defect to fix, not a footnote.
+    - **Denominator (my reading, named):** IN plus NOT ESTABLISHED, the positions the test would count if every build
+      were known. Old-build positions are outside by fact and are on neither side.
+    - **Exactly 10% does not trip it.** It changes no state and no figure.
+    - Expected at zero: 168 of 168 carried `buildVersion` on 11-26.
+    - `NOT_ESTABLISHED_MAX` and `captureFailure` in forward-declaration.mjs; tests/measure-forward-test.test.js;
+      mutants 3 of 3.
   - **Every run prints the counts** (in / earlier build, named / NOT ESTABLISHED, named); the first reading reports
     them.
 - **Three comments in frozen files still say "2026-11-27"** (the date I copied from the notes): core/scan-history.js
@@ -270,6 +280,51 @@ beat the stocks EDGE scanned that day and he did not buy.
       The baseline and the start line are unchanged. Tests: tests/instrument-freeze.test.js (the amendment, and a
       mutant of the card's own RSI-72 rule that the detector names as `app.js renderPortfolioTab`) and
       tests/frozen-references-out.test.js; mutants 6 of 6.
+- **THE SECOND STANDING CHECK, 2026-11-27 (the reviewer, CC-the-inputs-were-free-and-the-check-only-covers-one-
+  direction §1; tests/frozen-inputs-out.test.js, scripts/lib/frozen-inputs.mjs; mutants 10 of 10).** The first check
+  asks whether frozen code CALLS an OUT name. `renderPortfolioTab` was invisible to it: it called frozen code and WROTE
+  what frozen code reads. "A frozen function fed by free inputs is not frozen." This check covers the other direction:
+  - **THE WRITE CHANNEL:** every key an OUT declaration writes (an assignment or update, a delete, `Object.assign`, a
+    mutating call, `persist`, `setItem`) that frozen code reads (frozen declarations and frozen files). It is listed
+    in the spec, `out_writes_read_by_frozen`, with its writers and a reason. **19 keys, 38 (writer, key) pairs.**
+  - **THE CALL CHANNEL, beyond the ruling, named:** every OUT declaration that calls a frozen function, since a value
+    passed as an argument is an input too. That is how `renderPortfolioTab` handed `calcUnifiedRecommendation` its
+    RSI. Listed in `out_calls_frozen` with its callees and a reason. **16 callers, 34 pairs.**
+  - **Both directions, both channels:** a new writer, key or caller fails until it is frozen or listed; a listed one
+    no longer found fails too. It fires on the case that found it: `renderPortfolioTab` put back OUT is named for
+    `.peakPrice`, `.momentumProtectionActivated`, `.rsiSuspendedAtGainPct`, `.peakRsi`, `.prevRSI`,
+    `state.ownedPrevRSI` and `state.portfolioPrices`, and for its calls to `calcUnifiedRecommendation`,
+    `openMarkSoldModal` and `backgroundSavePosition`.
+  - **ITS FIRST RUN FOUND THREE, frozen by AMENDMENT 2026-11-27 (221 declarations).** So the thirteen were not all of
+    them. Each was classed as health bookkeeping, and each writes a retry queue that frozen code re-sends as a record:
+    - `noteSaleWrite` keeps a failed or pending sale's own arguments in `state.saleWriteFailures`, and the frozen
+      `retrySaleWrite` re-sends exactly those as the sale: measure A's sell price and time.
+    - `noteSnapshotFailure` keeps the buy snapshot's row, and the frozen `retrySnapshotWrite` writes it to
+      `signal_snapshot_at_buy`, where the build rule reads `buildVersion`.
+    - `clearSnapshotFailure` removes a row from that queue.
+
+    No restart: app.js was compared in full with b86d5c3 and is identical; hashes from that tree.
+  - **Listed, with reasons:**
+    - name collisions on page elements and counters (`.id`, `.disabled`, `.classList`, `.type`, `.saved`,
+      `.failed`, each checked against what frozen code actually reads under that name);
+    - his own controls (API keys, notifications on or off, the sort, the engine filter, the open tab: what each one
+      does is frozen);
+    - the sell-timing fill's `persist('sold')`: the fields it fills are read by no frozen code, and the check finds
+      none of them;
+    - plumbing and health.
+  - **Its limits, stated:**
+    - **Keys are property names, not objects.** `p.peakPrice` is keyed `.peakPrice`, so a write to a same-named
+      property of an unrelated object counts. This over-includes, the safe direction, and the six collisions above are
+      the cost.
+    - **A computed key is keyed coarsely.** `state[k] = v` is `var:state`, the engine filter's only writer.
+    - **Two writers cannot be frozen through a root:** `dismissSaleNotice` (it deletes only a `SALE_DUPLICATE` entry)
+      and `clearAllData` (it resets the scanned list to the frozen `MASTER_TICKERS`). They are reached only from
+      `onclick` strings in OUT markup, so the closure never meets them. They are listed, and freezing them would mean
+      adding roots.
+    - **The read side counts any mention.** A frozen read inside a string (`'disabled'` in Warrior's markup) counts.
+  - **Where the input side now stands: PINNED for app.js** (writes and calls, both directions), where before it was
+    checked by hand once. Frozen FILES are frozen whole. An OUT app.js declaration that reaches them goes through a
+    global, a write (this check) or a call (this check).
 - **Not moved, and why:** `renderWarriorTab` stays OUT. Its own text is the tab header and an engine-not-loaded
   message; the Warrior cards come from `engine.renderTab()` in the Warrior engine files, frozen whole since 11-25.
 

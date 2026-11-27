@@ -33,10 +33,24 @@ export function byBuild(positions, snaps) {
   return out;
 }
 const nameOf = p => `${p.ticker} ${String(p.buy_date).slice(0, 10)} ${p.buy_time ?? ''} (position ${p.position_id ?? 'none'})`.replace('  ', ' ');
+// THE CAPTURE TRIPWIRE (the reviewer, CC-the-inputs-were-free-and-the-check-only-covers-one-direction §2, declared
+// 2026-11-27, the first possible qualifying day, before any position after the start line was read): if NOT
+// ESTABLISHED exceeds 10% of the positions in the test, it is reported as a CAPTURE FAILURE to be fixed, not absorbed as
+// a footnote. The denominator is the positions the test would count if every build were known: IN plus NOT ESTABLISHED
+// (old-build positions are outside by fact and in neither). Expected to sit at zero (168 of 168 carried buildVersion,
+// 2026-11-26); it stops a slow drift from quietly shrinking the sample. It changes no state and no figure.
+export const NOT_ESTABLISHED_MAX = 0.10;
+export function captureFailure(split) {
+  const n = split.in.length + split.notEstablished.length;
+  return n > 0 && split.notEstablished.length / n > NOT_ESTABLISHED_MAX;
+}
 // the line every run prints, so the exclusion is visible rather than silent (reported at the first reading)
 export function buildLine(split) {
   const names = xs => (xs.length ? `: ${xs.map(nameOf).join('; ')}` : '');
-  return `THE BUILD RULE (build ${START_BUILD}, b86d5c3, or later): ${split.in.length} in; ${split.oldBuild.length} opened after the start line on an earlier build, OUTSIDE by that fact${names(split.oldBuild)}; ${split.notEstablished.length} NOT ESTABLISHED (no buildVersion in the buy snapshot), held out and named${names(split.notEstablished)}.`;
+  const line = `THE BUILD RULE (build ${START_BUILD}, b86d5c3, or later): ${split.in.length} in; ${split.oldBuild.length} opened after the start line on an earlier build, OUTSIDE by that fact${names(split.oldBuild)}; ${split.notEstablished.length} NOT ESTABLISHED (no buildVersion in the buy snapshot), held out and named${names(split.notEstablished)}.`;
+  if (!captureFailure(split)) return line;
+  const n = split.in.length + split.notEstablished.length;
+  return `${line}\n::error::CAPTURE FAILURE: ${split.notEstablished.length} of ${n} positions (${(100 * split.notEstablished.length / n).toFixed(1)}%) have no buildVersion, above the declared ${100 * NOT_ESTABLISHED_MAX}%. The buy snapshot is not being captured: a defect to fix, not a footnote. Take it to the reviewer.`;
 }
 
 const dayOf = p => String(p.buy_date).slice(0, 10);

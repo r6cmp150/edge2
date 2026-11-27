@@ -173,4 +173,18 @@ await run('THE BUILD RULE (2026-11-26): b86d5c3\'s build or later is in; an earl
   assert.ok(t.indexOf('const split = byBuild(') < t.indexOf('const q = qualifying(['), 'the rule is applied before qualifying days are counted');
   assert.ok(d.indexOf('const split = byBuild(') < d.indexOf('const q = qualifying(['), 'in measure A too');
 });
+
+await run('THE CAPTURE TRIPWIRE (2026-11-27): NOT ESTABLISHED above 10% of in + NOT ESTABLISHED is reported as a capture failure', async () => {
+  const F = await import(pathToFileURL(path.join(REPO_ROOT, 'scripts/lib/forward-declaration.mjs')).href);
+  const p = n => Array.from({ length: n }, (_, i) => ({ ticker: `T${i}`, buy_date: '2026-11-27', position_id: i }));
+  assert.strictEqual(F.NOT_ESTABLISHED_MAX, 0.10);
+  assert.strictEqual(F.captureFailure({ in: p(9), oldBuild: [], notEstablished: p(1) }), false, 'exactly 10% does not exceed it');
+  assert.strictEqual(F.captureFailure({ in: p(8), oldBuild: [], notEstablished: p(1) }), true, '1 of 9 (11.1%) does');
+  assert.strictEqual(F.captureFailure({ in: p(8), oldBuild: p(50), notEstablished: p(1) }), true, 'old-build positions are in neither side of the ratio (1 of 9, not 1 of 59)');
+  assert.strictEqual(F.captureFailure({ in: [], oldBuild: [], notEstablished: [] }), false, 'no positions, no failure');
+  assert.strictEqual(F.captureFailure({ in: [], oldBuild: [], notEstablished: p(1) }), true);
+  const line = F.buildLine({ in: p(8), oldBuild: [], notEstablished: p(1) });
+  assert.ok(line.includes('\n::error::CAPTURE FAILURE: 1 of 9 positions (11.1%) have no buildVersion, above the declared 10%.'), line);
+  assert.ok(!F.buildLine({ in: p(9), oldBuild: [], notEstablished: p(1) }).includes('CAPTURE FAILURE'));
+});
 })();
