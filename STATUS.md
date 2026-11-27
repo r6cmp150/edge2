@@ -509,6 +509,29 @@ differential begins with the first position opened after Roman deleted every ope
     - **peak_price:** only ever understated, because a missing price leaves the peak un-raised. Two routes to his
       exits: the trailing stop fires later, or protection never switches on.
     - **risk_score:** understates risk when news was not retrieved; the +2 is missing.
+    - **`signal_log`'s outcome fills are never HOT, and the cause is one index** (the reviewer, CC-the-growth-is-
+      largely-slack-reproject-from-live-bytes §3; read 2026-11-27). RUN-ME-23, as transcribed: 19,729 updates on
+      4,202 rows, 6 HOT.
+      - **The cause, from the schema:** db/001's `signal_log_pending_outcomes_idx` is a partial index whose WHERE
+        clause names all seven `ret_*` columns. A column in an index predicate blocks HOT like an indexed column does,
+        so every fill is a full new tuple and a new entry in each of the table's indexes, by construction, whatever
+        the page space. db/016's `signal_log_unresolved_taken_idx` does the same for `taken_resolution`, and
+        `matched_trade_id` is indexed.
+      - **Proven in PGlite** (scratchpad pg-harness/hot-predicate.mjs). Two identical tables at fillfactor 90, three
+        `ret_*` fills each: with the predicate index 0 of 900 updates were HOT, without it 256 of 900. TOAST was
+        byte-identical before and after in both.
+      - **Correction to the note's reading:** a fill does NOT rewrite the TOASTed bars. fill-outcomes PATCHes only
+        the `ret_*` columns that are still null; an UPDATE that leaves a TOASTed value unchanged reuses its pointer
+        (the harness, twice). Each fill's dead weight is the heap row plus one entry per index.
+        - So "separate the outcome columns from the row that holds the bars" would not save TOAST churn: there
+          isn't any.
+        - Where `signal_log`'s 11.5 MB "total minus live" sits (heap, TOAST, indexes, dead TOAST) needs the raw
+          RUN-ME-23 cell.
+      - **The fix, after the test:** drop or replace that partial index (4,202 rows; fill-outcomes' pending query
+        does not need it), so fills can be HOT. HOT then also needs free space on the page, so a fillfactor below 100
+        goes with it.
+        - A migration Roman runs. fill-outcomes is not frozen and `signal_log` is read by no measure, but nothing is
+          urgent at ~33 MB of live data, so it waits.
     - **The scan-history line wraps between a price and its time** (the reviewer, CC-the-date-was-mine-and-three-
       rulings §5, 2026-11-26). At 390px on real rows (CYRX, 11-24 and 11-25), the Signals card reads "$20.00" at the
       end of line 1 and "9:42a" at the start of line 2; Portfolio splits "$19.59" from "12:09p". This predates the
@@ -748,7 +771,9 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   their bars, so `trades_v2.signal_before_sale` (which copies the record at a sale) is unchanged. Measured: one record
   ~13,200 characters, 92-93% bars; 132 of 132 PREDATES_SALE rows carry bars, 88% of their size; `signal_log`'s
   snapshots 87.3% bars, the buy snapshots 85.8%. Database 46.2 MB of 500 MB (9.2%, read 2026-11-14); **65.1 MB read
-  2026-11-26, ~1.6 MB a day, 40% around mid-to-late February 2027** (the measurements section). **That meets condition
+  2026-11-26, ~1.6 MB a day ALLOCATED** (the measurements section). **Its "40% around mid-to-late February 2027" is
+  WITHDRAWN 2026-11-27:** it was computed from allocated bytes, a trend mixed with a vacuum sawtooth (the re-projection
+  below). **That meets condition
   (1)'s second half below** (measured growth puts it at 40% inside two years); the reviewer ruled the revisit owed
   (CC-option-A §4); done 2026-11-26, below. **Revisit if
   either holds:** (1) the database passes ~40% of the free quota, or its measured growth puts it there inside two
@@ -760,13 +785,17 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
   signal whole into `signal_snapshot_at_buy`, so stripping them would silently break re-scoring of any buy made
   after a reload. Left as is; a revisit covers all four.
   **REVISITED 2026-11-26 (owed: condition (1) met by measured growth; the reviewer, CC-option-A §4). DECISION: NO CUT
-  NOW. RECHECK 2027-01-11**, a fresh run of the same size query (RUN-ME, Roman). At the recheck: if the measured rate
+  NOW. RECHECK 2027-01-11**, a fresh run of the same size query AND of RUN-ME-23's live-bytes query (RUN-MEs, Roman;
+  amended 2026-11-27: the second direct reading of live bytes). At the recheck: if the measured rate
   still puts this database at 40% of the quota before 2027-03-01, bring option C below against B; otherwise recheck
   again in six weeks.
   - **Where the growth is (from the two reads, 11-14 19:05Z and 11-26 18:22Z, ~12 days; the 11-26 figures as the
     reviewer transcribed them):** `signal_log` +8.8 MB (+969 rows; ~0.73 MB/day, 46%); `rating_snapshots` +6.1 MB
     (+20,875 rows; ~0.5 MB/day, 32%); `trades_v2` +2.1 MB on +101 rows (its per-row size went 3,371 -> 5,289 B, which
     101 new rows alone do not explain: updated rows or dead tuples, not separated); `signal_snapshot_at_buy` +1.1 MB.
+    **So `rating_snapshots` is small per row but is a third of the growth;** "a red herring" holds for its row size,
+    not for its share. It is also what the forward test reads (measure A's universe, measure C), so it is not cut
+    during the test. (Allocated bytes; for the live-data split, see the re-projection below.)
   - **`trades_v2`'s growth, the cause read 2026-11-26** (the reviewer, CC-the-date-was-mine-and-three-rulings §4).
     **From git:** the backups nearest before each size read are f145eb4 (11-14 12:37Z) and b786b78 (11-26 15:55Z);
     script: scratchpad tv2-growth.cjs; JSON bytes, not stored bytes.
@@ -794,9 +823,55 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
       the file, and the excess of (heap + TOAST − live) over the untouched baseline (17% in the harness) is that free
       space.
     - **< 0.25 MB with no vacuum:** the growth is live data, the new rows' size, and the quota date stands.
-    **So `rating_snapshots` is small per row but is a third of the growth;** "a red herring" holds for its row size,
-    not for its share. It is also what the forward test reads (measure A's universe, measure C), so it is not cut
-    during the test.
+  - **THE RESULT (RUN-ME-23, read by Roman 2026-11-27 16:59Z; figures as the reviewer transcribed them, raw output
+    not seen):** `trades_v2` 920 rows, **100 dead rows**, last autovacuum **2026-11-27 04:53Z**. Allocated 4,726,784 B,
+    against 4,866,048 B at the 11-26 read: it lost 139 KB while gaining no rows. **The declared reading's second
+    branch:** the dead space is now small, about heap × 100/1,020, and an autovacuum ran since 11-14. **The ~0.9 MB was
+    dead row versions from the rewrites (hypothesis confirmed), already vacuumed;** the space is free for reuse.
+    - **Not explained, named:** `updated` reads **51,025 on 920 rows**, about 55 per row. db/044-045 and the
+      sell-timing fills account for a few thousand at most. The counter runs from `stats_reset` (in the raw output,
+      not transcribed), so it may cover the table's life. Which writer is not established.
+  - **THE RE-PROJECTION, 2026-11-27 (the reviewer, CC-the-growth-is-largely-slack-reproject-from-live-bytes §2).**
+    Allocated bytes are what the quota counts. But slack (dead row versions and free space) accumulates between
+    vacuums and is reclaimed by them, so a slope through two allocated readings mixes the trend with a sawtooth.
+    **Two series, stated apart:**
+    - **ALLOCATED (what the quota counts):** this database 46.2 MB (11-14) -> 65.1 MB (11-26), ~1.6 MB a calendar
+      day; cluster 61.3 -> 80.3 MB. Two readings, both transcribed.
+    - **LIVE DATA (the trend): ~0.89 MB a calendar day** for the four large tables, 11-14 -> 11-26:
+      | table | MB a calendar day |
+      |---|---|
+      | `signal_log` | 0.39 |
+      | `rating_snapshots` | 0.36 |
+      | `signal_snapshot_at_buy` | 0.08 |
+      | `trades_v2` | 0.06 |
+
+      0.82 over 11-14 -> 11-27 and 0.87 over 11-05 -> 11-27, so it is stable across windows.
+    - **Method** (scripts/measure-live-bytes.mjs, tests/measure-live-bytes.test.js, mutants 3 of 3):
+      - **Not two direct readings.** There is one direct reading of `live_data_bytes` (RUN-ME-23, 11-27).
+      - **The daily backups are full copies of every row:** rows match RUN-ME-22 exactly on 11-26 (4,202 and
+        29,398).
+      - **Their JSON bytes give a daily series, converted per table** by its stored/JSON ratio at eab55db
+        (11-27 15:43Z): `signal_log` 0.444, `rating_snapshots` 0.485, `signal_snapshot_at_buy` 0.455, `trades_v2`
+        0.418.
+      - **It assumes each ratio held over the window.** The second direct reading tests that.
+    - **40% of the 500 MB quota (200 MB), re-projected:**
+      - **At the live trend:** this database ~**2027-04-26**, the cluster ~**2027-04-09** (from the 11-26 allocated
+        65.1 / 80.3 MB). That assumes the slack level holds: it oscillates rather than climbs.
+      - **At the allocated slope** (the withdrawn basis): 2027-02-18 / 2027-02-08. That is now the fast bound, not
+        the projection.
+      - **PROVISIONAL** until a second direct reading of live bytes.
+    - **What the live trend leaves out (it is the slow bound, not the answer):**
+      - **Indexes grow with rows and are not slack.** `live_data_bytes` excludes them. The note's "slack" column is
+        total minus live, and total includes `index_bytes`, so that column counts index growth as slack.
+      - **Page and TOAST-chunk overhead grows with data.** In the harness, a table never updated still showed 17% of
+        heap + TOAST holding no live row.
+      - So the real trend is somewhere between 0.89 and 1.6 MB a day, and the 40% date between February and late
+        April.
+      - **Splitting it needs RUN-ME-23's raw cell** (`heap_bytes`, `toast_bytes`, `index_bytes`, dead rows, TOAST
+        dead rows, and the MB unit). Asked of Roman: save it as a file in the main checkout.
+    - **The caveat kept:** the quota counts allocated, so slack is not free. It is just not growth.
+    - **Second direct reading: at the 2027-01-11 recheck, RUN-ME-22 and RUN-ME-23 together.** Then the date is
+      reissued from two live readings, or this one stands corrected.
   - **What `signal_log` holds (backup data/backups/signal_log/2026-11.json at 8f3e891, rows through 11-25):** ~135
     rows a trading day; 1,620 of 2,264 carry `signal_snapshot.bars`, median 125 daily bars each; the bars are 79.7% of
     the rows' JSON bytes, and each (symbol, bar) is stored **14.2 times** (every day re-stores the same window).
@@ -814,8 +889,9 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
     - **D. Delete (or strip bars from) old `signal_log` rows already in git and with outcomes filled.** Loses nothing
       the repo does not hold; DB-history reads move to the backups. A production write Roman runs; Postgres reuses the
       space for new rows but does not shrink the reported size without VACUUM FULL.
-  - **Why A:** no measure reads what is growing, the repo holds all of it, and the binding date (40%, ~Feb 9-19 2027 by
-    basis: the cluster or this database) is ten weeks out. Touching the logger now changes a record during the
+  - **Why A:** no measure reads what is growing, the repo holds all of it, and the binding date (40%; first given as
+    ~Feb 9-19 2027 from allocated bytes, WITHDRAWN 2026-11-27; at the live trend ~Apr 9-26 2027, provisional, with
+    February as the fast bound) is at least ten weeks out. Touching the logger now changes a record during the
     test's first weeks for no measured need. C is the structural answer if a cut is ever needed.
 - **CLOSED 2026-11-18 (the reviewer): P3, the same-tier eviction policy, is not built.** It was deferred on the chance
   that bounding the cache would remove the question, and it did: every large key on the phone now has a bound
@@ -1142,7 +1218,36 @@ and phone storage (already here). Each item: when, what unit, how taken, and the
   quota (200 MB) around mid-to-late February 2027 and the quota around late August 2027. **`signal_log` is half the
   database, almost all TOAST: its `bars` field (87.3% of its snapshots, 11-17) is the whole question if it ever needs
   cutting. `rating_snapshots` at 276 B a row (239 on 11-14) is a red herring. No action** (the reviewer).
-  (`CC-my-reassuring-reading-is-withdrawn-and-the-order-reverses.md` §4.)
+  (`CC-my-reassuring-reading-is-withdrawn-and-the-order-reverses.md` §4.) **The February date above is WITHDRAWN
+  2026-11-27:** it came from allocated bytes. See the re-projection under the size revisit.
+- **Dead space and live bytes, 2026-11-27 16:59Z.** RUN-ME-23 (db/inspect-dead-space-read-only.sql at 4c18c67), run by
+  Roman. `live_data_bytes` = sum of `pg_column_size` over the live rows (stored, compressed); totals as
+  `pg_total_relation_size`; counters from `pg_stat_all_tables` since `stats_reset`. **Figures as the reviewer
+  transcribed them (MB, unit not stated); I have not seen the raw output.**
+
+  | table | total | live data | total − live (includes indexes) |
+  |---|---|---|---|
+  | `signal_log` | 32.06 MB | 20.52 MB | 11.5 MB |
+  | `rating_snapshots` | 8.12 MB | 5.85 MB | 2.3 MB |
+  | `signal_snapshot_at_buy` | 5.05 MB | 4.04 MB | 1.0 MB |
+  | `trades_v2` | 4.73 MB (4,726,784 B) | 2.16 MB | 2.6 MB |
+
+  - `trades_v2`: 920 rows, 100 dead, 51,025 updates, last autovacuum 2026-11-27 04:53Z.
+  - `signal_log`: 4,202 rows, 19,729 updates, 6 HOT.
+  - `peak_corrections`: inserted 2, rows 0, dead 2.
+  - (`CC-the-growth-is-largely-slack-reproject-from-live-bytes.md` §1-4.)
+  - **`peak_corrections`, read 2026-11-27 (§4): consistent with two ROLLED-BACK inserts, not deletions.**
+    - **The two runs:** db/044's behaviour runs each insert one row in their "door" check, then raise on purpose
+      so everything rolls back: RUN-ME-18 (run 2, 2026-11-14) and RUN-ME-18b (run 2b, read by the reviewer
+      2026-11-17, "door 3 of 3").
+    - **Nothing else writes it:** only `db/` files name the table; no app code, script or workflow does.
+    - **Shown in PGlite** (scratchpad pg-harness/rollback-counters.mjs): two rolled-back inserts read exactly
+      "inserted 2, rows 0, dead 2", and so does a real insert-then-delete. The three transcribed numbers cannot tell
+      them apart. **`deleted` (`n_tup_del`) does:** 0 for rollbacks, 2 for deletes.
+    - **It is in RUN-ME-23's raw cell, not transcribed. Established once it reads 0; until then, consistent but not
+      confirmed.**
+    - The table's append-only guarantee is db/046's, still unbuilt; `service_role` holds DELETE on it
+      (CC-044-complete-but-87-rows-in-3-days).
 - **What the logger saw of his trades (reported 2026-11-20 18:30 PT; commits c0d0a12..05969ca).** Counts in that
   report: `signal_log` holds 96 distinct EDGE symbols; Roman traded 310 distinct tickers; 72 of the 547 trades from
   09-11 on have a ticker that ever appears in the log. The log is the scheduled logger's view, not his phone's scans:
