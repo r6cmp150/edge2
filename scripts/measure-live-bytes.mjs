@@ -37,21 +37,23 @@ export function reaches(startMB, startDay, perDay, target) {
   return new Date(Date.parse(startDay) + ((target - startMB) / perDay) * 864e5).toISOString().slice(0, 10);
 }
 
-function jsonAt(rev) {
+// JSON bytes and row counts per table at one backup commit (the backups are full copies of every row)
+export function backupAt(rev) {
   const sh = c => execSync(c, { cwd: ROOT, maxBuffer: 4e9 }).toString();
-  const out = {};
+  const json = {}, rows = {};
   for (const t of TABLES) {
     const files = FILES[t] === 'monthly' ? sh(`git ls-tree --name-only ${rev} data/backups/${t}/`).trim().split('\n').filter(Boolean) : [FILES[t]];
-    let b = 0;
+    let b = 0, n = 0;
     for (const f of files) {
       let txt; try { txt = sh(`git show ${rev}:${f}`); } catch { continue; }
       const j = JSON.parse(txt);
-      for (const r of (Array.isArray(j) ? j : j.rows || [])) b += Buffer.byteLength(JSON.stringify(r));
+      for (const r of (Array.isArray(j) ? j : j.rows || [])) { b += Buffer.byteLength(JSON.stringify(r)); n++; }
     }
-    out[t] = b;
+    json[t] = b; rows[t] = n;
   }
-  return out;
+  return { json, rows };
 }
+const jsonAt = rev => backupAt(rev).json;
 
 async function main() {
   const arg = k => (i => (i < 0 ? null : process.argv[i + 1]))(process.argv.indexOf(k));

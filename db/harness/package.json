@@ -1,0 +1,9 @@
+{
+  "name": "edge2-db-harness",
+  "private": true,
+  "description": "PGlite (Postgres in WASM) harnesses for db/ reads and findings. Not run by CI (the suite has no install step). cd db/harness && npm install && node <file>.mjs [args]",
+  "type": "module",
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.10"
+  }
+}

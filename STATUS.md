@@ -517,7 +517,7 @@ differential begins with the first position opened after Roman deleted every ope
         so every fill is a full new tuple and a new entry in each of the table's indexes, by construction, whatever
         the page space. db/016's `signal_log_unresolved_taken_idx` does the same for `taken_resolution`, and
         `matched_trade_id` is indexed.
-      - **Proven in PGlite** (scratchpad pg-harness/hot-predicate.mjs). Two identical tables at fillfactor 90, three
+      - **Proven in PGlite** (db/harness/hot-predicate.mjs). Two identical tables at fillfactor 90, three
         `ret_*` fills each: with the predicate index 0 of 900 updates were HOT, without it 256 of 900. TOAST was
         byte-identical before and after in both.
       - **Correction to the note's reading:** a fill does NOT rewrite the TOASTed bars. fill-outcomes PATCHes only
@@ -828,9 +828,20 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
     against 4,866,048 B at the 11-26 read: it lost 139 KB while gaining no rows. **The declared reading's second
     branch:** the dead space is now small, about heap × 100/1,020, and an autovacuum ran since 11-14. **The ~0.9 MB was
     dead row versions from the rewrites (hypothesis confirmed), already vacuumed;** the space is free for reuse.
-    - **Not explained, named:** `updated` reads **51,025 on 920 rows**, about 55 per row. db/044-045 and the
-      sell-timing fills account for a few thousand at most. The counter runs from `stats_reset` (in the raw output,
-      not transcribed), so it may cover the table's life. Which writer is not established.
+    - **The 51,025 updates on 920 rows, read 2026-11-27 (§4 of the reviewer's next note):**
+      - **The period:** `stats_reset` is null, so the counter covers the table's whole life (44,977 of the updates
+        were HOT).
+      - **The app has never had an update path to `trades_v2`:** anon has no UPDATE policy (db/002), and
+        `writeSellTimingToSupabase` has returned at once since the 2026-09-05 cutover.
+      - `backgroundSavePosition`, one of the reviewer's candidates, writes `portfolio`, not `trades_v2`.
+      - **The writers are:** fill-outcomes' sell-timing PATCHes (a few passes per trade as each horizon closes), the
+        migrations, and their behaviour runs.
+      - **A rolled-back UPDATE still counts** (db/harness/rollback-update-counter.mjs): PGlite, 100 rows updated and rolled back, `n_tup_upd` 100. So every
+        behaviour run that rewrote the table and then raised on purpose added to the counter.
+      - **The count:** 32 UPDATE statements on `trades_v2` across 13 migration and behaviour files (db/008 to
+        db/045). Several are table-wide over ~800-900 rows, and how many times each was run is not recorded.
+      - **So:** the bulk is schema work, migrations and their rolled-back verifications, not a recurring writer.
+        Consistent, not counted exactly. It changes no decision.
   - **THE RE-PROJECTION, 2026-11-27 (the reviewer, CC-the-growth-is-largely-slack-reproject-from-live-bytes §2).**
     Allocated bytes are what the quota counts. But slack (dead row versions and free space) accumulates between
     vacuums and is reclaimed by them, so a slope through two allocated readings mixes the trend with a sawtooth.
@@ -865,10 +876,41 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
         total minus live, and total includes `index_bytes`, so that column counts index growth as slack.
       - **Page and TOAST-chunk overhead grows with data.** In the harness, a table never updated still showed 17% of
         heap + TOAST holding no live row.
-      - So the real trend is somewhere between 0.89 and 1.6 MB a day, and the 40% date between February and late
-        April.
-      - **Splitting it needs RUN-ME-23's raw cell** (`heap_bytes`, `toast_bytes`, `index_bytes`, dead rows, TOAST
-        dead rows, and the MB unit). Asked of Roman: save it as a file in the main checkout.
+    - **THE SPLIT, from the raw cell (2026-11-27; scripts/measure-slack-split.mjs, tests/measure-slack-split.test.js,
+      mutants 4 of 4).** Allocated = live + index + overhead + slack, in MB (1e6 B):
+
+      | table | total | live | index | overhead | SLACK |
+      |---|---|---|---|---|---|
+      | `signal_log` | 32.06 | 20.52 | 0.85 | 4.89 | **5.80** |
+      | `trades_v2` | 4.73 | 2.16 | 0.30 | 0.51 | **1.75** |
+      | `rating_snapshots` | 8.12 | 5.85 | 1.92 | 0.35 | 0.00 |
+      | `signal_snapshot_at_buy` | 5.05 | 4.04 | 0.04 | 0.96 | 0.00 |
+
+      - **Overhead is an estimate.** It is live × o, where o comes from a table of the same kind that has (almost)
+        never been updated:
+        - `rating_snapshots` is its own reference: 6.0%, 1 update in its life;
+        - the three TOAST-heavy tables take `signal_snapshot_at_buy`'s 23.8%: 0 updates, 2 dead rows.
+        - By construction, the two references show no slack.
+      - **Of the 18.7 MB "total minus live", about 7.6 MB is slack** (the sawtooth). The rest grows with the data:
+        6.7 MB overhead and 3.1 MB indexes.
+      - `signal_log` has 136 dead heap rows and 335 dead TOAST chunks, and 8 deletes in its life; the rest of its
+        slack is free space.
+    - **THE ALLOCATED TREND, the sawtooth set aside: ~1.17 MB a calendar day** over the window 11-14 -> 11-26. Each
+      table's live rate × (1 + o), plus its index bytes per row × its row rate (rows from the daily backups):
+      | table | MB a calendar day |
+      |---|---|
+      | `signal_log` | 0.50 |
+      | `rating_snapshots` | 0.50 (0.11 of it index) |
+      | `signal_snapshot_at_buy` | 0.10 |
+      | `trades_v2` | 0.07 |
+
+      The observed allocated 1.6 less this leaves ~0.4 a day, which is slack accumulating between vacuums.
+    - **40% (200 MB), RE-STATED WITH ITS RANGE (from the 11-26 allocated 65.1 MB database / 80.3 MB cluster):**
+      - **CENTRAL, at 1.17/day:** this database ~**2027-03-21**, the cluster ~**2027-03-08**.
+      - **Slow bound** (live data only, 0.89/day): 2027-04-26 / 2027-04-09.
+      - **Fast bound** (allocated slope, 1.6/day, the withdrawn basis): 2027-02-18 / 2027-02-08.
+      - **Provisional:** one direct live reading; the overhead estimated from reference tables; and the slack level
+        assumed to hold.
     - **The caveat kept:** the quota counts allocated, so slack is not free. It is just not growth.
     - **Second direct reading: at the 2027-01-11 recheck, RUN-ME-22 and RUN-ME-23 together.** Then the date is
       reissued from two live readings, or this one stands corrected.
@@ -890,8 +932,8 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
       the repo does not hold; DB-history reads move to the backups. A production write Roman runs; Postgres reuses the
       space for new rows but does not shrink the reported size without VACUUM FULL.
   - **Why A:** no measure reads what is growing, the repo holds all of it, and the binding date (40%; first given as
-    ~Feb 9-19 2027 from allocated bytes, WITHDRAWN 2026-11-27; at the live trend ~Apr 9-26 2027, provisional, with
-    February as the fast bound) is at least ten weeks out. Touching the logger now changes a record during the
+    ~Feb 9-19 2027 from allocated bytes, WITHDRAWN 2026-11-27; re-stated from the split ~Mar 8-21 2027, provisional,
+    in a range from February to late April) is at least ten weeks out. Touching the logger now changes a record during the
     test's first weeks for no measured need. C is the structural answer if a cut is ever needed.
 - **CLOSED 2026-11-18 (the reviewer): P3, the same-tier eviction policy, is not built.** It was deferred on the chance
   that bounding the cache would remove the question, and it did: every large key on the phone now has a bound
@@ -1236,16 +1278,27 @@ and phone storage (already here). Each item: when, what unit, how taken, and the
   - `signal_log`: 4,202 rows, 19,729 updates, 6 HOT.
   - `peak_corrections`: inserted 2, rows 0, dead 2.
   - (`CC-the-growth-is-largely-slack-reproject-from-live-bytes.md` §1-4.)
+  - **THE RAW CELL (2026-11-27):** `data/db-reads/run-me-23-2026-11-27.json`, copied from the main checkout's
+    RUN-ME-23-output-2026-11-27.json. It is the reviewer's hand transcription of Roman's paste, so it is a
+    transcription, not an export: suspect the file before a derivation, and ask for a fresh run rather than
+    reconciling.
+    - **Checked against itself:** 21 tables; allocated 52,436,992 B and live 33,689,147 B, as the reviewer
+      validated.
+    - **Every table's total is heap + TOAST + index + 0, 24,576 or 32,768 B.** Those are the free-space and
+      visibility maps, which `pg_total_relation_size` counts and `pg_relation_size` does not.
+    - **`stats_reset` is null:** the counters cover the database's whole life.
+    - Pinned by tests/measure-slack-split.test.js.
+  - **`peak_corrections`: CLOSED 2026-11-27. No row was ever deleted.** The raw cell reads `deleted: 0` with
+    `inserted: 2`, `dead_rows: 2`: the rollback case, named as the discriminating column before it was seen.
   - **`peak_corrections`, read 2026-11-27 (§4): consistent with two ROLLED-BACK inserts, not deletions.**
     - **The two runs:** db/044's behaviour runs each insert one row in their "door" check, then raise on purpose
       so everything rolls back: RUN-ME-18 (run 2, 2026-11-14) and RUN-ME-18b (run 2b, read by the reviewer
       2026-11-17, "door 3 of 3").
     - **Nothing else writes it:** only `db/` files name the table; no app code, script or workflow does.
-    - **Shown in PGlite** (scratchpad pg-harness/rollback-counters.mjs): two rolled-back inserts read exactly
+    - **Shown in PGlite** (db/harness/rollback-counters.mjs): two rolled-back inserts read exactly
       "inserted 2, rows 0, dead 2", and so does a real insert-then-delete. The three transcribed numbers cannot tell
       them apart. **`deleted` (`n_tup_del`) does:** 0 for rollbacks, 2 for deletes.
-    - **It is in RUN-ME-23's raw cell, not transcribed. Established once it reads 0; until then, consistent but not
-      confirmed.**
+    - **It read 0 in the raw cell: CLOSED, above.**
     - The table's append-only guarantee is db/046's, still unbuilt; `service_role` holds DELETE on it
       (CC-044-complete-but-87-rows-in-3-days).
 - **What the logger saw of his trades (reported 2026-11-20 18:30 PT; commits c0d0a12..05969ca).** Counts in that
