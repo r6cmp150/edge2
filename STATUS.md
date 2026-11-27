@@ -454,6 +454,13 @@ differential begins with the first position opened after Roman deleted every ope
     - **peak_price:** only ever understated, because a missing price leaves the peak un-raised. Two routes to his
       exits: the trailing stop fires later, or protection never switches on.
     - **risk_score:** understates risk when news was not retrieved; the +2 is missing.
+    - **The scan-history line wraps between a price and its time** (the reviewer, CC-the-date-was-mine-and-three-
+      rulings §5, 2026-11-26). At 390px on real rows (CYRX, 11-24 and 11-25), the Signals card reads "$20.00" at the
+      end of line 1 and "9:42a" at the start of line 2; Portfolio splits "$19.59" from "12:09p". This predates the
+      batch (b86d5c3), and the line is frozen, so a fix costs a restart. **The fix:** keep each point
+      (price, label) together on one line, and break only at the " · " separators.
+      **Evidence:** docs/evidence/2026-11-26-scan-line-wrap-390px.png (render harness scratchpad render2/
+      render-batch.mjs, app.js at b86d5c3).
     - **Scan history at every scan (Roman, 2026-11-26): ruled NO capture change during the test.** The line already
       shows every scan of the stock's own universe list: 778 of 784 left a row (99.2%), which was 13.4% of all his
       scans (5,798), because a scan covers only the selected list and he taps through nine (backups at b786b78; since
@@ -747,7 +754,8 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
       content is about one new bar per symbol per day, re-fetchable from Alpaca except where Alpaca later revises a
       bar. Audits of what the logger saw (unparseable bar dates, step-2 thresholds) could not run on new rows.
     - **C. Bars stored once per (symbol, bar), referenced from the snapshot.** Loses nothing; divides the bars' bytes
-      by ~14. Costs a migration (Roman runs it), a logger change, and every bars reader rewritten.
+      by ~14. **For the record (the reviewer, 2026-11-26): this is not merely the structural fix. It removes a 14x
+      duplication in the largest table, and if a cut is ever needed it is the first thing to say.** Costs a migration (Roman runs it), a logger change, and every bars reader rewritten.
     - **D. Delete (or strip bars from) old `signal_log` rows already in git and with outcomes filled.** Loses nothing
       the repo does not hold; DB-history reads move to the backups. A production write Roman runs; Postgres reuses the
       space for new rows but does not shrink the reported size without VACUUM FULL.
