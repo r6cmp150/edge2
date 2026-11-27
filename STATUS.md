@@ -705,6 +705,33 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
     reviewer transcribed them):** `signal_log` +8.8 MB (+969 rows; ~0.73 MB/day, 46%); `rating_snapshots` +6.1 MB
     (+20,875 rows; ~0.5 MB/day, 32%); `trades_v2` +2.1 MB on +101 rows (its per-row size went 3,371 -> 5,289 B, which
     101 new rows alone do not explain: updated rows or dead tuples, not separated); `signal_snapshot_at_buy` +1.1 MB.
+  - **`trades_v2`'s growth, the cause read 2026-11-26** (the reviewer, CC-the-date-was-mine-and-three-rulings §4).
+    **From git:** the backups nearest before each size read are f145eb4 (11-14 12:37Z) and b786b78 (11-26 15:55Z);
+    script: scratchpad tv2-growth.cjs; JSON bytes, not stored bytes.
+    - **The new rows are not 5.3 KB each.** 5,289 B is the new average over all 920 rows. The 101 new rows are
+      **15,675 B each in JSON, 1.58 MB together**, against 4,272 B for the 819 old ones, and `signal_before_sale` is
+      most of it (1.95 MB of the table's 5.17 MB). The reviewer's "about 0.5 MB" for them used the average.
+    - **Applying the 11-14 ratio of stored to JSON bytes (2.76 MB / 3.50 MB = 0.79)**, the new rows are about
+      1.25 MB on disk. That leaves about 0.9 MB of the 2.14 MB. This is an estimate from one ratio, not a measurement.
+    - **Every one of the 819 old rows was rewritten** between the two reads: db/044 and db/045's three `peak_rsi_*`
+      columns on all 819, plus about 225 sell-timing fills (`best_exit_*`, `price_at_plus*`). Their live JSON grew
+      only 0.08 MB, but each UPDATE leaves the old row version on disk until vacuum.
+    - **The PGlite harness bounds where that dead weight can sit.** An UPDATE of a small column rewrites the heap row
+      but leaves the TOAST data in place: TOAST was byte-identical to an untouched copy. So the dead versions are heap
+      rows (at most about 2 KB each, under the TOAST threshold), not the large JSON. 819 to 1,044 dead versions would
+      be roughly 0.5 to 1.6 MB, which covers the remaining ~0.9 MB if most are unvacuumed. **Not established until
+      read.**
+  - **The one read: RUN-ME-23 (db/inspect-dead-space-read-only.sql)**, harness-run in PGlite in a READ ONLY
+    transaction. It gives, per table: live rows, dead rows, updates, the last vacuum and autovacuum (for the table and
+    its TOAST), and heap, TOAST and index bytes against the stored bytes of the live rows.
+  - **Its reading, declared before the result:** DEAD SPACE ≈ heap_bytes × dead_rows / (rows + dead_rows), plus the
+    same for TOAST.
+    - **≥ 0.5 MB: the gap is mostly BLOAT.** It is reclaimed by vacuum and refilled by new rows, so the trend line
+      drops it. Recompute the quota date without it.
+    - **< 0.25 MB with an autovacuum since 11-14:** the old versions were vacuumed. The space is free for reuse inside
+      the file, and the excess of (heap + TOAST − live) over the untouched baseline (17% in the harness) is that free
+      space.
+    - **< 0.25 MB with no vacuum:** the growth is live data, the new rows' size, and the quota date stands.
     **So `rating_snapshots` is small per row but is a third of the growth;** "a red herring" holds for its row size,
     not for its share. It is also what the forward test reads (measure A's universe, measure C), so it is not cut
     during the test.
