@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-11-27T15:43:08.121Z",
+  "run_at": "2026-11-28T14:39:01.704Z",
   "floors": {
     "trades": 37,
     "trades_v2": 451,
@@ -26,14 +26,20 @@
     },
     "signal_log": {
       "floor": 1938,
+      "mode": "daily",
+      "read": 1868,
+      "live": 4228,
+      "prior": 4202,
+      "fetched": 4228,
+      "written": true,
+      "reason": null,
       "shards": {
         "2026-09": 373,
         "2026-10": 1565,
-        "2026-11": 2264
+        "2026-11": 2290
       },
       "last_full_month": "2026-11",
-      "written": false,
-      "reason": "signal_log: HTTP 500 {\"code\":\"57014\",\"details\":null,\"hint\":null,\"message\":\"canceling statement due to statement timeout\"}"
+      "changed_outside_window": null
     },
     "settings": {
       "fetched": 1,
@@ -59,7 +65,7 @@
     "rating_snapshots": {
       "floor": 2944,
       "mode": "daily",
-      "read": 22443,
+      "read": 20875,
       "live": 29398,
       "prior": 29398,
       "fetched": 29398,
