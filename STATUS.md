@@ -509,7 +509,14 @@ differential begins with the first position opened after Roman deleted every ope
     - **peak_price:** only ever understated, because a missing price leaves the peak un-raised. Two routes to his
       exits: the trailing stop fires later, or protection never switches on.
     - **risk_score:** understates risk when news was not retrieved; the +2 is missing.
-    - **`signal_log`'s outcome fills are never HOT, and the cause is one index** (the reviewer, CC-the-growth-is-
+    - **One index on the largest table: about 5.8 MB reclaimed, and the churn that makes most of the database's slack
+      stopped.** `signal_log_pending_outcomes_idx` makes every `signal_log` outcome fill a full new row version.
+      `signal_log` holds 5.80 MB of the four large tables' ~7.6 MB of slack (the slack split, RUN-ME-23 cell, 2026-11-27).
+      Dropping or replacing the index lets fills be HOT, so the mechanism stops and vacuum can return what is there.
+      That is more than a slower growth rate. (Wording: the reviewer, CC-no-ci-install-step-and-the-index-fix-is-worth-
+      more-than-stated §2. The 5.8 MB is a ceiling: vacuum makes it reusable within the table, and only a rewrite,
+      VACUUM FULL or pg_repack, returns it to the quota. The figure carries the split's estimated overhead rate.)
+    - **Why: `signal_log`'s outcome fills are never HOT, and the cause is one index** (the reviewer, CC-the-growth-is-
       largely-slack-reproject-from-live-bytes §3; read 2026-11-27). RUN-ME-23, as transcribed: 19,729 updates on
       4,202 rows, 6 HOT.
       - **The cause, from the schema:** db/001's `signal_log_pending_outcomes_idx` is a partial index whose WHERE
@@ -525,8 +532,8 @@ differential begins with the first position opened after Roman deleted every ope
         (the harness, twice). Each fill's dead weight is the heap row plus one entry per index.
         - So "separate the outcome columns from the row that holds the bars" would not save TOAST churn: there
           isn't any.
-        - Where `signal_log`'s 11.5 MB "total minus live" sits (heap, TOAST, indexes, dead TOAST) needs the raw
-          RUN-ME-23 cell.
+        - Where `signal_log`'s 11.5 MB "total minus live" sits: answered from the raw cell (2026-11-27), index 0.85,
+          estimated overhead 4.89, slack 5.80 MB (the slack split in THE RE-PROJECTION).
       - **The fix, after the test:** drop or replace that partial index (4,202 rows; fill-outcomes' pending query
         does not need it), so fills can be HOT. HOT then also needs free space on the page, so a fillfactor below 100
         goes with it.
@@ -841,7 +848,27 @@ prereg-costs.mjs charges, base-case costs. Same caveat: a frictionless paper sim
       - **The count:** 32 UPDATE statements on `trades_v2` across 13 migration and behaviour files (db/008 to
         db/045). Several are table-wide over ~800-900 rows, and how many times each was run is not recorded.
       - **So:** the bulk is schema work, migrations and their rolled-back verifications, not a recurring writer.
-        Consistent, not counted exactly. It changes no decision.
+        Consistent, not counted exactly. It changes no decision. **CLOSED** (the reviewer, CC-no-ci-install-step-and-
+        the-index-fix-is-worth-more-than-stated §3, read 2026-11-27).
+  - **db/harness is evidence, not CI (decision, the reviewer, CC-no-ci-install-step-and-the-index-fix-is-worth-more-
+    than-stated §1; recorded 2026-11-27).** CI gets no install step for PGlite.
+    - **Why:** most of the harness scripts establish facts about Postgres (a column in a partial index's predicate
+      blocks HOT; a rolled-back INSERT or UPDATE still counts in `n_tup_ins`/`n_tup_upd`). Re-running them on every
+      commit would test PGlite, which is not ours. They are committed with their outputs, as evidence.
+    - **The exception is an invariant of our SQL:** that a file Roman runs on production writes nothing.
+      `run-dead-space.mjs` proves it for db/inspect-dead-space-read-only.sql (RUN-ME-23), and `run-sizes.mjs`
+      (committed 2026-11-27 from the scratchpad, where it had sat since RUN-ME-16) for db/inspect-sizes-read-only.sql
+      (RUN-ME-16 and 22).
+    - **The mechanism:** tests/read-only-runme-sql.test.js pins both files' sha256. When either changes, the failure
+      names the harness to re-run, says it must print HARNESS PASS, and says to record the output before the file ships
+      as a RUN-ME. It also checks that the named harness exists and runs the file's own query READ ONLY. Mutants 4 of 4
+      killed.
+    - **The premise, checked:** the note said a RUN-ME hash pin already covered this. That held for the migration files
+      (db/038, 039, 043, 044 and the two data files) but **not** for the two read-only files, so the pin is new.
+    - **This is a mechanism pointing at a manual step, which is weaker than doing it.** It is proportionate because a
+      RUN-ME's SQL changes rarely, each is reviewed before it reaches Roman, and an install step would add a new way for
+      CI to fail while a measurement runs. **Revisit if RUN-ME files start changing often:** the install step then
+      becomes worth it.
   - **THE RE-PROJECTION, 2026-11-27 (the reviewer, CC-the-growth-is-largely-slack-reproject-from-live-bytes §2).**
     Allocated bytes are what the quota counts. But slack (dead row versions and free space) accumulates between
     vacuums and is reclaimed by them, so a slope through two allocated readings mixes the trend with a sawtooth.
