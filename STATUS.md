@@ -509,13 +509,16 @@ differential begins with the first position opened after Roman deleted every ope
     - **peak_price:** only ever understated, because a missing price leaves the peak un-raised. Two routes to his
       exits: the trailing stop fires later, or protection never switches on.
     - **risk_score:** understates risk when news was not retrieved; the +2 is missing.
-    - **One index on the largest table: about 5.8 MB reclaimed, and the churn that makes most of the database's slack
-      stopped.** `signal_log_pending_outcomes_idx` makes every `signal_log` outcome fill a full new row version.
-      `signal_log` holds 5.80 MB of the four large tables' ~7.6 MB of slack (the slack split, RUN-ME-23 cell, 2026-11-27).
-      Dropping or replacing the index lets fills be HOT, so the mechanism stops and vacuum can return what is there.
-      That is more than a slower growth rate. (Wording: the reviewer, CC-no-ci-install-step-and-the-index-fix-is-worth-
-      more-than-stated §2. The 5.8 MB is a ceiling: vacuum makes it reusable within the table, and only a rewrite,
-      VACUUM FULL or pg_repack, returns it to the quota. The figure carries the split's estimated overhead rate.)
+    - **Two separable items** (the reviewer, CC-the-pin-i-relied-on-did-not-exist §3, 2026-11-27). The first is cheap;
+      the second needs Roman. `signal_log` holds 5.80 MB of the four large tables' ~7.6 MB of slack (the slack split,
+      RUN-ME-23 cell, 2026-11-27; the figure carries the split's estimated overhead rate).
+      - **(a) The index: stops the cause.** `signal_log_pending_outcomes_idx` makes every `signal_log` outcome fill a
+        full new row version. Dropping or replacing it lets fills be HOT, so the churn that creates most of the
+        database's slack stops. A migration Roman runs. Plain vacuum then makes the existing slack reusable within the
+        table, but does NOT shrink its allocated size, which is what the quota counts.
+      - **(b) The one-time rewrite: returns what is there.** VACUUM FULL or pg_repack on `signal_log`, up to ~5.8 MB back
+        to the quota. VACUUM FULL takes an exclusive lock on the table for its duration, so it is Roman's to run and
+        to time. Worth doing only after (a); before it, the churn refills the space.
     - **Why: `signal_log`'s outcome fills are never HOT, and the cause is one index** (the reviewer, CC-the-growth-is-
       largely-slack-reproject-from-live-bytes §3; read 2026-11-27). RUN-ME-23, as transcribed: 19,729 updates on
       4,202 rows, 6 HOT.
